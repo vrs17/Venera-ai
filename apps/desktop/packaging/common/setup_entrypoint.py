@@ -174,10 +174,17 @@ def stop_running_app(timeout: float = 30.0) -> bool:
 
     True - jarayon yo'q; False - qulflab turibdi (o'rnatishni boshlash mumkin emas).
     """
+    setup_log("Ishlayotgan nusxa to'xtatilmoqda...")
     if not app_is_running():
+        setup_log("Ilova ishlamayapti - to'xtatish shart emas")
         return True
 
-    run_hidden(["taskkill", "/IM", PROCESS_NAME, "/F", "/T"], timeout=20)
+    # `/T` (butun daraxtni o'ldirish) ATAYLAB ISHLATILMAYDI. Yangilanish
+    # xizmati o'rnatuvchini Venera.exe ning FARZANDI sifatida ishga tushiradi,
+    # ya'ni `/T` ilova bilan birga o'rnatuvchining o'zini ham o'ldiradi -
+    # fayllar almashmasdan, jimgina. `/IM` esa faqat nomi mos jarayonlarni
+    # oladi, o'rnatuvchining nomi boshqacha (Venera-...-Setup-x.y.z.exe).
+    run_hidden(["taskkill", "/IM", PROCESS_NAME, "/F"], timeout=20)
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

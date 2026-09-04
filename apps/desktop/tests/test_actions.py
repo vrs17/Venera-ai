@@ -167,3 +167,21 @@ def test_barcha_intentlar_uchun_handler_bor():
 
     missing = [name for name in IntentName if name not in HANDLERS]
     assert not missing, f"handler yo'q: {missing}"
+
+
+# --- o'rnatuvchi o'zini o'ldirmasligi kerak ------------------------------------
+# `taskkill /IM Venera.exe /F /T` daraxtni o'ldiradi. Yangilanish xizmati
+# o'rnatuvchini Venera.exe ning FARZANDI sifatida ishga tushiradi, ya'ni `/T`
+# o'rnatuvchining o'zini ham o'ldirardi: log "O'rnatish boshlandi" da to'xtar,
+# fayllar almashmas, ilova eski versiyada qolardi.
+
+def test_ornatuvchi_taskkill_T_bayrogini_ishlatmaydi():
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1]
+              / "packaging" / "common" / "setup_entrypoint.py").read_text(encoding="utf-8")
+    kill_lines = [line for line in source.splitlines()
+                  if "taskkill" in line and not line.lstrip().startswith("#")]
+    assert kill_lines, "taskkill chaqiruvi topilmadi"
+    for line in kill_lines:
+        assert '"/T"' not in line, f"/T o'rnatuvchini o'zini o'ldiradi: {line.strip()}"
