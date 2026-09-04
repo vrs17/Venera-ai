@@ -1,19 +1,19 @@
 {
-  "version": "0.2.4",
+  "version": "0.2.5",
   "released": "2026-09-04",
-  "notes": "Venera nomiga to'liq o'tildi. Tray ikonkasi va o'rnatish papkasi yangilandi.",
+  "notes": "Yangi buyruq: \"claude ni och\". Mavjud dasturlar ro'yxati saqlanadi.",
   "mandatory": false,
   "min_version": "",
   "platforms": {
     "windows": {
-      "file": "Venera-AI-Assistant-Setup-0.2.4.exe",
-      "sha256": "833c7ed5852db4d00419ab67cb473e4ff5341a400a1bed005c74b7f7a69e2b71",
-      "size": 45600871
+      "file": "Venera-AI-Assistant-Setup-0.2.5.exe",
+      "sha256": "550fcd7ce490c4fd34d4d0be51cf31451990a1c533ae658852217fb6bd1babe4",
+      "size": 45605609
     }
   },
   "setup": {
-    "file": "Venera-AI-Assistant-Setup-0.2.4.exe",
-    "sha256": "833c7ed5852db4d00419ab67cb473e4ff5341a400a1bed005c74b7f7a69e2b71",
-    "size": 45600871
+    "file": "Venera-AI-Assistant-Setup-0.2.5.exe",
+    "sha256": "550fcd7ce490c4fd34d4d0be51cf31451990a1c533ae658852217fb6bd1babe4",
+    "size": 45605609
   }
 }
