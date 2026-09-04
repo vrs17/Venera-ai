@@ -35,6 +35,24 @@ if (-not $SkipAppBuild) {
     }
 }
 
+# Payload = dist\Venera. O'rnatuvchi nomida bir versiya, ichida boshqasi
+# bo'lib qolmasligi uchun ikkalasini SOLISHTIRAMIZ. Bu tekshiruvsiz eski
+# build jimgina o'raladi va faqat foydalanuvchi mashinasida bilinadi.
+$python = if (Test-Path ".venv\Scripts\python.exe") { ".venv\Scripts\python.exe" } else { "py" }
+$srcVersion = (& $python tools\sync_version.py).Trim()
+$payloadVersion = (& "dist\Venera\Venera.exe" --version 2>&1 | Out-String).Trim()
+if ($payloadVersion -notmatch [regex]::Escape($srcVersion)) {
+    throw @"
+PAYLOAD VERSIYASI MOS KELMADI - o'rnatuvchi yig'ilmadi.
+  manbada            : $srcVersion
+  dist\Venera\ ichida: $payloadVersion
+Toza yig'ing:
+  Remove-Item -Recurse -Force build, dist
+  powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
+"@
+}
+Write-Host "     Payload tasdiqlandi: $payloadVersion" -ForegroundColor Green
+
 $urlFile = Join-Path $PSScriptRoot "update_url.txt"
 if ($UpdateUrl.Count -gt 0) {
     # `powershell -File` orqali kelganda massiv bitta satrga aylanib qolishi

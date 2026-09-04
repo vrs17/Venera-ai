@@ -225,3 +225,33 @@ def test_upgrade_apps_buzuq_fayl_yiqitmaydi(tmp_path):
 
 def test_upgrade_apps_yoq_fayl(tmp_path):
     assert config_module.upgrade_apps_file(tmp_path / "yoq.yaml") == []
+
+
+# --- build skripti eski keshni qayta ishlatmasligi kerak -------------------------
+# `build\` keshi eski bayt-kodni saqlab qolgani uchun 0.2.8 deb nomlangan
+# o'rnatuvchi ichida 0.2.5 ilovasi ketdi. Bu jimgina sodir bo'ldi va faqat
+# foydalanuvchi mashinasida bilindi.
+
+def _build_script(name: str) -> str:
+    from pathlib import Path
+    return (Path(__file__).resolve().parents[1] / "packaging" / "windows" / name
+            ).read_text(encoding="utf-8")
+
+
+def test_build_tozalash_standart():
+    text = _build_script("build.ps1")
+    assert "$NoClean" in text, "tozalash standart bo'lishi kerak, -Clean bilan emas"
+    assert "if (-not $NoClean)" in text
+
+
+def test_build_yigilgan_exe_versiyasini_tekshiradi():
+    """`$version` manbadan o'qiladi - u yig'ilgan fayl haqida hech narsa
+    aytmaydi. .exe ning O'ZIDAN so'ralishi shart."""
+    text = _build_script("build.ps1")
+    assert "--version" in text, "yig'ilgan .exe versiyasi so'ralmayapti"
+    assert "VERSIYA MOS KELMADI" in text, "mos kelmasa build to'xtashi kerak"
+
+
+def test_setup_payload_versiyasini_tekshiradi():
+    text = _build_script("build_setup.ps1")
+    assert "PAYLOAD VERSIYASI MOS KELMADI" in text
