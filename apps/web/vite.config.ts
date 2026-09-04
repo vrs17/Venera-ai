@@ -1,5 +1,54 @@
+import { createReadStream, existsSync, statSync } from 'node:fs'
+import { basename, resolve } from 'node:path'
 import { defineConfig, loadEnv } from 'vite'
+import type { Connect, Plugin, PreviewServer, ViteDevServer } from 'vite'
 import vue from '@vitejs/plugin-vue'
+
+// Monorepo ildizidagi release/ papkasi — desktop .exe va version.json shu yerda.
+const RELEASE_DIR = resolve(__dirname, '../../release')
+
+/**
+ * FAQAT dev/preview uchun: release/ papkasini /download/ ostida ko'rsatadi,
+ * ya'ni production'dagi nginx (deploy/nginx.container.conf) qiladigan ishni
+ * takrorlaydi.
+ *
+ * Busiz splash sahifadagi yuklab olish kartasi lokalda doim "mavjud emas"
+ * holatida qolardi va oqimni ishga tushirmasdan tekshirib bo'lmasdi.
+ *
+ * Production bundle'ga TA'SIR QILMAYDI: `apply: 'serve'` sababli plugin
+ * `vite build` paytida umuman ishlamaydi, .exe dist/ ga tushmaydi.
+ */
+function releaseDownloads(): Plugin {
+  const handler: Connect.NextHandleFunction = (req, res, next) => {
+    // connect '/download' prefiksini olib tashlaydi, req.url = '/version.json'.
+    const requested = decodeURIComponent((req.url || '/').split('?')[0])
+    const name = basename(requested)
+    const file = resolve(RELEASE_DIR, name)
+
+    // basename() papkadan chiqishga yo'l qo'ymaydi; startsWith ikkinchi to'siq.
+    if (!name || !file.startsWith(RELEASE_DIR) || !existsSync(file)) return next()
+    const stat = statSync(file)
+    if (!stat.isFile()) return next()
+
+    const isJson = name.endsWith('.json')
+    res.setHeader('Content-Type', isJson ? 'application/json' : 'application/octet-stream')
+    res.setHeader('Content-Length', String(stat.size))
+    res.setHeader('Cache-Control', isJson ? 'no-store' : 'public, max-age=2592000')
+    if (!isJson) res.setHeader('Content-Disposition', 'attachment')
+    createReadStream(file).pipe(res)
+  }
+
+  return {
+    name: 'venera-release-downloads',
+    apply: 'serve',
+    configureServer(server: ViteDevServer) {
+      server.middlewares.use('/download', handler)
+    },
+    configurePreviewServer(server: PreviewServer) {
+      server.middlewares.use('/download', handler)
+    },
+  }
+}
 
 // CORS-free dev fallback: when VITE_API_BASE is left empty in .env, the fetch
 // call uses a relative URL and Vite forwards `/api` to the Spring Boot backend.
@@ -10,7 +59,7 @@ export default defineConfig(({ mode }) => {
   const target = env.VITE_API_TARGET || env.VITE_API_BASE || 'http://10.10.50.9:8080'
   const proxy = { '/api': target }
   return {
-    plugins: [vue()],
+    plugins: [vue(), releaseDownloads()],
     // host: true binds 0.0.0.0 so the dev server is reachable on the LAN
     // (http://<your-ip>:5173). Pinned port keeps the URL + firewall rule stable.
     server: { host: true, port: 5173, proxy },

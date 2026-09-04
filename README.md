@@ -24,9 +24,13 @@ Venera/
 │   └── nginx/             Yangilanish serveri
 │
 ├── docs/                  Umumiy hujjatlar
-├── release/               Chiqarilgan .exe va version.json
-└── .gitlab-ci.yml         CI kirish nuqtasi (har bir app o'z faylini keltiradi)
+└── release/               Chiqarilgan .exe va version.json — sayt shu yerdan tarqatadi
 ```
+
+> CI hozircha yo'q. Qo'shilganda har bir app o'z `.gitlab-ci.yml` faylini saqlaydi
+> va root'dagi fayl ularni `include: local:` bilan chaqiradi. `local:` yo'llari
+> HAR DOIM repo ildizidan hisoblanadi, va har bir job'da `rules: changes:` bo'lishi
+> kerak — aks holda desktop'ga tegadigan commit web'ni ham qayta yig'adi.
 
 ### Nega shunday
 
@@ -94,6 +98,7 @@ Batafsil: [packages/design-tokens/README.md](packages/design-tokens/README.md)
 |---|---|
 | [docs/deploy-linux-server.md](docs/deploy-linux-server.md) | Desktop yangilanishlarini Linux serverdan tarqatish |
 | [docs/deploy-update-server.md](docs/deploy-update-server.md) | Yangilanish serverini nginx bilan sozlash |
+| [docs/deploy-desktop-download.md](docs/deploy-desktop-download.md) | Saytdagi "Yuklab olish" tugmasini ishga tushirish |
 | [docs/web-origin.md](docs/web-origin.md) | Web app qayerdan kelgani (tarixiy ma'lumot) |
 
 ---
@@ -105,7 +110,7 @@ ishlaydi va web app unga `/api/` orqali murojaat qiladi. Uni bu yerga
 ko'chirmoqchi bo'lsangiz:
 
 1. `apps/backend/` papkasini yarating — ichida o'z build fayli va testlari bilan
-2. `apps/backend/.gitlab-ci.yml` yozing, `rules: changes: [apps/backend/**/*]` bilan
+2. CI qo'shsangiz, `apps/backend/.gitlab-ci.yml` da `rules: changes: [apps/backend/**/*]`
 3. Uni root `.gitlab-ci.yml` dagi `include:` ro'yxatiga qo'shing
 
 Uchala qadam ham boshqa apps'ga tegmaydi — struktura aynan shuning uchun shunday.
