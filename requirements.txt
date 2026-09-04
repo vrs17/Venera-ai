@@ -1,0 +1,14 @@
+# Venera AI Assistant - Step 1 (Windows desktop skeleton)
+# Python 3.11+ (tekshirilgan: 3.13.15 x64 Windows)
+
+numpy>=1.26
+sounddevice>=0.5.2
+pystray>=0.19.5
+Pillow>=10.0
+PyYAML>=6.0
+rapidfuzz>=3.9
+
+# Windows-only
+pywin32>=306 ; sys_platform == "win32"
+comtypes>=1.4 ; sys_platform == "win32"
+pycaw>=20240210 ; sys_platform == "win32"

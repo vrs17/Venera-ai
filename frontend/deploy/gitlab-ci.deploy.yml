@@ -1,0 +1,89 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DEPLOY STAGE — append to .gitlab-ci.yml (today it has only the `build` stage).
+# Add `- deploy` to stages: and the IMAGE_SHA/API_UPSTREAM vars to variables:.
+# Promotes the freshly-built SHA-tagged image to the live :5173 frontend by running
+# deploy/cutover.sh ON THE HOST as ymamajonov. ONE-CLICK MANUAL, default branch only,
+# triple-gated (when:manual + protected `production` env + protected ALLOW_PROD_DEPLOY).
+# On failure: rollback.sh --to-previous (NOT --to-vite: vite is retired/disabled).
+#
+# PREREQ 1 (HARD): merge MR !9 (deploy/cutover.sh + rollback.sh) to main first.
+# PREREQ 2 (HARD): reconcile the rollback state schema — pre-seed a non-none
+#   previous_image_digest= in ~ymamajonov/.local/state/brb-cutover/state.env (the
+#   live file uses image_repo_digest=/previous_repo_digest=none, which MR !9's
+#   rollback.sh --to-previous does NOT read), else first-deploy rollback has no
+#   target. before_script greps for it and ABORTS if missing.
+# IDENTITY: option (a) ONLY — native ymamajonov user-runner. No sudo bridge shipped
+#   (ymamajonov is in group sudo → a bash -lc * NOPASSWD grant is root-equivalent).
+# ─────────────────────────────────────────────────────────────────────────────
+
+variables:
+  IMAGE_SHA: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"   # immutable 40-hex tag build-image pushes on main; cutover accepts it, rejects sha-<short>/latest/vX
+  API_UPSTREAM: "http://10.10.50.9:8080"        # injected into the container (nginx proxy_pass); empty fails closed, so cutover REQUIRES it
+
+deploy:production:
+  stage: deploy
+  tags: [llm-brb-tech-deploy-user]  # the user-mode runner that runs AS ymamajonov (--run-untagged=false pins it)
+  interruptible: false            # never cancel a deploy mid-swap (the :5173 window)
+  resource_group: production      # serialize: never two concurrent cutovers on one host
+  environment:
+    name: production              # PROTECTED environment (approver list) in the UI = the WHO gate
+    url: http://10.10.10.8:5173
+  needs:
+    - job: build-image
+      optional: false             # deploy only after build-image (same-pipeline SHA handoff; deploy pulls from the registry, consumes no artifact)
+  rules:
+    # WHEN: default branch only + manual + explicit sign-off var. while ALLOW_PROD_DEPLOY
+    # is unset the rule is false → no manual button. when:manual=WHEN, protected env=WHO,
+    # ALLOW_PROD_DEPLOY=sign-off latch.
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $ALLOW_PROD_DEPLOY == "true"'
+      when: manual
+      allow_failure: false        # a refused/failed manual deploy is a RED pipeline, not a skip
+  variables:
+    GIT_STRATEGY: fetch           # we DO need the checkout: deploy/cutover.sh ships in the repo
+  before_script:
+    # identity assertion — must be the native ymamajonov user-runner, not the system runner (uid 998)
+    - |
+      test "$(id -un)" = "ymamajonov" || { echo "FATAL: runner user is '$(id -un)', not ymamajonov. This job must run on the ymamajonov user-runner (tag llm-brb-tech-deploy-user). Refusing."; exit 1; }
+    # rootless podman + cutover's ': ${XDG_RUNTIME_DIR:?}' guard need this (build job sets it the same way; linger keeps /run/user/1001 alive)
+    - export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    # HARD PREREQ 1: scripts present (MR !9 merged) — existence guard BEFORE chmod, so chmod-on-missing can't mask the real cause
+    - |
+      test -f deploy/cutover.sh && test -f deploy/rollback.sh || { echo "FATAL: deploy/cutover.sh / rollback.sh missing — merge MR !9 (feat/cutover-scripts) to main before enabling this stage."; exit 1; }
+    - chmod +x deploy/cutover.sh deploy/rollback.sh
+    # HARD PREREQ 2: rollback has a target — abort if no non-none previous_image_digest= (the key rollback.sh --to-previous reads)
+    - |
+      STATE_FILE="$HOME/.local/state/brb-cutover/state.env"
+      if ! grep -E '^previous_image_digest=' "$STATE_FILE" 2>/dev/null | grep -qvE '=(none|unknown)$'; then
+        echo "FATAL: no usable 'previous_image_digest=' (non-none) in $STATE_FILE — rollback --to-previous would have NO target on failure."
+        echo "       Pre-seed it once, as ymamajonov, with the current live repo digest before enabling CD:"
+        echo "         printf 'previous_image_digest=%s\\n' \"\$(grep -E '^image_repo_digest=' \"$STATE_FILE\" | tail -1 | cut -d= -f2-)\" >> \"$STATE_FILE\""
+        exit 1
+      fi
+    # registry login AS ymamajonov (same user that pulls) — writes /run/user/1001/containers/auth.json; job token via stdin only
+    - echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - echo "Deploying $IMAGE_SHA (commit $CI_COMMIT_SHA) to production :5173 as $(id -un)"
+    # --no-login: already logged in above (same user, same auth.json). cutover runs under set -euo pipefail → any failure is non-zero → rollback block.
+    - |
+      if deploy/cutover.sh --no-login --image "$IMAGE_SHA" --api-upstream "$API_UPSTREAM"; then
+        echo "cutover OK — $IMAGE_SHA is live on :5173"
+      else
+        rc=$?
+        echo "cutover FAILED (rc=$rc). NOTE: cutover's own EXIT trap may have already restarted the RETIRED vite unit; we now drive the correct container rollback."
+        echo "Rolling back to PREVIOUS image repo digest (vite is disabled/retired; --to-vite is NOT a valid restore here)."
+        if API_UPSTREAM="$API_UPSTREAM" deploy/rollback.sh --to-previous; then
+          echo "rolled back to previous image — :5173 restored to last-good container"
+        else
+          echo "FATAL: rollback --to-previous ALSO failed (genuinely no previous digest, or its health gate failed). :5173 may be on the stale vite unit or DOWN."
+          echo "       PAGE ON-CALL. Inspect: ~ymamajonov/.local/state/brb-cutover/state.env ; 'systemctl --user status container-brb-frontend.service brb-frontend.service' ; 'ss -ltn | grep 5173'."
+        fi
+        exit "$rc"
+      fi
+    # non-gating backend probe — /healthz (the cutover gate) is backend-independent; this surfaces real-backend state in the log without failing the job
+    - |
+      curl -fsS -o /dev/null -w 'post-deploy /api probe HTTP %{http_code}\n' "http://127.0.0.1:5173/api/health" \
+        || echo "post-deploy /api probe: backend NOT reachable (informational only; the /healthz gate already passed)"
+  after_script:
+    # clear the cached job-token credential from ymamajonov's auth.json (runs even on failure); best-effort
+    - export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    - podman logout "$CI_REGISTRY" 2>/dev/null || true

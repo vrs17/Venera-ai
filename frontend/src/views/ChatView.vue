@@ -1,0 +1,231 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
+import { askAi } from '../api/chat.api'
+import { localizeApiError } from '../api/errors'
+import { useAuth } from '../composables/useAuth'
+import type { ActorType, Phase, UIExchange } from '../types'
+import { applyTheme, getInitialTheme } from '../theme'
+import type { Theme } from '../theme'
+import AmbientBackground from '../components/AmbientBackground.vue'
+import ChatSidebar from '../components/ChatSidebar.vue'
+import Welcome from '../components/Welcome.vue'
+import Conversation from '../components/Conversation.vue'
+import InputDock from '../components/InputDock.vue'
+import AnswerGlow from '../components/AnswerGlow.vue'
+import { MenuIcon } from '../icons'
+
+const { t } = useI18n({ useScope: 'global' })
+const router = useRouter()
+// Identity now comes from the authenticated session (derived from the token by
+// the backend); the chat request carries only the question.
+const { user, logout } = useAuth()
+const exchanges = ref<UIExchange[]>([])
+const phase = ref<Phase>('idle')
+const theme = ref<Theme>(getInitialTheme())
+const sidebarOpen = ref(false)
+const collapsed = ref(localStorage.getItem('venera_sidebar_collapsed') === '1')
+watch(collapsed, (value) => localStorage.setItem('venera_sidebar_collapsed', value ? '1' : '0'))
+// User vs developer chat UI. User mode (default) hides the pipeline trace and
+// shows a "Thinking" loader; developer mode shows the full Guard/Intent/
+// Orchestrator/Access trace. A sidebar toggle drives it for now — later this
+// will be derived from the signed-in user's email.
+const devMode = ref(localStorage.getItem('venera_dev_mode') === '1')
+watch(devMode, (value) => localStorage.setItem('venera_dev_mode', value ? '1' : '0'))
+// Imperative, non-reactive (the React useRef equivalent) — a plain let, not a ref.
+let abortController: AbortController | null = null
+
+watch(theme, (value) => applyTheme(value), { immediate: true })
+onBeforeUnmount(() => abortController?.abort())
+
+function toggleTheme() {
+  theme.value = theme.value === 'dark' ? 'light' : 'dark'
+}
+
+function newChat() {
+  abortController?.abort()
+  abortController = null
+  exchanges.value = []
+  phase.value = 'idle'
+}
+
+// User-initiated cancel. Mark the in-flight exchange so PipelineResult can
+// render a soft "Generation stopped" notice instead of a request-failed error.
+function stop() {
+  if (phase.value !== 'sending') return
+  abortController?.abort()
+  abortController = null
+  const inflight = exchanges.value.find((e) => !e.response && !e.error && !e.cancelled)
+  if (inflight) patch(inflight.id, { cancelled: true })
+  phase.value = 'idle'
+}
+
+function toggleCollapse() {
+  collapsed.value = !collapsed.value
+}
+
+// ESC toggles the sidebar. On mobile that's the off-canvas drawer; on desktop
+// it's the collapsed rail. Skip during IME composition and if a deeper handler
+// (e.g. a future modal) already claimed the key.
+function onKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return
+  if (window.matchMedia('(max-width: 768px)').matches) {
+    sidebarOpen.value = !sidebarOpen.value
+  } else {
+    collapsed.value = !collapsed.value
+  }
+}
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+
+function toggleDevMode() {
+  devMode.value = !devMode.value
+}
+
+async function onLogout() {
+  abortController?.abort()
+  await logout()
+  router.push({ name: 'welcome' })
+}
+
+function patch(id: string, p: Partial<UIExchange>) {
+  exchanges.value = exchanges.value.map((e) => (e.id === id ? { ...e, ...p } : e))
+}
+
+// Run (or re-run) the pipeline for an existing exchange. Shared by send and
+// regenerate so both paths handle abort/error/timing identically.
+function runPipeline(id: string, question: string) {
+  phase.value = 'sending'
+  const t0 = performance.now()
+  const controller = new AbortController()
+  abortController = controller
+
+  askAi(question, controller.signal)
+    .then((response) => {
+      patch(id, { response, error: null, durationMs: performance.now() - t0 })
+      phase.value = 'idle'
+    })
+    .catch((err: unknown) => {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      patch(id, { error: localizeApiError(err, t), durationMs: performance.now() - t0 })
+      phase.value = 'idle'
+    })
+}
+
+function send(text: string): boolean {
+  const trimmed = text.trim()
+  if (!trimmed || phase.value !== 'idle') return false
+  // crypto.randomUUID() exists only in secure contexts (HTTPS / localhost);
+  // over plain HTTP on the LAN it's undefined, so fall back to a non-crypto id.
+  const id =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `ex-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  exchanges.value = [...exchanges.value, { id, question: trimmed, response: null, error: null, durationMs: null }]
+  runPipeline(id, trimmed)
+  return true
+}
+
+// Re-run the same question in place: clear the existing result, then re-fetch.
+function regenerate(id: string) {
+  if (phase.value !== 'idle') return
+  const ex = exchanges.value.find((e) => e.id === id)
+  if (!ex) return
+  patch(id, { response: null, error: null, cancelled: false, durationMs: null })
+  runPipeline(id, ex.question)
+}
+
+const displayName = computed(
+  () => user.value?.fullName?.trim() || user.value?.email?.split('@')[0] || t('defaultName'),
+)
+const actorType = computed<ActorType>(() => (user.value?.actorType as ActorType) ?? 'CUSTOMER')
+</script>
+
+<template>
+  <div
+    :style="{
+      fontFamily: 'Figtree, sans-serif',
+      color: 'var(--text)',
+      height: '100vh',
+      overflow: 'hidden',
+      background: 'var(--bg)',
+      position: 'relative',
+    }"
+  >
+    <div
+      data-screen-label="App shell"
+      :style="{ position: 'absolute', inset: 0, display: 'flex', animation: 'fadeUp 0.5s ease both' }"
+    >
+      <AmbientBackground />
+
+      <ChatSidebar
+        :user="user"
+        :theme="theme"
+        :open="sidebarOpen"
+        :collapsed="collapsed"
+        :dev-mode="devMode"
+        @toggle-theme="toggleTheme"
+        @toggle-dev-mode="toggleDevMode"
+        @new-chat="newChat"
+        @close="sidebarOpen = false"
+        @toggle-collapse="toggleCollapse"
+        @logout="onLogout"
+      />
+
+      <div v-if="sidebarOpen" class="chat-backdrop" @click="sidebarOpen = false" />
+
+      <div class="chat-main">
+        <button class="chat-menu-btn glass glass-hover" :aria-label="t('menu')" @click="sidebarOpen = true">
+          <MenuIcon :size="18" />
+        </button>
+
+        <Welcome v-if="exchanges.length === 0" :name="displayName" :actor-type="actorType" @chip="send" />
+        <Conversation v-else :exchanges="exchanges" :dev-mode="devMode" :busy="phase !== 'idle'" @regenerate="regenerate" />
+        <InputDock :phase="phase" :send="send" :stop="stop" />
+        <AnswerGlow :phase="phase" />
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.chat-main {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+.chat-menu-btn {
+  display: none;
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 15;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: var(--glass-shadow);
+}
+.chat-backdrop {
+  display: none;
+}
+@media (max-width: 768px) {
+  .chat-menu-btn {
+    display: flex;
+  }
+  .chat-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 19;
+    background: rgba(0, 0, 0, 0.4);
+  }
+}
+</style>

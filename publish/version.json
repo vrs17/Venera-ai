@@ -1,0 +1,12 @@
+{
+  "version": "0.2.3",
+  "released": "2026-09-04",
+  "notes": "Yangilanish manbasi ccs.venera.uz",
+  "mandatory": false,
+  "min_version": "",
+  "setup": {
+    "file": "Venera-AI-Assistant-Setup-0.2.3.exe",
+    "sha256": "7e0067490336564ca5128985f5218ee844632a732b3e42cbb74d147a765fe7b1",
+    "size": 44996397
+  }
+}

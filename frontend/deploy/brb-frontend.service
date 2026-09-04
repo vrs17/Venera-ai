@@ -1,0 +1,76 @@
+# /etc/systemd/system/brb-frontend.service
+#
+# SYSTEM service for the BRB frontend — serves the PRODUCTION BUILD (dist/) via
+# `vite preview` on 0.0.0.0:5173. Recommended variant for a server: starts at boot
+# with NO login session and NO enable-linger required.
+#
+# Serving mode: `vite preview` serves the built, minified dist/ bundle (NO raw
+# source / /@vite/client / HMR). The /api proxy comes from vite.config.ts
+# (preview.proxy). Requires `npm run build` first. For a hardened production server,
+# nginx serving dist/ is the recommended next step.
+
+[Unit]
+Description=BRB frontend (production preview, 0.0.0.0:5173)
+Documentation=https://vitejs.dev
+# Bind needs the LAN IP; wait for the network to be configured before starting.
+After=network-online.target
+Wants=network-online.target
+# Crash-loop guard: at most 5 starts per 60s, else the unit latches 'failed
+# (start-limit-hit)'. StartLimit* MUST live in [Unit] (not [Service]).
+# Recover after fixing the cause with: systemctl reset-failed brb-frontend
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=ymamajonov
+Group=ymamajonov
+WorkingDirectory=/home/ymamajonov/brbtechllm_frontend/brbtechllm_frontend
+
+# Node was installed via NVM, not the system. systemd runs with a minimal
+# environment and does NOT source nvm, so 'node'/'npm' are not on PATH.
+# 1) ExecStart uses ABSOLUTE node + vite.js paths.
+# 2) The nvm bin dir is prepended to PATH so child processes (esbuild, plugins)
+#    resolve the SAME node 22.22.3. Version-pinned: update PATH + ExecStart if
+#    you switch node versions.
+Environment=PATH=/home/ymamajonov/.nvm/versions/node/v22.22.3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Run vite.js directly (NOT 'npm run dev') so systemd supervises the node
+# process itself and gets clean exit codes for restart.
+# --strictPort makes :5173 load-bearing: if the port is busy vite exits
+# non-zero (loud EADDRINUSE in the journal) instead of silently hopping to 5174.
+ExecStart=/home/ymamajonov/.nvm/versions/node/v22.22.3/bin/node /home/ymamajonov/brbtechllm_frontend/brbtechllm_frontend/node_modules/vite/bin/vite.js preview --host 0.0.0.0 --port 5173 --strictPort
+
+# Auto-restart on any unexpected exit, short backoff. A commanded
+# 'systemctl stop' sends SIGTERM and does NOT restart, even with Restart=always.
+Restart=always
+RestartSec=3
+
+# --- Hardening (kept SAFE for Vite) ---
+# Block privilege escalation; Vite/esbuild never need setuid/setgid.
+NoNewPrivileges=yes
+# Private /tmp namespace (system-service feature). Vite's real cache lives in
+# node_modules/.vite under the project, not /tmp, so this is pure upside.
+PrivateTmp=yes
+# Mount /usr, /boot, /etc read-only. NOT 'strict' — strict would make /home
+# read-only and break node_modules/.vite cache writes (project + nvm node live
+# under /home).
+ProtectSystem=full
+# MUST be 'no'. The project, node_modules/.vite cache AND the nvm node binary
+# all live under /home/ymamajonov. ProtectHome=yes/read-only would break the
+# service (node unreadable, or cache writes blocked).
+ProtectHome=no
+# Inert under ProtectSystem=full + ProtectHome=no (/home is already writable);
+# kept for intent and to stay correct if Protect* is ever tightened. Scoped to
+# the project only.
+ReadWritePaths=/home/ymamajonov/brbtechllm_frontend/brbtechllm_frontend
+# System-service-only hardening (ignored in --user units).
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+# Enable hooks this into multi-user.target -> auto-start at every boot, no login.
+WantedBy=multi-user.target

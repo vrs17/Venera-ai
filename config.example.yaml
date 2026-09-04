@@ -1,0 +1,51 @@
+# Venera AI Assistant - sozlamalar
+# Bu fayl %APPDATA%\Venera\config.yaml ga ko'chiriladi va o'sha yerdan o'qiladi.
+# O'zgartirgandan keyin tray menyusidan "Sozlamalarni qayta yuklash" ni bosing.
+
+engines:
+  # Step 1: hammasi lokal, server kerak emas.
+  # Step 2+ da shu qiymatlar 'onprem' ga o'zgaradi, kod tegilmaydi.
+  activator: hotkey   # hotkey | wakeword  (wakeword - Step 5)
+  stt: mock           # mock   | onprem    (onprem  - Step 2)
+  llm: rules          # rules  | onprem    (onprem  - Step 3)
+  tts: sapi           # sapi   | onprem | none  (onprem - Step 4)
+
+hotkey:
+  modifiers: [ctrl, alt]
+  key: space
+
+audio:
+  input_device: null    # null = tizim default; yoki mikrofon nomining bir qismi, masalan "Array"
+  sample_rate: 16000    # STT serveri aynan 16 kHz kutadi - o'zgartirmang
+  channels: 1
+  blocksize: 512
+  save_debug_wav: false # true bo'lsa har bir yozuv %LOCALAPPDATA%\Venera\debug_audio ga saqlanadi
+
+tts:
+  enabled: true
+  voice: null           # SAPI ovoz nomining bir qismi, masalan "Irina" yoki "David"
+  rate: 0               # -10..10
+  volume: 100           # 0..100
+
+ui:
+  show_window_on_activate: true
+  start_minimized: true
+  window_topmost: false
+
+actions:
+  screenshot_dir: null  # null = Pictures\Venera
+  search_url: "https://www.google.com/search?q={query}"
+  volume_step: 10
+
+timeouts:
+  capturing: 15.0
+  thinking: 2.0
+  acting: 5.0
+  tts_synth: 10.0
+  playback: 30.0
+
+logging:
+  level: INFO
+  log_transcripts: false   # true bo'lsa buyruq matni logga tushadi (maxfiylik!)
+  max_bytes: 5242880
+  backup_count: 5

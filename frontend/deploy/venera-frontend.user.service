@@ -1,0 +1,43 @@
+# venera-frontend.service
+# Serves the Venera frontend (Vue 3 SPA) from an unprivileged nginx container.
+# Modeled on the proven container-brb-frontend.service unit.
+#
+# Source:   /home/ymamajonov/Venera/frontend
+# Image:    localhost/venera-frontend:latest  (rollback anchor: :0.2.3)
+# Redeploy: cd /home/ymamajonov/Venera/frontend \
+#             && podman build -t localhost/venera-frontend:latest . \
+#             && systemctl --user restart venera-frontend.service
+
+[Unit]
+Description=Venera frontend (nginx container, port 5173)
+Documentation=file:///home/ymamajonov/Venera/frontend/ORIGIN.md
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=%t/containers
+# Both units bind 0.0.0.0:5173 — never let them run at the same time.
+Conflicts=container-brb-frontend.service
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Restart=always
+TimeoutStopSec=70
+ExecStartPre=/bin/rm -f %t/%n.ctr-id
+ExecStart=/usr/bin/podman run \
+    --cidfile=%t/%n.ctr-id \
+    --cgroups=no-conmon \
+    --rm \
+    --sdnotify=conmon \
+    -d \
+    --replace \
+    --name venera-frontend \
+    -p 0.0.0.0:5173:8080 \
+    -e API_UPSTREAM=http://10.10.50.9:8080 \
+    -e API_READ_TIMEOUT=120s \
+    localhost/venera-frontend:latest
+ExecStop=/usr/bin/podman stop --ignore --cidfile=%t/%n.ctr-id
+ExecStopPost=/usr/bin/podman rm -f --ignore --cidfile=%t/%n.ctr-id
+Type=notify
+NotifyAccess=all
+
+[Install]
+WantedBy=default.target

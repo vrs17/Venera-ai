@@ -1,0 +1,19 @@
+# Keep the build context small and reproducible — never ship local cruft or secrets.
+node_modules/
+dist/
+.git/
+.gitignore
+.env
+.env.*
+!.env.production
+*.local
+.vite/
+.DS_Store
+npm-debug.log*
+# docs / deploy material not needed inside the image build context
+deploy/*.md
+deploy/*.service
+deploy/gitlab-ci.full.yml
+*.md
+run_dev.bat
+.claude/

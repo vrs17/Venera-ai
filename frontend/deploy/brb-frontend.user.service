@@ -1,0 +1,66 @@
+# ~/.config/systemd/user/brb-frontend.service
+#
+# USER service for the BRB frontend — serves the PRODUCTION BUILD (dist/) via
+# `vite preview` on 0.0.0.0:5173. No-root-to-install; managed with systemctl --user.
+# Serves the built, minified bundle (NO raw source / /@vite/client / HMR), with the
+# /api proxy from vite.config.ts (preview.proxy). Requires `npm run build` first.
+# For a hardened server, nginx serving dist/ is the recommended next step (root).
+#
+# REBOOT SURVIVAL: Linger=no for ymamajonov today, so the per-user manager is
+# torn down at logout and is NOT started at boot -> this service has ZERO reboot
+# survival until you run (needs root, ONCE):
+#     sudo loginctl enable-linger ymamajonov
+# After linger, the user manager starts at boot and this enabled service comes
+# up with nobody logged in.
+#
+# A user unit has no User=/Group= (it already runs as ymamajonov) and uses
+# default.target instead of multi-user.target.
+
+[Unit]
+Description=BRB frontend (production preview, 0.0.0.0:5173) - user unit
+Documentation=https://vitejs.dev
+# NOTE: network-online.target does NOT exist on the per-user bus, so ordering
+# against it is intentionally omitted here (it would be a silent no-op). With
+# linger the user manager starts late enough that the LAN IP is normally up;
+# --strictPort + Restart recover if the bind ever races the network. The SYSTEM
+# unit is preferred when real network-online ordering matters.
+# Crash-loop guard (StartLimit* belong in [Unit]). Recover with:
+#     systemctl --user reset-failed brb-frontend
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ymamajonov/brbtechllm_frontend/brbtechllm_frontend
+
+# NVM node is not on PATH in the systemd environment. Absolute node + vite.js
+# paths in ExecStart, AND the nvm bin dir prepended to PATH so esbuild / child
+# node processes resolve the same node 22.22.3. Version-pinned.
+Environment=PATH=/home/ymamajonov/.nvm/versions/node/v22.22.3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# `vite preview` serves dist/ (the production build) — run vite.js directly so the
+# user manager supervises node itself. --strictPort makes :5173 load-bearing
+# (loud failure if busy, not a silent hop to 5174).
+ExecStart=/home/ymamajonov/.nvm/versions/node/v22.22.3/bin/node /home/ymamajonov/brbtechllm_frontend/brbtechllm_frontend/node_modules/vite/bin/vite.js preview --host 0.0.0.0 --port 5173 --strictPort
+
+Restart=always
+RestartSec=3
+
+# --- Hardening (only directives honored by the --user manager on systemd 249) ---
+# NOTE: PrivateTmp, ProtectControlGroups, ProtectKernelModules,
+# ProtectKernelTunables are system-service-only and are logged+ignored in
+# --user units on systemd 249, so they are intentionally OMITTED here.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+# Honored per-user: keeps /usr,/boot,/etc read-only. 'full' (not 'strict') so
+# /home stays writable for the project + node_modules/.vite cache.
+ProtectSystem=full
+# MUST be 'no': project, .vite cache and nvm node all live under /home.
+ProtectHome=no
+# Inert under ProtectSystem=full + ProtectHome=no; kept for intent/forward-compat.
+ReadWritePaths=/home/ymamajonov/brbtechllm_frontend/brbtechllm_frontend
+
+[Install]
+# User services target default.target, not multi-user.target.
+WantedBy=default.target

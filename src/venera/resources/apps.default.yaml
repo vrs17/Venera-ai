@@ -1,0 +1,77 @@
+# Ovozli nom -> dastur. "aliases" ichidagi har qanday so'z mos kelsa ishlaydi.
+# STT o'zbekcha talaffuzni lotin yozuvida qaytaradi, shuning uchun "xrom", "krom",
+# "eksel" kabi variantlar ham yozilgan. Moslik rapidfuzz bilan taxminiy topiladi.
+#
+# windows: ShellExecute ga beriladigan maqsadlar, birinchi ishlagani olinadi.
+#          exe nomi App Paths registrida bo'lsa to'liq yo'l shart emas.
+
+apps:
+  - name: Google Chrome
+    aliases: [chrome, xrom, krom, xrome, gugl chrome, brauzer, browser]
+    windows: ["chrome.exe"]
+    macos: ["Google Chrome"]
+
+  - name: Microsoft Edge
+    aliases: [edge, edj, ej]
+    windows: ["msedge.exe"]
+    macos: ["Microsoft Edge"]
+
+  - name: Telegram
+    aliases: [telegram, telegramm, telega]
+    windows: ["Telegram.exe", "telegram.exe"]
+    macos: ["Telegram"]
+
+  - name: Microsoft Excel
+    aliases: [excel, eksel, eksel dastur, jadval]
+    windows: ["excel.exe"]
+    macos: ["Microsoft Excel"]
+
+  - name: Microsoft Word
+    aliases: [word, vord, vorde, hujjat]
+    windows: ["winword.exe"]
+    macos: ["Microsoft Word"]
+
+  - name: Microsoft Outlook
+    aliases: [outlook, autluk, autlook, pochta, elektron pochta]
+    windows: ["outlook.exe"]
+    macos: ["Microsoft Outlook"]
+
+  - name: Microsoft Teams
+    aliases: [teams, tims, tiyms]
+    windows: ["ms-teams:", "Teams.exe"]
+    macos: ["Microsoft Teams"]
+
+  - name: Bloknot
+    aliases: [notepad, bloknot, blaknot, matn muharriri]
+    windows: ["notepad.exe"]
+    macos: ["TextEdit"]
+
+  - name: Kalkulyator
+    aliases: [calculator, kalkulyator, kalkulator, hisoblagich]
+    windows: ["calc.exe"]
+    macos: ["Calculator"]
+
+  - name: Explorer
+    aliases: [explorer, papka, fayllar, kompyuter, provodnik]
+    windows: ["explorer.exe"]
+    macos: ["Finder"]
+
+  - name: Sozlamalar
+    aliases: [sozlamalar, settings, parametrlar, nastroyka]
+    windows: ["ms-settings:"]
+    macos: ["System Settings"]
+
+  - name: Terminal
+    aliases: [terminal, cmd, konsol, buyruq satri, powershell]
+    windows: ["wt.exe", "powershell.exe", "cmd.exe"]
+    macos: ["Terminal"]
+
+  - name: Visual Studio Code
+    aliases: [vs code, vscode, kod, vizual studiya]
+    windows: ["code.cmd", "code.exe"]
+    macos: ["Visual Studio Code"]
+
+  - name: Venera Biznes
+    aliases: [Venera biznes, biznes, Venera bank, ish portali]
+    windows: ["https://venera-biznes.uz"]
+    macos: ["https://venera-biznes.uz"]

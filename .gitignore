@@ -1,0 +1,40 @@
+# --- Python (apps/desktop) ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+*.spec.bak
+config.yaml
+logs/
+apps/desktop/packaging/update_url.txt
+
+# --- Node (apps/web) ---
+node_modules/
+.vite/
+*.local
+
+# --- Build natijalari ---
+build/
+dist/
+
+# --- Maxfiy sozlamalar ---
+.env
+!.env.example
+!.env.production
+
+# --- Chiqarilgan artefaktlar ---
+# .exe fayllar git'da saqlanmaydi (har biri ~45 MB).
+# Ular diskda qoladi, faqat kuzatilmaydi. release/version.json esa kuzatiladi.
+release/*.exe
+release/*.zip
+publish/*.exe
+
+# --- Audio ---
+*.wav
+!apps/desktop/tests/fixtures/*.wav
+
+# --- OS ---
+.DS_Store
+Thumbs.db

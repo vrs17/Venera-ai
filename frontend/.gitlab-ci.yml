@@ -1,0 +1,68 @@
+# CI — build an immutable, non-root container image of the frontend and push it to
+# the GitLab Container Registry, tagged by commit SHA.
+#
+# Type-check + build happen INSIDE the image: the Dockerfile's node stage runs
+# `vue-tsc -b && vite build`, so a type error or a build failure fails this job.
+# No Node is needed on the runner host — it all happens in the build.
+#
+# RUNNER: the shell runner tagged `brb-build`. It needs rootless **podman**
+# available to the `gitlab-runner` user (one-time root setup: subuid/subgid, e.g.
+# `usermod --add-subuids 100000-165535 --add-subgids 100000-165535 gitlab-runner`).
+#
+# Tests/lint are not here yet (none exist — Phase 3). The only gate today is the
+# type-check + build inside the image, plus a /healthz smoke test before publish.
+
+# The gated production deploy stage lives in its own file (manual, default-branch
+# only, and additionally latched behind ALLOW_PROD_DEPLOY).
+include:
+  - local: deploy/gitlab-ci.deploy.yml
+
+stages:
+  - build
+  - deploy
+
+variables:
+  IMAGE_SHA: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"               # immutable identity
+  IMAGE_ALIAS: "$CI_REGISTRY_IMAGE:sha-$CI_COMMIT_SHORT_SHA"   # friendly alias of the same digest
+
+# Avoid duplicate MR + branch pipelines.
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+
+build-image:
+  stage: build
+  tags: [llm-brb-tech-build]   # must match the build runner's tag in GitLab
+  interruptible: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+  before_script:
+    # Rootless podman needs a runtime dir; the shell runner's job env doesn't set
+    # one. /run/user/<uid> exists because linger is enabled for the gitlab-runner
+    # user. Without this, podman can't read container exit codes (journald cursor
+    # "cannot assign requested address") and commands fail spuriously.
+    - export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+  script:
+    - podman build --format docker -t "$IMAGE_SHA" -t "$IMAGE_ALIAS" .
+    # Smoke-test before publishing: the minimal nginx image has no wget/curl, so we
+    # publish the port and curl /healthz from the RUNNER (which has curl). /healthz
+    # is backend-independent (a bad/empty API_UPSTREAM is a separate concern).
+    - cid=$(podman run -d -p 127.0.0.1:18080:8080 -e API_UPSTREAM=http://127.0.0.1:9 "$IMAGE_SHA")
+    - for i in $(seq 1 15); do curl -fsS -o /dev/null http://127.0.0.1:18080/healthz && ok=1 && break || sleep 1; done
+    - if [ "${ok:-0}" != 1 ]; then echo "healthz did not come up; container logs:"; podman logs "$cid" 2>&1 | tail -30; fi
+    - podman rm -f "$cid" >/dev/null
+    - test "${ok:-0}" = 1   # fail the job if /healthz never answered
+    # Publish only from the default branch (don't fill the registry from every MR).
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        echo "$CI_REGISTRY_PASSWORD" | podman login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+        podman push "$IMAGE_SHA"
+        podman push "$IMAGE_ALIAS"
+        echo "pushed $IMAGE_SHA"
+      else
+        echo "MR / non-default branch: built + smoke-tested, not pushed."
+      fi
