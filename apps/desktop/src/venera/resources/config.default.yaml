@@ -45,20 +45,30 @@ timeouts:
   playback: 30.0
 
 update:
-  # Yangilanish manbasi. version.json manzilini shu yerga yozing.
-  # Odatda buni qo'lda yozish shart emas: o'rnatuvchi o'zi to'g'ri manzilni
-  # qo'yadi (manzil build paytida uning ichiga yopishtiriladi).
-  #   url: "https://ccs.venera.uz/assistant/version.json"     tashqi HTTPS (hozirgi holat)
+  # Yangilanish manbasi - saytdagi "Yuklab olish" bergan AYNI manifest. Sayt va
+  # auto-update bitta faylni ko'radi, shuning uchun ular bir-biridan farq qila
+  # olmaydi (nginx sozlamasi: apps/web/deploy/nginx.container.conf).
+  #
+  # Odatda buni qo'lda yozish shart emas: o'rnatuvchi ishga tushganda
+  # `--set-update-url` bilan o'zi yozadi (manzil build paytida uning ichiga
+  # yopishtiriladi: build_setup.ps1 -UpdateUrl "...").
+  #
+  # Boshqa variantlar:
   #   url: "http://10.10.50.9:8000/updates/version.json"        ichki HTTP server
   #   url: "\\\\fileserver\\venera\\assistant\\version.json"      tarmoq papkasi (SMB)
   #   url: "C:\\updates\\venera\\version.json"                      lokal papka (sinov)
   # Bo'sh qoldirilsa yangilanish tekshirilmaydi.
   enabled: true
-  url: ""
+  url: "https://llm.brb-tech.uz/download/version.json"
   # Asosiy manzil ochilmasa navbat bilan sinaladi. Shu tufayli BITTA o'rnatuvchi
   # ham ofisda (tarmoq papkasi), ham uydan (tashqi HTTPS) ishlaydi.
+  #
+  # ESLATMA: sayt Venera nomiga o'tkazilgan, lekin DOMEN hali eski - llm.venera.uz
+  # DNS'da mavjud emas. Domen yaratilgach, uni yuqoriga asosiy manzil qilib
+  # qo'ying va eskisini shu ro'yxatda zaxira sifatida qoldiring - eski
+  # o'rnatmalar uzilib qolmaydi.
   fallback_urls: []
-  #   - "https://ccs.venera.uz/assistant/version.json"
+  #   - "https://llm.venera.uz/download/version.json"
   check_on_start: true
   check_interval_hours: 6
   startup_delay_seconds: 90     # ishga tushgandan keyin qancha kutib tekshirsin

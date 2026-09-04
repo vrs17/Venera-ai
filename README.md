@@ -98,7 +98,8 @@ Batafsil: [packages/design-tokens/README.md](packages/design-tokens/README.md)
 |---|---|
 | [docs/deploy-linux-server.md](docs/deploy-linux-server.md) | Desktop yangilanishlarini Linux serverdan tarqatish |
 | [docs/deploy-update-server.md](docs/deploy-update-server.md) | Yangilanish serverini nginx bilan sozlash |
-| [docs/deploy-desktop-download.md](docs/deploy-desktop-download.md) | Saytdagi "Yuklab olish" tugmasini ishga tushirish |
+| [docs/deploy-desktop-download.md](docs/deploy-desktop-download.md) | Saytdagi "Yuklab olish" tugmasini ishga tushirish (bir marta) |
+| [docs/release-desktop.md](docs/release-desktop.md) | Yangi versiya chiqarish: build → manifest → PC'larda auto-update |
 | [docs/web-origin.md](docs/web-origin.md) | Web app qayerdan kelgani (tarixiy ma'lumot) |
 
 ---
