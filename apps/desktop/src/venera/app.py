@@ -353,6 +353,18 @@ class Application:
                 self.window.log_line(f"Ilova {updated_to} versiyasiga yangilandi", "ok")
             if self.tray is not None:
                 self.tray.notify(APP_DISPLAY_NAME, f"{updated_to} versiyasiga yangilandi")
+        elif self.updater.failed_update_version:
+            # Foydalanuvchi "Yangilash" ni bosgan, o'rnatuvchi ishga tushgan,
+            # lekin fayllar almashmagan. Ilgari bu jimgina o'tib ketardi va
+            # 6 soatdan keyin xuddi shu taklif qayta chiqardi.
+            failed = self.updater.failed_update_version
+            log.warning("Yangilanish %s ga o'tmadi", failed)
+            message = (f"{failed} o'rnatilmadi - ilova hali {__version__}. "
+                       f"Sabab: {self.updater.setup_log_path()}")
+            if self.window is not None and self.window.alive:
+                self.window.log_line(message, "error")
+            if self.tray is not None:
+                self.tray.notify(APP_DISPLAY_NAME, f"{failed} o'rnatilmadi. Loglarni qarang.")
 
         self.updater.start()
 

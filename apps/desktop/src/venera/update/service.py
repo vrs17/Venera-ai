@@ -29,6 +29,9 @@ from .source import UpdateSourceError, download, join_location, read_bytes, stri
 log = logging.getLogger(__name__)
 
 CREATE_NO_WINDOW = 0x08000000
+DETACHED_PROCESS = 0x00000008
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+CREATE_BREAKAWAY_FROM_JOB = 0x01000000
 PENDING_MARKER = "pending_update.txt"
 
 
@@ -81,6 +84,11 @@ class UpdateService:
         #: ko'taradi yoki ko'tarmaydi: fon tekshiruvi har 6 soatda ishlaydi va
         #: foydalanuvchi ishlayotgan dastur ustiga oyna otib chiqishi kerak emas.
         self.user_initiated: bool = False
+
+        #: Yangilanish boshlangan, lekin ilova hali eski versiyada bo'lsa - o'sha
+        #: versiya. `consume_completed_update()` to'ldiradi, UI foydalanuvchiga
+        #: aytadi. Bo'sh - hammasi joyida.
+        self.failed_update_version: str = ""
 
     # --- holat ---------------------------------------------------------------
 
@@ -325,6 +333,31 @@ class UpdateService:
 
             self.on_status("O'rnatilmoqda... Ilova bir necha soniyaga yopiladi.")
             log.info("O'rnatuvchi ishga tushirilmoqda: %s", destination)
+            # O'rnatuvchi o'ZINING OTA jarayonini o'ldiradi (taskkill Venera.exe),
+            # shuning uchun u ota bilan bog'liq bo'lmasligi SHART:
+            #   DETACHED_PROCESS          - konsol/oqim merosini uzadi
+            #   CREATE_NEW_PROCESS_GROUP  - ota guruhiga yuborilgan signal tegmaydi
+            #   CREATE_BREAKAWAY_FROM_JOB - ilova Task Scheduler yaratgan Job
+            #       obyektida ishlashi mumkin; kill-on-close bayrog'i bo'lsa ota
+            #       o'lganda BUTUN job, ya'ni o'rnatuvchi ham o'ldirilardi.
+            # Breakaway ruxsat etilmagan job'da Popen xato beradi - shuning uchun
+            # avval u bilan, keyin usiz uriniladi.
+            base_flags = CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            started = False
+            for flags in (base_flags | CREATE_BREAKAWAY_FROM_JOB, base_flags):
+                try:
+                    subprocess.Popen(
+                        [str(destination), "/S"],
+                        cwd=str(destination.parent),
+                        creationflags=flags,
+                        close_fds=True,
+                    )
+                    started = True
+                    break
+                except OSError as exc:
+                    log.info("O'rnatuvchi %#x bayrog'i bilan ishga tushmadi: %s", flags, exc)
+            if started:
+                return True
             try:
                 subprocess.Popen(
                     [str(destination), "/S"],
@@ -375,4 +408,18 @@ class UpdateService:
         self._clear_pending_marker()
         if requested and not is_newer(requested, self.current_version):
             return self.current_version
+
+        # Belgi bor, lekin biz HALI ESKI versiyadamiz: o'rnatuvchi ishga
+        # tushirilgan, ammo fayllarni almashtira olmagan. Ilgari bu holat
+        # jimgina e'tiborsiz qolar, foydalanuvchi esa "yangiladim, lekin hech
+        # nima o'zgarmadi" holatida qolib, 6 soatdan keyin xuddi shu taklifni
+        # qayta ko'rardi. Endi sabab aytiladi.
+        if requested:
+            self.failed_update_version = requested
+            log.warning("Yangilanish %s ga o'tmadi - ilova hali %s. Sabab: %s",
+                        requested, self.current_version, self.setup_log_path())
         return ""
+
+    def setup_log_path(self) -> Path:
+        """O'rnatuvchi jim rejimda yozadigan log (setup_entrypoint.setup_log)."""
+        return paths.state_dir() / "logs" / "setup.log"

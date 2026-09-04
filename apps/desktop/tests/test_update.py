@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from venera import config as config_module
+from venera import paths as paths_module
 from venera.update.manifest import (
     Manifest, UpdateInfo, compare_versions, is_newer, parse_version,
 )
@@ -531,3 +532,34 @@ def test_show_update_default_oynani_kotarmaydi():
 
     sig = inspect.signature(StatusWindow.show_update)
     assert sig.parameters["raise_window"].default is False
+
+
+# --- muvaffaqiyatsiz o'rnatish aniqlanishi kerak --------------------------------
+# "Yangilash" bosildi -> o'rnatuvchi ishga tushdi -> fayllar almashmadi ->
+# ilova eski versiyada qaytdi. Ilgari bu jimgina o'tib ketardi va 6 soatdan
+# keyin xuddi shu taklif qayta chiqardi (cheksiz tsikl).
+
+def test_muvaffaqiyatsiz_ornatish_aniqlanadi(tmp_path, monkeypatch):
+    service = _service(tmp_path, current="0.2.5")
+    monkeypatch.setattr(paths_module, "state_dir", lambda: tmp_path)
+
+    service._write_pending_marker("0.2.6")          # 0.2.6 ga o'tish boshlangan
+    assert service.consume_completed_update() == "", "yangilanmagan, xabar bo'lmasin"
+    assert service.failed_update_version == "0.2.6"
+    assert not service._marker_path().exists(), "belgi tozalanishi kerak"
+
+
+def test_muvaffaqiyatli_ornatish_xato_deb_belgilanmaydi(tmp_path, monkeypatch):
+    service = _service(tmp_path, current="0.2.6")
+    monkeypatch.setattr(paths_module, "state_dir", lambda: tmp_path)
+
+    service._write_pending_marker("0.2.6")          # o'tish muvaffaqiyatli
+    assert service.consume_completed_update() == "0.2.6"
+    assert service.failed_update_version == ""
+
+
+def test_belgi_yoq_bolsa_xato_yoq(tmp_path, monkeypatch):
+    service = _service(tmp_path, current="0.2.6")
+    monkeypatch.setattr(paths_module, "state_dir", lambda: tmp_path)
+    assert service.consume_completed_update() == ""
+    assert service.failed_update_version == ""

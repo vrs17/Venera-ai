@@ -135,9 +135,62 @@ def run_hidden(args: list[str], timeout: float = 60.0) -> tuple[int, str]:
         return 1, str(exc)
 
 
-def stop_running_app() -> None:
-    run_hidden(["taskkill", "/IM", PROCESS_NAME, "/F"], timeout=20)
-    time.sleep(1.0)
+def setup_log(message: str) -> None:
+    """O'rnatish qadamlarini faylga yozadi.
+
+    Jim rejimda (`/S`) `print()` hech qayerga chiqmaydi - o'rnatuvchini
+    yangilanish xizmati konsolsiz ishga tushiradi. Shu sababli muvaffaqiyatsiz
+    o'rnatish MUTLAQO ko'rinmas edi: ilova eski versiyada qolar, foydalanuvchi
+    esa nima bo'lganini bilmasdi. Endi sabab shu faylda qoladi.
+    """
+    try:
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        folder = Path(base) / "Venera" / "logs"
+        folder.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with (folder / "setup.log").open("a", encoding="utf-8") as handle:
+            handle.write(f"{stamp}  {message}\n")
+    except Exception:  # noqa: BLE001 - log yozilmasligi o'rnatishni to'xtatmaydi
+        pass
+
+
+def app_is_running() -> bool:
+    code, output = run_hidden(
+        ["tasklist", "/FI", f"IMAGENAME eq {PROCESS_NAME}", "/NH"], timeout=20
+    )
+    if code != 0:
+        return False          # tasklist ishlamasa - to'xtagan deb hisoblaymiz
+    return PROCESS_NAME.lower() in output.lower()
+
+
+def stop_running_app(timeout: float = 30.0) -> bool:
+    """Ishlayotgan ilovani to'xtatadi va HAQIQATAN to'xtaganini kutadi.
+
+    Avval `time.sleep(1.0)` bilan cheklanardi. Bu yetarli emas: tray ikonkasi,
+    tkinter oynasi va bir nechta thread bilan ishlayotgan jarayon o'ldirilgandan
+    keyin ham Windows .exe faylining qulfini bir necha soniya ushlab turadi.
+    Natijada keyingi `rmtree` va `copytree` muvaffaqiyatsiz tugardi - lekin xato
+    jim rejimda ko'rinmasdi va eski versiya joyida qolardi.
+
+    True - jarayon yo'q; False - qulflab turibdi (o'rnatishni boshlash mumkin emas).
+    """
+    if not app_is_running():
+        return True
+
+    run_hidden(["taskkill", "/IM", PROCESS_NAME, "/F", "/T"], timeout=20)
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(0.5)
+        if not app_is_running():
+            # Jarayon ro'yxatdan yo'qoldi, lekin fayl deskriptorlari bir lahza
+            # kechroq bo'shaydi - shuning uchun qisqa nafas.
+            time.sleep(1.5)
+            setup_log("Ishlayotgan nusxa to'xtatildi")
+            return True
+
+    setup_log(f"XATO: {PROCESS_NAME} {timeout:.0f} soniyada to'xtamadi")
+    return False
 
 
 def make_shortcut(target: Path, exe: Path) -> bool:
@@ -206,27 +259,54 @@ def perform_install(autostart: bool, desktop: bool, launch: bool, report,
     target = install_dir()
     exe = target / EXE_NAME
 
+    setup_log(f"--- O'rnatish boshlandi -> {target}")
+
     report(5, "Ishlayotgan nusxa to'xtatilmoqda...")
-    stop_running_app()
+    if not stop_running_app():
+        # MUHIM: shu yerda to'xtaymiz. Pastdagi rmtree ishlayotgan ilovaning
+        # papkasini o'chiradi - agar jarayon hali tirik bo'lsa, natija yarim
+        # o'chirilgan, ishlamaydigan o'rnatma bo'lardi. Eski versiya butun
+        # qolgani buzilganidan yaxshiroq.
+        return False, ("Ilova to'xtamadi - o'rnatish bekor qilindi. "
+                       "Venera'ni qo'lda yoping va qaytadan urinib ko'ring.")
 
     report(15, "Eski versiya tozalanmoqda...")
     if target.exists():
-        for attempt in range(3):
+        last_error: Exception | None = None
+        for attempt in range(5):
             try:
                 shutil.rmtree(target)
+                last_error = None
                 break
-            except OSError:
+            except OSError as exc:
+                last_error = exc
                 time.sleep(1.0 + attempt)
+        if last_error is not None:
+            # Ilgari bu xato JIMGINA e'tiborsiz qoldirilardi va kod pastga
+            # o'tib ketardi. Papka yarim o'chirilgan bo'lishi mumkin, ya'ni
+            # keyingi nusxalash ham ishonchsiz - shuning uchun aniq aytamiz.
+            setup_log(f"XATO: eski papka o'chmadi: {last_error}")
+            return False, f"Eski versiya o'chirilmadi: {last_error}"
 
     report(25, "Fayllar ko'chirilmoqda...")
-    try:
-        target.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source, target, dirs_exist_ok=True)
-    except Exception as exc:  # noqa: BLE001
-        return False, f"Fayllar ko'chirilmadi: {exc}"
+    copy_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(source, target, dirs_exist_ok=True)
+            copy_error = None
+            break
+        except Exception as exc:  # noqa: BLE001
+            copy_error = exc
+            time.sleep(1.0 + attempt)
+    if copy_error is not None:
+        setup_log(f"XATO: fayllar ko'chirilmadi: {copy_error}")
+        return False, f"Fayllar ko'chirilmadi: {copy_error}"
 
     if not exe.exists():
+        setup_log("XATO: ko'chirishdan keyin Venera.exe topilmadi")
         return False, "Ko'chirishdan keyin dastur fayli topilmadi"
+    setup_log("Fayllar ko'chirildi")
 
     report(60, "Yorliqlar yaratilmoqda...")
     make_shortcut(start_menu_shortcut(), exe)
@@ -261,6 +341,7 @@ def perform_install(autostart: bool, desktop: bool, launch: bool, report,
             pass
 
     report(100, "Tayyor")
+    setup_log(f"O'rnatish tugadi: {exe}")
     return True, str(exe)
 
 
@@ -284,6 +365,7 @@ def run_silent(argv: list[str]) -> int:
         report=lambda _p, _t: None,
         update_url=parse_url_flag(argv),
     )
+    setup_log(f"Jim rejim natijasi: {'OK' if ok else 'XATO'} - {detail}")
     if sys.stdout is not None:
         print(f"{APP_NAME}: {'o' + chr(39) + 'rnatildi' if ok else 'XATO'} - {detail}")
     return 0 if ok else 1
