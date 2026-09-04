@@ -4,15 +4,16 @@
 
 .DESCRIPTION
     Natija: dist\Venera\Venera.exe
-    Shundan keyin packaging\install.ps1 ni ishga tushiring.
+    Shundan keyin packaging\windows\install.ps1 ni ishga tushiring.
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File packaging\build.ps1
+    powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
 #>
 param([switch]$Clean)
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
+# packaging/windows/ ichida turibmiz, shuning uchun ikki daraja yuqoriga.
+$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $root
 
 Write-Host "=== Venera AI Assistant - build ===" -ForegroundColor Cyan
@@ -40,7 +41,7 @@ Write-Host "3/4  Testlar..."
 if ($LASTEXITCODE -ne 0) { throw "Testlar o'tmadi - build to'xtatildi" }
 
 Write-Host "4/4  PyInstaller..."
-& $python -m PyInstaller packaging\venera.spec --noconfirm --log-level WARN
+& $python -m PyInstaller packaging\windows\venera.spec --noconfirm --log-level WARN
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller xatosi" }
 
 $exe = Join-Path $root "dist\Venera\Venera.exe"
@@ -53,4 +54,4 @@ Write-Host "  $exe"
 Write-Host "  Versiya: $version"
 Write-Host "  Hajmi: $size MB"
 Write-Host "`nO'rnatish uchun:"
-Write-Host "  powershell -ExecutionPolicy Bypass -File packaging\install.ps1" -ForegroundColor Yellow
+Write-Host "  powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1" -ForegroundColor Yellow

@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller konfiguratsiyasi.
 
-    pyinstaller packaging/venera.spec --noconfirm
+    pyinstaller packaging/windows/venera.spec --noconfirm
 
 Nima uchun onedir (onefile emas):
   * Defender va SmartScreen onefile'ni ancha tez-tez bloklaydi;
@@ -17,7 +17,8 @@ from pathlib import Path
 
 block_cipher = None
 
-ROOT = Path(SPECPATH).resolve().parent
+# packaging/windows/ ichida turibmiz -> ikki daraja yuqori = apps/desktop
+ROOT = Path(SPECPATH).resolve().parent.parent
 SRC = ROOT / "src"
 
 datas = [
@@ -42,7 +43,7 @@ hiddenimports = [
 # PyInstaller __main__.py ni paketdan tashqarida ishga tushiradi va nisbiy
 # importlar buziladi (ImportError: attempted relative import).
 a = Analysis(
-    [str(ROOT / "packaging" / "entrypoint.py")],
+    [str(ROOT / "packaging" / "common" / "entrypoint.py")],
     pathex=[str(SRC)],
     binaries=[],
     datas=datas,

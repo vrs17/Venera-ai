@@ -28,7 +28,7 @@
     Shu versiyadan eskisi to'g'ridan-to'g'ri yangilana olmaydi (qo'lda o'rnatish kerak).
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File packaging\publish.ps1 `
+    powershell -ExecutionPolicy Bypass -File packaging\windows\publish.ps1 `
         -Target "\\fileserver\venera\assistant" -Notes "On-prem STT ulandi"
 #>
 param(
@@ -41,7 +41,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
+# packaging/windows/ ichida turibmiz, shuning uchun ikki daraja yuqoriga.
+$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $root
 
 $python = if (Test-Path ".venv\Scripts\python.exe") { ".venv\Scripts\python.exe" } else { "py" }

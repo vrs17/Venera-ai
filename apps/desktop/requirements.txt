@@ -1,5 +1,5 @@
-# Venera AI Assistant - Step 1 (Windows desktop skeleton)
-# Python 3.11+ (tekshirilgan: 3.13.15 x64 Windows)
+# Venera AI Assistant
+# Python 3.11+ (tekshirilgan: 3.13.15 x64 Windows, 3.12 arm64 macOS)
 
 numpy>=1.26
 sounddevice>=0.5.2
@@ -12,3 +12,11 @@ rapidfuzz>=3.9
 pywin32>=306 ; sys_platform == "win32"
 comtypes>=1.4 ; sys_platform == "win32"
 pycaw>=20240210 ; sys_platform == "win32"
+
+# macOS-only
+# pystray'ning darwin backend'i Cocoa'ga, osadapter.is_session_locked() esa
+# Quartz'ga tayanadi. Ikkalasi ham pyobjc orqali keladi. Ovoz (say) va
+# `open`/`screencapture` tizim buyruqlari - ular uchun paket kerak emas.
+pyobjc-core>=10.0 ; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10.0 ; sys_platform == "darwin"
+pyobjc-framework-Quartz>=10.0 ; sys_platform == "darwin"

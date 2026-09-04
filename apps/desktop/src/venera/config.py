@@ -339,3 +339,108 @@ def install_defaults() -> list[Path]:
         except OSError as exc:
             log.warning("Default fayl yozilmadi %s: %s", dst, exc)
     return written
+
+
+def _split_app_entries(text: str) -> "dict[str, str]":
+    """apps.yaml matnini `- name:` yozuvlari bo'yicha bo'laklarga ajratadi.
+
+    `_split_top_level_blocks` bilan bir xil mantiq, faqat ro'yxat elementlari
+    uchun: yozuvdan oldingi izohlar ham unga qo'shiladi, shunda yangi dastur
+    foydalanuvchi fayliga tushuntirishi bilan birga ko'chadi.
+
+    Kalit - `name` qiymati (asl registrida).
+    """
+    entries: dict[str, str] = {}
+    pending: list[str] = []
+    current_name: str | None = None
+    current: list[str] = []
+
+    for line in text.splitlines(keepends=True):
+        stripped = line.rstrip("\n")
+        lean = stripped.lstrip()
+        is_entry_start = lean.startswith("- name:") and not lean.startswith("#")
+
+        if is_entry_start:
+            if current_name is not None:
+                entries[current_name] = "".join(current)
+            current_name = lean.split(":", 1)[1].strip().strip("\"'")
+            current = pending + [line]
+            pending = []
+        elif current_name is None:
+            # `apps:` kalitigacha bo'lgan sarlavha izohlari - hech kimga tegishli emas
+            if lean.startswith("#") or not stripped:
+                pending = []
+        else:
+            # Bo'sh qatordan keyingi izoh keyingi yozuvga tegishli
+            if lean.startswith("#") and current and current[-1].strip() == "":
+                pending.append(line)
+            elif not stripped and pending:
+                pending.append(line)
+            elif not stripped:
+                pending.append(line)
+            else:
+                current.extend(pending)
+                pending = []
+                current.append(line)
+
+    if current_name is not None:
+        entries[current_name] = "".join(current)
+    return entries
+
+
+def upgrade_apps_file(path: Path | None = None) -> list[str]:
+    """Foydalanuvchi apps.yaml iga yangi versiyada qo'shilgan dasturlarni qo'shadi.
+
+    NEGA KERAK: `actions.apps.load()` foydalanuvchi faylini topsa, paket ichidagi
+    apps.default.yaml ni UMUMAN o'qimaydi, `install_defaults()` esa mavjud faylni
+    o'tkazib yuboradi. Ikkalasi birga - yangilangan ilovada yangi ovozli buyruq
+    hech qachon paydo bo'lmasligini anglatadi. `upgrade_file()` config uchun shu
+    muammoni hal qiladi, bu esa dasturlar katalogi uchun.
+
+    Faqat `name` bo'yicha YETISHMAYOTGAN yozuvlar qo'shiladi. Foydalanuvchi
+    tahrirlagan yozuvlarga tegilmaydi: nomi mos kelsa, o'tkazib yuboriladi.
+    O'chirilgan standart dastur ham qaytib kelmasligi kerak edi, lekin uni
+    "o'chirilgan" va "hali qo'shilmagan" dan farqlashning yo'li yo'q - shuning
+    uchun qaytib keladi. Zaxira nusxa (.bak) shu sababli yoziladi.
+
+    Qo'shilgan dastur nomlarini qaytaradi.
+    """
+    target = Path(path) if path else paths.apps_file()
+    template = paths.resource("apps.default.yaml")
+    if not target.exists() or not template.exists():
+        return []
+
+    try:
+        user_text = target.read_text(encoding="utf-8")
+        default_text = template.read_text(encoding="utf-8")
+        user_data = yaml.safe_load(user_text) or {}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("apps.yaml yangilanmadi (%s): %s", target, exc)
+        return []
+
+    if not isinstance(user_data, dict) or not isinstance(user_data.get("apps"), list):
+        return []
+
+    have = {
+        str(item.get("name", "")).strip().lower()
+        for item in user_data["apps"]
+        if isinstance(item, dict)
+    }
+    blocks = _split_app_entries(default_text)
+    missing = [name for name in blocks if name.strip().lower() not in have]
+    if not missing:
+        return []
+
+    addition = "".join("\n" + blocks[name].strip("\n") + "\n" for name in missing)
+
+    try:
+        backup = target.with_suffix(".yaml.bak")
+        backup.write_text(user_text, encoding="utf-8")
+        target.write_text(user_text.rstrip("\n") + "\n" + addition, encoding="utf-8")
+    except OSError as exc:
+        log.warning("apps.yaml yozilmadi (%s): %s", target, exc)
+        return []
+
+    log.info("apps.yaml ga yangi dasturlar qo'shildi: %s (zaxira: %s)",
+             ", ".join(missing), backup.name)
+    return missing

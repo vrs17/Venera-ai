@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -230,10 +231,19 @@ class UpdateService:
                 self.on_error(message)
                 return CheckResult(error=message, checked=True)
 
+            asset = manifest.current_asset
+            if asset is None:
+                # Reliz bor, lekin bu OS uchun fayl qo'yilmagan. Bu xato emas -
+                # masalan faqat Windows uchun chiqarilgan yangilanish.
+                log.info("Yangi versiya %s bor, lekin bu platforma uchun fayl yo'q",
+                         manifest.version)
+                return CheckResult(checked=True)
+
             info = UpdateInfo(
                 manifest=manifest,
                 current_version=self.current_version,
-                download_url=join_location(source_used, manifest.setup.file),
+                download_url=join_location(source_used, asset.file),
+                asset=asset,
             )
             self._pending = info
             log.info("Yangi versiya topildi: %s -> %s", self.current_version, manifest.version)
@@ -256,16 +266,17 @@ class UpdateService:
     def install(self, info: UpdateInfo) -> bool:
         """Yuklab oladi, tekshiradi va o'rnatuvchini ishga tushiradi."""
         with self._busy:
+            asset = info.resolved_asset
             folder = paths.state_dir() / "updates"
-            destination = folder / Path(info.manifest.setup.file).name
+            destination = folder / Path(asset.file).name
 
             self.on_status(f"Yangilanish yuklanmoqda ({info.size_mb or '?'} MB)...")
             try:
                 download(
                     info.download_url,
                     destination,
-                    expected_sha256=info.manifest.setup.sha256,
-                    expected_size=info.manifest.setup.size,
+                    expected_sha256=asset.sha256,
+                    expected_size=asset.size,
                     timeout=float(getattr(self.config.update, "download_timeout_seconds", 600.0)),
                     no_proxy=bool(getattr(self.config.update, "no_proxy", True)),
                     progress=self.on_progress,
@@ -278,6 +289,25 @@ class UpdateService:
                 return False
 
             strip_mark_of_the_web(destination)
+
+            # macOS: .dmg ni "jimgina o'rnatib" bo'lmaydi. Ishlayotgan .app
+            # o'zini almashtira olmaydi (Gatekeeper imzoni qayta tekshiradi),
+            # shuning uchun to'g'ri xatti-harakat - faylni Finder'da ochish va
+            # foydalanuvchi uni /Applications ga sudrab tashlashi. Yolg'on
+            # "o'rnatildi" belgisini QO'YMAYMIZ, aks holda keyingi ishga
+            # tushishda "yangilandi" deb noto'g'ri xabar chiqadi.
+            if sys.platform == "darwin":
+                self.on_status("Yuklab olindi. Finder'da ochilmoqda - "
+                               "Venera'ni Applications papkasiga sudrab tashlang.")
+                log.info("DMG Finder'da ochilmoqda: %s", destination)
+                try:
+                    subprocess.Popen(["open", "-R", str(destination)], close_fds=True)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Finder ochilmadi: %s", exc)
+                    self.on_error(f"Fayl yuklandi, lekin ochilmadi: {destination}")
+                    return False
+                return True
+
             self._write_pending_marker(info.version)
 
             self.on_status("O'rnatilmoqda... Ilova bir necha soniyaga yopiladi.")

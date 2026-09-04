@@ -8,32 +8,33 @@ joylashtiriladi. Shuning uchun:
   * o'rnatilgan ilova tez ishga tushadi (har safar arxivdan ochilmaydi);
   * antivirus onedir ilovani onefile'dan kamroq shubha bilan qaraydi.
 
-Avval `packaging/venera.spec` yig'ilgan bo'lishi shart.
+Avval `packaging/windows/venera.spec` yig'ilgan bo'lishi shart.
 """
 
 from pathlib import Path
 
 block_cipher = None
 
-ROOT = Path(SPECPATH).resolve().parent
+# packaging/windows/ ichida turibmiz -> ikki daraja yuqori = apps/desktop
+ROOT = Path(SPECPATH).resolve().parent.parent
 SRC = ROOT / "src"
 APP_BUILD = ROOT / "dist" / "Venera"
 
 if not (APP_BUILD / "Venera.exe").exists():
     raise SystemExit(
         f"Ilova build'i topilmadi: {APP_BUILD}\n"
-        "Avval ishga tushiring: powershell -File packaging\\build.ps1"
+        "Avval ishga tushiring: powershell -File packaging\\windows\\build.ps1"
     )
 
 # Yangilanish manzili build paytida yopishtiriladi (ixtiyoriy).
 # build_setup.ps1 -UpdateUrl "..." shu faylni yozadi.
 _datas = [(str(APP_BUILD), "payload")]     # butun ilova shu yerga joylashadi
-_update_url = ROOT / "packaging" / "update_url.txt"
+_update_url = ROOT / "packaging" / "windows" / "update_url.txt"
 if _update_url.exists() and _update_url.read_text(encoding="utf-8").strip():
     _datas.append((str(_update_url), "."))
 
 a = Analysis(
-    [str(ROOT / "packaging" / "setup_entrypoint.py")],
+    [str(ROOT / "packaging" / "common" / "setup_entrypoint.py")],
     pathex=[str(SRC)],
     binaries=[],
     datas=_datas,

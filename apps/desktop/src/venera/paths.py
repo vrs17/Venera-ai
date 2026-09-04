@@ -1,7 +1,15 @@
 """Fayl yo'llari: config, loglar, resurslar.
 
 PyInstaller bilan "frozen" holatda ham, oddiy dev rejimida ham ishlaydi.
-Windows'da %APPDATA% / %LOCALAPPDATA%, boshqa OS'da XDG yo'llari.
+Har bir OS o'zining kelishuviga amal qiladi:
+
+    Windows   %APPDATA%\\Venera            %LOCALAPPDATA%\\Venera
+    macOS     ~/Library/Application Support/Venera,  loglar ~/Library/Logs/Venera
+    boshqa    XDG ($XDG_CONFIG_HOME, $XDG_STATE_HOME)
+
+macOS'da XDG ishlatilmaydi: foydalanuvchi loglarni Console.app da
+~/Library/Logs ostidan izlaydi va ~/.local/state ni Finder umuman
+ko'rsatmaydi (nuqtali papka yashirin).
 """
 
 from __future__ import annotations
@@ -13,6 +21,7 @@ from pathlib import Path
 from . import APP_NAME
 
 IS_WINDOWS = sys.platform == "win32"
+IS_MACOS = sys.platform == "darwin"
 IS_FROZEN = getattr(sys, "frozen", False)
 
 
@@ -21,17 +30,27 @@ def _env_dir(var: str, fallback: Path) -> Path:
     return Path(value) if value else fallback
 
 
+def _macos_support_dir() -> Path:
+    return Path.home() / "Library" / "Application Support" / APP_NAME
+
+
 def config_dir() -> Path:
     """Foydalanuvchi sozlamalari (config.yaml, apps.yaml)."""
     if IS_WINDOWS:
         return _env_dir("APPDATA", Path.home() / "AppData" / "Roaming") / APP_NAME
+    if IS_MACOS:
+        return _macos_support_dir()
     return _env_dir("XDG_CONFIG_HOME", Path.home() / ".config") / APP_NAME.lower()
 
 
 def state_dir() -> Path:
-    """O'zgaruvchan ma'lumot: loglar, kesh, comtypes gen."""
+    """O'zgaruvchan ma'lumot: kesh, yangilanish fayllari, comtypes gen."""
     if IS_WINDOWS:
         return _env_dir("LOCALAPPDATA", Path.home() / "AppData" / "Local") / APP_NAME
+    if IS_MACOS:
+        # macOS'da sozlama va holat bitta papkada turishi normal - Apple
+        # "Application Support" ni aynan shu maqsad uchun beradi.
+        return _macos_support_dir()
     return _env_dir("XDG_STATE_HOME", Path.home() / ".local" / "state") / APP_NAME.lower()
 
 
@@ -44,6 +63,10 @@ def apps_file() -> Path:
 
 
 def log_dir() -> Path:
+    # macOS: Console.app aynan shu yerdan o'qiydi, foydalanuvchi ham loglarni
+    # shu yerdan izlaydi.
+    if IS_MACOS:
+        return Path.home() / "Library" / "Logs" / APP_NAME
     return state_dir() / "logs"
 
 

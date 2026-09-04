@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened Runtime uchun entitlement'lar. Notarizatsiya hardened runtime'ni
+  TALAB qiladi, hardened runtime esa quyidagilarsiz ilovani yiqitadi:
+
+    * cs.allow-jit / allow-unsigned-executable-memory
+        Python (va PyInstaller bootloader'i) kodni ish vaqtida yuklaydi.
+        Bularsiz .app ishga tushmaydi - "Killed: 9".
+    * cs.disable-library-validation
+        PyInstaller yig'gan .so/.dylib fayllar Apple tomonidan imzolanmagan.
+        Bularsiz dyld ularni rad etadi.
+    * device.audio-input
+        Mikrofon. Info.plist dagi NSMicrophoneUsageDescription bilan JUFT
+        ishlaydi: entitlement huquq beradi, Info.plist sababini tushuntiradi.
+    * automation.apple-events
+        osascript orqali System Events (ovoz, ekran qulflash).
+
+  DIQQAT: app-sandbox ATAYLAB yo'q. Sandbox'da `open -a`, `screencapture` va
+  System Events ishlamaydi - ilovaning asosiy funksiyalari yo'qoladi. Sandbox
+  faqat Mac App Store uchun majburiy; biz to'g'ridan-to'g'ri tarqatamiz.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+</dict>
+</plist>

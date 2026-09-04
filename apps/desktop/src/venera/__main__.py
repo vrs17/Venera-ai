@@ -69,6 +69,7 @@ def _set_update_url(url: str, config_path: Path | None) -> int:
     paths.ensure_dirs()
     config_module.install_defaults()
     config_module.upgrade_file(config_path)
+    config_module.upgrade_apps_file()
 
     target = Path(config_path) if config_path else paths.config_file()
     if not target.exists():

@@ -27,6 +27,7 @@ from .engines.activator_hotkey import HotkeyActivator, NullActivator
 from .engines.llm_rules import RulesLlm
 from .engines.stt_mock import MockStt
 from .engines.tts_sapi import NullTts, SapiTts
+from .engines.tts_say import SayTts
 from .osadapter import get_adapter
 from .ui.tray import Tray
 from .ui.window import StatusWindow
@@ -36,10 +37,25 @@ log = logging.getLogger(__name__)
 
 
 def autostart_command() -> str:
-    """Task Scheduler ishga tushiradigan buyruq."""
+    """Avtostart ishga tushiradigan buyruq (Windows: Task Scheduler, macOS: LaunchAgent)."""
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}"'
     return f'"{sys.executable}" -m venera'
+
+
+def _platform_tts(voice: str | None, rate: int, volume: int):
+    """Joriy OS uchun mos TTS. Qo'llab-quvvatlanmagan OS'da ovozsiz ishlaydi.
+
+    Linux (CI, WSL) da NullTts qaytadi: butun ilovani import qilib testlarni
+    ishga tushirish mumkin bo'lishi kerak - osadapter.NullAdapter bilan bir xil
+    mantiq.
+    """
+    if sys.platform == "win32":
+        return SapiTts(voice, rate, volume)
+    if sys.platform == "darwin":
+        return SayTts(voice, rate, volume)
+    log.warning("Bu platformada ovoz sintezi yo'q (%s) - ovozsiz ishlaydi", sys.platform)
+    return NullTts()
 
 
 class Application:
@@ -74,6 +90,10 @@ class Application:
         # Eski versiyadan qolgan config'ga yangi bo'limlarni qo'shamiz,
         # aks holda yangilangan ilovaning yangi sozlamalari ko'rinmay qoladi.
         added_sections = config_module.upgrade_file(self.config_path)
+        # Xuddi shu sabab dasturlar katalogi uchun ham: apps.load() foydalanuvchi
+        # faylini topsa standartni o'qimaydi, ya'ni yangilanishda qo'shilgan
+        # ovozli buyruq (masalan "claude ni och") aks holda hech qachon ishlamaydi.
+        added_apps = config_module.upgrade_apps_file()
         self.config, self.warnings = config_module.load(self.config_path)
 
         logging_setup.setup(
@@ -86,6 +106,8 @@ class Application:
             log.info("Default fayl yaratildi: %s", path)
         if added_sections:
             log.info("Config'ga yangi bo'limlar qo'shildi: %s", ", ".join(added_sections))
+        if added_apps:
+            log.info("Yangi ovozli buyruqlar qo'shildi: %s", ", ".join(added_apps))
         for warning in self.warnings:
             log.warning("Config: %s", warning)
 
@@ -112,13 +134,16 @@ class Application:
         self.llm = RulesLlm()
 
         # --- TTS ---
+        # Platformaning o'z sintezatori: Windows -> SAPI, macOS -> say.
+        # Ikkalasi ham vaqtinchalik yechim (o'zbek ovozi yo'q), Step 4 da
+        # on-prem TTS ikkalasini ham almashtiradi.
         if not cfg.tts.enabled or cfg.engines.tts == "none":
             self.tts = NullTts()
-        elif cfg.engines.tts == "onprem":
-            log.warning("engines.tts=onprem hali qo'shilmagan (Step 4) - SAPI ishlatilmoqda")
-            self.tts = SapiTts(cfg.tts.voice, cfg.tts.rate, cfg.tts.volume)
         else:
-            self.tts = SapiTts(cfg.tts.voice, cfg.tts.rate, cfg.tts.volume)
+            if cfg.engines.tts == "onprem":
+                log.warning("engines.tts=onprem hali qo'shilmagan (Step 4) - "
+                            "platforma sintezatori ishlatilmoqda")
+            self.tts = _platform_tts(cfg.tts.voice, cfg.tts.rate, cfg.tts.volume)
         log.info("Engine'lar: stt=%s llm=%s tts=%s", self.stt.name, self.llm.name, self.tts.name)
 
         # --- audio ---

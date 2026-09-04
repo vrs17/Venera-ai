@@ -154,3 +154,74 @@ def test_upgrade_file_buzuq_yaml_tegmaydi(tmp_path):
     before = path.read_text(encoding="utf-8")
     assert config_module.upgrade_file(path) == []
     assert path.read_text(encoding="utf-8") == before
+
+
+# --- apps.yaml birlashtirish ---------------------------------------------------
+# actions.apps.load() foydalanuvchi faylini topsa apps.default.yaml ni UMUMAN
+# o'qimaydi, install_defaults() esa mavjud faylni o'tkazib yuboradi. Ikkalasi
+# birga - yangilanishda qo'shilgan ovozli buyruq hech qachon ishlamasligini
+# anglatadi. Quyidagi testlar aynan shu holatni qo'riqlaydi.
+
+def _write_apps(tmp_path, body: str):
+    path = tmp_path / "apps.yaml"
+    path.write_text(textwrap.dedent(body), encoding="utf-8")
+    return path
+
+
+def test_upgrade_apps_yangi_dasturni_qoshadi(tmp_path):
+    """Eski katalogda Claude yo'q - yangilangandan keyin paydo bo'lishi kerak."""
+    path = _write_apps(tmp_path, """
+        apps:
+          - name: Google Chrome
+            aliases: [chrome]
+            windows: ["chrome.exe"]
+            macos: ["Google Chrome"]
+    """)
+    added = config_module.upgrade_apps_file(path)
+    assert "Claude" in added
+
+    from venera.actions import apps as apps_module
+    catalog = apps_module.load(path)
+    assert catalog.find("claude")[0] is not None, "yangi buyruq ishlashi kerak"
+    assert catalog.find("chrome")[0] is not None, "eski buyruq yo'qolmasligi kerak"
+
+
+def test_upgrade_apps_foydalanuvchi_tahririga_tegmaydi(tmp_path):
+    """Foydalanuvchi standart yozuvni o'zgartirgan bo'lsa, u saqlanishi shart."""
+    path = _write_apps(tmp_path, """
+        apps:
+          - name: Google Chrome
+            aliases: [mening brauzerim]
+            windows: ["C:\\\\mening\\\\chrome.exe"]
+            macos: ["Google Chrome"]
+    """)
+    config_module.upgrade_apps_file(path)
+
+    from venera.actions import apps as apps_module
+    catalog = apps_module.load(path)
+    entry, _score = catalog.find("mening brauzerim")
+    assert entry is not None and entry.name == "Google Chrome"
+    assert path.read_text(encoding="utf-8").count("- name: Google Chrome") == 1
+
+
+def test_upgrade_apps_zaxira_yaratadi(tmp_path):
+    path = _write_apps(tmp_path, "apps:\n  - name: Google Chrome\n    windows: [\"chrome.exe\"]\n")
+    original = path.read_text(encoding="utf-8")
+    config_module.upgrade_apps_file(path)
+    assert path.with_suffix(".yaml.bak").read_text(encoding="utf-8") == original
+
+
+def test_upgrade_apps_ikkinchi_marta_hech_narsa_qilmaydi(tmp_path):
+    path = _write_apps(tmp_path, "apps:\n  - name: Google Chrome\n    windows: [\"chrome.exe\"]\n")
+    first = config_module.upgrade_apps_file(path)
+    assert first
+    assert config_module.upgrade_apps_file(path) == [], "takroriy yozuv qo'shilmasligi kerak"
+
+
+def test_upgrade_apps_buzuq_fayl_yiqitmaydi(tmp_path):
+    path = _write_apps(tmp_path, "apps: bu ro'yxat emas\n")
+    assert config_module.upgrade_apps_file(path) == []
+
+
+def test_upgrade_apps_yoq_fayl(tmp_path):
+    assert config_module.upgrade_apps_file(tmp_path / "yoq.yaml") == []

@@ -8,7 +8,7 @@
     Maqsad kompyuterda Python yoki boshqa dastur kerak emas.
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File packaging\build_setup.ps1
+    powershell -ExecutionPolicy Bypass -File packaging\windows\build_setup.ps1
 #>
 param(
     [switch]$SkipAppBuild,
@@ -16,7 +16,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
+# packaging/windows/ ichida turibmiz, shuning uchun ikki daraja yuqoriga.
+$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $root
 
 $python = if (Test-Path ".venv\Scripts\python.exe") { ".venv\Scripts\python.exe" } else { "py" }
@@ -51,7 +52,7 @@ if ($UpdateUrl.Count -gt 0) {
 }
 
 Write-Host "`n2/2  O'rnatuvchi yig'ilmoqda..."
-& $python -m PyInstaller packaging\setup.spec --noconfirm --log-level WARN
+& $python -m PyInstaller packaging\windows\setup.spec --noconfirm --log-level WARN
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller xatosi" }
 
 $setup = Join-Path $root "dist\Venera-AI-Assistant-Setup.exe"

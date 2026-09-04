@@ -11,7 +11,7 @@
     Admin huquqi TALAB QILINMAYDI.
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File packaging\install.ps1
+    powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1
 #>
 param(
     [string]$Source,
@@ -26,7 +26,7 @@ $ErrorActionPreference = "Stop"
 if (-not $Source) {
     $candidates = @(
         (Join-Path $PSScriptRoot "Venera"),
-        (Join-Path (Split-Path -Parent $PSScriptRoot) "dist\Venera")
+        (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "dist\Venera")
     )
     foreach ($candidate in $candidates) {
         if (Test-Path (Join-Path $candidate "Venera.exe")) { $Source = $candidate; break }
@@ -46,7 +46,7 @@ if (-not (Test-Path (Join-Path $Source "Venera.exe"))) {
     Write-Host "Kutilgan joylar:" -ForegroundColor Yellow
     Write-Host "  $PSScriptRoot\Venera\  (tarqatma arxiv)"
     Write-Host "  ..\dist\Venera\        (build natijasi)"
-    Write-Host "Build qilish:  powershell -ExecutionPolicy Bypass -File packaging\build.ps1"
+    Write-Host "Build qilish:  powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1"
     exit 1
 }
 

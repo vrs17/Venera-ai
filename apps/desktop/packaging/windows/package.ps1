@@ -14,18 +14,19 @@
     Maqsad kompyuterda Python ham, boshqa dastur ham kerak emas.
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File packaging\package.ps1
+    powershell -ExecutionPolicy Bypass -File packaging\windows\package.ps1
 #>
 param([string]$Version = "0.1.0")
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
+# packaging/windows/ ichida turibmiz, shuning uchun ikki daraja yuqoriga.
+$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $root
 
 $appDir = Join-Path $root "dist\Venera"
 if (-not (Test-Path (Join-Path $appDir "Venera.exe"))) {
     Write-Host "Build topilmadi: $appDir" -ForegroundColor Red
-    Write-Host "Avval:  powershell -ExecutionPolicy Bypass -File packaging\build.ps1"
+    Write-Host "Avval:  powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1"
     exit 1
 }
 

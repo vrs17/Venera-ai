@@ -342,7 +342,7 @@ orqali gaplashiladi — to'g'ridan-to'g'ri chaqiruv yo'q.
 - **Javob matnlari shablondan, LLM'dan emas** (`resources/phrases.uz.yaml`).
   Shuning uchun o'zbekcha doim to'g'ri va Step 4 da bu iboralarni oldindan
   sintez qilib keshlash mumkin.
-- **PyInstaller kirish nuqtasi `packaging/entrypoint.py`**, paket ichidagi
+- **PyInstaller kirish nuqtasi `packaging/common/entrypoint.py`**, paket ichidagi
   `__main__.py` emas — aks holda nisbiy importlar buziladi.
 - **onedir, onefile emas.** Defender onefile'ni ko'proq bloklaydi va u har safar
   `%TEMP%` ga ochiladi.

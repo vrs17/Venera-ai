@@ -75,3 +75,11 @@ apps:
     aliases: [Venera biznes, biznes, Venera bank, ish portali]
     windows: ["https://venera-biznes.uz"]
     macos: ["https://venera-biznes.uz"]
+
+  # Desktop ilova o'rnatilgan bo'lsa u ochiladi, aks holda sayt. Ro'yxat tartibi
+  # muhim: birinchi ishlagani olinadi, URL esa har doim ishlaydi - shuning uchun
+  # u OXIRIDA turadi, aks holda desktop ilova hech qachon ochilmaydi.
+  - name: Claude
+    aliases: [claude, klod, klaud, kloud, klode, klaudni, sun'iy intellekt]
+    windows: ["claude.exe", "https://claude.ai"]
+    macos: ["Claude", "https://claude.ai"]

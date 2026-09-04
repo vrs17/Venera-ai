@@ -3,8 +3,8 @@
     Venera AI Assistant ni o'chiradi.
 
 .EXAMPLE
-    powershell -ExecutionPolicy Bypass -File packaging\uninstall.ps1
-    powershell -ExecutionPolicy Bypass -File packaging\uninstall.ps1 -KeepSettings
+    powershell -ExecutionPolicy Bypass -File packaging\windows\uninstall.ps1
+    powershell -ExecutionPolicy Bypass -File packaging\windows\uninstall.ps1 -KeepSettings
 #>
 param([switch]$KeepSettings)
 
