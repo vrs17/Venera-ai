@@ -1,19 +1,19 @@
 {
-  "version": "0.2.5",
+  "version": "0.2.6",
   "released": "2026-09-04",
-  "notes": "Yangi buyruq: \"claude ni och\". Mavjud dasturlar ro'yxati saqlanadi.",
+  "notes": "Yangilanish xabari endi ish jarayonini bo'lmaydi - oyna o'zi ochilmaydi.",
   "mandatory": false,
   "min_version": "",
   "platforms": {
     "windows": {
-      "file": "Venera-AI-Assistant-Setup-0.2.5.exe",
-      "sha256": "550fcd7ce490c4fd34d4d0be51cf31451990a1c533ae658852217fb6bd1babe4",
-      "size": 45605609
+      "file": "Venera-AI-Assistant-Setup-0.2.6.exe",
+      "sha256": "f0e51e39f174515d3d6107f4d2497c6025e5f0aa379ca3bfa78eb85e52cb9127",
+      "size": 45605514
     }
   },
   "setup": {
-    "file": "Venera-AI-Assistant-Setup-0.2.5.exe",
-    "sha256": "550fcd7ce490c4fd34d4d0be51cf31451990a1c533ae658852217fb6bd1babe4",
-    "size": 45605609
+    "file": "Venera-AI-Assistant-Setup-0.2.6.exe",
+    "sha256": "f0e51e39f174515d3d6107f4d2497c6025e5f0aa379ca3bfa78eb85e52cb9127",
+    "size": 45605514
   }
 }
