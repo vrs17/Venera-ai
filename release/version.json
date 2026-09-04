@@ -1,12 +1,19 @@
 {
-  "version": "0.2.3",
+  "version": "0.2.4",
   "released": "2026-09-04",
-  "notes": "Yangilanish manbasi llm.brb-tech.uz",
+  "notes": "Venera nomiga to'liq o'tildi. Tray ikonkasi va o'rnatish papkasi yangilandi.",
   "mandatory": false,
   "min_version": "",
+  "platforms": {
+    "windows": {
+      "file": "Venera-AI-Assistant-Setup-0.2.4.exe",
+      "sha256": "833c7ed5852db4d00419ab67cb473e4ff5341a400a1bed005c74b7f7a69e2b71",
+      "size": 45600871
+    }
+  },
   "setup": {
-    "file": "Venera-AI-Assistant-Setup-0.2.3.exe",
-    "sha256": "7e0067490336564ca5128985f5218ee844632a732b3e42cbb74d147a765fe7b1",
-    "size": 44996397
+    "file": "Venera-AI-Assistant-Setup-0.2.4.exe",
+    "sha256": "833c7ed5852db4d00419ab67cb473e4ff5341a400a1bed005c74b7f7a69e2b71",
+    "size": 45600871
   }
 }
