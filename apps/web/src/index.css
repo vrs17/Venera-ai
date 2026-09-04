@@ -1,0 +1,628 @@
+/* Shared tokens (holat + natija ranglari) — packages/design-tokens/tokens.json dan
+   generatsiya qilinadi va desktop app bilan ayni bir manbadan keladi.
+   @import CSS'da eng birinchi qoida bo'lishi SHART, shuning uchun u shu yerda. */
+@import './tokens.css';
+
+/* Global styles for Venera. Two themes driven by CSS custom properties:
+   :root is light (default), :root[data-theme="dark"] overrides to the dark
+   "Gemini" palette. Components reference var(--token) only — never raw theme
+   colours — so a single attribute flip on <html> repaints the whole app.
+   The single brand accent (pure red --accent) is reserved for sparse use:
+   primary CTAs, the ✦ spark, and focus rings. Everything else is neutral. */
+
+:root {
+  color-scheme: light;
+
+  --accent: #E11900;
+  --accent-contrast: #FFFFFF;
+  --ink: #141414;
+  --ink-contrast: #FFFFFF;
+
+  --bg: #FCFBFA;
+  --surface: #FFFFFF;
+  --surface-sunken: #F7F5F2;
+  --surface-inset: #FCFBFA;
+  --surface-hover: #F4F2EF;
+
+  --border: #ECEAE6;
+  --border-hover: #D5D1CA;
+  --border-faint: #F1EEEA;
+
+  --text: #1A1A1A;
+  --text-strong: #111111;
+  --text-secondary: #8A867F;
+  --text-muted: #6F6B64;
+  --placeholder: #B0ACA5;
+  --icon-muted: #6E6B66;
+  /* Link tone that meets AA on the light card; dark theme overrides below. */
+  --link: #141414;
+  /* Neutral avatar — the accent is reserved for focus, not identity chrome. */
+  --avatar-bg: #2D2D2F;
+  --avatar-fg: #F5F4F2;
+
+  --ok-fg: #1E8E3E;
+  --ok-bg: #F2F8F3;
+  --ok-bd: #D8EBDB;
+  --bad-fg: #C81E1E;
+  --bad-bg: #FDF3F1;
+  --bad-bd: #F3D8D2;
+  --warn-fg: #B8761A;
+  --warn-bg: #FBF5E8;
+  --warn-bd: #EFE0BD;
+
+  --greeting-grad: linear-gradient(90deg, #141414, #6B6B6B, #141414);
+  --glow-base: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(20, 20, 20, 0.06), rgba(20, 20, 20, 0.03) 50%, transparent 70%);
+  --glow-core: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(20, 20, 20, 0.07), rgba(20, 20, 20, 0.04) 40%, transparent 72%);
+  --scrollbar: rgba(0, 0, 0, 0.16);
+  --scrollbar-hover: rgba(0, 0, 0, 0.26);
+  --menu-shadow: 0 16px 44px rgba(26, 26, 26, 0.12);
+
+  /* Frosted-glass surfaces (light). */
+  --glass-bg: rgba(255, 255, 255, 0.5);
+  --glass-bg-hover: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(20, 20, 20, 0.08);
+  --glass-shadow: 0 8px 30px rgba(60, 40, 30, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+
+  --skeleton-base: rgba(20, 20, 20, 0.05);
+  --skeleton-hi: rgba(20, 20, 20, 0.1);
+
+  /* Settle-with-slight-overshoot spring, used for accordion + reveals. Theme
+     independent, so it lives only here (dark block doesn't override it). */
+  --spring: linear(0, 0.026, 0.1 6%, 0.4 14%, 0.74 22%, 0.91 28%, 1.02 36%, 1.05 44%, 1.03 56%, 1);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --accent: #FF453A;
+  --accent-contrast: #FFFFFF;
+  --ink: #F2F2F2;
+  --ink-contrast: #141414;
+
+  --bg: #131314;
+  --surface: #1E1F20;
+  --surface-sunken: #1A1B1C;
+  --surface-inset: #151617;
+  --surface-hover: #2A2B2C;
+
+  --border: rgba(255, 255, 255, 0.1);
+  --border-hover: rgba(255, 255, 255, 0.22);
+  --border-faint: rgba(255, 255, 255, 0.07);
+
+  --text: #E8E8E8;
+  --text-strong: #F1F1F1;
+  --text-secondary: #9AA0A6;
+  --text-muted: #76797B;
+  --placeholder: #8E918F;
+  --icon-muted: #B4B7B5;
+  --link: #F2F2F2;
+  /* Lifted off the surface so the neutral chip still reads on dark. */
+  --avatar-bg: #3C3D40;
+  --avatar-fg: #ECECEC;
+
+  --ok-fg: #5BD08A;
+  --ok-bg: rgba(46, 160, 90, 0.14);
+  --ok-bd: rgba(91, 208, 138, 0.35);
+  --bad-fg: #FF453A;
+  --bad-bg: rgba(255, 69, 58, 0.16);
+  --bad-bd: rgba(255, 69, 58, 0.35);
+  --warn-fg: #E6A94B;
+  --warn-bg: rgba(184, 118, 26, 0.16);
+  --warn-bd: rgba(230, 169, 75, 0.35);
+
+  --greeting-grad: linear-gradient(95deg, #FFFFFF, #9A9A9A, #FFFFFF);
+  --glow-base: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(86, 58, 120, 0.14), rgba(60, 46, 96, 0.05) 46%, transparent 68%);
+  --glow-core: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(242, 242, 242, 0.10), rgba(242, 242, 242, 0.05) 38%, rgba(242, 242, 242, 0.02) 58%, transparent 72%);
+  --scrollbar: rgba(255, 255, 255, 0.13);
+  --scrollbar-hover: rgba(255, 255, 255, 0.2);
+  --menu-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+
+  /* Frosted-glass surfaces (dark). */
+  --glass-bg: rgba(40, 41, 43, 0.45);
+  --glass-bg-hover: rgba(54, 55, 58, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-shadow: 0 8px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+
+  --skeleton-base: rgba(255, 255, 255, 0.05);
+  --skeleton-hi: rgba(255, 255, 255, 0.13);
+}
+
+/* Force a subtree to dark-theme tokens regardless of the active app theme. Used by
+   the Welcome galaxy hero (an additive starfield is only legible over a dark
+   backdrop), so its greeting/chips/input dock stay legible while the rest of the app
+   may be in light mode. Values mirror :root[data-theme='dark'] above; keep in sync. */
+.dark-zone {
+  color-scheme: dark;
+
+  --accent: #FF453A;
+  --accent-contrast: #FFFFFF;
+  --ink: #F2F2F2;
+  --ink-contrast: #141414;
+
+  --bg: #131314;
+  --surface: #1e1f20;
+  --surface-sunken: #1a1b1c;
+  --surface-inset: #151617;
+  --surface-hover: #2a2b2c;
+
+  --border: rgba(255, 255, 255, 0.1);
+  --border-hover: rgba(255, 255, 255, 0.22);
+  --border-faint: rgba(255, 255, 255, 0.07);
+
+  --text: #e8e8e8;
+  --text-strong: #f1f1f1;
+  --text-secondary: #9aa0a6;
+  --text-muted: #76797b;
+  --placeholder: #8e918f;
+  --icon-muted: #b4b7b5;
+  --link: #F2F2F2;
+
+  --greeting-grad: linear-gradient(95deg, #FFFFFF, #9A9A9A, #FFFFFF);
+
+  --glass-bg: rgba(40, 41, 43, 0.45);
+  --glass-bg-hover: rgba(54, 55, 58, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-shadow: 0 8px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  font-family: 'Figtree', sans-serif;
+  color: var(--text);
+  transition: background 0.3s ease, color 0.3s ease;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: 'Figtree', sans-serif;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--placeholder);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-hover);
+}
+
+/* ---- Keyframes ---- */
+@keyframes shimmer {
+  to {
+    background-position: -200% center;
+  }
+}
+@keyframes spinSlow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* Three "jumping ball" dots on the send button while the assistant is busy. */
+@keyframes dotJump {
+  0%,
+  70%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.55;
+  }
+  35% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+/* Skeleton sweep for the in-flight trace loader (standard loading affordance). */
+@keyframes skeletonSweep {
+  from {
+    background-position: 140% 0;
+  }
+  to {
+    background-position: -40% 0;
+  }
+}
+/* Origin-aware reveals for new exchanges (replace the rejected fadeUp). */
+@keyframes revealDown {
+  from {
+    clip-path: inset(0 0 100% 0);
+    opacity: 0.5;
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    opacity: 1;
+  }
+}
+@keyframes revealUp {
+  from {
+    clip-path: inset(100% 0 0 0);
+    opacity: 0.5;
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    opacity: 1;
+  }
+}
+/* One-shot specular glint across glass. */
+@keyframes glintSweep {
+  from {
+    transform: translateX(-120%) skewX(-18deg);
+  }
+  to {
+    transform: translateX(320%) skewX(-18deg);
+  }
+}
+/* Auth: wrong-OTP shake. */
+@keyframes otpShake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-3px);
+  }
+  40% {
+    transform: translateX(3px);
+  }
+  60% {
+    transform: translateX(-2px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+/* Auth: brand-gradient ring blooming outward from the hero spark on success. */
+@keyframes ignitionRing {
+  from {
+    transform: translate(-50%, -50%) scale(0.4);
+    opacity: 0.5;
+  }
+  to {
+    transform: translate(-50%, -50%) scale(2.6);
+    opacity: 0;
+  }
+}
+/* Auth: faint ✦ watermark breathing inside an empty OTP cell. */
+@keyframes sparkPulse {
+  0%,
+  100% {
+    opacity: 0.16;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+/* Auth: one-shot bloom of the hero ✦ when a step succeeds. */
+@keyframes sparkBloom {
+  0% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  45% {
+    transform: scale(1.16);
+    filter: brightness(1.55);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton,
+  .jumping-dot,
+  .glint::after,
+  .otp-cell,
+  .ignition-ring,
+  .spark-watermark,
+  .hero-spark {
+    animation: none !important;
+  }
+  .reveal-down,
+  .reveal-up {
+    animation: none !important;
+    clip-path: none !important;
+  }
+  .rise {
+    animation: none !important;
+  }
+}
+
+/* Loading skeleton bars. */
+.skeleton {
+  background-color: var(--skeleton-base);
+  background-image: linear-gradient(
+    90deg,
+    transparent 20%,
+    var(--skeleton-hi) 50%,
+    transparent 80%
+  );
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  animation: skeletonSweep 1.5s ease-in-out infinite;
+  border-radius: 5px;
+}
+
+/* Specular glint — hover sweep for chips, one-shot for the resolved badge. */
+.glint {
+  position: relative;
+  overflow: hidden;
+}
+.glint::after {
+  content: '';
+  position: absolute;
+  top: -20%;
+  bottom: -20%;
+  left: 0;
+  width: 35%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+  transform: translateX(-120%) skewX(-18deg);
+  pointer-events: none;
+}
+/* Cards get a softer sweep than the badge's celebratory one-shot. */
+.chip.glint::after {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.14), transparent);
+}
+.glint:hover::after {
+  animation: glintSweep 0.75s ease-out;
+}
+.glint-once::after {
+  animation: glintSweep 0.9s ease-out 0.15s;
+}
+
+/* Origin-aware reveal helpers. */
+.reveal-down {
+  animation: revealDown 0.5s var(--spring) both;
+}
+.reveal-up {
+  animation: revealUp 0.45s var(--spring) both;
+}
+/* Clip-free entrance for forms. revealUp leaves a persistent clip-path (fill
+   mode both) that shears focus rings / box-shadows on inputs; fadeUp uses only
+   opacity + translate, so nothing is ever clipped at rest. */
+.rise {
+  animation: fadeUp 0.45s var(--spring) both;
+}
+
+/* ---- Frosted glass ---- */
+.glass {
+  /* Both prefixes preserved across builds: the unprefixed uses a CSS variable
+     reference so the minifier (lightningcss / esbuild) can't statically prove
+     the two declarations are equivalent and dedup the unprefixed away. Chrome's
+     compositor blurs the standard `backdrop-filter` more effectively than the
+     `-webkit-` alias for layers behind composited surfaces. */
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: var(--glass-filter, blur(16px) saturate(140%));
+  /* Pin each glass surface to its own compositor layer. Without this, hovering
+     one glass element re-rasterises the shared backdrop and smears a
+     neighbour's blur (the white-ghost artifact). will-change is the reliable
+     layer-promotion hint; isolation gives each its own stacking context;
+     contain: paint stops the right-edge ghost when siblings hover by keeping
+     paint invalidation from crossing the border. */
+  will-change: transform;
+  transform: translateZ(0);
+  isolation: isolate;
+  contain: paint;
+}
+.glass-hover:hover {
+  background: var(--glass-bg-hover) !important;
+}
+
+/* ---- Hover / focus utilities ---- */
+.input-focus:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.14);
+}
+.btn-gradient:hover {
+  filter: brightness(1.08);
+}
+.btn-gradient:active {
+  transform: scale(0.985);
+}
+/* Brand-gradient badge that holds a contextual icon in auth form headers. */
+.auth-head__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 11px;
+  color: var(--ink-contrast);
+  background: var(--ink);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+.btn-outline:hover {
+  background: var(--surface-hover) !important;
+  border-color: var(--border-hover) !important;
+}
+.hover-surface:hover {
+  background: var(--surface-hover) !important;
+}
+.menu-item:hover {
+  background: var(--surface-hover);
+}
+.chip {
+  transition: border-color 0.25s, box-shadow 0.25s, background 0.25s;
+}
+/* No transform lift on hover: translating a backdrop-filter card re-rasterises
+   the shared backdrop and ghosts its neighbours (the white-ghost artifact, see
+   .glass). No shadow change either — the chips' box-shadow comes from the
+   inline style and can't be overridden here without !important; changing the
+   shadow alpha on hover used to lighten card 2's shadow patch over card 1's
+   right edge, which card 1's backdrop-filter re-sampled as a white ghost. */
+.chip:hover {
+  border-color: var(--border-hover) !important;
+  background: var(--glass-bg-hover) !important;
+}
+.send-btn:active {
+  transform: scale(0.92);
+}
+.stage-row:hover {
+  background: var(--surface-hover);
+}
+.model-pill:hover {
+  border-color: var(--border-hover) !important;
+}
+
+/* ---- Markdown ---- */
+.md {
+  font-size: 15.5px;
+  line-height: 1.68;
+}
+.md > *:first-child {
+  margin-top: 0;
+}
+.md > *:last-child {
+  margin-bottom: 0;
+}
+.md p {
+  margin: 0 0 10px;
+  font-size: 15.5px;
+  line-height: 1.68;
+}
+.md strong {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.md ul,
+.md ol {
+  padding-left: 22px;
+  margin: 8px 0;
+}
+.md li {
+  margin: 4px 0;
+}
+.md h1 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 16px 0 8px;
+}
+.md h2 {
+  font-size: 16.5px;
+  font-weight: 600;
+  margin: 14px 0 7px;
+}
+.md h3 {
+  font-size: 15.5px;
+  font-weight: 600;
+  margin: 12px 0 6px;
+}
+.md code {
+  background: var(--surface-hover);
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 13.5px;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.md pre {
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 10px 0;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 13px;
+}
+.md pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: 13px;
+}
+.md table {
+  border-collapse: collapse;
+  margin: 10px 0;
+}
+.md th,
+.md td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+}
+.md th {
+  background: var(--surface-sunken);
+}
+.md blockquote {
+  border-left: 3px solid var(--ink);
+  padding-left: 12px;
+  margin: 10px 0;
+  color: var(--text-secondary);
+}
+.md a {
+  color: var(--text);
+  text-decoration: underline;
+}
+.md hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+/* ---- Message actions (copy / regenerate) ---- */
+.msg-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: 'Figtree', sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
+}
+.msg-action:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.msg-action:active {
+  transform: scale(0.95);
+}
+.msg-action:focus-visible {
+  outline: none;
+  border-color: var(--border-hover);
+}
+.msg-action.is-copied {
+  color: var(--ok-fg);
+}
+
+/* ---- Responsive ---- */
+.mobile-only {
+  display: none !important;
+}
+@media (max-width: 768px) {
+  .greeting {
+    font-size: 34px !important;
+  }
+  .mobile-only {
+    display: flex !important;
+  }
+}

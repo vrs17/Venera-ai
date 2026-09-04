@@ -1,0 +1,24 @@
+/* Venera dizayn tokenlari (web).
+   GENERATSIYA QILINGAN FAYL - QO'LDA TAHRIRLAMANG.
+   Manba: packages/design-tokens/tokens.json | Qayta yig'ish: python3 packages/design-tokens/build.py
+
+   Bu faylda FAQAT ikkala mahsulot uchun umumiy tokenlar bor (holat va natija
+   ranglari). Web'ning o'z mavzusi (och/qorong'i, --accent, --bg va h.k.)
+   index.css da qoladi - u web'ga xos va desktop bilan ulashilmaydi. */
+
+:root {
+  /* Ovozli yordamchi holatlari */
+  --venera-state-idle: #2F6FED;  /* ko'k - tayyor */
+  --venera-state-activated: #1FAD66;  /* yashil - uyg'ondi */
+  --venera-state-capturing: #1FAD66;  /* yashil - yozib olmoqda */
+  --venera-state-transcribing: #E0A32E;  /* sariq - matnga o'girmoqda */
+  --venera-state-thinking: #E0A32E;  /* sariq - o'ylamoqda */
+  --venera-state-acting: #E0A32E;  /* sariq - bajarmoqda */
+  --venera-state-speaking: #7B5CD6;  /* binafsha - gapirmoqda */
+  --venera-state-paused: #8A9099;  /* kulrang - to'xtatilgan */
+
+  /* Natija ranglari */
+  --venera-ok: #1FAD66;
+  --venera-warn: #E0A32E;
+  --venera-error: #D64545;
+}
