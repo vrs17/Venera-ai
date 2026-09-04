@@ -109,9 +109,20 @@ class StatusWindow:
     def set_status_note(self, text: str) -> None:
         self._commands.put(("note", text))
 
-    def show_update(self, text: str, button_text: str = "Yangilash") -> None:
-        """Yuqorida yangilanish paneli chiqaradi."""
-        self._commands.put(("update_show", (text, button_text)))
+    def show_update(self, text: str, button_text: str = "Yangilash",
+                    raise_window: bool = False) -> None:
+        """Yuqorida yangilanish paneli chiqaradi.
+
+        `raise_window` ATAYLAB default False: fon tekshiruvi har 6 soatda
+        ishlaydi va oynani o'zi ochib, foydalanuvchi ishlayotgan dastur ustiga
+        chiqarishi kerak emas. Bunday holatda tray bildirishnomasi va tray
+        menyusidagi "Yangi versiya ... - yangilash" yozuvi yetarli, panel esa
+        foydalanuvchi oynani o'zi ochganda joyida kutib turadi.
+
+        True faqat foydalanuvchi "Yangilanishni tekshirish" ni BOSGANDA
+        beriladi - o'shanda u javob kutayotgan bo'ladi.
+        """
+        self._commands.put(("update_show", (text, button_text, raise_window)))
 
     def hide_update(self) -> None:
         self._commands.put(("update_hide", None))
@@ -360,7 +371,7 @@ class StatusWindow:
                     text_widget.delete("1.0", "100.0")
                 text_widget.configure(state="disabled")
         elif command == "update_show":
-            text, button_text = payload
+            text, button_text, raise_window = payload
             frame = self._widgets.get("update_frame")
             label_widget = self._widgets.get("update_label")
             button = self._widgets.get("update_button")
@@ -374,8 +385,10 @@ class StatusWindow:
                            after=self._widgets.get("header"))
             if bar is not None:
                 bar.pack_forget()
-            root.deiconify()
-            root.lift()
+            # Fokusni FAQAT foydalanuvchi so'ragan bo'lsa olamiz.
+            if raise_window:
+                root.deiconify()
+                root.lift()
         elif command == "update_hide":
             frame = self._widgets.get("update_frame")
             if frame is not None:

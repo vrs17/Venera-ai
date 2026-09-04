@@ -76,6 +76,12 @@ class UpdateService:
         self._last_error: str = ""
         self._active_source: str = ""
 
+        #: So'nggi tekshiruvni foydalanuvchi o'zi so'raganmi (tray -> "Yangilanishni
+        #: tekshirish") yoki fon rejimi ishga tushirganmi. UI shunga qarab oynani
+        #: ko'taradi yoki ko'tarmaydi: fon tekshiruvi har 6 soatda ishlaydi va
+        #: foydalanuvchi ishlayotgan dastur ustiga oyna otib chiqishi kerak emas.
+        self.user_initiated: bool = False
+
     # --- holat ---------------------------------------------------------------
 
     @property
@@ -180,9 +186,16 @@ class UpdateService:
         ).start()
 
     def check(self, notify_when_current: bool = True) -> CheckResult:
-        """Manifestni o'qiydi va yangilanish bor-yo'qligini aniqlaydi."""
+        """Manifestni o'qiydi va yangilanish bor-yo'qligini aniqlaydi.
+
+        `notify_when_current` foydalanuvchi javob kutayotganini ham bildiradi
+        (fon tekshiruvi "so'nggi versiya" xabarini chiqarmaydi), shuning uchun
+        `user_initiated` ham shu qiymatdan olinadi.
+        """
         if not self.enabled:
             return CheckResult(error="yangilanish o'chirilgan")
+
+        self.user_initiated = notify_when_current
 
         with self._busy:
             self.on_status("Yangilanish tekshirilmoqda...")

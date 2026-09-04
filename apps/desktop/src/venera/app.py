@@ -256,7 +256,11 @@ class Application:
                 text += f"  ({info.size_mb} MB)"
             if note:
                 text += f"\n{note}"
-            self.window.show_update(text)
+            # Fon tekshiruvi oynani ko'tarmaydi - foydalanuvchi ishlayotgan
+            # dastur ustiga otilib chiqish o'rniga tray bildirishnomasi va tray
+            # menyusidagi yozuv orqali bildiriladi. Panel oyna ochilganda
+            # joyida turadi.
+            self.window.show_update(text, raise_window=self.updater.user_initiated)
             self.window.log_line(info.describe(), "info")
 
         if getattr(self.config.update, "auto_install", False):

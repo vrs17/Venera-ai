@@ -503,3 +503,31 @@ def test_update_info_asset_berilmasa_manifestdan():
     m = Manifest.parse(json.dumps(_manifest_dict()))
     info = UpdateInfo(manifest=m, current_version="0.1.0", download_url="x")
     assert info.resolved_asset.file == "setup-0.2.0.exe"
+
+
+# --- fon tekshiruvi oynani o'g'irlamasligi kerak --------------------------------
+# Har 6 soatda ishlaydigan tekshiruv oynani deiconify+lift qilib, foydalanuvchi
+# ishlayotgan dastur ustiga otilib chiqardi. Endi faqat foydalanuvchi
+# "Yangilanishni tekshirish" ni bosganda ko'tariladi.
+
+def test_fon_tekshiruvi_user_initiated_false(tmp_path):
+    service = _service(tmp_path, current="0.1.0")
+    service.check(notify_when_current=False)
+    assert service.user_initiated is False
+
+
+def test_qolda_tekshiruv_user_initiated_true(tmp_path):
+    service = _service(tmp_path, current="0.1.0")
+    service.check(notify_when_current=True)
+    assert service.user_initiated is True
+
+
+def test_show_update_default_oynani_kotarmaydi():
+    """show_update() ni raise_window'siz chaqirish oynani ko'tarmasligi kerak -
+    default xavfsiz tomonga qarab turishi shart."""
+    import inspect
+
+    from venera.ui.window import StatusWindow
+
+    sig = inspect.signature(StatusWindow.show_update)
+    assert sig.parameters["raise_window"].default is False
