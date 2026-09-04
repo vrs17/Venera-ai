@@ -1,19 +1,19 @@
 {
-  "version": "0.2.7",
+  "version": "0.2.8",
   "released": "2026-09-04",
-  "notes": "Yangilanish o'rnatilmay qolish xatosi tuzatildi.",
+  "notes": "Yangilanish endi haqiqatan o'rnatiladi.",
   "mandatory": false,
   "min_version": "",
   "platforms": {
     "windows": {
-      "file": "Venera-AI-Assistant-Setup-0.2.7.exe",
-      "sha256": "58b38b0ce84422e47c9cb459ebcb2e1f8b9090bbca0e0ca0516926458a14f632",
-      "size": 45606815
+      "file": "Venera-AI-Assistant-Setup-0.2.8.exe",
+      "sha256": "de9e9e4dfe4e9a3191d26456f52eda1a8e07551534b1f48af611dd2aeed1de58",
+      "size": 45607697
     }
   },
   "setup": {
-    "file": "Venera-AI-Assistant-Setup-0.2.7.exe",
-    "sha256": "58b38b0ce84422e47c9cb459ebcb2e1f8b9090bbca0e0ca0516926458a14f632",
-    "size": 45606815
+    "file": "Venera-AI-Assistant-Setup-0.2.8.exe",
+    "sha256": "de9e9e4dfe4e9a3191d26456f52eda1a8e07551534b1f48af611dd2aeed1de58",
+    "size": 45607697
   }
 }
