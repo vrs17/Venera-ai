@@ -50,11 +50,11 @@ onUnmounted(() => clearTimeout(navTimer))
       <LanguageSwitcher />
     </div>
 
-    <div class="splash__content">
-      <!-- Venus as the hero mark: the product is named after the planet, so the
-           disc carries the identity above the wordmark. Decorative — the brand
-           name follows immediately, so it is hidden from assistive tech. -->
-      <div class="splash__planet" aria-hidden="true">
+    <!-- Venus, the planet the product is named after, anchored low on the right.
+         Its own clipping layer so the disc can sit close to the edge without ever
+         widening the page, and so it stacks between the starfield and the copy. -->
+    <div class="splash__planet-layer" aria-hidden="true">
+      <div class="splash__planet">
         <span class="splash__planet-glow" />
         <img
           class="splash__planet-img"
@@ -66,6 +66,9 @@ onUnmounted(() => clearTimeout(navTimer))
           fetchpriority="high"
         />
       </div>
+    </div>
+
+    <div class="splash__content">
       <div class="splash__brand">
         Venera
         <span class="splash__spark" aria-hidden="true">✦</span>
@@ -131,23 +134,36 @@ onUnmounted(() => clearTimeout(navTimer))
   pointer-events: none;
   animation: fadeUp 0.6s ease both;
 }
-/* Venus hero mark. The asset is already a transparent circle, so the work here
-   is scale, a warm limb glow that ties it to the accent, and a slow float that
-   keeps it feeling suspended in the starfield rather than pasted onto it. */
+/* Clipping layer for the planet. Own stacking level: above the starfield (0),
+   below the copy (2). overflow:hidden means the disc can sit hard against the
+   right edge without ever adding a horizontal scrollbar — .splash itself must
+   stay unclipped so tall content can grow past 100vh. */
+.splash__planet-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+/* Venus, low on the right. The asset is already a transparent circle, so the
+   work here is scale, a warm limb glow that ties it to the accent, and a slow
+   float that keeps it suspended in the starfield rather than pasted onto it. */
 .splash__planet {
-  position: relative;
+  position: absolute;
+  right: clamp(8px, 4vw, 88px);
+  bottom: clamp(8px, 5vh, 72px);
   display: inline-flex;
-  margin-bottom: 26px;
   animation: planetFloat 9s ease-in-out infinite;
 }
 .splash__planet-img {
   position: relative;
   z-index: 1;
   display: block;
-  width: 150px;
-  height: 150px;
+  width: clamp(260px, 32vw, 480px);
+  height: auto;
+  aspect-ratio: 1;
   border-radius: 50%;
-  filter: drop-shadow(0 0 22px rgba(226, 148, 62, 0.34));
+  filter: drop-shadow(0 0 34px rgba(226, 148, 62, 0.32));
 }
 /* Sits behind the disc and bleeds past it, so the planet lights the space
    around itself instead of ending on a hard edge. */
@@ -155,15 +171,15 @@ onUnmounted(() => clearTimeout(navTimer))
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 260%;
-  height: 260%;
+  width: 200%;
+  height: 200%;
   transform: translate(-50%, -50%);
   border-radius: 50%;
   pointer-events: none;
   background: radial-gradient(
     circle,
-    rgba(232, 156, 68, 0.3) 0%,
-    rgba(232, 156, 68, 0.12) 38%,
+    rgba(232, 156, 68, 0.26) 0%,
+    rgba(232, 156, 68, 0.1) 40%,
     transparent 68%
   );
 }
@@ -309,24 +325,16 @@ onUnmounted(() => clearTimeout(navTimer))
   .splash__sub {
     font-size: 16px;
   }
-  .splash__planet-img {
-    width: 108px;
-    height: 108px;
-  }
+  /* Narrow screens: the copy and the download cards run the full width, so the
+     disc would sit right behind them. Pull it down into the corner and ease it
+     back so it reads as depth, not clutter. */
   .splash__planet {
-    margin-bottom: 18px;
+    right: -12%;
+    bottom: -4%;
+    opacity: 0.55;
   }
-}
-/* Short viewports (landscape phones, small laptops): the splash already carries
-   copy, a CTA and the download block, so shrink the disc rather than let the
-   page scroll on first paint. */
-@media (max-height: 720px) {
   .splash__planet-img {
-    width: 96px;
-    height: 96px;
-  }
-  .splash__planet {
-    margin-bottom: 14px;
+    width: clamp(200px, 56vw, 300px);
   }
 }
 @media (prefers-reduced-motion: reduce) {

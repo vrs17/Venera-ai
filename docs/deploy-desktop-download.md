@@ -9,19 +9,25 @@ sozlanadi. macOS kartasi "yaqinda" holatida turadi — u hech narsa talab qilmay
 release/version.json  ──┐
 release/Venera-...exe ──┤  serverga nusxalanadi
                         ▼
-        /var/www/venera/assistant/          ← diskdagi YAGONA nusxa
+  ~/.local/share/venera/downloads/     ← diskdagi nusxa (root huquqi kerak emas)
                         │
-        ┌───────────────┴────────────────┐
-        ▼                                ▼
-  konteyner :ro mount              update serveri (nginx)
-  /download/version.json           ccs.venera.uz/assistant/version.json
-  /download/Venera-...exe          ← desktop ilova auto-update shu yerdan o'qiydi
-        ▲
-   sayt shu yerdan tarqatadi
+                        ▼  konteynerga :ro bind-mount
+              /usr/share/nginx/downloads/
+                        │
+                        ▼
+              /download/version.json      ← sayt versiyani shu yerdan o'qiydi
+              /download/Venera-...exe     ← "Yuklab olish" tugmasi shu faylni beradi
 ```
 
-Bitta fayl, ikkita yo'l. Shuning uchun saytda ko'rsatilgan versiya auto-update
-ko'radigan versiyadan **farq qila olmaydi** — sinxrondan chiqish imkoni yo'q.
+**Nega `$HOME`, `/var/www` emas:** frontend rootless podman user-service sifatida
+ishlaydi. `/var/www` root'niki — uni mount qilish uchun sudo kerak, va konteyner
+ichidagi nginx (uid 101 → hostda subuid) uni o'qiy olmay 403 beradi.
+Foydalanuvchi papkasi ikkala muammoni ham yo'q qiladi.
+
+> **Keyinchalik `ccs.venera.uz` update serveri sozlanganda:** ikkalasi AYNI BIR
+> papkani ko'rsatishi kerak — yo update server'ning nginx `root` ini shu yerga
+> qarating, yo mount manzilini o'zgartiring. Aks holda sayt va auto-update ikki
+> xil versiyani ko'rsatib qoladi.
 
 Sayt versiyani `/download/version.json` dan o'qiydi, ya'ni yangi `.exe` qo'yilganda
 frontend'ni qayta yig'ish **shart emas**.
@@ -55,23 +61,22 @@ python3 apps/desktop/tools/make_manifest.py \
 
 Ikkala faylni (`.exe` va `version.json`) `release/` ga qo'ying.
 
-## 1-qadam: serverda papka yarating
+## 1-qadam: papka yarating
+
+Sudo kerak emas — papka konteynerni ishga tushiradigan foydalanuvchiniki:
 
 ```bash
-sudo mkdir -p /var/www/venera/assistant
-sudo chown -R ymamajonov:ymamajonov /var/www/venera/assistant
-sudo chmod 755 /var/www/venera /var/www/venera/assistant
+mkdir -p ~/.local/share/venera/downloads
 ```
 
-Egasi konteynerni ishga tushiradigan foydalanuvchi bo'lishi kerak — aks holda
-rootless podman faylni o'qiy olmaydi va nginx 403 qaytaradi.
-
-## 2-qadam: fayllarni yuklang
+## 2-qadam: fayllarni nusxalang
 
 ```bash
-scp release/Venera-AI-Assistant-Setup-0.2.4.exe  srv:/var/www/venera/assistant/
-scp release/version.json                          srv:/var/www/venera/assistant/
+cp release/Venera-AI-Assistant-Setup-0.2.4.exe  ~/.local/share/venera/downloads/
+cp release/version.json                          ~/.local/share/venera/downloads/
 ```
+
+Boshqa serverga qo'yayotgan bo'lsangiz `scp ... srv:~/.local/share/venera/downloads/`.
 
 Tartib muhim: **avval `.exe`, keyin `version.json`.** Manifest yangi versiyani
 e'lon qilgan payt fayl allaqachon joyida bo'lishi kerak, aks holda tugmani
@@ -82,7 +87,7 @@ bosgan foydalanuvchi 404 oladi.
 Papka `venera-frontend.user.service` da read-only mount qilinadi:
 
 ```
--v /var/www/venera/assistant:/usr/share/nginx/downloads:ro,z
+-v %h/.local/share/venera/downloads:/usr/share/nginx/downloads:ro,z
 ```
 
 Unit fayli yangilangan bo'lsa:
@@ -154,8 +159,8 @@ ishlamaydi va 45 MB `.exe` hech qachon `dist/` ga tushmaydi.
 
 | Belgi | Sabab |
 |---|---|
-| Kartada "Yuklab olish vaqtincha ishlamayapti" | `/download/version.json` 404 yoki JSON buzuq. `curl` bilan tekshiring. |
-| 403 Forbidden | Papka egasi noto'g'ri, yoki SELinux. Mount'da `:z` borligini va `chown` qilinganini tekshiring. |
+| Kartada "Yuklab olish vaqtincha ishlamayapti" | `/download/version.json` 404 yoki JSON buzuq. Eng ko'p uchraydigan sabab: mount yo'q. `podman inspect venera-frontend --format '{{range .Mounts}}{{.Source}}{{end}}'` bo'sh chiqsa, unit fayli `~/.config/systemd/user/` ga nusxalanmagan. |
+| 403 Forbidden | Papka egasi noto'g'ri, yoki SELinux. Mount'da `:z` borligini tekshiring. |
 | Tugma eski versiyani ko'rsatadi | Manifest keshlangan. `Cache-Control: no-cache` kelayotganini tekshiring. |
 | `.exe` o'rniga HTML keladi | `location /download/ { return 404; }` bloki yo'q — so'rov SPA fallback'ga tushyapti. |
 | Yuklandi, lekin BRB nomi bilan o'rnatildi | 0-qadam bajarilmagan — `.exe` eski build. |

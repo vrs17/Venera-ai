@@ -20,13 +20,23 @@ RequiresMountsFor=%t/containers
 Conflicts=container-brb-frontend.service
 
 # Desktop yuklab olish papkasi read-only bind-mount qilinadi:
-#   /var/www/venera/assistant  ->  /usr/share/nginx/downloads  (ro)
-# Xuddi shu papkani desktop auto-update ham o'qiydi, ya'ni .exe bitta nusxada.
-# `:z` - SELinux yoqilgan hostlarda konteynerga o'qish huquqi uchun (aks holda
-# nginx 403 beradi). Papka mavjud bo'lmasa podman uni EGASI root bilan yaratadi,
-# shuning uchun oldindan yarating:
-#     sudo mkdir -p /var/www/venera/assistant
-#     sudo chown -R ymamajonov:ymamajonov /var/www/venera/assistant
+#   %h/.local/share/venera/downloads  ->  /usr/share/nginx/downloads  (ro)
+#
+# NEGA $HOME, /var/www EMAS: bu ROOTLESS user-service. /var/www root'niki, uni
+# mount qilish uchun sudo kerak bo'ladi va konteyner ichidagi nginx (uid 101 ->
+# hostda subuid) uni o'qiy olmay 403 beradi. Foydalanuvchi papkasi ikkala
+# muammoni ham yo'q qiladi.
+#
+# `:z` - SELinux yoqilgan hostlarda o'qish huquqi uchun.
+#
+# Papkani oldindan yarating va relizni nusxalang:
+#     mkdir -p ~/.local/share/venera/downloads
+#     cp release/version.json release/Venera-*.exe ~/.local/share/venera/downloads/
+#
+# Keyinchalik ccs.venera.uz update serveri sozlansa, IKKALASI BIR PAPKANI
+# ko'rsatishi kerak (update server'ning nginx root'ini shu yerga qarating yoki
+# mount manzilini o'zgartiring) - aks holda sayt va auto-update ikki xil
+# versiyani ko'rsatib qoladi.
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=always
@@ -43,7 +53,7 @@ ExecStart=/usr/bin/podman run \
     -p 0.0.0.0:5173:8080 \
     -e API_UPSTREAM=http://10.10.50.9:8080 \
     -e API_READ_TIMEOUT=120s \
-    -v /var/www/venera/assistant:/usr/share/nginx/downloads:ro,z \
+    -v %h/.local/share/venera/downloads:/usr/share/nginx/downloads:ro,z \
     localhost/venera-frontend:latest
 ExecStop=/usr/bin/podman stop --ignore --cidfile=%t/%n.ctr-id
 ExecStopPost=/usr/bin/podman rm -f --ignore --cidfile=%t/%n.ctr-id
