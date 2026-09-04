@@ -24,10 +24,9 @@ ishlaydi. `/var/www` root'niki — uni mount qilish uchun sudo kerak, va konteyn
 ichidagi nginx (uid 101 → hostda subuid) uni o'qiy olmay 403 beradi.
 Foydalanuvchi papkasi ikkala muammoni ham yo'q qiladi.
 
-> **Keyinchalik `ccs.venera.uz` update serveri sozlanganda:** ikkalasi AYNI BIR
-> papkani ko'rsatishi kerak — yo update server'ning nginx `root` ini shu yerga
-> qarating, yo mount manzilini o'zgartiring. Aks holda sayt va auto-update ikki
-> xil versiyani ko'rsatib qoladi.
+> **Alohida update serveri YO'Q va kerak emas.** Sayt ham, auto-update ham
+> `llm.brb-tech.uz/download/` dan o'qiydi — bitta host, bitta papka, bitta fayl.
+> Ikkinchi manzil qo'shilsa, ikki xil versiya ko'rsatilishi xavfi paydo bo'ladi.
 
 Sayt versiyani `/download/version.json` dan o'qiydi, ya'ni yangi `.exe` qo'yilganda
 frontend'ni qayta yig'ish **shart emas**.

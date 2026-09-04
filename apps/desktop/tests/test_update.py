@@ -318,7 +318,7 @@ def test_hech_qaysi_manba_ishlamasa(tmp_path):
 
 
 # --- SPA sayt (nginx try_files -> index.html) ---------------------------------
-# ccs.venera.uz mavjud bo'lmagan har qanday yo'lga HTTP 200 + index.html
+# llm.brb-tech.uz mavjud bo'lmagan har qanday yo'lga HTTP 200 + index.html
 # qaytaradi. Bu eng yashirin nosozlik: hamma narsa "muvaffaqiyatli" ko'rinadi.
 
 SPA_HTML = b'<!doctype html>\n<html lang="en">\n  <head>\n    <title>Venera LLM</title>\n'
@@ -363,7 +363,7 @@ def test_html_source_falls_back_to_next(tmp_path, monkeypatch):
 
     cfg, _ = config_module.load(Path("__yoq__.yaml"))
     cfg.update.enabled = True
-    cfg.update.url = "https://ccs.venera.uz/assistant/version.json"
+    cfg.update.url = "https://llm.brb-tech.uz/download/version.json"
     cfg.update.fallback_urls = [str(good)]
 
     seen: list = []
@@ -401,8 +401,105 @@ def test_download_rejects_html_response(tmp_path, monkeypatch):
 
     destination = tmp_path / "Setup.exe"
     with pytest.raises(UpdateSourceError) as exc:
-        download("https://ccs.venera.uz/assistant/Setup.exe", destination)
+        download("https://llm.brb-tech.uz/download/Setup.exe", destination)
 
     assert "HTML" in str(exc.value)
     assert not destination.exists()
     assert not destination.with_suffix(".exe.part").exists()
+
+
+# --- ko'p platformali manifest -------------------------------------------------
+#
+# `setup` va `platforms` birga yashaydi: `setup` tarqatilgan eski mijozlar
+# (0.2.3 va oldingilar) uchun majburiy meros. Quyidagi testlar aynan shu
+# yashash qoidalarini qotiradi - ular buzilsa eski mijozlar yangilanishni
+# yo'qotadi yoki noto'g'ri platformaning faylini yuklab oladi.
+
+def _multi_manifest_dict(version="0.2.4"):
+    return {
+        "version": version,
+        "released": "2026-09-10",
+        "setup": {"file": f"setup-{version}.exe", "sha256": "a" * 64, "size": 1234},
+        "platforms": {
+            "windows": {"file": f"setup-{version}.exe", "sha256": "a" * 64, "size": 1234},
+            "macos": {"file": f"venera-{version}-universal.dmg", "sha256": "b" * 64,
+                      "size": 5678, "arch": "universal", "min_os": "11.0"},
+        },
+    }
+
+
+def test_platforms_bloki_oqiladi():
+    m = Manifest.parse(json.dumps(_multi_manifest_dict()))
+    assert set(m.platforms) == {"windows", "macos"}
+
+    mac = m.asset_for("macos")
+    assert mac is not None
+    assert mac.file == "venera-0.2.4-universal.dmg"
+    assert mac.arch == "universal"
+    assert mac.min_os == "11.0"
+    assert mac.size == 5678
+    assert mac.has_checksum
+
+    win = m.asset_for("windows")
+    assert win is not None and win.file == "setup-0.2.4.exe"
+
+
+def test_platforms_yoq_bolsa_setup_hamma_uchun():
+    """Eski format: platforma haqida ma'lumot yo'q -> yagona fayl hammaga."""
+    m = Manifest.parse(json.dumps(_manifest_dict()))
+    assert m.platforms == {}
+    for key in ("windows", "macos", "linux"):
+        asset = m.asset_for(key)
+        assert asset is not None and asset.file == "setup-0.2.0.exe"
+
+
+def test_platforms_bor_lekin_bu_os_yoq():
+    """Nashr qiluvchi platformalarni ochiq sanagan - ro'yxatda yo'q OS uchun fayl yo'q."""
+    data = _multi_manifest_dict()
+    del data["platforms"]["macos"]
+    m = Manifest.parse(json.dumps(data))
+    assert m.asset_for("macos") is None
+    assert m.asset_for("linux") is None
+    # Windows esa `setup` ga tushadi - u kelishuvga ko'ra Windows o'rnatuvchisi.
+    assert m.asset_for("windows") is not None
+
+
+def test_faqat_platforms_bilan_manifest():
+    """`setup` yo'q, lekin platformalar bor - yangi mijozlar uchun yaroqli."""
+    data = _multi_manifest_dict()
+    del data["setup"]
+    m = Manifest.parse(json.dumps(data))
+    assert m.setup.file == ""
+    assert m.asset_for("macos") is not None
+    # Windows `platforms` dan keladi, `setup` dan emas.
+    assert m.asset_for("windows").file == "setup-0.2.4.exe"
+
+
+def test_setup_ham_platforms_ham_yoq_xato():
+    with pytest.raises(ValueError):
+        Manifest.parse(json.dumps({"version": "0.2.4"}))
+    with pytest.raises(ValueError):
+        Manifest.parse(json.dumps({"version": "0.2.4", "platforms": {}}))
+
+
+def test_fayl_nomsiz_platforma_etiborsiz():
+    data = _multi_manifest_dict()
+    data["platforms"]["linux"] = {"sha256": "c" * 64, "size": 1}
+    m = Manifest.parse(json.dumps(data))
+    assert "linux" not in m.platforms
+
+
+def test_update_info_hajmi_platforma_faylidan():
+    m = Manifest.parse(json.dumps(_multi_manifest_dict()))
+    mac = m.asset_for("macos")
+    info = UpdateInfo(manifest=m, current_version="0.2.0",
+                      download_url="x", asset=mac)
+    assert info.resolved_asset is mac
+    assert info.size_mb == round(5678 / 1048576.0, 1)
+
+
+def test_update_info_asset_berilmasa_manifestdan():
+    """Eski chaqiruvlar (asset=None) buzilmasligi kerak."""
+    m = Manifest.parse(json.dumps(_manifest_dict()))
+    info = UpdateInfo(manifest=m, current_version="0.1.0", download_url="x")
+    assert info.resolved_asset.file == "setup-0.2.0.exe"

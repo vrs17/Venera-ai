@@ -1,103 +1,73 @@
-# Venera AI Assistant — Linux serverda
+# Venera — Linux serverda
 
-Bu paket loyihaning to'liq manbasini va tayyor `0.2.3` o'rnatuvchisini o'z
-ichiga oladi.
+Bu server ikki ish qiladi: kod bilan ishlash va relizni tarqatish.
 
-## Linux serverda nima mumkin, nima mumkin emas
+## Nima mumkin, nima mumkin emas
 
-Ilova o'zi **Windows desktop dasturi** — mikrofon, tray ikonkasi va SAPI
-ovoziga tayanadi. Shuning uchun:
+Desktop ilova **Windows dasturi** — mikrofon, tray ikonkasi va SAPI ovoziga
+tayanadi. Shuning uchun:
 
 | Mumkin | Mumkin emas |
 |---|---|
 | Kodni tahrirlash | Ilovani ishga tushirish (audio/tray qurilmalari yo'q) |
-| `pytest` — 199 test | `.exe` yig'ish (PyInstaller Windows kerak) |
-| `version.json` yasash | `packaging/publish.ps1` ni bajarish (PowerShell) |
-| **Yangilanishlarni tarqatish** | |
+| `pytest` — 207 test | `.exe` yig'ish (PyInstaller Windows'da ishlashi shart) |
+| `version.json` yasash | `packaging/windows/*.ps1` ni bajarish (PowerShell) |
+| **Relizni tarqatish** | |
 
-Oxirgi qator eng muhimi: **Linux server yangilanish serveri bo'la oladi.**
-Bu unga eng mos rol.
+Oxirgi qator eng muhimi: **relizni shu server tarqatadi.**
 
 ## 1. Kod bilan ishlash
 
 ```bash
+cd apps/desktop
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt      # Windows paketlari o'zi o'tkazib yuboriladi
-python -m pytest tests/ -q               # 199 test
+python -m pytest -q
 ```
 
 `requirements.txt` dagi `pywin32`, `comtypes`, `pycaw` paketlari
 `sys_platform == "win32"` sharti bilan belgilangan, shuning uchun Linux'da
 o'rnatilmaydi va xato bermaydi.
 
-## 2. Yangilanish serveri sifatida
+## 2. Relizni tarqatish
 
-`release/` papkasida tayyor fayllar bor:
+Fayllar `~/.local/share/venera/downloads/` da turadi. O'sha papkani web
+konteyneri read-only mount qiladi va `llm.brb-tech.uz/download/` ostida beradi.
 
-```
-release/version.json                            417 B
-release/Venera-AI-Assistant-Setup-0.2.3.exe    43 MB
-```
+**Alohida update serveri yo'q va kerak emas.** Sayt ham, desktop auto-update
+ham xuddi shu manzildan o'qiydi — bitta host, bitta papka, bitta fayl.
+Shuning uchun ular ikki xil versiya ko'rsatishi mumkin emas.
 
-nginx sozlamasi `infra/nginx/venera-updates.conf` da. Fayllarni o'z joyiga
-qo'ying:
+Bir martalik sozlash: [deploy-desktop-download.md](deploy-desktop-download.md)
 
-```bash
-sudo mkdir -p /var/www/venera/assistant
-sudo cp release/Venera-AI-Assistant-Setup-0.2.3.exe /var/www/venera/assistant/
-sudo cp release/version.json                          /var/www/venera/assistant/
-sudo chown -R www-data:www-data /var/www/venera
-```
+Har bir reliz: [release-desktop.md](release-desktop.md)
 
-**Tartib muhim: avval `.exe`, keyin `version.json`.** Teskari bo'lsa manifest
-hali yuklanmagan faylga ishora qilib turadi va kompyuterlar xato oladi.
-
-To'liq qo'llanma: `docs/deploy-update-server.md`.
-
-## 3. Keyingi versiyani chiqarish
-
-Ish ikki mashina orasida taqsimlanadi:
+## 3. Ish ikki mashina orasida qanday taqsimlanadi
 
 ```
-Windows mashinasi                     Linux server
-─────────────────────                 ──────────────────────────
-packaging/build_setup.ps1     ──►     tools/make_manifest.py
-  .exe yig'adi                          version.json yozadi
-                                        fayllarni tarqatadi
+Windows mashinasi                        Linux server
+─────────────────────                    ────────────────────────────
+packaging/windows/build_setup.ps1   ──►  tools/make_manifest.py
+  .exe yig'adi                             version.json yozadi
+  update URL ni ichiga yopishtiradi        fayllarni papkaga qo'yadi
 ```
 
-Windows'da yangi `.exe` yig'ilgach, uni Linux serverga ko'chiring va:
+`make_manifest.py` sha256 va hajmni o'zi hisoblaydi.
 
-```bash
-python3 apps/desktop/tools/make_manifest.py release/Venera-AI-Assistant-Setup-0.2.4.exe \
-        --notes "Nima o'zgardi"
-
-sudo cp release/Venera-AI-Assistant-Setup-0.2.4.exe /var/www/venera/assistant/
-sudo cp release/version.json                          /var/www/venera/assistant/
-```
-
-`make_manifest.py` sha256 va hajmni o'zi hisoblaydi — `publish.ps1` bilan
-bir xil natija beradi (tekshirilgan).
-
-Eski `.exe` fayllarni o'chirmang: yangilanish yarim yo'lda uzilgan kompyuter
-qayta urinishi mumkin.
-
-## 4. Tekshirish
-
-```bash
-curl -sS https://ccs.venera.uz/assistant/version.json
-#   kutilgan:  {"version": "0.2.3", ...}
-#   xato:      <!doctype html>   -> nginx yo'li sozlanmagan
-
-curl -sSI https://ccs.venera.uz/assistant/Venera-AI-Assistant-Setup-0.2.3.exe
-#   kutilgan:  Content-Type: application/octet-stream
-```
+Eski `.exe` fayllarni darhol o'chirmang: yangilanish yarim yo'lda uzilgan
+kompyuter qayta urinishi mumkin.
 
 ## Hal qilinmagan masalalar
 
-- `ccs.venera.uz` hozircha HTTP javob bermaydi — vhost sozlanmagan.
-- Tashqi `195.158.16.251:443` internetga e'lon qilinganmi — tasdiqlanmagan.
-- 0.1.0 o'rnatilgan kompyuterlarda yangilanish moduli yo'q — ularga
-  `0.2.3` bir marta qo'lda o'rnatilishi kerak.
+- Nom o'zgarishidan **oldingi** o'rnatmalarda (`%LOCALAPPDATA%\Programs\BRB-Tech\`)
+  update manzili yo'q yoki eskirgan bo'lishi mumkin. Ularni tuzatish:
 
-Batafsil: `docs/deploy-update-server.md`.
+  ```powershell
+  "$env:LOCALAPPDATA\Programs\BRB-Tech\BRBTechAssistant.exe" --set-update-url "https://llm.brb-tech.uz/download/version.json"
+  ```
+
+  Yoki yangi `Setup.exe` ni bir marta qo'lda o'rnatish. Ikkalasidan keyin ham
+  keyingi barcha yangilanishlar avtomatik bo'ladi.
+
+- macOS uchun `.dmg` hali chiqarilmagan — nginx va manifest uni qo'llab-quvvatlaydi,
+  faqat build kerak ([build-macos.md](build-macos.md)).

@@ -20,9 +20,6 @@ Venera/
 ├── packages/              O'zi ishga tushmaydigan, ulashiladigan kod
 │   └── design-tokens/     Ranglar - desktop va web uchun yagona manba
 │
-├── infra/                 Server sozlamalari (koddan mustaqil)
-│   └── nginx/             Yangilanish serveri
-│
 ├── docs/                  Umumiy hujjatlar
 └── release/               Chiqarilgan .exe va version.json — sayt shu yerdan tarqatadi
 ```
@@ -42,9 +39,10 @@ tegmaydi. Shuning uchun yangi mahsulot qo'shish — `apps/` ga bitta papka qo'sh
 ko'p joyda kerak bo'lgan narsa `packages/` ga chiqadi. Bittasida kerak bo'lsa, o'sha
 app ichida qoladi.
 
-**`infra/` — koddan ajratilgan.** nginx sozlamasi qaysi appga tegishli ekani
-noaniq bo'lganda (masalan, desktop yangilanishlarini tarqatadigan server), u shu
-yerga tushadi.
+**Tarqatish bitta manzildan.** Sayt ham, desktop auto-update ham
+`llm.brb-tech.uz/download/` dan o'qiydi — bitta host, bitta papka, bitta fayl.
+Alohida update serveri yo'q va qo'shilmasligi kerak: ikkinchi manzil paydo
+bo'lishi bilan ikki xil versiya ko'rsatilishi xavfi tug'iladi.
 
 ---
 
@@ -96,8 +94,7 @@ Batafsil: [packages/design-tokens/README.md](packages/design-tokens/README.md)
 
 | Fayl | Nima haqida |
 |---|---|
-| [docs/deploy-linux-server.md](docs/deploy-linux-server.md) | Desktop yangilanishlarini Linux serverdan tarqatish |
-| [docs/deploy-update-server.md](docs/deploy-update-server.md) | Yangilanish serverini nginx bilan sozlash |
+| [docs/deploy-linux-server.md](docs/deploy-linux-server.md) | Linux serverda ishlash va relizni tarqatish |
 | [docs/deploy-desktop-download.md](docs/deploy-desktop-download.md) | Saytdagi "Yuklab olish" tugmasini ishga tushirish (bir marta) |
 | [docs/release-desktop.md](docs/release-desktop.md) | Yangi versiya chiqarish: build → manifest → PC'larda auto-update |
 | [docs/web-origin.md](docs/web-origin.md) | Web app qayerdan kelgani (tarixiy ma'lumot) |

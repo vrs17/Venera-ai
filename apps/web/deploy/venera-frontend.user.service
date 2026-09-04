@@ -33,10 +33,9 @@ Conflicts=container-brb-frontend.service
 #     mkdir -p ~/.local/share/venera/downloads
 #     cp release/version.json release/Venera-*.exe ~/.local/share/venera/downloads/
 #
-# Keyinchalik ccs.venera.uz update serveri sozlansa, IKKALASI BIR PAPKANI
-# ko'rsatishi kerak (update server'ning nginx root'ini shu yerga qarating yoki
-# mount manzilini o'zgartiring) - aks holda sayt va auto-update ikki xil
-# versiyani ko'rsatib qoladi.
+# Alohida update serveri YO'Q: sayt ham, desktop auto-update ham shu konteyner
+# bergan llm.brb-tech.uz/download/ dan o'qiydi. Ikkinchi manzil qo'shmang -
+# aks holda ikki xil versiya ko'rsatilishi mumkin.
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=always
