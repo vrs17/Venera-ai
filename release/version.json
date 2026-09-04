@@ -1,19 +1,19 @@
 {
-  "version": "0.2.8",
+  "version": "0.2.9",
   "released": "2026-09-04",
-  "notes": "Yangilanish endi haqiqatan o'rnatiladi.",
+  "notes": "Build tekshiruvi qo'shildi.",
   "mandatory": false,
   "min_version": "",
   "platforms": {
     "windows": {
-      "file": "Venera-AI-Assistant-Setup-0.2.8.exe",
-      "sha256": "de9e9e4dfe4e9a3191d26456f52eda1a8e07551534b1f48af611dd2aeed1de58",
-      "size": 45607697
+      "file": "Venera-AI-Assistant-Setup-0.2.9.exe",
+      "sha256": "cbff6129bd06f652e98ab1c1f4676c9c4b5f6ec2136588fcc0e2301a0d6a99c6",
+      "size": 45610336
     }
   },
   "setup": {
-    "file": "Venera-AI-Assistant-Setup-0.2.8.exe",
-    "sha256": "de9e9e4dfe4e9a3191d26456f52eda1a8e07551534b1f48af611dd2aeed1de58",
-    "size": 45607697
+    "file": "Venera-AI-Assistant-Setup-0.2.9.exe",
+    "sha256": "cbff6129bd06f652e98ab1c1f4676c9c4b5f6ec2136588fcc0e2301a0d6a99c6",
+    "size": 45610336
   }
 }
