@@ -2,6 +2,17 @@
 # Bu fayl %APPDATA%\Venera\config.yaml ga ko'chiriladi va o'sha yerdan o'qiladi.
 # O'zgartirgandan keyin tray menyusidan "Sozlamalarni qayta yuklash" ni bosing.
 
+# Butun tizimning tili: uz | en | ru | zh
+# Shu bitta qiymat quyidagilarning HAMMASINI belgilaydi:
+#   * STT serveriga yuboriladigan `language` (server uni majburiy talab qiladi)
+#   * ovozli javob iboralari
+#   * buyruqni tushunish qoidalari ("chromeni och" / "открой хром" / "open chrome")
+#   * ilova oynasi va tray menyusi matnlari
+#   * wake word ("salom Venera") modeli
+# Til AVTOMATIK ANIQLANMAYDI - buni foydalanuvchi ilova oynasidan tanlaydi.
+# Sabab: qisqa buyruqda (1-2 s) avtomatik aniqlash ~44% aniqlik beradi.
+language: uz
+
 engines:
   # Step 1: hammasi lokal, server kerak emas.
   # Step 2+ da shu qiymatlar 'onprem' ga o'zgaradi, kod tegilmaydi.
@@ -39,10 +50,30 @@ actions:
 
 timeouts:
   capturing: 15.0
+  stt: 30.0             # bitta STT so'rovi; qayta urinishlar alohida o'lchanadi
   thinking: 2.0
   acting: 5.0
   tts_synth: 10.0
   playback: 30.0
+
+stt:
+  # On-prem STT Router. `engines.stt: onprem` bo'lgandagina ishlatiladi.
+  #
+  # MUHIM: server ICHKI tarmoqda (10.10.50.x) - ishlashi uchun VPN kerak.
+  # VPN uzilgan bo'lsa ilova "Server bilan aloqa yo'q" deb aytadi.
+  #
+  # Boshqa variant (TLS, sertifikat o'z-o'zidan imzolangan):
+  #   url: "https://10.10.50.4/stt"
+  url: "http://10.10.50.4:8006"
+  attempts: 3           # 503 "navbat to'lgan" = nosozlik emas, qayta urinamiz
+  no_proxy: true        # ichki serverga korporativ proksisiz murojaat
+  verify_tls: false     # https variantida sertifikat o'z-o'zidan imzolangan
+  # Server parallelligi BUTUN park uchun <=10 (undan yuqorida 503 boshlanadi).
+  # Bitta kompyuter shu byudjetning ko'pini olib qo'ymasligi kerak.
+  max_concurrent: 2
+  # Mikrofoni doimiy shovqinda qolgan BITTA kompyuter cheksiz siklga tushib
+  # butun park uchun xizmatni o'ldirmasligi uchun. 0 = chegara yo'q.
+  max_per_minute: 20
 
 update:
   # Yangilanish manbasi - saytdagi "Yuklab olish" bergan AYNI manifest. Sayt va

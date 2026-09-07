@@ -68,10 +68,38 @@ class ActionsConfig:
 @dataclass
 class TimeoutsConfig:
     capturing: float = 15.0
+    #: STT serveriga so'rov. Qayta urinishlar BUNGA KIRMAYDI - har urinish
+    #: alohida shu chegara bilan o'lchanadi (stt.attempts ga qarang).
+    stt: float = 30.0
     thinking: float = 2.0
     acting: float = 5.0
     tts_synth: float = 10.0
     playback: float = 30.0
+
+
+@dataclass
+class SttConfig:
+    """On-prem STT Router (`engines.stt: onprem` bo'lganda ishlatiladi).
+
+    Server ICHKI tarmoqda turadi, shuning uchun VPN kerak va korporativ
+    proksini chetlab o'tish shart (`no_proxy: true`).
+
+    Til bu yerda YO'Q: u butun ilova uchun bitta - yuqoridagi `language`.
+    Server `language` maydonini majburiy talab qiladi va biz uni har so'rovda
+    beramiz; `/detect-language` ishlatilmaydi.
+    """
+
+    #: `/transcribe` va `/health` shu manzilga nisbatan qo'shiladi.
+    url: str = "http://10.10.50.4:8006"
+    #: 503 (navbat to'lgan) va tarmoq uzilishida shuncha marta urinamiz.
+    attempts: int = 3
+    no_proxy: bool = True
+    #: HTTPS variantida sertifikat o'z-o'zidan imzolangan.
+    verify_tls: bool = False
+    #: Server parallelligi BUTUN park uchun <=10. Bitta mashina ko'p olmasin.
+    max_concurrent: int = 2
+    #: Mikrofoni shovqinda qolgan bitta PC parkni yiqitmasligi uchun.
+    max_per_minute: int = 20
 
 
 @dataclass
@@ -108,8 +136,27 @@ class LoggingConfig:
     backup_count: int = 5
 
 
+#: Ilova qo'llab-quvvatlaydigan tillar. Ro'yxat STT serveri qabul qiladigan
+#: tillar bilan bir xil - boshqasini yuborsak server 400 qaytaradi.
+LANGUAGES = ("uz", "en", "ru", "zh")
+
+#: UI da ko'rsatiladigan nomlar (har til O'Z tilida yozilgan - foydalanuvchi
+#: hozirgi til noto'g'ri bo'lsa ham o'zinikini tanib oladi).
+LANGUAGE_NAMES = {
+    "uz": "O'zbekcha",
+    "en": "English",
+    "ru": "Русский",
+    "zh": "中文",
+}
+
+
 @dataclass
 class Config:
+    #: Butun tizimning tili: STT, javob iboralari, intent qoidalari, UI matni
+    #: va wake word modeli - hammasi shunga qarab tanlanadi. Foydalanuvchi
+    #: buni ilova oynasidan o'zgartiradi, avtomatik ANIQLANMAYDI.
+    language: str = "uz"
+
     engines: EnginesConfig = field(default_factory=EnginesConfig)
     hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
@@ -117,6 +164,7 @@ class Config:
     ui: UiConfig = field(default_factory=UiConfig)
     actions: ActionsConfig = field(default_factory=ActionsConfig)
     timeouts: TimeoutsConfig = field(default_factory=TimeoutsConfig)
+    stt: SttConfig = field(default_factory=SttConfig)
     update: UpdateConfig = field(default_factory=UpdateConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
@@ -196,7 +244,30 @@ def validate(cfg: Config) -> list[str]:
         problems.append("actions.search_url ichida {query} yo'q - default'ga qaytarildi")
         cfg.actions.search_url = ActionsConfig.search_url
 
-    for name in ("capturing", "thinking", "acting", "tts_synth", "playback"):
+    language = str(cfg.language).strip().lower()
+    if language not in LANGUAGES:
+        problems.append(
+            f"language={cfg.language!r} qo'llab-quvvatlanmaydi ({list(LANGUAGES)}) - 'uz' ga qaytarildi")
+        language = "uz"
+    cfg.language = language
+
+    if not 1 <= cfg.stt.attempts <= 10:
+        problems.append(f"stt.attempts={cfg.stt.attempts} chegaradan tashqarida - 3 ga qaytarildi")
+        cfg.stt.attempts = 3
+    # Server parallelligi BUTUN park uchun <=10. Bitta mashinaga 4 dan ko'p
+    # berish - boshqa foydalanuvchilarni ochlikda qoldirish.
+    if not 1 <= cfg.stt.max_concurrent <= 4:
+        problems.append(
+            f"stt.max_concurrent={cfg.stt.max_concurrent} chegaradan tashqarida (1..4) - 2 ga qaytarildi")
+        cfg.stt.max_concurrent = 2
+    if cfg.stt.max_per_minute < 0:
+        problems.append("stt.max_per_minute manfiy bo'lolmaydi - 20 ga qaytarildi")
+        cfg.stt.max_per_minute = 20
+    if cfg.engines.stt == "onprem" and not str(cfg.stt.url).strip():
+        problems.append("engines.stt=onprem, lekin stt.url bo'sh - mock ishlatiladi")
+        cfg.engines.stt = "mock"
+
+    for name in ("capturing", "stt", "thinking", "acting", "tts_synth", "playback"):
         value = getattr(cfg.timeouts, name)
         if not isinstance(value, (int, float)) or value <= 0:
             default = getattr(TimeoutsConfig(), name)

@@ -98,6 +98,84 @@ def test_default_resurs_fayli_oqiladi():
     assert warnings == [], warnings
     assert cfg.engines.stt == "mock"
     assert cfg.audio.sample_rate == 16000
+    assert cfg.language == "uz"
+
+
+# --- til tanlash --------------------------------------------------------------
+
+def test_default_til_uz(tmp_path):
+    cfg, _ = config_module.load(tmp_path / "yoq.yaml")
+    assert cfg.language == "uz"
+
+
+@pytest.mark.parametrize("language", ["uz", "en", "ru", "zh"])
+def test_qollab_quvvatlanadigan_tillar(tmp_path, language):
+    cfg, warnings = config_module.load(_write(tmp_path, f"language: {language}\n"))
+    assert cfg.language == language
+    assert warnings == []
+
+
+def test_notogri_til_uz_ga_qaytadi(tmp_path):
+    cfg, warnings = config_module.load(_write(tmp_path, "language: de\n"))
+    assert cfg.language == "uz"
+    assert any("language" in w for w in warnings)
+
+
+def test_til_katta_harf_va_boshliq_bilan_yozilsa(tmp_path):
+    """Foydalanuvchi qo'lda tahrirlaydi - " RU " ham ishlashi kerak."""
+    cfg, warnings = config_module.load(_write(tmp_path, 'language: "  RU  "\n'))
+    assert cfg.language == "ru"
+    assert warnings == []
+
+
+# --- STT sozlamalari ----------------------------------------------------------
+
+def test_stt_defaultlari(tmp_path):
+    cfg, _ = config_module.load(tmp_path / "yoq.yaml")
+    assert cfg.stt.url.startswith("http")
+    assert cfg.stt.attempts == 3
+    assert cfg.stt.no_proxy is True
+    assert cfg.timeouts.stt == 30.0
+
+
+def test_stt_parallelligi_chegaralanadi(tmp_path):
+    """Server byudjeti BUTUN park uchun <=10 - bitta mashina ko'p olmasin."""
+    cfg, warnings = config_module.load(_write(tmp_path, """
+        stt:
+          max_concurrent: 50
+    """))
+    assert cfg.stt.max_concurrent == 2
+    assert any("max_concurrent" in w for w in warnings)
+
+
+def test_stt_urinishlari_chegaralanadi(tmp_path):
+    cfg, warnings = config_module.load(_write(tmp_path, """
+        stt:
+          attempts: 100
+    """))
+    assert cfg.stt.attempts == 3
+    assert any("attempts" in w for w in warnings)
+
+
+def test_onprem_manzilsiz_mock_ga_qaytadi(tmp_path):
+    """Manzilsiz onprem har buyruqda xato berardi - mock hech bo'lmasa ishlaydi."""
+    cfg, warnings = config_module.load(_write(tmp_path, """
+        engines:
+          stt: onprem
+        stt:
+          url: ""
+    """))
+    assert cfg.engines.stt == "mock"
+    assert any("stt.url" in w for w in warnings)
+
+
+def test_stt_timeouti_tekshiriladi(tmp_path):
+    cfg, warnings = config_module.load(_write(tmp_path, """
+        timeouts:
+          stt: -5
+    """))
+    assert cfg.timeouts.stt == 30.0
+    assert any("timeouts.stt" in w for w in warnings)
 
 
 # --- eski config'ni yangilash -------------------------------------------------
