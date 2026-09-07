@@ -22,7 +22,8 @@ from typing import Callable
 
 import numpy as np
 
-from .wav import resample_linear, rms_level
+from .resample import Resampler
+from .wav import rms_level
 
 log = logging.getLogger(__name__)
 
@@ -153,6 +154,7 @@ class AudioCapture:
         self._stream = None
         self._device: DeviceInfo | None = None
         self._native_rate = sample_rate
+        self._resampler: Resampler | None = None
         self._lock = threading.RLock()
         self._last_callback = 0.0
         self._running = False
@@ -211,6 +213,11 @@ class AudioCapture:
                 self._stream = stream
                 self._device = device
                 self._native_rate = rate
+                # Holatli resampler: chiziqli interpolyatsiyadan farqli o'laroq
+                # blok chegaralarida uzilmaydi va anti-aliasing filtri bor.
+                # Busiz 48 kHz mikrofonda 10 kHz tovush 6 kHz ga buklanib
+                # tushardi - aynan nutq chastotasining o'rtasiga.
+                self._resampler = Resampler(rate, self.sample_rate)
                 self._running = True
                 self._last_callback = time.monotonic()
                 log.info(
@@ -226,6 +233,7 @@ class AudioCapture:
     def stop(self) -> None:
         with self._lock:
             self._running = False
+            self._resampler = None
             stream, self._stream = self._stream, None
         if stream is not None:
             try:
@@ -308,8 +316,13 @@ class AudioCapture:
             self._overflow_count += 1
         self._last_callback = time.monotonic()
         chunk = np.asarray(indata, dtype=np.int16).reshape(-1).copy()
-        if self._native_rate != self.sample_rate:
-            chunk = resample_linear(chunk, self._native_rate, self.sample_rate)
+        resampler = self._resampler
+        if resampler is not None and not resampler.passthrough:
+            chunk = resampler.process(chunk)
+            if chunk.size == 0:
+                # Birinchi chaqiruvlar: FIR ga kelajak konteksti yetmagan.
+                # Bo'sh blokni navbatga qo'yish iste'molchini chalg'itadi.
+                return
         try:
             self._queue.put_nowait(chunk)
         except queue.Full:
