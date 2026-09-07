@@ -31,6 +31,16 @@ log = logging.getLogger(__name__)
 EventSink = Callable[[object], None]
 
 
+class SttUnavailable(Exception):
+    """Ovoz matnga o'girilmadi (server, tarmoq yoki vaqt chegarasi).
+
+    ALOHIDA tur: ilgari bu holat `None` bilan qaytarilardi va `_turn` uni
+    "hech narsa eshitilmadi" deb talqin qilib `tick` signalini chalardi -
+    ya'ni foydalanuvchiga TESKARI ma'lumot berardi. Endi u eshitiladigan
+    xato sifatida aytiladi.
+    """
+
+
 class Orchestrator:
     """Holat mashinasi: IDLE -> ... -> IDLE."""
 
@@ -76,6 +86,10 @@ class Orchestrator:
         #: `run_in_executor` future'ini bekor qilish o'sha thread'ni TO'XTATMAYDI -
         #: shuning uchun bekor qilish faqat shu Event orqali yetib boradi.
         self._capture_cancel: threading.Event | None = None
+        #: Qulf ochildi, lekin mikrofon tiklanmadi - `_watchdog` qayta uradi.
+        self._needs_audio_restore = False
+        self._restore_backoff = 0.0
+        self._restore_at = 0.0
 
     # --- holat ---------------------------------------------------------------
 
@@ -216,8 +230,13 @@ class Orchestrator:
             log.info("To'xtatilgan holatda aktivatsiya e'tiborsiz qoldirildi")
             return
         if self._task is not None and not self._task.done():
-            # Ish ketayotganda qayta uyg'otish = bekor qilish (barge-in)
+            # Ish ketayotganda qayta uyg'otish = bekor qilish (barge-in).
+            # `player.stop()` BEKOR QILISHDAN OLDIN: `_play` ning finally
+            # bloki `listener.resume()` ni chaqiradi va u jim dinamikda
+            # ishlashi kerak, aks holda mikrofon Veneraning o'z ovoziga
+            # ochiladi. `_on_cancel` allaqachon shunday qiladi.
             log.info("Ish ketayotganda aktivatsiya - joriy buyruq bekor qilindi")
+            self.player.stop()
             await self._cancel_task()
             return
         self._task = asyncio.create_task(self._turn(event.source))
@@ -229,6 +248,7 @@ class Orchestrator:
             return
         # Aktivatsiyasiz to'g'ridan-to'g'ri matn: aktivatsiya + matn
         if self._task is not None and not self._task.done():
+            self.player.stop()      # barge-in bilan bir xil sabab
             await self._cancel_task()
         self._task = asyncio.create_task(self._turn(event.source, direct_text=event.text))
 
@@ -259,44 +279,83 @@ class Orchestrator:
         log.info("Ekran qulflandi - mikrofon yopilmoqda")
         await self._cancel_task()
         self.player.stop()
-        # Tinglovchi capture'ning yagona iste'molchisi - avval U to'xtaydi,
-        # keyin oqim yopiladi. Teskari tartibda thread o'lik navbatni o'qirdi.
-        if self.listener is not None:
-            self.listener.stop()
-        self.capture.stop()
+        # `listener.stop()` thread'ni join qiladi va `capture.stop()`
+        # PortAudio oqimini yopadi - ikkalasi ham SONIYALAB davom etishi
+        # mumkin. Core siklida bajarilsa butun ilova muzlab qolardi.
+        await asyncio.get_running_loop().run_in_executor(None, self._stop_audio)
         self._paused_by_lock = True
+        self._needs_audio_restore = True
         self._set_state(State.PAUSED, "ekran qulflangan")
+
+    def _stop_audio(self) -> None:
+        """Bloklovchi. Tinglovchi capture'ning yagona iste'molchisi - avval U
+        to'xtaydi, keyin oqim yopiladi; teskari tartibda thread o'lik navbatni
+        o'qirdi."""
+        listener = self.listener
+        if listener is not None:
+            try:
+                listener.stop()
+            except Exception:  # noqa: BLE001
+                log.exception("Tinglovchi to'xtatilmadi")
+        try:
+            self.capture.stop()
+        except Exception:  # noqa: BLE001
+            log.exception("Mikrofon yopilmadi")
 
     async def _on_unlock(self) -> None:
         if not self._paused_by_lock:
             return
         log.info("Ekran ochildi - ish davom etadi")
-        self._paused_by_lock = False
-        # `_on_lock` mikrofonni YOPGAN edi. Uni qayta ochmasak, ekran bir marta
-        # qulflangach ilova qayta ishga tushmaguncha kar bo'lib qolardi.
-        self._restore_audio()
-        self._set_state(State.IDLE, "ekran ochildi")
+        # `_paused_by_lock` FAQAT tiklash muvaffaqiyatli bo'lsa tushiriladi.
+        # Ilgari u tiklashdan OLDIN tushirilardi va bitta muvaffaqiyatsiz
+        # urinishdan keyin ikkinchi shans qolmasdi - ilova qayta ishga
+        # tushmaguncha kar bo'lib qolardi.
+        if await self._try_restore() or self.listener is None:
+            # MATN rejimida mikrofon shart emas - buyruq oynadan keladi.
+            # U yerda ochilmagan mikrofon uchun ilovani PAUSED da ushlab
+            # tursak, foydalanuvchi matn ham yozolmay qolardi.
+            self._paused_by_lock = False
+            self._set_state(State.IDLE, "ekran ochildi")
+        else:
+            # OVOZ rejimida esa ilova haqiqatan eshitmaydi - "Tayyor" yozuvi
+            # yolg'on bo'lardi. `_watchdog` backoff bilan qayta uradi.
+            self._set_state(State.PAUSED, "mikrofon ochilmadi")
 
-    def _restore_audio(self) -> None:
-        """Qulfdan keyin mikrofonni tiklaydi. Xato butun oqimni to'xtatmasin."""
+    async def _try_restore(self) -> bool:
+        """Mikrofonni tiklaydi. Qurilma ochish BLOKLOVCHI - executor'da."""
+        ok = await asyncio.get_running_loop().run_in_executor(None, self._restore_audio)
+        if ok:
+            self._needs_audio_restore = False
+            self._restore_backoff = 0.0
+        return ok
+
+    def _restore_audio(self) -> bool:
+        """Bloklovchi. Qulfdan keyin mikrofonni tiklaydi."""
         try:
             started = bool(self.capture.start())
         except Exception:  # noqa: BLE001
             log.exception("Qulfdan keyin mikrofon ochilmadi")
-            return
+            return False
         if not started:
             log.warning("Qulfdan keyin mikrofon ochilmadi")
-            self._emit(ev.Notice(self.ctx.phrases.get("mic_error"), level="warning"))
-            return
+            if self.listener is not None:
+                # Ovoz rejimida bu ishlamay qolish; matn rejimida esa
+                # mikrofon ixtiyoriy va ogohlantirish shovqin bo'lardi.
+                self._emit(ev.Notice(self.ctx.phrases.get("mic_error"), level="warning"))
+            return False
         listener = self.listener
         if listener is None:
-            return
+            return True
         try:
-            if not listener.start():
-                log.warning("Qulfdan keyin tinglovchi ishga tushmadi: %s",
-                            getattr(listener, "error", "") or "noma'lum sabab")
+            if listener.start():
+                return True
+            log.warning("Qulfdan keyin tinglovchi ishga tushmadi: %s",
+                        getattr(listener, "error", "") or "noma'lum sabab")
         except Exception:  # noqa: BLE001
             log.exception("Qulfdan keyin tinglovchi ishga tushmadi")
+        # Mikrofon ochildi, lekin ovoz yo'li yo'q - buni JIM o'tkazmaymiz.
+        self._emit(ev.Notice(self.ctx.phrases.get("mic_error"), level="warning"))
+        return False
 
     # --- bitta buyruq oqimi --------------------------------------------------
 
@@ -362,6 +421,15 @@ class Orchestrator:
             log.info("Buyruq bekor qilindi")
             self._set_state(State.IDLE, "bekor qilindi")
             raise
+        except SttUnavailable as exc:
+            # Ilgari bu `None` bo'lib "vaqt tugadi" + `tick` signaliga
+            # aylanardi: foydalanuvchi "eshitmadim" deb tushunib qayta
+            # gapirardi, sabab esa server edi.
+            log.warning("STT: %s", exc)
+            self._emit(ev.Notice(self.ctx.phrases.get("stt_error"), level="error"))
+            await self._speak(self.ctx.phrases.get("stt_error"))
+            await self._play(earcons.error())
+            self._set_state(State.IDLE, "stt xatosi")
         except asyncio.TimeoutError:
             log.warning("Buyruq vaqt chegarasidan oshdi")
             await self._speak(self.ctx.phrases.get("timeout"))
@@ -429,20 +497,32 @@ class Orchestrator:
 
         self._save_debug_wav(wav)
         self._set_state(State.TRANSCRIBING)
+        budget = self._stt_budget()
         try:
-            return await asyncio.wait_for(
-                self.stt.transcribe(wav), timeout=self.config.timeouts.stt,
-            )
+            return await asyncio.wait_for(self.stt.transcribe(wav), timeout=budget)
         except asyncio.CancelledError:
             raise
-        except asyncio.TimeoutError:
-            log.warning("STT %.0f s ichida javob bermadi", self.config.timeouts.stt)
-            self._emit(ev.Notice(self.ctx.phrases.get("stt_error"), level="error"))
-            return None
+        except asyncio.TimeoutError as exc:
+            log.warning("STT %.0f s ichida javob bermadi", budget)
+            raise SttUnavailable(f"javob kutish vaqti tugadi ({budget:.0f} s)") from exc
         except Exception as exc:  # noqa: BLE001 - server xatosi buyruqni yiqitsin, ilovani emas
             log.warning("STT xatosi: %s", exc)
-            self._emit(ev.Notice(self.ctx.phrases.get("stt_error"), level="error"))
-            return None
+            raise SttUnavailable(str(exc)) from exc
+
+    def _stt_budget(self) -> float:
+        """BUTUN STT zanjiri uchun chegara.
+
+        `OnpremStt` har urinishni `timeouts.stt` bilan o'zi chegaralaydi va
+        urinishlar orasida jitter bilan kutadi. Tashqi chegara ham AYNI
+        qiymatda bo'lsa, zanjir ikkinchi urinish boshlanishidan oldin
+        uzilardi - ya'ni `stt.attempts` aynan o'zi kerak bo'lgan holatda
+        (server javob bermay osilib qolganda) ishlamasdi.
+        """
+        per_attempt = max(1.0, float(self.config.timeouts.stt))
+        attempts = max(1, int(getattr(self.config.stt, "attempts", 1)))
+        # Jitterli kutishlar yig'indisining yuqori chegarasi.
+        backoff = 0.5 * (2 ** attempts)
+        return per_attempt * attempts + backoff
 
     def _save_debug_wav(self, wav: bytes) -> None:
         """Ovoz rejimida segment allaqachon WAV - qayta kodlash shart emas."""
@@ -566,6 +646,23 @@ class Orchestrator:
             elif not locked and was_locked:
                 self.post(ev.SessionUnlocked())
             was_locked = locked
+
+            # Qulf ochilgan, lekin mikrofon tiklanmagan: backoff bilan
+            # qayta uramiz. Bu tekshiruv PAUSED qo'riqchisidan OLDIN turishi
+            # SHART - tiklanmagan holat aynan PAUSED da qoladi.
+            if not locked and self._needs_audio_restore:
+                if now >= self._restore_at:
+                    if await self._try_restore():
+                        self._paused_by_lock = False
+                        if self._state is State.PAUSED:
+                            self._set_state(State.IDLE, "mikrofon tiklandi")
+                    else:
+                        self._restore_backoff = min(
+                            30.0, max(2.0, self._restore_backoff * 2))
+                        self._restore_at = now + self._restore_backoff
+                        log.info("Mikrofonni tiklash %.0f s dan keyin qayta urinadi",
+                                 self._restore_backoff)
+                continue
 
             if locked or self._state is State.PAUSED:
                 continue

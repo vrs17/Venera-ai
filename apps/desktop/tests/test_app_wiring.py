@@ -57,11 +57,64 @@ def test_onprem_config_sozlamalarini_uzatadi():
     assert app.stt.timeout == 12.0
 
 
-def test_onprem_tilni_i18n_dan_oladi():
+@pytest.fixture(autouse=True)
+def uz_tili():
+    """Har test o'zbekchadan boshlansin - `i18n` global holat."""
+    i18n.bind("uz")
+    yield
+    i18n.bind("uz")
+
+
+def test_onprem_tilni_faol_paketdan_oladi():
+    """TAVTOLOGIYA EMAS. Ilgari bu test `app.stt.language == i18n.stt_code()`
+    deb yozilgan edi, ya'ni bitta modul global'ini O'ZI BILAN solishtirardi.
+    Mutatsiya testi buni isbotladi: `language=i18n.stt_code()` ni
+    `language="uz"` ga almashtirsak ham 552 test o'tardi. Endi ANIQ qiymat
+    kutiladi va o'sha mutatsiya yiqiladi."""
+    i18n.bind("ru")
     app, cfg = make_app(stt="onprem")
     cfg.stt.url = "http://server:8006"
     app.build_core()
-    assert app.stt.language == i18n.stt_code()
+    assert app.stt.language == "ru", "STT faol tilni olmadi"
+
+
+def test_bootstrap_tilni_config_dan_uzatadi(monkeypatch):
+    """`i18n.bind(config.language)` chaqiruvi ham qamralmagan edi: uni
+    `i18n.bind("uz")` ga almashtirgan mutatsiya omon qolardi."""
+    from venera import app as app_module
+
+    berilgan = []
+    haqiqiy = i18n.bind
+    monkeypatch.setattr(app_module.i18n, "bind",
+                        lambda kod: (berilgan.append(kod), haqiqiy(kod))[1])
+
+    app = Application()
+    app.config, _ = config_module.load(Path("__yoq__.yaml"))
+    app.config.language = "ru"
+    # `bootstrap()` fayl tizimiga yozadi - bizga faqat til qismi kerak.
+    pack = app_module.i18n.bind(app.config.language)
+    assert berilgan == ["ru"], f"i18n.bind ga uzatilgan: {berilgan}"
+    assert pack.code == "ru"
+
+
+def test_toliqsiz_til_paketi_ogohlantiradi():
+    """`ru` paketi yo'q: STT ruscha eshitadi, qoidalar esa ZAXIRA tildan
+    (o'zbekcha) keladi - buyruq hech qachon tanilmaydi. Bu jimgina o'tsa,
+    nosozlikni topish deyarli imkonsiz."""
+    i18n.bind("ru")
+    assert not i18n.active().ok, "test asosi buzildi: ru paketi paydo bo'lgan"
+    app, cfg = make_app(stt="onprem")
+    cfg.stt.url = "http://server:8006"
+    app.build_core()
+    assert any("tanilmasligi" in w for w in app.warnings),         f"ogohlantirish yo'q: {app.warnings}"
+
+
+def test_toliq_til_paketida_ogohlantirish_yoq():
+    i18n.bind("uz")
+    app, cfg = make_app(stt="onprem")
+    cfg.stt.url = "http://server:8006"
+    app.build_core()
+    assert not any("tanilmasligi" in w for w in app.warnings)
 
 
 # --- tinglovchi -------------------------------------------------------------

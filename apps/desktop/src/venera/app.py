@@ -151,6 +151,16 @@ class Application:
                 max_per_minute=cfg.stt.max_per_minute,
             )
             log.info("STT: %s (til: %s)", self.stt.base_url, self.stt.language)
+            # Til paketi to'liq bo'lmasa (masalan `ru` - hali yozilmagan)
+            # qoidalar ZAXIRA tildan keladi. Natijada server ruscha matn
+            # qaytaradi, qoidalar esa o'zbekcha - buyruq hech qachon
+            # tanilmaydi. Bu jimgina o'tsa, nosozlikni topish qiyin.
+            if not i18n.active().ok:
+                self.warnings.append(
+                    f"{self.stt.language!r} tili uchun paket to'liq emas - "
+                    f"buyruq qoidalari {i18n.FALLBACK_CODE!r} tilidan olinadi, "
+                    f"ya'ni ovozli buyruqlar tanilmasligi mumkin")
+                log.warning("%s", self.warnings[-1])
         else:
             self.stt = MockStt()
 
@@ -430,7 +440,12 @@ class Application:
         else:
             window.log_line("Mikrofon ochilmadi - buyruqni matn bilan yozing", "error")
         if self.listener is not None and self.listener.running:
-            window.log_line(f"Ovoz bilan boshqaruv yoqilgan (til: {i18n.stt_code()})", "ok")
+            if i18n.active().ok:
+                window.log_line(f"Ovoz bilan boshqaruv yoqilgan (til: {i18n.stt_code()})", "ok")
+            else:
+                window.log_line(
+                    f"Ovoz yoqilgan, lekin {i18n.code()!r} til paketi to'liq emas - "
+                    f"buyruqlar {i18n.FALLBACK_CODE!r} qoidalari bilan tekshiriladi", "error")
         elif self.listener is not None:
             window.log_line("Ovoz yo'li ishga tushmadi - buyruqni matn bilan yozing", "error")
         if not hotkey_ok:
