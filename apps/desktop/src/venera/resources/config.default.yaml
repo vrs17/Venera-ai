@@ -14,12 +14,15 @@
 language: uz
 
 engines:
-  # Step 1: hammasi lokal, server kerak emas.
-  # Step 2+ da shu qiymatlar 'onprem' ga o'zgaradi, kod tegilmaydi.
-  activator: hotkey   # hotkey | wakeword  (wakeword - Step 5)
-  stt: mock           # mock   | onprem    (onprem  - Step 2)
-  llm: rules          # rules  | onprem    (onprem  - Step 3)
-  tts: sapi           # sapi   | onprem | none  (onprem - Step 4)
+  # Qaysi implementatsiya ishlatilishi. Kodga tegilmaydi - faqat shu qiymatlar.
+  activator: hotkey   # hotkey | wakeword  (wakeword hali yo'q - Step 5)
+  # mock   = buyruq OYNAGA yoziladi, server kerak emas (default)
+  # onprem = buyruq MIKROFONDAN olinadi va pastdagi `stt.url` ga yuboriladi.
+  #          Ishlashi uchun VPN va tirik STT Router kerak. Ular bo'lmasa
+  #          ilova yiqilmaydi: "Ovozni matnga o'girib bo'lmadi" deb aytadi.
+  stt: mock           # mock   | onprem
+  llm: rules          # rules  | onprem    (onprem hali yo'q - Step 3)
+  tts: sapi           # sapi   | onprem | none  (onprem hali yo'q - Step 4)
 
 hotkey:
   modifiers: [ctrl, alt]

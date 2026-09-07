@@ -15,17 +15,20 @@ import sys
 import threading
 from pathlib import Path
 
-from . import APP_DISPLAY_NAME, __version__, config as config_module, events as ev, logging_setup, paths
+from . import (APP_DISPLAY_NAME, __version__, config as config_module, events as ev,
+               i18n, logging_setup, paths)
 from .actions import apps as apps_module
 from .actions import phrases as phrases_module
 from .actions.base import ActionContext
 from .audio.capture import AudioCapture
+from .audio.listener import AudioListener
 from .audio.player import AudioPlayer
 from .core.orchestrator import Orchestrator
 from .core.states import State, label
 from .engines.activator_hotkey import HotkeyActivator, NullActivator
 from .engines.llm_rules import RulesLlm
 from .engines.stt_mock import MockStt
+from .engines.stt_onprem import OnpremStt
 from .engines.tts_sapi import NullTts, SapiTts
 from .engines.tts_say import SayTts
 from .osadapter import get_adapter
@@ -74,6 +77,7 @@ class Application:
         self.tts = None
         self.activator = None
         self.capture = None
+        self.listener = None
         self.player = None
         self.orchestrator = None
         self.window = None
@@ -111,6 +115,13 @@ class Application:
         for warning in self.warnings:
             log.warning("Config: %s", warning)
 
+        # Til BITTA joydan olinadi: STT so'rovi, javob iboralari, intent
+        # qoidalari va interfeys matni - hammasi shu paketdan.
+        pack = i18n.bind(self.config.language)
+        if not pack.ok:
+            for problem in i18n.problems():
+                log.warning("Til paketi: %s", problem)
+
         self.adapter = get_adapter()
         log.info("OS adapteri: %s", self.adapter.name)
 
@@ -124,9 +135,24 @@ class Application:
         cfg = self.config
 
         # --- STT ---
+        # `onprem` = ovoz haqiqatan tanib olinadi. `mock` da esa buyruq oynadan
+        # matn bo'lib keladi va server umuman kerak emas - shuning uchun u
+        # default bo'lib qoladi. `config.validate()` allaqachon tekshirgan:
+        # url bo'sh bo'lsa engines.stt o'zi `mock` ga qaytariladi.
         if cfg.engines.stt == "onprem":
-            log.warning("engines.stt=onprem hali qo'shilmagan (Step 2) - mock ishlatilmoqda")
-        self.stt = MockStt()
+            self.stt = OnpremStt(
+                base_url=cfg.stt.url,
+                language=i18n.stt_code(),
+                timeout=cfg.timeouts.stt,
+                attempts=cfg.stt.attempts,
+                no_proxy=cfg.stt.no_proxy,
+                verify_tls=cfg.stt.verify_tls,
+                max_concurrent=cfg.stt.max_concurrent,
+                max_per_minute=cfg.stt.max_per_minute,
+            )
+            log.info("STT: %s (til: %s)", self.stt.base_url, self.stt.language)
+        else:
+            self.stt = MockStt()
 
         # --- LLM ---
         if cfg.engines.llm == "onprem":
@@ -156,6 +182,17 @@ class Application:
             on_error=self._on_audio_error,
         )
 
+        # Ovoz yo'li faqat haqiqiy STT bilan mantiqli: mock rejimda buyruq
+        # oynaga yoziladi va mikrofon navbatini band qilishning hojati yo'q.
+        # Tinglovchi `capture._queue` ning YAGONA iste'molchisi bo'lishi shart.
+        if cfg.engines.stt == "onprem":
+            self.listener = AudioListener(
+                capture=self.capture,
+                sample_rate=cfg.audio.sample_rate,
+                frame_size=cfg.audio.blocksize,
+                on_level=self._on_level,
+            )
+
         # --- harakatlar ---
         context = ActionContext(
             adapter=self.adapter,
@@ -173,7 +210,7 @@ class Application:
         self.orchestrator = Orchestrator(
             config=cfg, adapter=self.adapter, stt=self.stt, llm=self.llm, tts=self.tts,
             activator=self.activator, capture=self.capture, player=self.player,
-            context=context, on_event=self._on_core_event,
+            context=context, on_event=self._on_core_event, listener=self.listener,
         )
 
     def build_ui(self) -> None:
@@ -326,7 +363,13 @@ class Application:
         if self.capture.start():
             log.info("Mikrofon: %s", self.capture.device.label() if self.capture.device else "?")
         else:
-            log.warning("Mikrofonsiz davom etilmoqda (Step 1 da buyruq matn bilan kiritiladi)")
+            log.warning("Mikrofonsiz davom etilmoqda - buyruq matn bilan kiritiladi")
+
+        # Tinglovchi capture'dan KEYIN: u navbatning yagona o'quvchisi bo'lishi
+        # kerak. Ishga tushmasa ilova yiqilmaydi - matn yo'li ishlayveradi.
+        if self.listener is not None and not self.listener.start():
+            log.warning("Ovoz yo'li ishga tushmadi (%s) - buyruq matn bilan kiritiladi",
+                        self.listener.error or "noma'lum sabab")
 
         # Aktivator UI'dan OLDIN ishga tushadi: klavisha band bo'lsa zaxiraga
         # o'tadi va tray/oyna darhol to'g'ri nomni ko'rsatadi.
@@ -386,6 +429,10 @@ class Application:
             window.log_line(f"Mikrofon: {self.capture.device.name}", "info")
         else:
             window.log_line("Mikrofon ochilmadi - buyruqni matn bilan yozing", "error")
+        if self.listener is not None and self.listener.running:
+            window.log_line(f"Ovoz bilan boshqaruv yoqilgan (til: {i18n.stt_code()})", "ok")
+        elif self.listener is not None:
+            window.log_line("Ovoz yo'li ishga tushmadi - buyruqni matn bilan yozing", "error")
         if not hotkey_ok:
             window.log_line(
                 f"Uyg'otish klavishasi ishlamadi: {self.activator.error}. "
@@ -418,6 +465,7 @@ class Application:
             ("yangilanish", lambda: self.updater and self.updater.stop()),
             ("aktivator", lambda: self.activator and self.activator.stop()),
             ("oyna", lambda: self.window and self.window.stop()),
+            ("tinglovchi", lambda: self.listener and self.listener.stop()),
             ("mikrofon", lambda: self.capture and self.capture.stop()),
             ("ijro", lambda: self.player and self.player.stop()),
             ("core", lambda: self.orchestrator and self.orchestrator.stop()),
@@ -459,6 +507,17 @@ def run_check(config_path: Path | None = None) -> int:
 
     lines.append("")
     lines.append(f"Uyg'otish: {app.activator.label}")
+
+    lines.append("")
+    lines.append("Til:")
+    for key, value in i18n.describe().items():
+        lines.append(f"  {key:14} {value}")
+    for problem in i18n.problems():
+        lines.append(f"  ! {problem}")
+
+    lines.append("")
+    source = "mikrofon (ovoz)" if app.listener is not None else "oyna (matn)"
+    lines.append(f"Buyruq manbai: {source}")
 
     lines.append("")
     from .audio import capture as capture_module

@@ -46,6 +46,7 @@ class Orchestrator:
         player,
         context: ActionContext,
         on_event: EventSink | None = None,
+        listener=None,
     ) -> None:
         self.config = config
         self.adapter = adapter
@@ -55,6 +56,9 @@ class Orchestrator:
         self.activator = activator
         self.capture = capture
         self.player = player
+        # Ovoz yo'li. Berilgan bo'lsa buyruq MIKROFONDAN olinadi; None bo'lsa
+        # matn oynadan keladi (Step 1 xulqi) - mavjud testlar shunga tayanadi.
+        self.listener = listener
         self.ctx = context
         self.on_event = on_event or (lambda _e: None)
 
@@ -68,12 +72,22 @@ class Orchestrator:
         self._text_waiter: asyncio.Future | None = None
         self._paused_by_lock = False
         self._last_tick = 0.0
+        #: `capture_utterance()` BLOKLOVCHI va boshqa thread'da ishlaydi.
+        #: `run_in_executor` future'ini bekor qilish o'sha thread'ni TO'XTATMAYDI -
+        #: shuning uchun bekor qilish faqat shu Event orqali yetib boradi.
+        self._capture_cancel: threading.Event | None = None
 
     # --- holat ---------------------------------------------------------------
 
     @property
     def state(self) -> State:
         return self._state
+
+    @property
+    def voice_mode(self) -> bool:
+        """Buyruq mikrofondan olinadimi: tinglovchi bor va ishlayaptimi."""
+        listener = self.listener
+        return bool(listener is not None and getattr(listener, "running", False))
 
     def _set_state(self, state: State, detail: str = "") -> None:
         if state is self._state:
@@ -226,6 +240,10 @@ class Orchestrator:
     async def _cancel_task(self) -> None:
         task, self._task = self._task, None
         waiter, self._text_waiter = self._text_waiter, None
+        # Ovoz yozuvi executor thread'ida bloklangan - uni faqat shu Event uzadi.
+        cancel, self._capture_cancel = self._capture_cancel, None
+        if cancel is not None:
+            cancel.set()
         if waiter is not None and not waiter.done():
             waiter.cancel()
         if task is not None and not task.done():
@@ -241,6 +259,10 @@ class Orchestrator:
         log.info("Ekran qulflandi - mikrofon yopilmoqda")
         await self._cancel_task()
         self.player.stop()
+        # Tinglovchi capture'ning yagona iste'molchisi - avval U to'xtaydi,
+        # keyin oqim yopiladi. Teskari tartibda thread o'lik navbatni o'qirdi.
+        if self.listener is not None:
+            self.listener.stop()
         self.capture.stop()
         self._paused_by_lock = True
         self._set_state(State.PAUSED, "ekran qulflangan")
@@ -250,7 +272,31 @@ class Orchestrator:
             return
         log.info("Ekran ochildi - ish davom etadi")
         self._paused_by_lock = False
+        # `_on_lock` mikrofonni YOPGAN edi. Uni qayta ochmasak, ekran bir marta
+        # qulflangach ilova qayta ishga tushmaguncha kar bo'lib qolardi.
+        self._restore_audio()
         self._set_state(State.IDLE, "ekran ochildi")
+
+    def _restore_audio(self) -> None:
+        """Qulfdan keyin mikrofonni tiklaydi. Xato butun oqimni to'xtatmasin."""
+        try:
+            started = bool(self.capture.start())
+        except Exception:  # noqa: BLE001
+            log.exception("Qulfdan keyin mikrofon ochilmadi")
+            return
+        if not started:
+            log.warning("Qulfdan keyin mikrofon ochilmadi")
+            self._emit(ev.Notice(self.ctx.phrases.get("mic_error"), level="warning"))
+            return
+        listener = self.listener
+        if listener is None:
+            return
+        try:
+            if not listener.start():
+                log.warning("Qulfdan keyin tinglovchi ishga tushmadi: %s",
+                            getattr(listener, "error", "") or "noma'lum sabab")
+        except Exception:  # noqa: BLE001
+            log.exception("Qulfdan keyin tinglovchi ishga tushmadi")
 
     # --- bitta buyruq oqimi --------------------------------------------------
 
@@ -334,8 +380,15 @@ class Orchestrator:
         return ""
 
     async def _capture_text(self, timeout: float) -> str | None:
-        """Step 1: matn oynadan keladi. Step 2 da bu yerda ovoz yoziladi va STT chaqiriladi."""
+        """Buyruqni oladi: tinglovchi bo'lsa mikrofondan, aks holda oynadan.
+
+        Ovoz rejimida STT ham SHU YERDA chaqiriladi, ya'ni qaytadigan qiymat
+        allaqachon matn. `_transcribe()` esa `submit_text` yo'qligini ko'rib
+        uni o'zgarishsiz o'tkazib yuboradi - `_turn()` tegilmaydi.
+        """
         self._set_state(State.CAPTURING)
+        if self.voice_mode:
+            return await self._capture_voice(timeout)
         loop = asyncio.get_running_loop()
         waiter: asyncio.Future = loop.create_future()
         self._text_waiter = waiter
@@ -351,6 +404,58 @@ class Orchestrator:
         finally:
             self._text_waiter = None
             self._save_debug_audio()
+
+    async def _capture_voice(self, timeout: float) -> str | None:
+        """Mikrofondan bitta nutq segmentini olib STT ga yuboradi."""
+        loop = asyncio.get_running_loop()
+        cancel = threading.Event()
+        self._capture_cancel = cancel
+        try:
+            wav = await loop.run_in_executor(
+                None, self.listener.capture_utterance, timeout, cancel,
+            )
+        except asyncio.CancelledError:
+            # Future bekor bo'ldi, lekin executor thread'i o'z holicha yozishda
+            # davom etardi - uni O'ZIMIZ to'xtatamiz.
+            cancel.set()
+            raise
+        finally:
+            if self._capture_cancel is cancel:
+                self._capture_cancel = None
+
+        if not wav:
+            log.info("Nutq eshitilmadi (%.0f s)", timeout)
+            return None
+
+        self._save_debug_wav(wav)
+        self._set_state(State.TRANSCRIBING)
+        try:
+            return await asyncio.wait_for(
+                self.stt.transcribe(wav), timeout=self.config.timeouts.stt,
+            )
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            log.warning("STT %.0f s ichida javob bermadi", self.config.timeouts.stt)
+            self._emit(ev.Notice(self.ctx.phrases.get("stt_error"), level="error"))
+            return None
+        except Exception as exc:  # noqa: BLE001 - server xatosi buyruqni yiqitsin, ilovani emas
+            log.warning("STT xatosi: %s", exc)
+            self._emit(ev.Notice(self.ctx.phrases.get("stt_error"), level="error"))
+            return None
+
+    def _save_debug_wav(self, wav: bytes) -> None:
+        """Ovoz rejimida segment allaqachon WAV - qayta kodlash shart emas."""
+        if not self.config.audio.save_debug_wav or not wav:
+            return
+        try:
+            directory = paths.debug_audio_dir()
+            directory.mkdir(parents=True, exist_ok=True)
+            target = directory / f"{datetime.now():%Y%m%d-%H%M%S}.wav"
+            target.write_bytes(wav)
+            log.info("Nosozlik uchun audio saqlandi: %s", target)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Debug audio saqlanmadi: %s", exc)
 
     def _save_debug_audio(self) -> None:
         if not self.config.audio.save_debug_wav or not self.capture.running:
@@ -405,12 +510,28 @@ class Orchestrator:
 
     async def _play(self, pcm, sample_rate: int = 16000) -> None:
         loop = asyncio.get_running_loop()
+        # AEC yo'q: dinamikdagi ovoz mikrofonga qaytadi va Venera O'Z javobini
+        # keyingi buyruq deb yozib olardi. Ijro davomida tinglovchi karlanadi;
+        # `resume()` marker qo'yadi, shuning uchun pre-roll ham o'sha ovozni
+        # orqaga qarab tortib kelolmaydi.
+        listener = self.listener
+        if listener is not None:
+            try:
+                listener.pause()
+            except Exception:  # noqa: BLE001
+                log.debug("listener.pause xatosi", exc_info=True)
         try:
             await loop.run_in_executor(
                 None, self.player.play, pcm, sample_rate, self.config.timeouts.playback,
             )
         except Exception:  # noqa: BLE001
             log.debug("Ijro xatosi", exc_info=True)
+        finally:
+            if listener is not None:
+                try:
+                    listener.resume()
+                except Exception:  # noqa: BLE001
+                    log.debug("listener.resume xatosi", exc_info=True)
 
     # --- kuzatuvchi ----------------------------------------------------------
 
@@ -450,6 +571,11 @@ class Orchestrator:
                 continue
 
             if not self.capture.running:
+                continue
+            # Ovoz rejimida mikrofonni tinglovchi o'zi kuzatadi va qayta ochadi
+            # (`AudioListener._check_alive`). Ikkalasi bir vaqtda `reopen()`
+            # chaqirsa oqim ketma-ket ikki marta yopilib-ochilardi.
+            if self.voice_mode:
                 continue
             if resumed or not self.capture.is_alive(tolerance=max(3.0, interval * 2)):
                 log.warning("Mikrofon javob bermayapti (%.1f s) - qayta ochilmoqda",

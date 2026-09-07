@@ -2,13 +2,27 @@
 # Bu fayl %APPDATA%\Venera\config.yaml ga ko'chiriladi va o'sha yerdan o'qiladi.
 # O'zgartirgandan keyin tray menyusidan "Sozlamalarni qayta yuklash" ni bosing.
 
+# Butun tizimning tili: uz | en | ru | zh
+# Shu bitta qiymat quyidagilarning HAMMASINI belgilaydi:
+#   * STT serveriga yuboriladigan `language` (server uni majburiy talab qiladi)
+#   * ovozli javob iboralari
+#   * buyruqni tushunish qoidalari ("chromeni och" / "открой хром" / "open chrome")
+#   * ilova oynasi va tray menyusi matnlari
+#   * wake word ("salom Venera") modeli
+# Til AVTOMATIK ANIQLANMAYDI - buni foydalanuvchi ilova oynasidan tanlaydi.
+# Sabab: qisqa buyruqda (1-2 s) avtomatik aniqlash ~44% aniqlik beradi.
+language: uz
+
 engines:
-  # Step 1: hammasi lokal, server kerak emas.
-  # Step 2+ da shu qiymatlar 'onprem' ga o'zgaradi, kod tegilmaydi.
-  activator: hotkey   # hotkey | wakeword  (wakeword - Step 5)
-  stt: mock           # mock   | onprem    (onprem  - Step 2)
-  llm: rules          # rules  | onprem    (onprem  - Step 3)
-  tts: sapi           # sapi   | onprem | none  (onprem - Step 4)
+  # Qaysi implementatsiya ishlatilishi. Kodga tegilmaydi - faqat shu qiymatlar.
+  activator: hotkey   # hotkey | wakeword  (wakeword hali yo'q - Step 5)
+  # mock   = buyruq OYNAGA yoziladi, server kerak emas (default)
+  # onprem = buyruq MIKROFONDAN olinadi va pastdagi `stt.url` ga yuboriladi.
+  #          Ishlashi uchun VPN va tirik STT Router kerak. Ular bo'lmasa
+  #          ilova yiqilmaydi: "Ovozni matnga o'girib bo'lmadi" deb aytadi.
+  stt: mock           # mock   | onprem
+  llm: rules          # rules  | onprem    (onprem hali yo'q - Step 3)
+  tts: sapi           # sapi   | onprem | none  (onprem hali yo'q - Step 4)
 
 hotkey:
   modifiers: [ctrl, alt]
@@ -39,10 +53,63 @@ actions:
 
 timeouts:
   capturing: 15.0
+  stt: 30.0             # bitta STT so'rovi; qayta urinishlar alohida o'lchanadi
   thinking: 2.0
   acting: 5.0
   tts_synth: 10.0
   playback: 30.0
+
+stt:
+  # On-prem STT Router. `engines.stt: onprem` bo'lgandagina ishlatiladi.
+  #
+  # MUHIM: server ICHKI tarmoqda (10.10.50.x) - ishlashi uchun VPN kerak.
+  # VPN uzilgan bo'lsa ilova "Server bilan aloqa yo'q" deb aytadi.
+  #
+  # Boshqa variant (TLS, sertifikat o'z-o'zidan imzolangan):
+  #   url: "https://10.10.50.4/stt"
+  url: "http://10.10.50.4:8006"
+  attempts: 3           # 503 "navbat to'lgan" = nosozlik emas, qayta urinamiz
+  no_proxy: true        # ichki serverga korporativ proksisiz murojaat
+  verify_tls: false     # https variantida sertifikat o'z-o'zidan imzolangan
+  # Server parallelligi BUTUN park uchun <=10 (undan yuqorida 503 boshlanadi).
+  # Bitta kompyuter shu byudjetning ko'pini olib qo'ymasligi kerak.
+  max_concurrent: 2
+  # Mikrofoni doimiy shovqinda qolgan BITTA kompyuter cheksiz siklga tushib
+  # butun park uchun xizmatni o'ldirmasligi uchun. 0 = chegara yo'q.
+  max_per_minute: 20
+
+update:
+  # Yangilanish manbasi - saytdagi "Yuklab olish" bergan AYNI manifest. Sayt va
+  # auto-update bitta faylni ko'radi, shuning uchun ular bir-biridan farq qila
+  # olmaydi (nginx sozlamasi: apps/web/deploy/nginx.container.conf).
+  #
+  # Odatda buni qo'lda yozish shart emas: o'rnatuvchi ishga tushganda
+  # `--set-update-url` bilan o'zi yozadi (manzil build paytida uning ichiga
+  # yopishtiriladi: build_setup.ps1 -UpdateUrl "...").
+  #
+  # Boshqa variantlar:
+  #   url: "http://10.10.50.9:8000/updates/version.json"        ichki HTTP server
+  #   url: "\\\\fileserver\\venera\\assistant\\version.json"      tarmoq papkasi (SMB)
+  #   url: "C:\\updates\\venera\\version.json"                      lokal papka (sinov)
+  # Bo'sh qoldirilsa yangilanish tekshirilmaydi.
+  enabled: true
+  url: "https://llm.brb-tech.uz/download/version.json"
+  # Asosiy manzil ochilmasa navbat bilan sinaladi. Shu tufayli BITTA o'rnatuvchi
+  # ham ofisda (tarmoq papkasi), ham uydan (tashqi HTTPS) ishlaydi.
+  #
+  # ESLATMA: sayt Venera nomiga o'tkazilgan, lekin DOMEN hali eski - llm.venera.uz
+  # DNS'da mavjud emas. Domen yaratilgach, uni yuqoriga asosiy manzil qilib
+  # qo'ying va eskisini shu ro'yxatda zaxira sifatida qoldiring - eski
+  # o'rnatmalar uzilib qolmaydi.
+  fallback_urls: []
+  #   - "https://llm.venera.uz/download/version.json"
+  check_on_start: true
+  check_interval_hours: 6
+  startup_delay_seconds: 90     # ishga tushgandan keyin qancha kutib tekshirsin
+  timeout_seconds: 20
+  download_timeout_seconds: 600
+  no_proxy: true                # ichki serverga korporativ proksisiz murojaat
+  auto_install: false           # true: so'ramasdan o'rnatadi (IT ommaviy tarqatishi uchun)
 
 logging:
   level: INFO

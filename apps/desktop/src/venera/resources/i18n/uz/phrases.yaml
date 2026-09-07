@@ -45,6 +45,7 @@ timeout: "Javob kutish vaqti tugadi"
 no_speech: "Hech narsa eshitilmadi"
 offline: "Server bilan aloqa yo'q. VPN ulanganini tekshiring"
 mic_error: "Mikrofon ochilmadi. Sozlamalarni tekshiring"
+stt_error: "Ovozni matnga o'girib bo'lmadi. Qayta urinib ko'ring"
 
 version_ok: "Versiya {version}"
 
