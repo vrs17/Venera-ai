@@ -14,7 +14,7 @@ import webbrowser
 from pathlib import Path
 from typing import Callable
 
-from .. import APP_DISPLAY_NAME, __version__, paths
+from .. import APP_DISPLAY_NAME, __version__, i18n, paths
 from ..core.states import State, label
 from . import icons
 
@@ -182,13 +182,14 @@ class Tray:
         try:
             if self._autostart_checked():
                 status = self.adapter.autostart_remove()
-                self.notify(APP_DISPLAY_NAME, "Avtostart o'chirildi")
+                self.notify(APP_DISPLAY_NAME, i18n.t("tray.autostart_off"))
             else:
                 status = self.adapter.autostart_install(self.autostart_command)
                 if status.installed:
-                    self.notify(APP_DISPLAY_NAME, "Avtostart yoqildi - kompyuter yonganda o'zi ishga tushadi")
+                    self.notify(APP_DISPLAY_NAME, i18n.t("tray.autostart_on"))
                 else:
-                    self.notify(APP_DISPLAY_NAME, f"Avtostart yoqilmadi: {status.detail[:120]}")
+                    self.notify(APP_DISPLAY_NAME,
+                                i18n.t("tray.autostart_failed", detail=status.detail[:120]))
             log.info("Avtostart holati: %s", status)
         except Exception:  # noqa: BLE001
             log.exception("Avtostart o'zgartirilmadi")
@@ -198,25 +199,28 @@ class Tray:
         separator = pystray.Menu.SEPARATOR
 
         return pystray.Menu(
-            item(lambda _i: f"Holat: {label(self._state)}", None, enabled=False),
+            # Holat lambda ichida: menyu har ochilganda qayta hisoblanadi,
+            # shuning uchun til almashsa yozuv ham yangilanadi.
+            item(lambda _i: i18n.t("tray.state", state=label(self._state)), None, enabled=False),
             separator,
-            item("Oynani ko'rsatish / yashirish", lambda: self.on_toggle_window(), default=True),
-            item(f"Uyg'otish ({self.hotkey_label})" if self.hotkey_label else "Uyg'otish",
+            item(i18n.t("tray.toggle_window"), lambda: self.on_toggle_window(), default=True),
+            item(i18n.t("tray.activate_hotkey", hotkey=self.hotkey_label) if self.hotkey_label
+                 else i18n.t("tray.activate"),
                  lambda: self.on_activate()),
-            item("To'xtatish", lambda: self.on_cancel()),
+            item(i18n.t("tray.cancel"), lambda: self.on_cancel()),
             separator,
-            item("Windows bilan ishga tushsin", self._toggle_autostart,
+            item(i18n.t("tray.autostart"), self._toggle_autostart,
                  checked=self._autostart_checked),
             separator,
-            item(lambda _i: (f"Yangi versiya {self._update_version} - yangilash"
-                             if self._update_version else "Yangilanishni tekshirish"),
+            item(lambda _i: (i18n.t("tray.update_available", version=self._update_version)
+                             if self._update_version else i18n.t("tray.check_update")),
                  lambda: (self.on_install_update() if self._update_version
                           else self.on_check_update())),
-            item("Sozlamalar faylini ochish", lambda: _open_path(paths.config_file())),
-            item("Dasturlar ro'yxatini ochish", lambda: _open_path(paths.apps_file())),
-            item("Loglar papkasini ochish", lambda: _open_path(paths.log_dir())),
-            item("Sozlamalarni qayta yuklash", lambda: self.on_reload()),
+            item(i18n.t("tray.open_config"), lambda: _open_path(paths.config_file())),
+            item(i18n.t("tray.open_apps"), lambda: _open_path(paths.apps_file())),
+            item(i18n.t("tray.open_logs"), lambda: _open_path(paths.log_dir())),
+            item(i18n.t("tray.reload"), lambda: self.on_reload()),
             separator,
-            item(f"Versiya {__version__}", None, enabled=False),
-            item("Chiqish", lambda: self.on_quit()),
+            item(i18n.t("tray.version", version=__version__), None, enabled=False),
+            item(i18n.t("tray.quit"), lambda: self.on_quit()),
         )

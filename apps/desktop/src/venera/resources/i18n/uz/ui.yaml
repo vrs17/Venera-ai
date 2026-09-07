@@ -28,9 +28,9 @@ window:
   title: "Venera"
   version: "v{version}"
   mic: "Mikrofon"
-  command: "Buyruq (Step 1 da matn bilan)"
+  command: "Buyruq"
   hint_hotkey: "Uyg'otish: {hotkey}. "
-  hint: "Buyruqni yozing va Enter bosing. Masalan: \"chromeni och\", \"ovozni 40 foiz\", \"soat necha\"."
+  hint: "Gapiring yoki buyruqni yozib Enter bosing. Masalan: \"chromeni och\", \"ovozni 40 foiz\", \"soat necha\"."
   button:
     submit: "Bajarish"
     cancel: "To'xtat"

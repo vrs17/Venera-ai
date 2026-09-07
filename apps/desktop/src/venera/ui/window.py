@@ -17,7 +17,9 @@ from datetime import datetime
 from typing import Callable
 
 from .. import APP_DISPLAY_NAME, __version__
+from .. import i18n
 from ..core.states import State, label
+from .scene import VoiceScene
 
 # Ranglar packages/design-tokens/tokens.json dan generatsiya qilinadi - shu yerda
 # qattiq yozilmaydi, aks holda web bilan bir kuni farq qilib qoladi.
@@ -32,7 +34,6 @@ from .tokens import (  # noqa: F401 - BG/FG/... shu modul orqali ham ishlatiladi
     MUTED,
     OK,
     ON_ACCENT,
-    STATE_COLORS,
     UPDATE_BG,
     UPDATE_FG,
     UPDATE_TRACK,
@@ -109,7 +110,7 @@ class StatusWindow:
     def set_status_note(self, text: str) -> None:
         self._commands.put(("note", text))
 
-    def show_update(self, text: str, button_text: str = "Yangilash",
+    def show_update(self, text: str, button_text: str = "",
                     raise_window: bool = False) -> None:
         """Yuqorida yangilanish paneli chiqaradi.
 
@@ -160,8 +161,10 @@ class StatusWindow:
         self._alive = True
         root.title(APP_DISPLAY_NAME)
         root.configure(bg=BG)
-        root.geometry("520x460")
-        root.minsize(420, 380)
+        # Sahna 270 px egallaydi - oyna balandligi shunga qarab oshirildi,
+        # aks holda `log_frame` (expand=True) siqilib butunlay yo'qolardi.
+        root.geometry("520x620")
+        root.minsize(460, 540)
         if self.topmost:
             root.attributes("-topmost", True)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -177,21 +180,23 @@ class StatusWindow:
             log.exception("Oyna sikli xatosi")
         finally:
             self._alive = False
+            scene = self._widgets.get("scene")
+            if scene is not None:
+                scene.stop()
             log.info("Holat oynasi yopildi")
 
     def _build(self, tk, root) -> None:
         header = tk.Frame(root, bg=BG)
         header.pack(fill="x", padx=16, pady=(14, 8))
 
-        dot = tk.Canvas(header, width=14, height=14, bg=BG, highlightthickness=0)
-        dot_id = dot.create_oval(2, 2, 12, 12, fill=ACCENT, outline="")
-        dot.pack(side="left", padx=(0, 8))
-
+        # Holat nuqtasi YO'Q: sahnadagi orbning o'zi holatni bildiradi va
+        # ikkita ko'rsatkich bir-birini takrorlardi.
         state_label = tk.Label(header, text=label(State.IDLE), bg=BG, fg=FG,
                                font=("Segoe UI", 13, "bold"))
         state_label.pack(side="left")
 
-        version_label = tk.Label(header, text=f"v{__version__}", bg=BG, fg=MUTED,
+        version_label = tk.Label(header, text=i18n.t("window.version", version=__version__),
+                                 bg=BG, fg=MUTED,
                                  font=("Segoe UI", 9))
         version_label.pack(side="right")
 
@@ -203,7 +208,8 @@ class StatusWindow:
                                 font=("Segoe UI", 9), anchor="w", justify="left",
                                 wraplength=330)
         update_label.pack(side="left", fill="x", expand=True)
-        update_button = tk.Button(update_row, text="Yangilash", command=self._on_update,
+        update_button = tk.Button(update_row, text=i18n.t("window.button.update"),
+                                  command=self._on_update,
                                   relief="flat", bg=ACCENT, fg=ON_ACCENT,
                                   font=("Segoe UI", 9, "bold"), padx=14, pady=3,
                                   activebackground=ACCENT_ACTIVE, activeforeground=ON_ACCENT,
@@ -216,17 +222,14 @@ class StatusWindow:
                         font=("Segoe UI", 9), anchor="w", justify="left", wraplength=480)
         note.pack(fill="x", padx=16)
 
-        meter_frame = tk.Frame(root, bg=BG)
-        meter_frame.pack(fill="x", padx=16, pady=(12, 4))
-        tk.Label(meter_frame, text="Mikrofon", bg=BG, fg=MUTED,
-                 font=("Segoe UI", 9)).pack(anchor="w")
-        meter = tk.Canvas(meter_frame, height=10, bg=FIELD_BG, highlightthickness=0)
-        meter.pack(fill="x", pady=(4, 0))
-        meter_bar = meter.create_rectangle(0, 0, 0, 10, fill=OK, outline="")
+        # Ovoz sahnasi: orb holatni, to'lqin esa mikrofon darajasini
+        # ko'rsatadi - ikkalasi ham eski 10 px chizig'idan ko'ra o'qiladi.
+        scene = VoiceScene(tk, root)
+        scene.canvas.pack(fill="x", padx=16, pady=(10, 2))
 
         entry_frame = tk.Frame(root, bg=BG)
         entry_frame.pack(fill="x", padx=16, pady=(14, 6))
-        tk.Label(entry_frame, text="Buyruq (Step 1 da matn bilan)", bg=BG, fg=MUTED,
+        tk.Label(entry_frame, text=i18n.t("window.command"), bg=BG, fg=MUTED,
                  font=("Segoe UI", 9)).pack(anchor="w")
         entry = tk.Entry(entry_frame, bg=FIELD_BG, fg=FG, insertbackground=FG,
                          relief="flat", font=("Segoe UI", 11))
@@ -236,15 +239,18 @@ class StatusWindow:
 
         buttons = tk.Frame(root, bg=BG)
         buttons.pack(fill="x", padx=16, pady=(8, 6))
-        tk.Button(buttons, text="Bajarish", command=self._on_submit, relief="flat",
+        tk.Button(buttons, text=i18n.t("window.button.submit"),
+                  command=self._on_submit, relief="flat",
                   bg=ACCENT, fg=ON_ACCENT, font=("Segoe UI", 10, "bold"),
                   activebackground=ACCENT_ACTIVE, activeforeground=ON_ACCENT,
                   padx=16, pady=5, cursor="hand2").pack(side="left")
-        tk.Button(buttons, text="To'xtat", command=self.on_cancel, relief="flat",
+        tk.Button(buttons, text=i18n.t("window.button.cancel"),
+                  command=self.on_cancel, relief="flat",
                   bg=FIELD_BG, fg=FG, font=("Segoe UI", 10),
                   activebackground=HOVER, activeforeground=FG,
                   padx=14, pady=5, cursor="hand2").pack(side="left", padx=(8, 0))
-        tk.Button(buttons, text="Yashirish", command=self.hide, relief="flat",
+        tk.Button(buttons, text=i18n.t("window.button.hide"),
+                  command=self.hide, relief="flat",
                   bg=FIELD_BG, fg=MUTED, font=("Segoe UI", 10),
                   activebackground=HOVER, activeforeground=FG,
                   padx=14, pady=5, cursor="hand2").pack(side="right")
@@ -254,7 +260,9 @@ class StatusWindow:
         text = tk.Text(log_frame, bg=FIELD_BG, fg=FG, relief="flat", height=8,
                        font=("Consolas", 9), wrap="word", state="disabled",
                        insertbackground=FG)
-        scroll = tk.Scrollbar(log_frame, command=text.yview, relief="flat")
+        scroll = tk.Scrollbar(log_frame, command=text.yview, relief="flat",
+                              bg=FIELD_BG, troughcolor=BG, activebackground=HOVER,
+                              highlightthickness=0, bd=0)
         text.configure(yscrollcommand=scroll.set)
         text.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
@@ -264,17 +272,16 @@ class StatusWindow:
         text.tag_configure("info", foreground=FG)
 
         self._widgets = {
-            "dot": dot, "dot_id": dot_id, "state": state_label, "note": note,
-            "meter": meter, "meter_bar": meter_bar, "entry": entry, "text": text,
+            "state": state_label, "note": note,
+            "scene": scene, "entry": entry, "text": text,
             "update_frame": update_frame, "update_label": update_label,
             "update_button": update_button, "update_bar": update_bar,
             "update_progress": update_progress, "header": header,
         }
 
     def _default_note(self) -> str:
-        hint = f"Uyg'otish: {self.hotkey_label}. " if self.hotkey_label else ""
-        return (f"{hint}Buyruqni yozing va Enter bosing. "
-                "Masalan: \"chromeni och\", \"ovozni 40 foiz\", \"soat necha\".")
+        hint = i18n.t("window.hint_hotkey", hotkey=self.hotkey_label) if self.hotkey_label else ""
+        return f"{hint}{i18n.t('window.hint')}"
 
     # --- hodisalar -----------------------------------------------------------
 
@@ -295,7 +302,7 @@ class StatusWindow:
     def _on_update(self) -> None:
         button = self._widgets.get("update_button")
         if button is not None:
-            button.configure(state="disabled", text="Yuklanmoqda...")
+            button.configure(state="disabled", text=i18n.t("window.button.downloading"))
         try:
             self.on_update()
         except Exception:  # noqa: BLE001
@@ -346,14 +353,16 @@ class StatusWindow:
                 except ValueError:
                     text = state
                 widget.configure(text=text + (f" - {detail}" if detail else ""))
-            dot, dot_id = self._widgets.get("dot"), self._widgets.get("dot_id")
-            if dot is not None and dot_id is not None:
-                dot.itemconfigure(dot_id, fill=STATE_COLORS.get(state, ACCENT))
+            scene = self._widgets.get("scene")
+            if scene is not None:
+                scene.set_state(state)
         elif command == "level":
-            meter, bar = self._widgets.get("meter"), self._widgets.get("meter_bar")
-            if meter is not None and bar is not None:
-                width = max(0.0, min(1.0, float(payload) * 4.0)) * meter.winfo_width()
-                meter.coords(bar, 0, 0, width, 10)
+            # Mikrofon darajasining YAGONA yo'li. O'lchagich o'chirilganda bu
+            # tarmoq ham ko'chirilishi shart edi, aks holda to'lqin abadiy
+            # nolda qolardi (`.get()` tufayli xato ham chiqmasdi).
+            scene = self._widgets.get("scene")
+            if scene is not None:
+                scene.set_level(min(1.0, max(0.0, float(payload) * 4.0)))
         elif command == "note":
             widget = self._widgets.get("note")
             if widget is not None:
@@ -379,7 +388,9 @@ class StatusWindow:
             if label_widget is not None:
                 label_widget.configure(text=text)
             if button is not None:
-                button.configure(text=button_text, state="normal")
+                # Chaqiruvchi matn bermasa - faol tildagi standart yozuv.
+                button.configure(text=button_text or i18n.t("window.button.update"),
+                                 state="normal")
             if frame is not None:
                 frame.pack(fill="x", padx=16, pady=(4, 8),
                            after=self._widgets.get("header"))
@@ -404,8 +415,9 @@ class StatusWindow:
                 ratio = (done / total) if total else 0.0
                 bar.coords(item, 0, 0, max(0.0, min(1.0, ratio)) * bar.winfo_width(), 4)
             if label_widget is not None and total:
-                label_widget.configure(
-                    text=f"Yuklanmoqda... {done // 1048576} / {total // 1048576} MB")
+                label_widget.configure(text=i18n.t(
+                    "window.update.progress",
+                    done=done // 1048576, total=total // 1048576))
         elif command == "quit":
             self._alive = False
             try:

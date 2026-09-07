@@ -23,7 +23,9 @@ class State(str, Enum):
         return self.value
 
 
-#: Foydalanuvchiga ko'rsatiladigan nomlar
+#: Zaxira nomlar. Faol til paketi (`ui.yaml` dagi `state.*`) BIRINCHI
+#: o'qiladi; bu jadval paket yuklanmagan holat uchun qoladi. Ikkisi bir xil
+#: bo'lishini `tests/test_i18n.py` tekshiradi.
 LABELS: dict[State, str] = {
     State.IDLE: "Tayyor",
     State.ACTIVATED: "Uyg'ondi",
@@ -44,4 +46,14 @@ BUSY = {State.ACTIVATED, State.CAPTURING, State.TRANSCRIBING,
 
 
 def label(state: State) -> str:
+    """Holatning foydalanuvchiga ko'rinadigan nomi - FAOL tilda.
+
+    Import halqasi bo'lmasligi uchun i18n kech import qilinadi:
+    `i18n` -> `nlu.grammar` zanjiri bu modulga qaytib kelmasligi kerak.
+    """
+    from .. import i18n
+
+    text = i18n.t(f"state.{state.value}")
+    if text != f"state.{state.value}":
+        return text
     return LABELS.get(state, str(state))
