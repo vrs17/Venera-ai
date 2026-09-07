@@ -4,10 +4,11 @@ Web ilova (`apps/web`) uchun backend. FastAPI, Python 3.10+.
 
 ## Tez boshlash
 
+**Ishlab chiqarish uchun** systemd + podman ishlatiladi — `docs/deploy-api.md`
+ga qarang. Quyidagisi faqat LOKAL ishlab chiqish uchun.
+
 ```bash
 cd apps/api
-
-python3 -m venv .venv && source .venv/bin/activate     # ixtiyoriy
 pip install -e ".[dev]"
 
 cp .env.example .env
@@ -16,8 +17,15 @@ cp config/users.example.yaml config/users.yaml
 uvicorn app.main:app --reload --port 8000
 ```
 
-Hujjat: <http://localhost:8000/docs> — avtomatik generatsiya qilinadi, qo'lda yozilmaydi.
-Holat: <http://localhost:8000/health>
+| | Manzil |
+|---|---|
+| Swagger | <http://localhost:8000/api/docs> |
+| OpenAPI JSON | <http://localhost:8000/api/openapi.json> |
+| Holat | <http://localhost:8000/api/health> |
+
+Manzillar ATAYLAB `/api/` ostida: nginx faqat `location /api/` ni backend'ga
+uzatadi, qolgani SPA ga ketadi. Default `/docs` bilan qoldirsak Swagger
+tashqaridan ochilmasdi.
 
 Frontend bilan birga ishga tushirish:
 
@@ -92,7 +100,8 @@ integratsiya qo'shganda router'ga tegilmaydi.
 | POST | `/api/v1/auth/signup` | — | 501 — demo uchun yopiq |
 | POST | `/api/v1/auth/change-password` | — | 501 — demo uchun yopiq |
 | POST | `/api/v1/chat/ask` | ✅ | savol → quvur → javob |
-| GET | `/health` | — | holat va ogohlantirishlar |
+| GET | `/api/health` | — | holat va ogohlantirishlar |
+| GET | `/api/docs` | — | Swagger UI (fayllar image ichida, internetsiz ishlaydi) |
 
 ## Frontend shartnomasi
 
@@ -131,7 +140,7 @@ pytest -q
 
 - `SECRET_KEY` ni **albatta** o'zgartiring:
   `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`.
-  Unutilsa `/health` `degraded` qaytaradi va ogohlantiradi.
+  Unutilsa `/api/health` `degraded` qaytaradi va ogohlantiradi.
 - `config/users.yaml` va `.env` git'ga tushmaydi.
 - CORS odatda kerak emas: nginx frontend va `/api` ni bir xil originda
   ko'rsatadi.

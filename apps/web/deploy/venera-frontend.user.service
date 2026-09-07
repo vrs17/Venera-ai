@@ -36,6 +36,16 @@ Conflicts=container-brb-frontend.service
 # Alohida update serveri YO'Q: sayt ham, desktop auto-update ham shu konteyner
 # bergan llm.brb-tech.uz/download/ dan o'qiydi. Ikkinchi manzil qo'shmang -
 # aks holda ikki xil versiya ko'rsatilishi mumkin.
+# API MANZILI. Endi o'z backend'imiz (apps/api) - 10.10.50.9 dagi boshqa
+# jamoaning serveri EMAS.
+#
+# `host.containers.internal` - konteyner ichidan HOST ga murojaat. Backend
+# host'da 127.0.0.1:8000 da turadi va tashqi tarmoqqa ochilmagan, shuning
+# uchun unga faqat shu nginx bora oladi.
+#
+# Agar podman versiyasi bu nomni bilmasa, o'rniga host'ning podman
+# ko'prigidagi manzilini yozing (odatda 10.0.2.2 yoki `ip -4 addr show
+# podman0`) yoki `--network=host` bilan ishga tushiring.
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=always
@@ -50,7 +60,7 @@ ExecStart=/usr/bin/podman run \
     --replace \
     --name venera-frontend \
     -p 0.0.0.0:5173:8080 \
-    -e API_UPSTREAM=http://10.10.50.9:8080 \
+    -e API_UPSTREAM=http://host.containers.internal:8000 \
     -e API_READ_TIMEOUT=120s \
     -v %h/.local/share/venera/downloads:/usr/share/nginx/downloads:ro,z \
     localhost/venera-frontend:latest

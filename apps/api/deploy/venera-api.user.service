@@ -1,0 +1,77 @@
+# venera-api.service
+# Venera API (FastAPI) - root'siz podman konteynerida, 127.0.0.1:8000.
+#
+# Manba:    /home/ymamajonov/Venera/apps/api
+# Image:    localhost/venera-api:latest
+# Qayta tarqatish:
+#     cd /home/ymamajonov/Venera/apps/api \
+#       && podman build -t localhost/venera-api:latest . \
+#       && systemctl --user restart venera-api.service
+#
+# O'RNATISH (bir marta):
+#     mkdir -p ~/.config/systemd/user
+#     cp deploy/venera-api.user.service ~/.config/systemd/user/venera-api.service
+#     systemctl --user daemon-reload
+#     systemctl --user enable --now venera-api.service
+#
+#     # Sessiyadan chiqqanda ham ishlab tursin (AKS HOLDA logout'da o'chadi):
+#     loginctl enable-linger $USER
+#
+# Kuzatish:
+#     systemctl --user status venera-api.service
+#     journalctl --user -u venera-api.service -f
+
+[Unit]
+Description=Venera API (FastAPI, port 8000)
+Documentation=file:///home/ymamajonov/Venera/apps/api/README.md
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=%t/containers
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+
+# AVTOMATIK QAYTA ISHGA TUSHISH.
+#   Restart=always      - har qanday to'xtashda (crash, OOM, xato kod) qayta ko'taradi
+#   RestartSec=3        - darhol emas: xizmat qayta-qayta yiqilsa CPU ni yemasin
+#   StartLimitBurst=0   - cheksiz urinish. Default (5 marta / 10 s) bilan
+#                         ma'lumotlar bazasi kech ko'tarilsa systemd taslim
+#                         bo'lib xizmatni O'CHIRIB qo'yardi va uni QO'LDA
+#                         yoqish kerak bo'lardi.
+Restart=always
+RestartSec=3
+StartLimitBurst=0
+
+TimeoutStopSec=70
+ExecStartPre=/bin/rm -f %t/%n.ctr-id
+
+# NEGA 127.0.0.1, 0.0.0.0 EMAS: API tashqi tarmoqqa OCHILMASLIGI kerak.
+# Unga faqat frontend konteyneridagi nginx murojaat qiladi (`/api/` proxy),
+# va u host tarmog'i orqali boradi. Portni tashqariga ochsak autentifikatsiya
+# yagona himoya bo'lib qolardi.
+#
+# Bind-mount qilinadigan ikki narsa image ICHIDA emas, chunki ularda SIR bor
+# va ular muhitga qarab farq qiladi (bitta image staging va prod'da ishlaydi):
+#   config/  -> foydalanuvchilar va parol xeshlari
+#   .env     -> SECRET_KEY
+# `:ro` - konteyner ularni o'zgartira olmaydi. `:z` - SELinux hostlar uchun.
+ExecStart=/usr/bin/podman run \
+    --cidfile=%t/%n.ctr-id \
+    --cgroups=no-conmon \
+    --rm \
+    --sdnotify=conmon \
+    -d \
+    --replace \
+    --name venera-api \
+    -p 127.0.0.1:8000:8000 \
+    -v %h/Venera/apps/api/config:/app/config:ro,z \
+    -v %h/Venera/apps/api/.env:/app/.env:ro,z \
+    localhost/venera-api:latest
+
+ExecStop=/usr/bin/podman stop --ignore --cidfile=%t/%n.ctr-id
+ExecStopPost=/usr/bin/podman rm -f --ignore --cidfile=%t/%n.ctr-id
+Type=notify
+NotifyAccess=all
+
+[Install]
+WantedBy=default.target
