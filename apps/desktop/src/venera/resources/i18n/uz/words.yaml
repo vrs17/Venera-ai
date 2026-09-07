@@ -1,0 +1,87 @@
+# Tilning so'z boyligi: tozalash, morfologiya, sonlar, regex makrolari.
+# `nlu.words.WordBook` shu fayldan quriladi.
+#
+# DIQQAT (uz uchun): `fillers`, `suffixes` va `numbers` ning nusxasi
+# `nlu/normalize.py` va `nlu/numbers.py` ichida ham bor - u yerda ular
+# `normalize()` / `words_to_int()` moslik funksiyalari uchun turibdi.
+# ASOSIY MANBA - SHU FAYL. Ikkalasining bir xilligini `tests/test_i18n.py`
+# tekshiradi, shuning uchun birini o'zgartirsangiz test darrov aytadi.
+
+version: 1
+
+# Ma'noga ta'sir qilmaydigan so'zlar - solishtirishdan oldin olib tashlanadi.
+# TARTIB MUHIM: ro'yxat regex alternativalariga aynan shu tartibda aylanadi.
+fillers:
+  - iltimos
+  - marhamat
+  - qani
+  - menga
+  - mendan
+  - mumkinmi
+  - mumkin
+  - "bo'ladimi"
+  - tez
+  - tezda
+
+# So'z OXIRIDAN kesiladigan kelishik qo'shimchalari: "chromeni" -> "chrome".
+# To'liq morfologiya emas - alias bilan solishtirish uchun yetarli.
+# Qo'shimcha faqat o'zak kamida 3 harf bo'lib qolsa kesiladi.
+suffixes: [ni, ning, ga, da, dan, ya, yi]
+
+# ALOHIDA turgan yuklamalar: "google chrome ni och" -> "google chrome".
+particles: [ni, ga, da, dan, ning]
+
+# Matn boshidan olib tashlanadigan uyg'otish so'zlari.
+# "venera chrome och" -> "chrome och". Yolg'iz qolsa kesilmaydi, shuning
+# uchun "venerani och" buyrug'i buzilmaydi.
+wake_prefixes: [venera, venere, vinera, vener]
+
+# `rules.yaml` naqshlarida `{nom}` ko'rinishida ishlatiladi.
+# `str.format` ISHLATILMAYDI (regexdagi `{2,3}` KeyError berardi) - faqat
+# to'liq makro nomlari almashtiriladi.
+macros:
+  # Son: raqam yoki so'zlar ketma-ketligi. Ochko'zlikni cheklash uchun `+?`.
+  num: |-
+    (?:\d+|[a-z'\s]+?)
+
+numbers:
+  # `nlu.numbers.PARSERS` dagi nom. O'nlik sanoq tizimidagi har qanday til
+  # (uz, ru, en) shu parserdan foydalanadi.
+  parser: decimal_words
+
+  # `flush_from` dan KICHIK ko'paytiruvchi joriy sonni ko'paytiradi
+  # ("ikki yuz ellik" = 2*100 + 50), katta-tengi esa yig'indiga qo'shadi
+  # ("sakkiz yuz o'n olti ming" = (800+16)*1000).
+  flush_from: 1000
+
+  units:
+    nol: 0
+    "nol'": 0
+    bir: 1
+    ikki: 2
+    uch: 3
+    "to'rt": 4
+    besh: 5
+    olti: 6
+    yetti: 7
+    etti: 7
+    sakkiz: 8
+    "to'qqiz": 9
+
+  tens:
+    "o'n": 10
+    yigirma: 20
+    "o'ttiz": 30
+    qirq: 40
+    ellik: 50
+    oltmish: 60
+    yetmish: 70
+    etmish: 70
+    sakson: 80
+    "to'qson": 90
+
+  scales:
+    yuz: 100
+    ming: 1000
+    million: 1000000
+    milliard: 1000000000

@@ -2,13 +2,21 @@
 
 Talablar:
   * 16 kHz, mono, int16 - STT serveri (Step 2) aynan shuni kutadi;
-  * callback thread'ida hech qanday og'ir ish qilinmaydi (faqat nusxa + queue);
+  * callback thread'ida hech qanday og'ir ish qilinmaydi (faqat nusxa +
+    resample + queue) - RMS hisoblash va UI xabarlari `AudioListener`
+    thread'iga ko'chirilgan;
   * qurilma uzilsa yoki kompyuter uyqudan uyg'onsa - qayta ochish;
   * audio qurilmasi umuman yo'q muhitda (WSL, CI) import ham, ishga tushirish ham
     yiqilmasligi kerak - shunchaki "mavjud emas" holati.
 
 WASAPI ustunlik beriladi: MME qurilma nomlarini 31 belgida kesadi.
 Exclusive mode HECH QACHON ishlatilmaydi - u mikrofonni Teams/Zoom'dan tortib oladi.
+
+NEGA on_level bu yerda CHAQIRILMAYDI:
+  `on_level` atributi qoladi (uni `AudioListener` o'rnatadi/almashtiradi), lekin
+  uni PortAudio callback'idan chaqirish mumkin emas: RMS + UI ishlovchisi audio
+  deadline'ini yeydi va glitch (chertillash) beradi. Daraja endi listener
+  thread'ida, blok navbatdan olingandan keyin hisoblanadi.
 """
 
 from __future__ import annotations
@@ -23,7 +31,6 @@ from typing import Callable
 import numpy as np
 
 from .resample import Resampler
-from .wav import rms_level
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +40,54 @@ try:  # PortAudio bo'lmasa ham modul import bo'lishi kerak
 except Exception as exc:  # noqa: BLE001
     _sd = None
     SOUNDDEVICE_ERROR = str(exc)
+
+# --- PortAudio xato matnini sababga ajratish ---------------------------------
+# PortAudio faqat matn qaytaradi, xato turini emas. Foydalanuvchiga "ochilmadi"
+# deyish foydasiz: u nima qilishini bilmaydi. Kalit so'zlar bo'yicha uchta
+# amaliy sababni farqlaymiz.
+_SABAB_RUXSAT = "ruxsat"
+_SABAB_BAND = "band"
+_SABAB_YOQ = "yo'q"
+_SABAB_NOMALUM = ""
+
+# macOS TCC / Windows Privacy: "Permission denied", "not authorized"
+_KALIT_RUXSAT = (
+    "permission", "denied", "unauthorized", "not authorized",
+    "access is denied", "privacy", "tcc",
+)
+# Qurilma bor, lekin boshqa dastur (Teams/Zoom) yoki exclusive mode egallagan.
+# paDeviceUnavailable = -9985.
+_KALIT_BAND = ("busy", "in use", "unavailable", "-9985", "already open", "exclusive")
+# Qurilma yo'q yoki uzilgan. paInvalidDevice = -9996.
+_KALIT_YOQ = (
+    "no such device", "invalid device", "device not found",
+    "no default input", "nodevice", "-9996",
+)
+
+_SABAB_MATNI = {
+    _SABAB_RUXSAT: "mikrofonga ruxsat berilmagan (tizim sozlamalari -> Maxfiylik -> Mikrofon)",
+    _SABAB_BAND: "mikrofon band - boshqa dastur (Teams/Zoom/brauzer) uni egallab turibdi",
+    _SABAB_YOQ: "mikrofon qurilmasi topilmadi yoki uzilgan",
+    _SABAB_NOMALUM: "mikrofon ochilmadi",
+}
+
+
+def xato_sababi(text: str) -> str:
+    """PortAudio xato matnidan sabab kodini ajratadi (bo'sh satr = noma'lum)."""
+    low = (text or "").lower()
+    for kalit, sabab in (
+        (_KALIT_RUXSAT, _SABAB_RUXSAT),
+        (_KALIT_BAND, _SABAB_BAND),
+        (_KALIT_YOQ, _SABAB_YOQ),
+    ):
+        if any(k in low for k in kalit):
+            return sabab
+    return _SABAB_NOMALUM
+
+
+def xato_izohi(text: str) -> str:
+    """Foydalanuvchiga ko'rsatiladigan sabab (asl matnsiz)."""
+    return _SABAB_MATNI[xato_sababi(text)]
 
 
 @dataclass(frozen=True)
@@ -54,7 +109,12 @@ def available() -> bool:
 
 
 def rescan_devices() -> None:
-    """PortAudio qurilma ro'yxati init paytidagi snapshot - hotplug uchun qayta skan."""
+    """PortAudio qurilma ro'yxati init paytidagi snapshot - hotplug uchun qayta skan.
+
+    DIQQAT: `_terminate()` GLOBAL - u shu jarayondagi barcha PortAudio oqimlarini
+    o'ldiradi, jumladan `player.py` dagi modul darajasidagi `_sd.play()` ijrosini.
+    Shuning uchun `reopen()` buni O'ZI chaqirmaydi (rescan=False default).
+    """
     if _sd is None:
         return
     try:
@@ -146,19 +206,28 @@ class AudioCapture:
         self.sample_rate = sample_rate
         self.blocksize = blocksize
         self.device_hint = device_hint
+        # Callback bu atributni CHAQIRMAYDI - uni listener o'z thread'ida ishlatadi.
         self.on_level = on_level
         self.on_error = on_error
+        self.queue_seconds = queue_seconds
+        # Mikrofonning HAQIQIY tezligi (16 kHz bo'lmasligi mumkin). Listener freym
+        # vaqtini shu bo'yicha hisoblaydi, shuning uchun ochiq atribut.
+        self.native_rate = sample_rate
 
-        max_blocks = max(8, int(queue_seconds * sample_rate / max(1, blocksize)))
-        self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=max_blocks)
+        # Navbat OBYEKTI hech qachon almashtirilmaydi: listener unga to'g'ridan
+        # to'g'ri ishora saqlashi mumkin. Sig'im esa nativ tezlik ma'lum bo'lgach
+        # `start()` da qayta hisoblanadi (`maxsize` - Queue ning ochiq atributi).
+        self._queue: queue.Queue[np.ndarray] = queue.Queue(
+            maxsize=self._navbat_sigimi(sample_rate),
+        )
         self._stream = None
         self._device: DeviceInfo | None = None
-        self._native_rate = sample_rate
         self._resampler: Resampler | None = None
         self._lock = threading.RLock()
         self._last_callback = 0.0
         self._running = False
         self._overflow_count = 0
+        self._dropped_blocks = 0
 
     # --- holat ---------------------------------------------------------------
 
@@ -169,6 +238,21 @@ class AudioCapture:
     @property
     def device(self) -> DeviceInfo | None:
         return self._device
+
+    @property
+    def overflow_count(self) -> int:
+        """PortAudio 'input overflow' bergan callback'lar soni (telemetriya)."""
+        return self._overflow_count
+
+    @property
+    def dropped_blocks(self) -> int:
+        """Navbat to'lgani uchun tashlab yuborilgan bloklar (telemetriya)."""
+        return self._dropped_blocks
+
+    @property
+    def queue_capacity(self) -> int:
+        """Navbatning hozirgi sig'imi (nativ bloklarda)."""
+        return self._queue.maxsize
 
     def seconds_since_audio(self) -> float:
         if not self._last_callback:
@@ -191,9 +275,10 @@ class AudioCapture:
 
             device = pick_device(self.device_hint)
             if device is None:
-                self._fail("Mikrofon topilmadi")
+                self._fail(f"{_SABAB_MATNI[_SABAB_YOQ]} (kirish qurilmalari ro'yxati bo'sh)")
                 return False
 
+            xatolar: list[str] = []
             for rate in self._candidate_rates(device):
                 try:
                     stream = _sd.InputStream(
@@ -207,12 +292,18 @@ class AudioCapture:
                     )
                     stream.start()
                 except Exception as exc:  # noqa: BLE001
-                    log.debug("Mikrofon %s @%d Hz ochilmadi: %s", device.name, rate, exc)
+                    matn = str(exc) or exc.__class__.__name__
+                    log.debug("Mikrofon %s @%d Hz ochilmadi: %s", device.name, rate, matn)
+                    xatolar.append(matn)
                     continue
 
                 self._stream = stream
                 self._device = device
-                self._native_rate = rate
+                self.native_rate = rate
+                # Sig'im NATIV bloklarda: har callback bitta blok beradi, ya'ni
+                # sekundiga native_rate/blocksize ta. 48 kHz da 16 kHz bo'yicha
+                # hisoblansa bufer 3 barobar qisqarardi (30 s o'rniga 10 s).
+                self._queue.maxsize = self._navbat_sigimi(rate)
                 # Holatli resampler: chiziqli interpolyatsiyadan farqli o'laroq
                 # blok chegaralarida uzilmaydi va anti-aliasing filtri bor.
                 # Busiz 48 kHz mikrofonda 10 kHz tovush 6 kHz ga buklanib
@@ -227,7 +318,7 @@ class AudioCapture:
                 )
                 return True
 
-            self._fail(f"Mikrofon ochilmadi: {device.name}")
+            self._fail(self._ochilmadi_xabari(device, xatolar))
             return False
 
     def stop(self) -> None:
@@ -244,8 +335,13 @@ class AudioCapture:
             else:
                 log.info("Mikrofon yopildi")
 
-    def reopen(self, rescan: bool = True) -> bool:
-        """Qurilma uzilgan yoki uyqudan keyin o'lgan oqimni tiklaydi."""
+    def reopen(self, rescan: bool = False) -> bool:
+        """Qurilma uzilgan yoki uyqudan keyin o'lgan oqimni tiklaydi.
+
+        `rescan=True` faqat qurilmalar RO'YXATI eskirgan bo'lsa (hotplug) kerak:
+        u `_sd._terminate()` chaqiradi va shu jarayondagi barcha PortAudio
+        oqimlarini - jumladan AudioPlayer ijrosini - uzib qo'yadi.
+        """
         log.info("Mikrofon qayta ochilmoqda (rescan=%s)", rescan)
         self.stop()
         if rescan:
@@ -269,7 +365,19 @@ class AudioCapture:
             return None
 
     def record(self, seconds: float, drain_first: bool = True) -> np.ndarray:
-        """Berilgan vaqt davomida yozib oladi va yagona int16 massiv qaytaradi."""
+        """int16 massiv qaytaradi (16 kHz, mono).
+
+        `seconds > 0` - shuncha vaqt yig'adi; `drain_first` bo'lsa avval navbat
+        tozalanadi.
+
+        `seconds <= 0` - "navbatda HOZIR bor hamma narsani ber": bloklamaydi va
+        `drain_first` E'TIBORGA OLINMAYDI. Ilgari bu holat `wanted = 0` bergani
+        uchun sikl umuman aylanmasdi va doim bo'sh massiv qaytardi - debug WAV
+        aynan shu sababli hech qachon yozilmagan.
+        """
+        if seconds <= 0:
+            return self._navbatni_yigish()
+
         if drain_first:
             self.drain()
         wanted = int(seconds * self.sample_rate)
@@ -289,6 +397,35 @@ class AudioCapture:
         return np.concatenate(chunks)[:wanted]
 
     # --- ichki ---------------------------------------------------------------
+
+    def _navbatni_yigish(self) -> np.ndarray:
+        """Navbatdagi barcha bloklarni bloklamasdan oladi."""
+        chunks: list[np.ndarray] = []
+        while True:
+            try:
+                chunks.append(self._queue.get_nowait())
+            except queue.Empty:
+                break
+        if not chunks:
+            return np.zeros(0, dtype=np.int16)
+        return np.concatenate(chunks)
+
+    def _navbat_sigimi(self, native_rate: int) -> int:
+        """Navbat sig'imi - NATIV kadrlar bo'yicha blok soni."""
+        rate = native_rate or self.sample_rate
+        return max(8, int(self.queue_seconds * rate / max(1, self.blocksize)))
+
+    def _ochilmadi_xabari(self, device: DeviceInfo, xatolar: list[str]) -> str:
+        """Barcha urinishlar xato bergan - eng aniq sababni tanlaydi."""
+        asl = ""
+        for matn in xatolar:
+            if xato_sababi(matn):
+                asl = matn
+                break
+        if not asl and xatolar:
+            asl = xatolar[-1]
+        izoh = xato_izohi(asl)
+        return f"{izoh}: {device.name}" + (f" ({asl})" if asl else "")
 
     def _candidate_rates(self, device: DeviceInfo) -> list[int]:
         rates = [self.sample_rate]
@@ -311,7 +448,11 @@ class AudioCapture:
             return None
 
     def _callback(self, indata, frames, time_info, status) -> None:  # noqa: ARG002
-        """PortAudio thread'i. Faqat nusxa olish - boshqa hech narsa."""
+        """PortAudio thread'i: nusxa + resample + navbat. Boshqa HECH NARSA.
+
+        Bu yerda RMS ham, UI callback ham yo'q: audio deadline'i o'tkazib
+        yuborilsa PortAudio blokni tashlaydi va ovoz chertillaydi.
+        """
         if status and status.input_overflow:
             self._overflow_count += 1
         self._last_callback = time.monotonic()
@@ -326,15 +467,13 @@ class AudioCapture:
         try:
             self._queue.put_nowait(chunk)
         except queue.Full:
+            # Eng eskisini tashlaymiz: iste'molchi to'xtab qolsa ham navbatda
+            # eng YANGI audio qolsin.
+            self._dropped_blocks += 1
             try:
                 self._queue.get_nowait()
                 self._queue.put_nowait(chunk)
-            except queue.Empty:
-                pass
-        if self.on_level is not None:
-            try:
-                self.on_level(rms_level(chunk))
-            except Exception:  # noqa: BLE001 - UI xatosi audio oqimini to'xtatmasin
+            except (queue.Empty, queue.Full):
                 pass
 
     def _fail(self, message: str) -> None:

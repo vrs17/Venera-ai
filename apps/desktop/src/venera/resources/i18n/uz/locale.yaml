@@ -1,0 +1,39 @@
+# Til paketining PASPORTI.
+#
+# Bu fayl ataylab kichik: ishga tushishda BARCHA tillarning aynan shu fayli
+# o'qiladi (`registry.discover()`), qolgan beshta fayl esa faqat foydalanuvchi
+# tanlagan til uchun yuklanadi. Shu yerga matn yoki qoida YOZILMAYDI.
+#
+# Yangi til qo'shish uchun kodga tegish SHART EMAS: `resources/i18n/<kod>/`
+# papkasini yarating va shu pasportni nusxalab to'ldiring.
+
+version: 1
+
+# Papka nomi bilan bir xil bo'lishi kerak.
+code: uz
+
+# Tilning O'Z tilidagi nomi. Foydalanuvchi interfeys noto'g'ri tilda bo'lsa
+# ham o'zinikini shu ro'yxatdan tanib oladi.
+name: "O'zbekcha"
+english_name: Uzbek
+
+# Kalit topilmasa qaysi tildan olinadi. `uz` - ETALON, shuning uchun uning
+# o'zida fallback bo'sh bo'ladi (o'zini o'ziga zaxira qilish cheksiz halqa).
+fallback: ""
+
+# "latin" | "cyrillic" | "han" - `i18n.script` shunga qarab transliteratsiya
+# qiladi (TTS uchun).
+script: latin
+direction: ltr
+
+# STT serveriga yuboriladigan kod. Bo'sh bo'lsa `code` ishlatiladi.
+stt: uz
+
+# `nlu.numbers.PARSERS` dagi nom.
+number_parser: decimal_words
+
+# Interfeys to'liq tarjima qilinganmi. `false` bo'lsa `--check` ogohlantiradi
+# va yetishmagan kalitlar zaxira tildan olinadi.
+complete: true
+
+note: "Manba til: yangi kalit AVVAL shu paketga yoziladi, keyin qolganlariga."

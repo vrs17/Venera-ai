@@ -1,0 +1,57 @@
+# Ovozli javob shablonlari (`i18n.phrase("kalit", ...)`).
+#
+# MUHIM: bu matnlar LLM tomonidan yozilmaydi - shuning uchun grammatika doim
+# to'g'ri. Step 4 da shu iboralar on-prem TTS bilan oldindan sintez qilinib
+# keshlanadi, shunda server o'chiq bo'lganda ham to'g'ri ovozda gapiradi.
+#
+# `{app}`, `{level}` kabi joy egallovchilar `str.format` bilan to'ldiriladi.
+# Boshqa tilga o'girganda ULAR O'ZGARMASLIGI kerak - nomlari kod bilan
+# bog'langan. Gapdagi TARTIBINI esa xohlagancha o'zgartirsa bo'ladi.
+#
+# `weekdays` va `months` - RO'YXAT, tartibi qat'iy:
+#   weekdays[0] = dushanba (Python `datetime.weekday()` bilan bir xil)
+#   months[0]   = yanvar
+
+greeting: "Tinglayapman"
+ready: "Tayyor"
+listening: "Eshitaman"
+
+open_app_ok: "{app} ochilmoqda"
+open_app_fail: "{app} topilmadi"
+open_url_ok: "Sayt ochilmoqda"
+web_search_ok: "{query} bo'yicha qidirilmoqda"
+
+volume_set_ok: "Ovoz {level} foizga o'rnatildi"
+volume_up_ok: "Ovoz {level} foizga ko'tarildi"
+volume_down_ok: "Ovoz {level} foizga tushirildi"
+mute_ok: "Ovoz o'chirildi"
+unmute_ok: "Ovoz yoqildi"
+volume_fail: "Ovoz balandligini o'zgartirib bo'lmadi"
+
+lock_ok: "Ekran qulflanmoqda"
+screenshot_ok: "Skrinshot saqlandi"
+screenshot_fail: "Skrinshot olinmadi"
+
+time_ok: "Hozir soat {time}"
+date_ok: "Bugun {date}"
+
+cancel_ok: "Bekor qilindi"
+repeat_none: "Takrorlash uchun hech narsa yo'q"
+help_ok: "Men dastur ocha olaman, ovozni boshqaraman, ekranni qulflayman, skrinshot olaman va vaqtni aytaman"
+
+unknown: "Tushunmadim, qayta ayting"
+action_failed: "Buyruqni bajarib bo'lmadi"
+timeout: "Javob kutish vaqti tugadi"
+no_speech: "Hech narsa eshitilmadi"
+offline: "Server bilan aloqa yo'q. VPN ulanganini tekshiring"
+mic_error: "Mikrofon ochilmadi. Sozlamalarni tekshiring"
+
+version_ok: "Versiya {version}"
+
+update_available: "Yangi versiya {version} mavjud"
+update_installing: "Yangilanmoqda"
+update_done: "Ilova {version} versiyasiga yangilandi"
+update_failed: "Yangilanmadi"
+
+weekdays: [Dushanba, Seshanba, Chorshanba, Payshanba, Juma, Shanba, Yakshanba]
+months: [yanvar, fevral, mart, aprel, may, iyun, iyul, avgust, sentabr, oktabr, noyabr, dekabr]

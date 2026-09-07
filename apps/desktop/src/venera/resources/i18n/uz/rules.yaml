@@ -1,0 +1,173 @@
+# Intent qoidalari - deklarativ slot-grammatika (`nlu.grammar`).
+#
+# TARTIB MUHIM: birinchi mos kelgan qoida yutadi. Umumiy qoidalar
+# ("... och") eng OXIRIDA turadi, aks holda ular aniqroq qoidalarni
+# ("... saytini och") yeb qo'yadi.
+#
+# NAQSH YOZISH QOIDASI: HAR DOIM `|-` blok skalyari ishlating.
+# YAML ning qo'shtirnoqli satrida `\s` NOTO'G'RI ESCAPE hisoblanadi va
+# PyYAML ScannerError tashlaydi; blok skalyarida escape umuman qayta
+# ishlanmaydi, ya'ni regexni qanday yozsangiz shunday yetib boradi.
+#
+# Matn qoidaga kelguncha `words.yaml` bo'yicha tozalanadi: kichik harf,
+# yagona apostrof ('), to'ldiruvchi so'zlarsiz. Shuning uchun naqshlarda
+# katta harf ham, IGNORECASE ham kerak emas.
+#
+# SLOT nomi `(?P<nom>...)` guruh nomi bilan bir xil va `Intent` maydoni
+# bo'lishi kerak: app, url, query, level.
+
+version: 1
+
+# Matn boshidagi uyg'otish so'zi ("venera, chrome och") kesilsinmi.
+strip_wake: true
+
+rules:
+  # --- boshqaruv ----------------------------------------------------------
+  - name: cancel
+    intent: cancel
+    patterns:
+      - |-
+        ^(to'xta|to'xtat|bekor|bas|stop|jim bo'l)\b
+
+  - name: repeat
+    intent: repeat
+    patterns:
+      - |-
+        \b(yana ayt|qaytar|takrorla|nima deding)\b
+
+  - name: help
+    intent: help
+    patterns:
+      - |-
+        \b(nima qila olasan|yordam|imkoniyat|buyruqlar)\b
+
+  - name: version
+    intent: version
+    patterns:
+      - |-
+        \b(versiya|qaysi versiya|versiyang)\b
+
+  # --- vaqt ---------------------------------------------------------------
+  - name: time
+    intent: time
+    patterns:
+      - |-
+        \b(soat necha|necha soat bo'ldi|hozir soat|vaqt qancha)\b
+
+  - name: date
+    intent: date
+    patterns:
+      - |-
+        \b(bugun (qaysi kun|nechanchi|qanaqa kun)|bugungi sana|sana necha)\b
+
+  # --- tizim --------------------------------------------------------------
+  - name: lock
+    intent: lock_screen
+    patterns:
+      - |-
+        \b(ekran(ni)?|kompyuter(ni)?|noutbuk(ni)?)\s+(qulfla|blokla|qulfa|lock)\b
+
+  - name: lock2
+    intent: lock_screen
+    patterns:
+      - |-
+        ^(qulfla|blokla)\b
+
+  - name: screenshot
+    intent: screenshot
+    patterns:
+      - |-
+        \b(skrinshot|screenshot|ekran(ni)?\s+(rasm|surat|suratga|rasmga))\b
+
+  # --- ovoz ---------------------------------------------------------------
+  # Aniq daraja baland/past qoidalaridan OLDIN turishi SHART, aks holda
+  # "ovozni qirq besh foiz" volume_up ga tushib ketardi.
+  #
+  # `required: true` - son ajratilmasa qoida MOS KELMAGAN hisoblanadi va
+  # keyingisiga o'tiladi ("ovozni salom foiz" -> volume_set emas).
+  - name: volume_set
+    intent: volume_set
+    slots:
+      level: {transform: number, clamp: [0, 100], required: true}
+    patterns:
+      - |-
+        \b(ovoz|tovush)(ni)?\s+(?P<level>{num})\s*(foiz|protsent|ga|gacha)?\s*(qo'y|qil|o'rnat)?\s*$
+
+  - name: mute
+    intent: mute
+    patterns:
+      - |-
+        \b(ovoz|tovush)(ni)?\s+(o'chir|jim)|^jim qil\b
+
+  - name: unmute
+    intent: unmute
+    patterns:
+      - |-
+        \b(ovoz|tovush)(ni)?\s+(yoq|qaytar|tikla)\b
+
+  - name: volume_up
+    intent: volume_up
+    patterns:
+      - |-
+        \b(ovoz|tovush)(ni)?\s+.*?(baland|ko'tar|oshir|kattalash|kuchaytir)
+
+  - name: volume_down
+    intent: volume_down
+    patterns:
+      - |-
+        \b(ovoz|tovush)(ni)?\s+.*?(pasay|past|kamaytir|tushir|sekinlash|kichiklash)
+
+  # --- qidiruv ------------------------------------------------------------
+  # "och" qoidalaridan OLDIN: "googlda venera bank qidir" dastur ochish emas.
+  - name: search
+    intent: web_search
+    slots:
+      query: {transform: text}
+    patterns:
+      - |-
+        ^(?:(?:googl(?:e)?|gugl|internet|yandex|brauzer)(?:dan|da)?\s+)?(?P<query>.+?)\s+(?:ni\s+)?(?:qidir|izla|top)(?:ib ber)?\s*$
+
+  # --- manzillar ----------------------------------------------------------
+  - name: url_explicit
+    intent: open_url
+    slots:
+      url: {transform: text}
+    patterns:
+      - |-
+        (?P<url>(?:https?://|www\.)\S+)
+
+  - name: url_domain
+    intent: open_url
+    slots:
+      url: {transform: text}
+    patterns:
+      - |-
+        (?P<url>\b[\w-]+\.(?:uz|com|org|net|ru|io|dev)\b)\s*(?:ni\s+)?(?:sayt(?:ini)?\s+)?(?:och|ochib ber)
+
+  - name: url_site
+    intent: open_url
+    slots:
+      url: {transform: text}
+    patterns:
+      - |-
+        (?P<url>.+?)\s+sayt(?:i|ini|ga)?\s+(?:och|ochib ber|kir)
+
+  # --- dastur ochish ------------------------------------------------------
+  # ENG UMUMIY qoida - shuning uchun ENG OXIRIDA.
+  # `strip_affixes` "google chrome ni" -> "google chrome",
+  # "chromeni" -> "chrome" qiladi: katalogda alias "chrome" ko'rinishida.
+  - name: open_app
+    intent: open_app
+    slots:
+      app: {transform: strip_affixes}
+    patterns:
+      - |-
+        ^(?P<app>.+?)\s+(?:och|ochib ber|ochgin|ishga tushir|yur)\s*$
+
+  - name: open_app_rev
+    intent: open_app
+    slots:
+      app: {transform: strip_affixes}
+    patterns:
+      - |-
+        ^(?:och|ishga tushir)\s+(?P<app>.+?)\s*$

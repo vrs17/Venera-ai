@@ -1,0 +1,20 @@
+# Dastur nomlarining SHU TILGA XOS aliaslari.
+#
+# NEGA ALOHIDA FAYL: `resources/apps.default.yaml` ga TEGIB BO'LMAYDI.
+# Sabab `config.upgrade_apps_file()` yozuvlarni `name` bo'yicha solishtiradi
+# va MAVJUD yozuvga yangi kalit qo'sha olmaydi - foydalanuvchi mashinasida
+# yangi aliaslar hech qachon ko'rinmasdi. Til aliaslari shuning uchun til
+# paketining ichida yashaydi va katalogga yuklashda qo'shiladi.
+#
+# uz uchun bu fayl ATAYLAB BO'SH: o'zbekcha aliaslar ("xrom", "krom",
+# "eksel") allaqachon `apps.default.yaml` ichida turibdi va u yerdan
+# ko'chirilsa ikki nusxa paydo bo'lardi.
+#
+# ru/en paketlari uchun namuna:
+#   aliases:
+#     Google Chrome: [хром, браузер]
+#     Microsoft Excel: [эксель, таблица]
+
+version: 1
+
+aliases: {}

@@ -1,0 +1,140 @@
+# Interfeys matnlari (`i18n.t("kalit")`).
+#
+# Kalitlar ichma-ich yozilgan, lekin `i18n` ularni NUQTA bilan tekislaydi:
+#   window: {button: {submit: ...}}  ->  i18n.t("window.button.submit")
+# Xohlasangiz tekis ham yozishingiz mumkin - ikkalasi ham ishlaydi.
+#
+# `{hotkey}`, `{version}` kabi joy egallovchilar `str.format` bilan
+# to'ldiriladi. Boshqa tilga o'girganda ULARNING NOMI o'zgarmaydi.
+#
+# TARJIMA QILUVCHIGA: yetishmagan kalit ilovani yiqitmaydi - u zaxira tildan
+# (`uz`) olinadi va logga bir marta ogohlantirish yoziladi. Shuning uchun
+# paketni bosqichma-bosqich to'ldirsa bo'ladi; `locale.yaml` dagi
+# `complete: false` shuni bildiradi.
+
+# --- holatlar (core/states.py) ---------------------------------------------
+state:
+  idle: "Tayyor"
+  activated: "Uyg'ondi"
+  capturing: "Tinglayapman"
+  transcribing: "Matnga o'girilmoqda"
+  thinking: "O'ylayapman"
+  acting: "Bajarilmoqda"
+  speaking: "Javob berilmoqda"
+  paused: "To'xtatilgan"
+
+# --- holat oynasi (ui/window.py) -------------------------------------------
+window:
+  title: "Venera"
+  version: "v{version}"
+  mic: "Mikrofon"
+  command: "Buyruq (Step 1 da matn bilan)"
+  hint_hotkey: "Uyg'otish: {hotkey}. "
+  hint: "Buyruqni yozing va Enter bosing. Masalan: \"chromeni och\", \"ovozni 40 foiz\", \"soat necha\"."
+  button:
+    submit: "Bajarish"
+    cancel: "To'xtat"
+    hide: "Yashirish"
+    update: "Yangilash"
+    downloading: "Yuklanmoqda..."
+  update:
+    progress: "Yuklanmoqda... {done} / {total} MB"
+  error:
+    no_tkinter: "tkinter mavjud emas: {error}"
+    no_display: "oyna ochilmadi: {error}"
+  log:
+    submit_failed: "Buyruq yuborilmadi"
+    update_failed: "Yangilanish boshlanmadi"
+    loop_failed: "Oyna sikli xatosi"
+    command_failed: "Oyna buyrug'i bajarilmadi"
+    closed: "Holat oynasi yopildi"
+
+# --- tray ikonkasi (ui/tray.py) --------------------------------------------
+tray:
+  state: "Holat: {state}"
+  toggle_window: "Oynani ko'rsatish / yashirish"
+  activate: "Uyg'otish"
+  activate_hotkey: "Uyg'otish ({hotkey})"
+  cancel: "To'xtatish"
+  autostart: "Windows bilan ishga tushsin"
+  autostart_on: "Avtostart yoqildi - kompyuter yonganda o'zi ishga tushadi"
+  autostart_off: "Avtostart o'chirildi"
+  autostart_failed: "Avtostart yoqilmadi: {detail}"
+  update_available: "Yangi versiya {version} - yangilash"
+  check_update: "Yangilanishni tekshirish"
+  open_config: "Sozlamalar faylini ochish"
+  open_apps: "Dasturlar ro'yxatini ochish"
+  open_logs: "Loglar papkasini ochish"
+  reload: "Sozlamalarni qayta yuklash"
+  version: "Versiya {version}"
+  quit: "Chiqish"
+  error:
+    unavailable: "Tray ikonkasi mavjud emas: {error}"
+    create_failed: "Tray ikonkasi yaratilmadi: {error}"
+    loop_stopped: "Tray sikli to'xtadi: {error}"
+    menu_failed: "Menyu yangilanmadi: {error}"
+    open_failed: "Ochilmadi {path}: {error}"
+  log:
+    started: "Tray ikonkasi ishga tushdi"
+    icon_failed: "Tray ikonkasi yangilanmadi: {error}"
+    autostart_failed: "Avtostart o'zgartirilmadi"
+
+# --- ilova hodisalari (app.py) ---------------------------------------------
+app:
+  started: "{app} v{version} ishga tushdi"
+  stopping: "To'xtatilmoqda..."
+  quit_requested: "Chiqish so'raldi"
+  config_reloaded: "Sozlamalar qayta yuklandi"
+  mic: "Mikrofon: {device}"
+  mic_failed: "Mikrofon ochilmadi - buyruqni matn bilan yozing"
+  hotkey: "Uyg'otish klavishasi: {hotkey}"
+  hotkey_failed: "Uyg'otish klavishasi ro'yxatdan o'tmadi: {error}"
+  autostart_on: "Avtostart yoqilgan"
+  autostart_off: "Avtostart o'chirilgan (tray menyusidan yoqing)"
+  no_tray: "Tray ikonkasisiz ishlamoqda - to'xtatish uchun Ctrl+C"
+
+# --- yangilanish (update/) -------------------------------------------------
+update:
+  available: "Yangi versiya {version} mavjud"
+  installing: "Yangilanmoqda"
+  done: "Ilova {version} versiyasiga yangilandi"
+  failed: "{version} o'rnatilmadi - ilova hali {current}."
+  failed_short: "{version} o'rnatilmadi. Loglarni qarang."
+  checking: "Yangilanish tekshirilmoqda"
+  up_to_date: "So'nggi versiya o'rnatilgan"
+  not_configured: "Yangilanish manzili ko'rsatilmagan"
+
+# --- til tanlash -----------------------------------------------------------
+# Foydalanuvchi tilni O'ZI tanlaydi (`config.language`), avtomatik
+# ANIQLANMAYDI. Tanlangan til butun tizimga tegishli: STT, javob iboralari,
+# intent qoidalari va interfeys.
+language:
+  title: "Til"
+  label: "Ilova tili"
+  hint: "Tanlangan til STT, javoblar va interfeysga BIRDANIGA qo'llanadi"
+  changed: "Til {name} ga o'zgartirildi"
+  restart_hint: "Ba'zi matnlar ilova qayta ishga tushgandan keyin yangilanadi"
+  incomplete: "{name} tili uchun interfeys tarjimasi to'liq emas - yetishmagan matnlar {fallback} tilida ko'rinadi"
+  pack_missing: "{name} tili uchun interfeys paketi yo'q - ovoz tanish shu tilda ishlaydi, interfeys esa {fallback} tilida qoladi"
+  name:
+    uz: "O'zbekcha"
+    en: "English"
+    ru: "Русский"
+    zh: "中文"
+
+# --- umumiy ----------------------------------------------------------------
+common:
+  # DIQQAT: `yes`, `no`, `on`, `off` YAML 1.1 da BOOLEAN. Kalit sifatida
+  # ishlatilsa PyYAML ularni True/False ga aylantiradi - shuning uchun
+  # qo'shtirnoqda.
+  "yes": "Ha"
+  "no": "Yo'q"
+  ok: "Yaxshi"
+  cancel: "Bekor qilish"
+  close: "Yopish"
+  error: "Xato"
+  warning: "Ogohlantirish"
+  unknown: "Noma'lum"
+  "none": "Yo'q"
+  loading: "Yuklanmoqda..."
+  seconds: "soniya"

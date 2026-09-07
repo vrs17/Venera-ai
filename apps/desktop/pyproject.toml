@@ -26,7 +26,15 @@ venera = "venera.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-venera = ["resources/*.yaml", "resources/VERSION", "resources/icons/*"]
+# `resources/i18n/*/*.yaml` - til paketlari. Yangi til qo'shilganda bu
+# qatorga tegish SHART EMAS: joker belgi barcha papkalarni qamrab oladi.
+# (PyInstaller spec'lari `resources` papkasini butunlay ko'chiradi.)
+venera = [
+    "resources/*.yaml",
+    "resources/VERSION",
+    "resources/icons/*",
+    "resources/i18n/*/*.yaml",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
