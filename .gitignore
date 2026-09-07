@@ -49,5 +49,9 @@ __pycache__/
 .pytest_cache/
 
 # Swagger UI artefaktlari - Dockerfile yuklab oladi, git da saqlanmaydi.
-apps/api/app/static/*.js
-apps/api/app/static/*.css
+# Swagger UI ning YUKLAB OLINADIGAN fayllari (docs/deploy-api.md, 3-qadam).
+apps/api/app/static/swagger-ui*.js
+apps/api/app/static/swagger-ui*.css
+# DIQQAT: `swagger-init.js` BUNGA KIRMAYDI - u bizning manba kodimiz.
+# Umumiy `*.js` qoidasi uni ham yutib yuborardi va toza klonda `/api/docs`
+# 503 qaytarardi.
