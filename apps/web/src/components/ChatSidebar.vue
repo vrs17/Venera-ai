@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
 import type { AuthUser } from '../types'
 import type { Theme } from '../theme'
 import { LOCALES, setLocale } from '../i18n'
 import type { Locale } from '../i18n'
-import { ChevronDownIcon, CodeIcon, FileTextIcon, GlobeIcon, MoonIcon, PanelLeftIcon, PlusIcon, SunIcon } from '../icons'
+import { ChevronDownIcon, CodeIcon, GlobeIcon, MoonIcon, PanelLeftIcon, PlusIcon, SunIcon } from '../icons'
 import IdentityBar from './IdentityBar.vue'
 
 const props = defineProps<{ user: AuthUser | null; theme: Theme; open: boolean; collapsed: boolean; devMode: boolean }>()
@@ -20,17 +19,7 @@ const emit = defineEmits<{
 }>()
 
 const { t, locale } = useI18n({ useScope: 'global' })
-const router = useRouter()
 const currentLang = computed(() => LOCALES.find((l) => l.code === (locale.value as Locale)) ?? LOCALES[0])
-// Documents are EMPLOYEE-only (backend enforces it; this just hides the entry).
-const isEmployee = computed(
-  () => Boolean(props.user?.roles?.includes('EMPLOYEE')) || props.user?.actorType === 'EMPLOYEE',
-)
-function goDocuments() {
-  router.push('/documents')
-  emit('close')
-}
-
 // Collapse only applies on desktop; the mobile sidebar is the full off-canvas panel.
 const mq = window.matchMedia('(max-width: 768px)')
 const isMobile = ref(mq.matches)
@@ -91,11 +80,6 @@ function expandToLang() {
     <button class="sidebar__new" :title="t('newChat')" @click="onNewChat">
       <PlusIcon :size="15" />
       <span v-if="!compact">{{ t('newChat') }}</span>
-    </button>
-
-    <button v-if="isEmployee" class="sidebar__row sidebar__nav" :title="t('documents')" @click="goDocuments">
-      <FileTextIcon :size="16" />
-      <span v-if="!compact" class="sidebar__row-label">{{ t('documents') }}</span>
     </button>
 
     <div class="sidebar__spacer" />

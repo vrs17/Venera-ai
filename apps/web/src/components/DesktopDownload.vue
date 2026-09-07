@@ -1,20 +1,28 @@
 <script setup lang="ts">
-// Splash sahifasidagi desktop yuklab olish bloki: Windows (tayyor) + macOS (yaqinda).
+// Splash sahifasidagi desktop yuklab olish bloki: Windows va macOS.
 //
 // Versiya, hajm va fayl nomi /download/version.json dan olinadi — desktop
-// ilovaning auto-update manifestidan. Shu sababli yangi .exe serverga qo'yilganda
-// sayt o'zi yangi versiyani ko'rsatadi, frontend'ni qayta yig'ish shart emas.
+// ilovaning auto-update manifestidan. Shu sababli yangi .exe/.dmg serverga
+// qo'yilganda sayt o'zi yangi versiyani ko'rsatadi, frontend'ni qayta yig'ish
+// shart emas.
 //
-// Manifest o'qilmasa (server hali sozlanmagan, tarmoq yo'q) — Windows kartasi
+// Kartalar ATAYLAB ma'lumotdan quriladi, qo'lda takrorlanmaydi: platforma
+// qo'shilganda (masalan Linux) faqat PLATFORMS ro'yxatiga bir qator qo'shiladi.
+//
+// Manifest o'qilmasa yoki platforma uchun fayl bo'lmasa — o'sha karta
 // o'chirilgan holatda qoladi va sabab yoziladi. Splash baribir ochilaveradi.
 
 import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
+  assetFor,
+  detectPlatform,
   fetchDesktopRelease,
   formatSize,
   setupUrl,
   type DesktopRelease,
+  type DesktopSetup,
+  type PlatformKey,
 } from '../api/download.api'
 import { AppleIcon, DownloadIcon, WindowsIcon } from '../icons'
 
@@ -31,12 +39,53 @@ onMounted(async () => {
 // Foydalanuvchi manifest kelgunicha sahifadan ketsa, so'rovni bekor qilamiz.
 onUnmounted(() => controller.abort())
 
-const href = computed(() => (release.value ? setupUrl(release.value) : undefined))
-const meta = computed(() => {
-  if (!release.value) return ''
-  const size = formatSize(release.value.setup.size, locale.value)
-  const version = t('downloadVersion', { version: release.value.version })
-  return size ? `${version} · ${size}` : version
+const PLATFORMS: { key: PlatformKey; name: string; icon: unknown; reqKey: string }[] = [
+  { key: 'windows', name: 'Windows', icon: WindowsIcon, reqKey: 'downloadWindowsReq' },
+  { key: 'macos', name: 'macOS', icon: AppleIcon, reqKey: 'downloadMacReq' },
+]
+
+// Foydalanuvchining OS'i birinchi turadi. Aniqlanmasa tartib o'zgarmaydi —
+// ikkala karta baribir ko'rinadi, ya'ni noto'g'ri taxmin hech narsani to'smaydi.
+const detected = detectPlatform()
+
+interface Card {
+  key: PlatformKey
+  name: string
+  icon: unknown
+  req: string
+  asset: DesktopSetup | null
+  href: string | undefined
+  meta: string
+}
+
+const cards = computed<Card[]>(() => {
+  const built = PLATFORMS.map((platform): Card => {
+    const asset = release.value ? assetFor(release.value, platform.key) : null
+    let req = t(platform.reqKey)
+    // min_os manifestdan keladi — "macOS 11.0+" tarjima talab qilmaydi
+    // (faqat atoqli ot va raqam), shuning uchun alohida kalit ochilmadi.
+    if (asset?.min_os) req = `macOS ${asset.min_os}+ · ${req}`
+
+    let meta = ''
+    if (asset && release.value) {
+      const size = formatSize(asset.size, locale.value)
+      const version = t('downloadVersion', { version: release.value.version })
+      meta = size ? `${version} · ${size}` : version
+    }
+
+    return {
+      key: platform.key,
+      name: platform.name,
+      icon: platform.icon,
+      req,
+      asset,
+      href: asset ? setupUrl(asset) : undefined,
+      meta,
+    }
+  })
+
+  if (!detected) return built
+  return [...built].sort((a, b) => Number(b.key === detected) - Number(a.key === detected))
 })
 </script>
 
@@ -46,48 +95,49 @@ const meta = computed(() => {
     <p class="dl__sub">{{ t('downloadSub') }}</p>
 
     <div class="dl__cards">
-      <!-- Windows: manifest kelganda haqiqiy <a download>, aks holda o'chirilgan.
-           Havolani <a> sifatida qoldiramiz - o'ng tugma "Save link as" ishlaydi,
-           yuklanish JS'ga bog'liq bo'lmaydi. -->
-      <a
-        v-if="href"
-        class="dl__card dl__card--ready"
-        :href="href"
-        download
-        :aria-label="`${t('downloadCta')} — Windows, ${meta}`"
-      >
-        <span class="dl__os"><WindowsIcon :size="20" /></span>
-        <span class="dl__body">
-          <span class="dl__name">Windows</span>
-          <span class="dl__req">{{ t('downloadWindowsReq') }}</span>
-        </span>
-        <span class="dl__action">
-          <DownloadIcon :size="16" />
-          <span class="dl__meta">{{ meta }}</span>
-        </span>
-      </a>
+      <!-- Fayli bor platforma: haqiqiy <a download>. Havolani ATAYLAB <a>
+           sifatida qoldiramiz - o'ng tugma "Save link as" ishlaydi va yuklanish
+           JS'ga bog'liq bo'lmaydi.
+           Fayli yo'q platforma: <button> emas, <div aria-disabled> - bosiladigan
+           narsaga o'xshamasligi kerak. -->
+      <template v-for="card in cards" :key="card.key">
+        <a
+          v-if="card.href"
+          class="dl__card dl__card--ready"
+          :href="card.href"
+          download
+          :aria-label="`${t('downloadCta')} — ${card.name}, ${card.meta}`"
+        >
+          <span class="dl__os"><component :is="card.icon" :size="card.key === 'macos' ? 19 : 20" /></span>
+          <span class="dl__body">
+            <span class="dl__name">{{ card.name }}</span>
+            <span class="dl__req">{{ card.req }}</span>
+          </span>
+          <span class="dl__action">
+            <DownloadIcon :size="16" />
+            <span class="dl__meta">{{ card.meta }}</span>
+          </span>
+        </a>
 
-      <div v-else class="dl__card dl__card--off" aria-disabled="true">
-        <span class="dl__os"><WindowsIcon :size="20" /></span>
-        <span class="dl__body">
-          <span class="dl__name">Windows</span>
-          <span class="dl__req">{{ t('downloadWindowsReq') }}</span>
-        </span>
-        <span class="dl__action dl__action--muted">
-          {{ loading ? t('downloadChecking') : t('downloadUnavailable') }}
-        </span>
-      </div>
-
-      <!-- macOS: hali yig'ilmagan. Ataylab <button> emas, <div aria-disabled> -
-           bosiladigan narsaga o'xshamasligi kerak. -->
-      <div class="dl__card dl__card--off" aria-disabled="true">
-        <span class="dl__os"><AppleIcon :size="19" /></span>
-        <span class="dl__body">
-          <span class="dl__name">macOS</span>
-          <span class="dl__req">{{ t('downloadMacReq') }}</span>
-        </span>
-        <span class="dl__action dl__action--muted">{{ t('comingSoon') }}</span>
-      </div>
+        <div v-else class="dl__card dl__card--off" aria-disabled="true">
+          <span class="dl__os"><component :is="card.icon" :size="card.key === 'macos' ? 19 : 20" /></span>
+          <span class="dl__body">
+            <span class="dl__name">{{ card.name }}</span>
+            <span class="dl__req">{{ card.req }}</span>
+          </span>
+          <span class="dl__action dl__action--muted">
+            <!-- Uch xil sabab, uch xil matn: hali tekshirilmoqda / manifest
+                 o'qilmadi / manifest keldi-yu bu platforma unda yo'q. -->
+            {{
+              loading
+                ? t('downloadChecking')
+                : release
+                  ? t('comingSoon')
+                  : t('downloadUnavailable')
+            }}
+          </span>
+        </div>
+      </template>
     </div>
   </section>
 </template>

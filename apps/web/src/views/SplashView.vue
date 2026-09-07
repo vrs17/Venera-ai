@@ -145,25 +145,28 @@ onUnmounted(() => clearTimeout(navTimer))
   overflow: hidden;
   pointer-events: none;
 }
-/* Venus, low on the right. The asset is already a transparent circle, so the
-   work here is scale, a warm limb glow that ties it to the accent, and a slow
-   float that keeps it suspended in the starfield rather than pasted onto it. */
+/* Venus, parked on the right at mid-height and drifting slowly up toward the
+   centre. `top: 50%` + the -50% in every keyframe keeps it vertically centred at
+   any size, so the base transform and the animated one never fight. The drift is
+   bounded (alternate, no fill) so the disc always stays fully on screen. */
 .splash__planet {
   position: absolute;
-  right: clamp(8px, 4vw, 88px);
-  bottom: clamp(8px, 5vh, 72px);
+  right: clamp(12px, 5vw, 96px);
+  top: 50%;
   display: inline-flex;
-  animation: planetFloat 9s ease-in-out infinite;
+  transform: translate(0, -50%);
+  will-change: transform;
+  animation: planetDrift 30s ease-in-out infinite alternate;
 }
 .splash__planet-img {
   position: relative;
   z-index: 1;
   display: block;
-  width: clamp(260px, 32vw, 480px);
+  width: clamp(190px, 21vw, 300px);
   height: auto;
   aspect-ratio: 1;
   border-radius: 50%;
-  filter: drop-shadow(0 0 34px rgba(226, 148, 62, 0.32));
+  filter: drop-shadow(0 0 28px rgba(226, 148, 62, 0.32));
 }
 /* Sits behind the disc and bleeds past it, so the planet lights the space
    around itself instead of ending on a hard edge. */
@@ -183,13 +186,15 @@ onUnmounted(() => clearTimeout(navTimer))
     transparent 68%
   );
 }
-@keyframes planetFloat {
-  0%,
-  100% {
-    transform: translateY(0);
+/* Right-of-centre -> up and in toward the centre, then back. Deliberately small
+   offsets: enough to read as motion over half a minute, never enough to push the
+   disc off an edge or park it behind the headline. */
+@keyframes planetDrift {
+  0% {
+    transform: translate(0, -50%);
   }
-  50% {
-    transform: translateY(-9px);
+  100% {
+    transform: translate(-7vw, calc(-50% - 13vh));
   }
 }
 .splash__brand {
@@ -326,15 +331,23 @@ onUnmounted(() => clearTimeout(navTimer))
     font-size: 16px;
   }
   /* Narrow screens: the copy and the download cards run the full width, so the
-     disc would sit right behind them. Pull it down into the corner and ease it
-     back so it reads as depth, not clutter. */
+     disc sits directly behind them. Keep it whole and in place, but ease it back
+     and shorten the drift so it reads as depth rather than competing with text. */
   .splash__planet {
-    right: -12%;
-    bottom: -4%;
-    opacity: 0.55;
+    right: clamp(4px, 2vw, 16px);
+    opacity: 0.5;
+    animation-name: planetDriftNarrow;
   }
   .splash__planet-img {
-    width: clamp(200px, 56vw, 300px);
+    width: clamp(150px, 34vw, 200px);
+  }
+}
+@keyframes planetDriftNarrow {
+  0% {
+    transform: translate(0, -50%);
+  }
+  100% {
+    transform: translate(-3vw, calc(-50% - 7vh));
   }
 }
 @media (prefers-reduced-motion: reduce) {

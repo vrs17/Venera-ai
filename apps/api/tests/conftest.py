@@ -1,0 +1,85 @@
+"""Testlar uchun umumiy fikstura.
+
+Har test O'Z foydalanuvchilar fayli bilan ishlaydi - shu tufayli testlar
+bir-biriga ta'sir qilmaydi va `config/users.yaml` (haqiqiy fayl) o'qilmaydi.
+"""
+
+from __future__ import annotations
+
+import pytest
+import yaml
+from fastapi.testclient import TestClient
+
+from app.api.deps import get_user_store
+from app.core.config import settings
+from app.core.security import hash_password
+from app.main import app
+from app.services.users import UserStore
+
+ADMIN = {"email": "admin@venera.uz", "password": "venera2026"}
+USER = {"email": "demo@venera.uz", "password": "demo2026"}
+
+
+@pytest.fixture
+def users_file(tmp_path):
+    """Ikkita foydalanuvchili vaqtinchalik YAML."""
+    path = tmp_path / "users.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "users": [
+                    {
+                        "actor_id": 1,
+                        "email": ADMIN["email"],
+                        "full_name": "Administrator",
+                        "position": "Tizim administratori",
+                        "department": "IT",
+                        "roles": ["ADMIN", "RAG_ADMIN"],
+                        "password_hash": hash_password(ADMIN["password"]),
+                    },
+                    {
+                        "actor_id": 2,
+                        "email": USER["email"],
+                        "full_name": "Demo Foydalanuvchi",
+                        "roles": ["USER"],
+                        "password_hash": hash_password(USER["password"]),
+                    },
+                ]
+            },
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture
+def client(users_file):
+    """Sinov klienti - vaqtinchalik foydalanuvchilar fayli bilan."""
+    store = UserStore.from_file(users_file)
+    app.dependency_overrides[get_user_store] = lambda: store
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def token(client) -> str:
+    """Kirgan admin uchun token."""
+    response = client.post("/api/v1/auth/login", json=ADMIN)
+    assert response.status_code == 200, response.text
+    return response.json()["token"]
+
+
+@pytest.fixture
+def auth(token) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(autouse=True)
+def _default_secret():
+    """Testlar default kalit bilan ishlaydi - natija takrorlanadigan bo'lsin."""
+    original = settings.secret_key
+    settings.secret_key = "test-secret"
+    yield
+    settings.secret_key = original

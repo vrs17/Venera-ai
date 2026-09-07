@@ -34,12 +34,6 @@ const routes = [
     component: () => import('../views/ChangePasswordView.vue'),
     meta: { requiresAuth: true, allowPasswordChangeRequired: true },
   },
-  {
-    path: '/documents',
-    name: 'documents',
-    component: () => import('../views/DocumentsView.vue'),
-    meta: { requiresAuth: true, requiresEmployee: true },
-  },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 
@@ -51,7 +45,7 @@ export const router = createRouter({
 // Gate the app. The guard awaits bootstrap() so the first navigation resolves
 // only after /auth/me has restored (or rejected) the stored session.
 router.beforeEach(async (to) => {
-  const { isAuthenticated, passwordChangeRequired, isEmployee, bootstrap } = useAuth()
+  const { isAuthenticated, passwordChangeRequired, bootstrap } = useAuth()
   await bootstrap()
 
   // Unauthenticated: protected pages send you to the splash/landing first.
@@ -62,9 +56,6 @@ router.beforeEach(async (to) => {
   if (isAuthenticated.value && passwordChangeRequired.value && !to.meta.allowPasswordChangeRequired) {
     return { name: 'change-password' }
   }
-
-  // EMPLOYEE-only areas (Documents) — non-employees fall back to chat.
-  if (to.meta.requiresEmployee && isAuthenticated.value && !isEmployee.value) return { name: 'chat' }
 
   // Settled users shouldn't sit on guest pages or the (now-irrelevant) change page.
   if (isAuthenticated.value && !passwordChangeRequired.value) {

@@ -1,0 +1,38 @@
+# Venera - demo foydalanuvchilar
+#
+# Bu NAMUNA fayl. Ishlatish uchun nusxa oling:
+#     cp config/users.example.yaml config/users.yaml
+#
+# `config/users.yaml` git'ga TUSHMAYDI (.gitignore) - unda haqiqiy
+# xodimlarning xeshlari bo'ladi.
+#
+# Parol xeshini yasash:
+#     cd apps/api && python -m app.tools.hash_password
+#
+# Parol HECH QACHON ochiq yozilmaydi - faqat `password_hash`.
+# Xesh formati: pbkdf2$<iteratsiya>$<salt>$<xesh>
+#
+# KEYINCHALIK: bu fayl ma'lumotlar bazasi yoki Active Directory bilan
+# almashtiriladi. `app/services/users.py` dagi `UserStore` interfeysi
+# o'zgarmaydi, shuning uchun router'larga tegilmaydi.
+
+users:
+  # Parol: venera2026
+  - actor_id: 1
+    email: admin@venera.uz
+    full_name: Administrator
+    actor_type: EMPLOYEE
+    position: Tizim administratori
+    department: IT
+    roles: [ADMIN, RAG_ADMIN]
+    password_hash: "pbkdf2$600000$f49051cbcfc6e70b13d56bca793b5cdb$657a49b2c3350a405606b7e4b060ba11db5bce84553b262b3d701998cbe6aa6e"
+
+  # Parol: demo2026
+  - actor_id: 2
+    email: demo@venera.uz
+    full_name: Demo Foydalanuvchi
+    actor_type: EMPLOYEE
+    position: Mutaxassis
+    department: Operatsiyalar
+    roles: [USER]
+    password_hash: "pbkdf2$600000$09ef50034908fc991606544000d54ebe$64830c2dd8d7edfe07ab064dddc32a14e7f1df0cb26f993506e675a827a82b32"
