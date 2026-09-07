@@ -51,6 +51,15 @@ Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=always
 TimeoutStopSec=70
 ExecStartPre=/bin/rm -f %t/%n.ctr-id
+# `--network slirp4netns:allow_host_loopback=true` MAJBURIY.
+#
+# Root'siz podman default holda konteynerdan HOST LOOPBACK ga yo'lni YOPADI.
+# Backend esa ataylab 127.0.0.1:8000 da turadi (tashqariga ochilmasin deb),
+# shuning uchun bu bayroqsiz nginx unga yeta olmaydi va `/api/*` ning HAMMASI
+# 502 qaytaradi. Log'da: "connect() failed (101: Network is unreachable)".
+#
+# Sayt ochiladi, SPA yuklanadi - faqat login ishlamaydi. Shuning uchun buzilish
+# darhol ko'zga tashlanmaydi.
 ExecStart=/usr/bin/podman run \
     --cidfile=%t/%n.ctr-id \
     --cgroups=no-conmon \
@@ -59,6 +68,7 @@ ExecStart=/usr/bin/podman run \
     -d \
     --replace \
     --name venera-frontend \
+    --network slirp4netns:allow_host_loopback=true \
     -p 0.0.0.0:5173:8080 \
     -e API_UPSTREAM=http://host.containers.internal:8000 \
     -e API_READ_TIMEOUT=120s \

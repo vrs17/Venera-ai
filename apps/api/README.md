@@ -4,17 +4,23 @@ Web ilova (`apps/web`) uchun backend. FastAPI, Python 3.10+.
 
 ## Tez boshlash
 
-**Ishlab chiqarish uchun** systemd + podman ishlatiladi — `docs/deploy-api.md`
-ga qarang. Quyidagisi faqat LOKAL ishlab chiqish uchun.
+**Ishlab chiqarish uchun** systemd xizmati ishlatiladi — `docs/deploy-api.md`
+ga qarang.
+
+Bu host'da `python3 -m venv` **ishlamaydi** (`ensurepip` yo'q, o'rnatishga
+sudo kerak). `virtualenv` o'z pip'ini olib keladi:
 
 ```bash
+pip3 install --user virtualenv
+
 cd apps/api
-pip install -e ".[dev]"
+python3 -m virtualenv .venv
+.venv/bin/pip install -e ".[dev]"
 
 cp .env.example .env
 cp config/users.example.yaml config/users.yaml
 
-uvicorn app.main:app --reload --port 8000
+.venv/bin/uvicorn app.main:app --reload --port 8000
 ```
 
 | | Manzil |
@@ -31,7 +37,7 @@ Frontend bilan birga ishga tushirish:
 
 ```bash
 # 1-terminal
-cd apps/api && uvicorn app.main:app --reload --port 8000
+cd apps/api && .venv/bin/uvicorn app.main:app --reload --port 8000
 
 # 2-terminal
 cd apps/web && npm run dev

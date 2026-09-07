@@ -61,8 +61,8 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-#: Swagger UI fayllari shu papkada bo'lsa lokal beriladi (Dockerfile ularni
-#: build paytida yuklab oladi). Bo'lmasa - CDN.
+#: Swagger UI fayllari shu papkada bo'lsa lokal beriladi. Bo'lmasa - CDN.
+#: Yuklab olish: docs/deploy-api.md, "Swagger fayllari" bo'limi.
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 _SWAGGER_LOCAL = (_STATIC_DIR / "swagger-ui-bundle.js").exists()
 
@@ -104,7 +104,7 @@ app.include_router(v1_router)
 @app.get("/api/health", tags=["service"])
 @app.get("/health", tags=["service"], include_in_schema=False)
 def health() -> dict:
-    """Holat. Konteyner orkestratori va IT xodimi uchun.
+    """Holat. Monitoring va IT xodimi uchun.
 
     `warnings` - ishga tushdi, lekin e'tibor talab qiladigan holatlar.
     Bular server KO'TARILISHINI to'smaydi: buzuq config tufayli xizmat

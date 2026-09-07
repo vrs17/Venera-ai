@@ -18,6 +18,12 @@ dev = [
     "httpx>=0.27",        # TestClient shunga tayanadi
 ]
 
+# Paketni ANIQ ko'rsatish shart: papka tekis joylashgan (app/, tests/, config/,
+# deploy/ - hammasi ildizda) va setuptools qaysi biri paket ekanini o'zi
+# topa olmaydi, "Multiple top-level packages discovered" deb to'xtaydi.
+[tool.setuptools.packages.find]
+include = ["app*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

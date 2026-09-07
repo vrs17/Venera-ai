@@ -65,7 +65,7 @@ class UserStore:
         """YAML dan yuklaydi. Fayl yo'q yoki buzuq bo'lsa BO'SH ombor qaytaradi.
 
         Ataylab istisno tashlamaydi: server ishga tushishi va `/health` da
-        muammoni ko'rsatishi kerak. Aks holda IT xodimi konteyner nima uchun
+        muammoni ko'rsatishi kerak. Aks holda IT xodimi xizmat nima uchun
         ko'tarilmayotganini log ichidan qidiradi.
         """
         try:

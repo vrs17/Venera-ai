@@ -1,0 +1,72 @@
+# venera-api.service
+#
+# Backend to'g'ridan-to'g'ri host'da, `apps/api/.venv` ichidagi uvicorn bilan
+# ishlaydi.
+#
+# O'RNATISH:
+#     cp deploy/venera-api.service ~/.config/systemd/user/venera-api.service
+#     systemctl --user daemon-reload
+#     systemctl --user enable --now venera-api.service
+#     loginctl enable-linger $USER      # BUSIZ logout'da o'chadi
+#
+# venv'ni yaratish (bir marta):
+#     pip3 install --user virtualenv     # `python3 -m venv` bu host'da ISHLAMAYDI:
+#                                        # ensurepip yo'q va uni o'rnatishga sudo kerak
+#     cd ~/Venera/apps/api
+#     python3 -m virtualenv .venv
+#     .venv/bin/pip install -e ".[dev]"
+#
+# Kuzatish:
+#     systemctl --user status venera-api.service
+#     journalctl --user -u venera-api.service -f
+
+[Unit]
+Description=Venera API (FastAPI + venv, port 8000)
+Documentation=file:///home/ymamajonov/Venera/apps/api/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=%h/Venera/apps/api
+
+# AVTOMATIK QAYTA ISHGA TUSHISH.
+#   Restart=always      - har qanday to'xtashda (crash, OOM, xato kod) ko'taradi
+#   RestartSec=3        - darhol emas: qayta-qayta yiqilsa CPU ni yemasin
+#   StartLimitBurst=0   - cheksiz urinish. Default (5 marta / 10 s) bilan
+#                         systemd taslim bo'lib xizmatni O'CHIRIB qo'yardi va
+#                         uni QO'LDA yoqish kerak bo'lardi.
+Restart=always
+RestartSec=3
+StartLimitBurst=0
+TimeoutStopSec=20
+
+# NEGA 127.0.0.1, 0.0.0.0 EMAS: API tashqi tarmoqqa OCHILMASLIGI kerak.
+# Unga faqat frontend konteyneridagi nginx murojaat qiladi. Portni tashqariga
+# ochsak autentifikatsiya yagona himoya bo'lib qolardi.
+#
+# `.env` va `config/users.yaml` bu yerda ko'rsatilmagan: `core/config.py` ularni
+# modul joylashuviga NISBATAN mutlaq yo'l bilan topadi, ya'ni ular ishchi
+# papkaga bog'liq emas.
+ExecStart=%h/Venera/apps/api/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --proxy-headers \
+    --forwarded-allow-ips '*'
+
+# Izolyatsiyani ATAYLAB qo'shish kerak: backend uy papkasidagi hamma narsaga
+# yoza olmasin.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+# ProtectSystem=strict butun fayl tizimini o'qishga-cheklaydi. Loyihaga yozish
+# huquqi kerak emas - kod o'qiladi xolos - lekin __pycache__ yozilmasin deb:
+Environment=PYTHONDONTWRITEBYTECODE=1
+# Log buferda qolmasin, journalctl ga DARHOL tushsin.
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
