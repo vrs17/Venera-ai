@@ -43,7 +43,7 @@ Thumbs.db
 # Haqiqiy foydalanuvchilar va sirlar. Namunalar (.example) git da qoladi.
 apps/api/config/users.yaml
 apps/api/.env
-apps/api/.venv/
+apps/api/venv/
 __pycache__/
 *.egg-info/
 .pytest_cache/

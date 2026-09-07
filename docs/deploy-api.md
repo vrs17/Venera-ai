@@ -1,6 +1,6 @@
 # Venera API — tarqatish
 
-Backend (`apps/api`) host'da, `apps/api/.venv` ichidagi uvicorn bilan ishlaydi,
+Backend (`apps/api`) host'da, `apps/api/venv` ichidagi uvicorn bilan ishlaydi,
 systemd `--user` xizmati sifatida. Frontend (`apps/web`) esa root'siz podman
 konteynerida qoladi.
 
@@ -20,17 +20,20 @@ API porti **tashqariga ochilmagan** — unga faqat nginx murojaat qiladi.
 
 ## 1. Bir marta: venv
 
-Bu host'da **`python3 -m venv` ISHLAMAYDI** — `ensurepip` yo'q va uni
-o'rnatish uchun `sudo apt install python3.10-venv` kerak. `virtualenv` esa
-o'z pip'ini olib keladi, ya'ni sudo kerak emas:
-
 ```bash
-pip3 install --user virtualenv
-
 cd ~/Venera/apps/api
-python3 -m virtualenv .venv
-.venv/bin/pip install -e ".[dev]"
+python3 -m venv venv
+
+# Ubuntu ning venv'i eski setuptools bilan keladi (59.6), u esa pyproject.toml
+# dagi [project] blokini TUSHUNMAYDI - PEP 621 uchun 61+ kerak. Busiz keyingi
+# qator "Multiple top-level packages discovered" deb yiqiladi.
+venv/bin/pip install -U pip setuptools
+
+venv/bin/pip install -e ".[dev]"
 ```
+
+> `python3 -m venv` ishlashi uchun `python3.10-venv` paketi kerak
+> (`sudo apt install python3.10-venv`). Bu host'da o'rnatilgan.
 
 ## 2. Bir marta: sozlama fayllari
 
@@ -60,10 +63,12 @@ curl -fsSL -o app/static/swagger-ui.css \
   "https://cdn.jsdelivr.net/npm/swagger-ui-dist@$V/swagger-ui.css"
 ```
 
-Bu qadam **tashlab ketilsa ham server ko'tariladi**, lekin ichki tarmoqda
-(internetsiz) Swagger sahifasi **bo'sh** ochiladi: FastAPI fayllarni
-`cdn.jsdelivr.net` dan yuklashga urinadi. Fayllar joyida bo'lsa
-`app/main.py` ularni lokal beradi.
+`app/static/swagger-init.js` git'da keladi - uni yuklab olish shart emas.
+
+Bu qadam **tashlab ketilsa ham server ko'tariladi**, lekin `/api/docs`
+**503** va yetishmayotgan fayllar ro'yxatini qaytaradi. CDN ga qaytish
+ataylab olib tashlangan: CSP tashqi manbani baribir bloklaydi, ya'ni
+foydalanuvchi sababsiz oq ekran ko'rardi.
 
 ## 4. Xizmatni o'rnatish
 
@@ -129,7 +134,7 @@ systemctl --user restart venera-api.service
 Bog'liqliklar `pyproject.toml` da o'zgargan bo'lsa qo'shimcha:
 
 ```bash
-cd ~/Venera/apps/api && .venv/bin/pip install -e ".[dev]"
+cd ~/Venera/apps/api && venv/bin/pip install -e ".[dev]"
 ```
 
 Frontend uchun image qayta yig'iladi:
@@ -185,6 +190,22 @@ podman logs venera-frontend | grep 'Network is unreachable'
 Sayt ochiladi va SPA yuklanadi — faqat login ishlamaydi, shuning uchun
 buzilish darhol ko'zga tashlanmaydi.
 
+**Swagger sahifasi BO'SH ochiladi, curl esa 200 qaytaradi.** Eng aldamchi
+xato. Frontend nginx butun saytga `script-src 'self'` CSP qo'yadi, FastAPI
+ning tayyor `get_swagger_ui_html()` funksiyasi esa sahifaga INLINE
+`<script>` yozadi. Brauzer uni bloklaydi: `swagger-ui-bundle.js` yuklanadi,
+lekin uni ISHGA TUSHIRADIGAN kod bajarilmaydi va `<div id="swagger-ui">`
+bo'sh qoladi. `curl` JS ishlatmaydi, shuning uchun 200 ko'radi va muammoni
+UMUMAN sezmaydi.
+
+Yechim `app/main.py` da: sahifa qo'lda yig'iladi, ishga tushirish kodi
+`app/static/swagger-init.js` da - inline skript yo'q. CSP ni
+bo'shashtirish (`'unsafe-inline'` qo'shish) KERAK EMAS va zararli bo'lardi:
+u butun sayt uchun ochilardi.
+
+Buni `tests/test_docs.py` qo'riqlaydi - u status kodni emas, sahifa
+TARKIBINI tekshiradi.
+
 **Xizmat ko'tarilmadi, `Address already in use`.** 8000-portni boshqa
 jarayon band qilgan (odatda qo'lda qoldirilgan `uvicorn`):
 
@@ -193,8 +214,9 @@ ss -ltnp | grep 8000
 ```
 
 **`ModuleNotFoundError` restart'dan keyin.** venv yangi bog'liqliksiz qolgan:
-`cd ~/Venera/apps/api && .venv/bin/pip install -e ".[dev]"`.
+`cd ~/Venera/apps/api && venv/bin/pip install -e ".[dev]"`.
 
 **Xizmat logout'da o'chadi.** `loginctl enable-linger $USER` bajarilmagan.
 
-**Swagger sahifasi bo'sh.** `app/static/` bo'sh — 3-qadamni bajaring.
+**`/api/docs` 503 qaytardi.** `app/static/` da fayllar yo'q — 3-qadamni
+bajaring. Javobda qaysi fayl yetishmayotgani yozilgan.

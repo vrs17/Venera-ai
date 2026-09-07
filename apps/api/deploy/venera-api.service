@@ -1,6 +1,6 @@
 # venera-api.service
 #
-# Backend to'g'ridan-to'g'ri host'da, `apps/api/.venv` ichidagi uvicorn bilan
+# Backend to'g'ridan-to'g'ri host'da, `apps/api/venv` ichidagi uvicorn bilan
 # ishlaydi.
 #
 # O'RNATISH:
@@ -10,11 +10,10 @@
 #     loginctl enable-linger $USER      # BUSIZ logout'da o'chadi
 #
 # venv'ni yaratish (bir marta):
-#     pip3 install --user virtualenv     # `python3 -m venv` bu host'da ISHLAMAYDI:
-#                                        # ensurepip yo'q va uni o'rnatishga sudo kerak
 #     cd ~/Venera/apps/api
-#     python3 -m virtualenv .venv
-#     .venv/bin/pip install -e ".[dev]"
+#     python3 -m venv venv
+#     venv/bin/pip install -U pip setuptools   # eski setuptools PEP 621 ni bilmaydi
+#     venv/bin/pip install -e ".[dev]"
 #
 # Kuzatish:
 #     systemctl --user status venera-api.service
@@ -48,7 +47,7 @@ TimeoutStopSec=20
 # `.env` va `config/users.yaml` bu yerda ko'rsatilmagan: `core/config.py` ularni
 # modul joylashuviga NISBATAN mutlaq yo'l bilan topadi, ya'ni ular ishchi
 # papkaga bog'liq emas.
-ExecStart=%h/Venera/apps/api/.venv/bin/uvicorn app.main:app \
+ExecStart=%h/Venera/apps/api/venv/bin/uvicorn app.main:app \
     --host 127.0.0.1 \
     --port 8000 \
     --proxy-headers \
