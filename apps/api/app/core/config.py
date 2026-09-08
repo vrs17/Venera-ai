@@ -44,11 +44,14 @@ class Settings(BaseSettings):
     # --- STT (ovozni matnga o'girish) ---
     #: STT Router manzili. Ichki tarmoqda, VPN ortida.
     stt_base_url: str = "http://10.10.50.4:8006"
-    #: Router backend'ni 120 s kutadi (keyin 504); hujjat 180 s tavsiya qiladi.
-    #: Bizning navbatlar 30 s dan uzun emas, lekin Router navbati ostida
-    #: qisqa timeout so'rovni MUDDATIDAN OLDIN uzib, ishni bekorga yo'qotardi.
-    stt_timeout: float = 150.0
+    #: BIR urinish uchun timeout. Byudjet zanjiri: brauzer nginx orqali 120 s
+    #: kutadi (API_READ_TIMEOUT). Undan uzoq kutish ma'nosiz - javob endi hech
+    #: kimga yetib bormaydi, lekin slot va Router ishchisi band turadi.
+    stt_timeout: float = 35.0
+    #: 503 (navbat to'la) uchun urinishlar. 502/504 QAYTA URINILMAYDI.
     stt_attempts: int = 3
+    #: Butun `transcribe()` uchun devor-soat chegarasi - nginx 120 s dan KAM.
+    stt_deadline: float = 100.0
     #: BUTUN park uchun Router chegarasi ~10 parallel (o'lchangan: 25 da 503 lar
     #: boshlanadi). Web ilova shuning bir qismini oladi - desktop park va boshqa
     #: klientlarga joy qolsin. Oshsa - kutmasdan 503 "band" qaytaramiz.

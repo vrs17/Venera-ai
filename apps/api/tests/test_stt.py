@@ -267,3 +267,165 @@ def test_zh_qabul_qilinmaydi(client, auth, fake_stt):
                            data={"language": "zh"}, headers=auth)
     assert response.status_code == 400
     assert not fake_stt
+
+
+# ─── Xato yo'li: Router status kodlari, retry siyosati, fayl nomi ───────────
+
+import io as _io
+import time as _time
+from email.message import Message as _Msg
+import urllib.error as _ue
+
+from app.services.stt import safe_filename
+
+
+def _http_error(code: int, detail):
+    body = _json.dumps({"detail": detail}).encode() if not isinstance(detail, bytes) else detail
+    return _ue.HTTPError("http://router.test/transcribe", code, "x", _Msg(), _io.BytesIO(body))
+
+
+def _raising_client(monkeypatch, errors, **kw):
+    """`_once` navbat bilan `errors` dagi istisnolarni tashlaydi; tugagach OK."""
+    c = SttClient("http://router.test", attempts=3, deadline=100, **kw)
+    calls = []
+    seq = list(errors)
+    def once(body, ct):
+        calls.append(body)
+        if seq:
+            raise seq.pop(0)
+        return SttClient._parse(_uz())
+    monkeypatch.setattr(c, "_once", once)
+    monkeypatch.setattr(_time, "sleep", lambda s: None)   # backoff'ni kutmaymiz
+    return c, calls
+
+
+@pytest.mark.parametrize("code", [400, 413, 415, 422, 502, 504])
+def test_doimiy_xatolar_qayta_urinilmaydi_va_status_saqlanadi(monkeypatch, code):
+    """415/422 ni 503 "band" deb ko'rsatish foydalanuvchini hech qachon
+    o'tmaydigan so'rovni qayta urinishga majbur qilardi."""
+    import app.services.stt as m
+    real_once = SttClient._once
+    c = SttClient("http://router.test", attempts=3)
+    def open_raises(*a, **k):
+        class O:
+            def open(self, req, timeout): raise _http_error(code, "detail")
+        return O()
+    monkeypatch.setattr(m.urllib.request, "build_opener", open_raises)
+    with pytest.raises(SttError) as e:
+        c.transcribe(b"x" * 100, language="uz")
+    assert e.value.status == code
+    assert e.value.retryable is False
+
+
+def test_503_uch_marta_uriniladi_keyin_503(monkeypatch):
+    c, calls = _raising_client(monkeypatch, [
+        SttError("band", status=503, retryable=True)] * 3)
+    with pytest.raises(SttError) as e:
+        c.transcribe(b"x" * 100, language="uz")
+    assert len(calls) == 3 and e.value.status == 503
+
+
+def test_503_dan_keyin_muvaffaqiyat(monkeypatch):
+    c, calls = _raising_client(monkeypatch, [SttError("band", status=503, retryable=True)])
+    r = c.transcribe(b"x" * 100, language="uz")
+    assert r.text == "salom" and len(calls) == 2
+
+
+def test_504_qayta_urinilmaydi(monkeypatch):
+    """Timeout'dan keyin yana 35 s kutish brauzer byudjetini oshiradi va
+    slotni band qiladi - bitta urinish."""
+    c, calls = _raising_client(monkeypatch, [SttError("timeout", status=504)] * 3)
+    with pytest.raises(SttError) as e:
+        c.transcribe(b"x" * 100, language="uz")
+    assert len(calls) == 1 and e.value.status == 504
+
+
+def test_ulanish_uzilishi_qayta_uriniladi(monkeypatch):
+    """RemoteDisconnected avval 500 bo'lib chiqardi - endi 503, qayta uriniladi."""
+    import app.services.stt as m
+    import http.client
+    c = SttClient("http://router.test", attempts=2)
+    n = {"i": 0}
+    class O:
+        def open(self, req, timeout):
+            n["i"] += 1
+            raise http.client.RemoteDisconnected("uzildi")
+    monkeypatch.setattr(m.urllib.request, "build_opener", lambda *a, **k: O())
+    monkeypatch.setattr(_time, "sleep", lambda s: None)
+    with pytest.raises(SttError) as e:
+        c.transcribe(b"x" * 100, language="uz")
+    assert e.value.status == 503 and e.value.retryable and n["i"] == 2
+
+
+def test_urinish_timeouti_504(monkeypatch):
+    import app.services.stt as m
+    from socket import timeout as socket_timeout
+    c = SttClient("http://router.test", attempts=3)
+    class O:
+        def open(self, req, timeout): raise socket_timeout("timed out")
+    monkeypatch.setattr(m.urllib.request, "build_opener", lambda *a, **k: O())
+    with pytest.raises(SttError) as e:
+        c.transcribe(b"x" * 100, language="uz")
+    assert e.value.status == 504 and not e.value.retryable
+
+
+def test_devor_soat_byudjeti_qayta_urinishni_toxtatadi(monkeypatch):
+    """Keyingi urinish nginx byudjetidan chiqsa - to'xtaymiz."""
+    c, calls = _raising_client(monkeypatch, [SttError("band", status=503, retryable=True)] * 3)
+    c.deadline = 5.0; c.timeout = 10.0        # 1-urinishdan keyin 10 s sig'maydi
+    with pytest.raises(SttError):
+        c.transcribe(b"x" * 100, language="uz")
+    assert len(calls) == 1
+
+
+def test_detail_uzun_json_ham_oqiladi():
+    long = "x" * 500
+    assert _detail_of(_http_error(400, long)) == long[:300]
+
+
+def _detail_of(exc):
+    from app.services.stt import _detail
+    return _detail(exc)
+
+
+def test_detail_json_bolmasa_matn():
+    assert _detail_of(_http_error(502, b"<html>Bad Gateway</html>")) == "<html>Bad Gateway</html>"
+
+
+@pytest.mark.parametrize("ctype,name", [
+    ("audio/wav", "speech.wav"), ("audio/x-wav", "speech.wav"),
+    ("audio/webm;codecs=opus", "speech.webm"), ("audio/ogg;codecs=opus", "speech.ogg"),
+    ("audio/mp4", "speech.m4a"), ("audio/mpeg", "speech.mp3"),
+    ("application/octet-stream", "speech.bin"), ("", "speech.bin"),
+])
+def test_fayl_nomi_kontent_turidan(ctype, name):
+    assert safe_filename(ctype) == name
+
+
+def test_klient_fayl_nomi_multipartga_tushmaydi(client, auth, monkeypatch):
+    """`"; filename="x\\r\\n` kabi nom sarlavhani buzardi. Nom umuman olinmaydi."""
+    import app.api.v1.stt as module
+    seen = {}
+    def once(self, body, ct):
+        seen["body"] = body
+        return SttClient._parse(_uz())
+    monkeypatch.setattr(SttClient, "_once", once)
+    evil = 'x"; filename="pwned\r\nX-Injected: 1'
+    client.post("/api/v1/stt/transcribe",
+                files={"file": (evil, _io.BytesIO(b"\0" * 2000), "audio/wav")},
+                data={"language": "uz"}, headers=auth)
+    assert b"pwned" not in seen["body"] and b"X-Injected" not in seen["body"]
+    assert b'filename="speech.wav"' in seen["body"]
+
+
+@pytest.mark.parametrize("code,word", [
+    (503, "band"), (504, "uzoq"), (413, "katta"), (415, "format"), (502, "javob bermadi"),
+])
+def test_endpoint_status_va_xabar(client, auth, monkeypatch, code, word):
+    import app.api.v1.stt as module
+    def boom(*a, **k): raise SttError("http://10.10.50.4:8006 ichki", status=code, retryable=code == 503)
+    monkeypatch.setattr(module._client, "transcribe", boom)
+    r = client.post("/api/v1/stt/transcribe", files=_audio(), data={"language": "uz"}, headers=auth)
+    assert r.status_code == code
+    assert word in r.json()["message"].lower()
+    assert "10.10.50" not in r.json()["message"]

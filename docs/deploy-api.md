@@ -117,8 +117,9 @@ Sozlamalar `.env` da, hammasi ixtiyoriy:
 | O'zgaruvchi | Default | Izoh |
 |---|---|---|
 | `STT_BASE_URL` | `http://10.10.50.4:8006` | Router manzili (ichki tarmoq) |
-| `STT_TIMEOUT` | `150` | soniya. Router backend'ni 120 s kutadi, hujjat 180 tavsiya qiladi |
-| `STT_ATTEMPTS` | `3` | 502/503/504 da qayta urinish (jitter bilan) |
+| `STT_TIMEOUT` | `35` | BIR urinish uchun, soniya |
+| `STT_ATTEMPTS` | `3` | FAQAT 503 (navbat to'la) da qayta urinish, jitter bilan. 502/504 qayta urinilmaydi |
+| `STT_DEADLINE` | `100` | butun so'rov uchun devor-soat. nginx 120 s dan KAM bo'lishi shart - undan keyin javob brauzerga yetmaydi |
 | `STT_MAX_CONCURRENT` | `4` | shu ilovaning Router'dagi ulushi |
 | `STT_MAX_UPLOAD_MB` | `10` | brauzerdan qabul qilinadigan maksimal audio |
 
@@ -136,6 +137,12 @@ almashtirmaydi). Mismatch faqat log'ga tushadi. `zh` tizimda yo'q, 400.
 
 `low_confidence` - matn chatga AVTOMATIK yuborilmaydi; panel foydalanuvchiga
 ko'rsatib, tasdiq so'raydi (hujjat: bunday matnda WER 60-70%).
+
+**Audio formati.** Router'ning `uz` backend'i faqat `.wav .ogg .opus .mp3
+.flac` qabul qiladi, brauzer (Chrome/Edge) esa faqat WebM yozadi. Shuning
+uchun brauzer yozuvni O'ZI 16 kHz mono WAV ga aylantirib yuboradi
+(`src/api/wav.ts`) - 30 s ≈ 960 KB. nginx `client_max_body_size 12m`,
+API 10 MB. Backend fayl nomini klientdan olmaydi - kontent turidan yasaydi.
 
 Tekshirish:
 

@@ -16,6 +16,7 @@ uni threadpool'da ishlatadi va event loop to'silmaydi.
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import random
@@ -24,6 +25,8 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+
+from socket import timeout as socket_timeout
 
 from dataclasses import dataclass
 
@@ -45,9 +48,35 @@ LOCALE_TO_STT = {
     "en": "en",
 }
 
-#: 503 = navbat to'la. Bu XATO EMAS, "keyinroq urin" degani.
-_RETRYABLE = frozenset({502, 503, 504})
-_BACKOFF_BASE = 0.4
+#: FAQAT 503 qayta uriniladi - u "navbat to'la, keyinroq urin" degani.
+#: 502 (backend yiqilgan) va 504 (backend 120 s javob bermadi) qayta
+#: urinilMAYDI: ular bir necha soniyada o'zgarmaydi, urinish esa slotni va
+#: Router ishchisini daqiqalab band qiladi - brauzer allaqachon ketgan bo'ladi.
+_RETRYABLE = frozenset({503})
+#: Hujjat: 0.5-2 s. Jitter bilan: 0.5-1.5 s, keyin 1-3 s.
+_BACKOFF_BASE = 1.0
+#: Router'ga uzatiladigan fayl nomi FAQAT shu ro'yxatdan - klient nomi
+#: multipart sarlavhasiga hech qachon tushmaydi (u yerga `"` yoki CRLF
+#: kiritib sarlavhani buzish mumkin), va Router dekoderni KENGAYTMADAN
+#: tanlaydi, shuning uchun nom kontent turiga MOS bo'lishi shart.
+_NAME_BY_SUBTYPE = {
+    "wav": "speech.wav", "x-wav": "speech.wav", "wave": "speech.wav", "vnd.wave": "speech.wav",
+    "ogg": "speech.ogg", "opus": "speech.opus", "webm": "speech.webm",
+    "mp4": "speech.m4a", "x-m4a": "speech.m4a", "m4a": "speech.m4a", "aac": "speech.aac",
+    "mpeg": "speech.mp3", "mp3": "speech.mp3", "flac": "speech.flac", "x-flac": "speech.flac",
+}
+
+
+def safe_filename(content_type: str) -> str:
+    """`audio/webm;codecs=opus` -> speech.webm.
+
+    SUBTIP bo'yicha, satr ichidan qidirib emas: `codecs=opus` ichidagi "opus"
+    konteyner "webm" dan oldin topilib, faylga noto'g'ri nom berardi - Router
+    esa dekoderni aynan kengaytmadan tanlaydi.
+    """
+    ct = (content_type or "").lower().strip()
+    subtype = ct.split("/", 1)[1].split(";", 1)[0].strip() if "/" in ct else ""
+    return _NAME_BY_SUBTYPE.get(subtype, "speech.bin")
 
 
 class SttError(Exception):
@@ -105,13 +134,15 @@ class SttClient:
         self,
         base_url: str,
         *,
-        timeout: float = 150.0,
+        timeout: float = 35.0,
         attempts: int = 3,
         max_concurrent: int = 4,
+        deadline: float = 100.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.attempts = max(1, attempts)
+        self.deadline = deadline
         # Router BUTUN park uchun ~10 parallel ko'taradi. Bu semafora shu
         # ilovaning ulushi: oshsa Router'ga bormasdan 503 qaytaramiz - Router
         # navbatini boshqa klientlar uchun to'ldirib qo'ymaslik uchun.
@@ -123,8 +154,7 @@ class SttClient:
         audio: bytes,
         *,
         language: str,
-        filename: str = "audio.webm",
-        content_type: str = "audio/webm",
+        content_type: str = "audio/wav",
     ) -> Transcript:
         """Audio -> matn, AYNAN so'ralgan tilda.
 
@@ -132,26 +162,29 @@ class SttClient:
         yuborishni tavsiya qiladi. Bu yerda ATAYLAB qilinmaydi: mahsulot
         qarori - ovoz foydalanuvchi tizimda tanlagan tilda ishlaydi, tizim
         tilni o'zi almashtirmaydi. Mismatch faqat log'ga tushadi.
+
+        Fayl nomi klientdan OLINMAYDI - `safe_filename(content_type)`.
         """
         if language not in LANGUAGES:
             raise SttError(f"til qo'llab-quvvatlanmaydi: {language}", status=400)
         if not audio:
             raise SttError("audio bo'sh", status=400)
 
-        # Semafora: 2 s kutamiz (navbatdagi so'rov tez bo'shashi mumkin),
+        # Semafora: 1 s kutamiz (navbatdagi so'rov tez bo'shashi mumkin),
         # keyin taslim - Router 503 si bilan bir xil ma'noda.
-        if not self._slots.acquire(timeout=2.0):
+        if not self._slots.acquire(timeout=1.0):
             raise SttError(
                 f"ilova STT chegarasida ({self.max_concurrent} parallel)",
                 status=503, retryable=True,
             )
         try:
-            return self._with_retries(audio, filename, content_type, language)
+            return self._with_retries(audio, safe_filename(content_type), content_type, language)
         finally:
             self._slots.release()
 
     def _with_retries(self, audio: bytes, filename: str, content_type: str, language: str) -> Transcript:
         body, ctype = _multipart(audio, filename, content_type, language)
+        started = time.monotonic()
         last: SttError | None = None
 
         for attempt in range(self.attempts):
@@ -164,6 +197,11 @@ class SttClient:
                 # Jitter MAJBURIY: usiz bir vaqtda band bo'lgan klientlar
                 # AYNAN bir vaqtda qayta urinadi va navbatni yana to'ldiradi.
                 delay = _BACKOFF_BASE * (2 ** attempt) * (0.5 + random.random())
+                # Devor-soat: keyingi urinish nginx byudjetidan chiqib ketsa,
+                # brauzer javobni baribir olmaydi - to'xtaymiz.
+                if time.monotonic() - started + delay + self.timeout > self.deadline:
+                    log.warning("STT: byudjet tugadi (%.0f s), qayta urinilmaydi", self.deadline)
+                    raise
                 log.warning("STT %s - %.1f s dan keyin qayta urinish (%d/%d)",
                             exc, delay, attempt + 1, self.attempts)
                 time.sleep(delay)
@@ -185,16 +223,32 @@ class SttClient:
         except urllib.error.HTTPError as exc:
             status = exc.code
             detail = _detail(exc)
-            raise SttError(
-                f"STT xatosi {status}: {detail}",
-                status=503 if status in _RETRYABLE else status,
-                retryable=status in _RETRYABLE,
-            ) from exc
+            # Status AYNAN uzatiladi: 415 (format) yoki 422 ni 503 "band" deb
+            # ko'rsatish foydalanuvchini hech qachon o'tmaydigan so'rovni
+            # qayta-qayta urinishga majbur qilardi, monitoring esa "STT
+            # yiqildi" derdi. Faqat kutilmagan 5xx -> 502.
+            if status in (400, 413, 415, 422, 502, 503, 504):
+                mapped = status
+            elif 500 <= status < 600:
+                mapped = 502
+            else:
+                mapped = 502
+            raise SttError(f"STT {status}: {detail}", status=mapped,
+                           retryable=status in _RETRYABLE) from exc
         except urllib.error.URLError as exc:
+            # Ulanib bo'lmadi (refused, DNS) - vaqtinchalik bo'lishi mumkin.
             raise SttError(f"STT serveriga ulanib bo'lmadi: {exc.reason}",
                            status=503, retryable=True) from exc
-        except (TimeoutError, json.JSONDecodeError) as exc:
-            raise SttError(f"STT javobi o'qilmadi: {exc}", status=502, retryable=True) from exc
+        except (TimeoutError, socket_timeout) as exc:
+            # Urinish timeout'i - 504. Qayta URINILMAYDI: yana shuncha kutish
+            # brauzer byudjetini oshirib yuboradi.
+            raise SttError("STT javob bermadi (timeout)", status=504) from exc
+        except (http.client.HTTPException, OSError) as exc:
+            # RemoteDisconnected, IncompleteRead, ConnectionReset - ulanish
+            # o'rtada uzildi. Avval bular 500 bo'lib chiqardi.
+            raise SttError(f"STT ulanishi uzildi: {exc}", status=503, retryable=True) from exc
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise SttError(f"STT javobi o'qilmadi: {exc}", status=502) from exc
 
         return self._parse(payload)
 
@@ -227,11 +281,14 @@ class SttClient:
 
 
 def _detail(exc: urllib.error.HTTPError) -> str:
+    """`{"detail": "..."}` dan matn. Avval JSON, KEYIN qisqartirish - aksincha
+    qilinsa 300 belgidan uzun detail JSON sifatida o'qilmay qolardi."""
     try:
-        raw = exc.read().decode("utf-8", "replace")[:300]
+        raw = exc.read().decode("utf-8", "replace")
     except Exception:  # noqa: BLE001
-        return exc.reason or ""
+        return str(exc.reason or "")
     try:
-        return str(json.loads(raw).get("detail") or raw)
+        text = str(json.loads(raw).get("detail") or raw)
     except Exception:  # noqa: BLE001
-        return raw
+        text = raw
+    return text[:300]

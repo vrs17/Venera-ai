@@ -30,7 +30,21 @@ _client = SttClient(
     timeout=settings.stt_timeout,
     attempts=settings.stt_attempts,
     max_concurrent=settings.stt_max_concurrent,
+    deadline=settings.stt_deadline,
 )
+
+#: Foydalanuvchiga ko'rinadigan xabarlar - status bo'yicha, ichki matnsiz.
+#: 503 = band (qayta urinsa bo'ladi), 504 = juda uzoq, 413 = katta,
+#: 415 = format, 400/422 = audio qabul qilinmadi, 502 = xizmat javob bermadi.
+_MESSAGES = {
+    503: "Ovoz xizmati band, biroz kutib qayta urinib ko'ring",
+    504: "Ovozni qayta ishlash juda uzoq cho'zildi - qisqaroq gapirib ko'ring",
+    413: "Audio juda katta",
+    415: "Bu audio formati qabul qilinmaydi",
+    400: "Audio qabul qilinmadi",
+    422: "Audio qabul qilinmadi",
+    502: "Ovoz xizmati javob bermadi",
+}
 
 
 @router.post("/transcribe", response_model=TranscriptResponse)
@@ -61,19 +75,12 @@ def transcribe(
         result = _client.transcribe(
             audio,
             language=stt_language,
-            filename=file.filename or "audio.webm",
             content_type=file.content_type or "application/octet-stream",
         )
     except SttError as exc:
         log.warning("STT (%s, %s): %s", user.email, stt_language, exc)
-        # Xato matni FOYDALANUVCHIGA ko'rinadi, shuning uchun ichki manzil
-        # yoki stek uzatilmaydi - faqat nima bo'lgani.
-        message = (
-            "Ovoz xizmati band, biroz kutib qayta urinib ko'ring"
-            if exc.retryable or exc.status == 503
-            else "Ovozni matnga o'girib bo'lmadi"
-        )
-        raise error_status(exc.status if exc.status in (400, 413) else 503, message) from exc
+        status = exc.status if exc.status in _MESSAGES else 502
+        raise error_status(status, _MESSAGES[status]) from exc
 
     return TranscriptResponse(
         text=result.text,

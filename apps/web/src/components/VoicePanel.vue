@@ -30,6 +30,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { micAvailable, micBlockedByPolicy, secureUrl, transcribe } from '../api/stt.api'
 import { localizeApiError } from '../api/errors'
+import { ApiError } from '../api/http'
 import { LOCALES } from '../i18n'
 import { MicIcon, MicOffIcon, XIcon } from '../icons'
 
@@ -66,6 +67,11 @@ let rafId = 0
 let chunks: Blob[] = []
 let silenceSince = 0
 let speechSeen = false
+// One turn = one recording + one upload. The id lets a late result from an
+// earlier turn (closed panel, new tap) be ignored instead of sent to chat.
+let turnId = 0
+let turnTimer = 0
+let aborter: AbortController | null = null
 
 /** Speech must be seen before silence can end the turn, otherwise the recorder
  *  stops instantly in a quiet room. */
@@ -112,6 +118,10 @@ function fail(message: string, hint = '') {
 function teardown() {
   cancelAnimationFrame(rafId)
   rafId = 0
+  clearTimeout(turnTimer)
+  turnTimer = 0
+  aborter?.abort()
+  aborter = null
   if (recorder && recorder.state !== 'inactive') {
     recorder.onstop = null
     try { recorder.stop() } catch { /* already stopping */ }
@@ -161,6 +171,10 @@ async function startListening() {
   chunks = []
   speechSeen = false
   silenceSince = performance.now()
+  clearTimeout(turnTimer)
+  aborter?.abort()
+  aborter = new AbortController()
+  const turn = ++turnId
 
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -194,7 +208,11 @@ async function startListening() {
     recorder.start()
     state.value = 'listening'
     meter()
-    window.setTimeout(() => { if (state.value === 'listening') stopListening() }, MAX_TURN_MS)
+    // Guarded by the turn id: a timer left over from a previous turn must not
+    // cut the next one short.
+    turnTimer = window.setTimeout(() => {
+      if (turn === turnId && state.value === 'listening') stopListening()
+    }, MAX_TURN_MS)
   } catch {
     fail(t('voiceError'))
   }
@@ -205,10 +223,12 @@ function stopListening() {
   state.value = 'transcribing'
   cancelAnimationFrame(rafId)
   rafId = 0
+  clearTimeout(turnTimer)
   try { recorder.stop() } catch { fail(t('voiceError')) }
 }
 
 async function handleRecorded() {
+  const turn = turnId
   const type = recorder?.mimeType || 'audio/webm'
   const blob = new Blob(chunks, { type })
   chunks = []
@@ -217,14 +237,19 @@ async function handleRecorded() {
   stream?.getTracks().forEach((track) => track.stop())
   stream = null
 
-  // A blob this small holds only container headers: the turn had no audio.
-  if (blob.size < 1200) {
+  // Nothing above the speech threshold during the whole turn (the 30 s timer
+  // fired on a silent room): do not upload. The uz backend has no confidence
+  // flag and will happily "hear" a word in room noise, which would then be
+  // sent to chat as a question.
+  if (!speechSeen || blob.size < 1200) {
     fail(t('voiceNoSpeech'))
     return
   }
 
   try {
-    const result = await transcribe(blob, String(locale.value))
+    const result = await transcribe(blob, String(locale.value), aborter?.signal)
+    // A newer turn started, or the panel closed, while this one was in flight.
+    if (turn !== turnId || !props.open) return
     teardown()
     const text = result.text.trim()
     if (!text) {
@@ -239,10 +264,33 @@ async function handleRecorded() {
       state.value = 'confirm'
       return
     }
-    state.value = props.send(text) ? 'thinking' : 'idle'
+    if (props.send(text)) {
+      state.value = 'thinking'
+    } else {
+      // The chat pipeline is still answering the previous question. Keep the
+      // text and let the person send it when it is free — never drop it.
+      note.value = t('voicePipelineBusy')
+      state.value = 'confirm'
+    }
   } catch (err) {
-    fail(localizeApiError(err, t))
+    if (err instanceof DOMException && err.name === 'AbortError') return
+    if (turn !== turnId || !props.open) return
+    fail(voiceErrorText(err))
   }
+}
+
+/** Errors from the proxy path (nginx 413/504) have no message envelope;
+ *  map by status so the user never sees "Request failed (504)". */
+function voiceErrorText(err: unknown): string {
+  if (err instanceof ApiError) {
+    switch (err.status) {
+      case 503: return t('voiceBusy')
+      case 504: return t('voiceTooLong')
+      case 413: return t('voiceTooLarge')
+      case 415: return t('voiceFormat')
+    }
+  }
+  return localizeApiError(err, t)
 }
 
 /** Notes shown under the heard text. Language is never mentioned here: voice
@@ -254,12 +302,20 @@ function noteFor(r: { truncated: boolean }): string {
 /** "Send anyway" after a low-confidence transcript. */
 function confirmSend() {
   if (state.value !== 'confirm' || !heard.value) return
-  state.value = props.send(heard.value) ? 'thinking' : 'idle'
+  if (props.send(heard.value)) {
+    note.value = ''
+    state.value = 'thinking'
+  } else {
+    note.value = t('voicePipelineBusy')
+  }
 }
 
 function close() {
   teardown()
+  turnId++          // anything still in flight is now stale
   state.value = 'idle'
+  heard.value = ''
+  note.value = ''
   emit('close')
 }
 
@@ -271,7 +327,7 @@ function onOrbClick() {
 // The pipeline finishing is what ends the "thinking" state.
 watch(() => props.busy, (busy) => { if (!busy && state.value === 'thinking') state.value = 'idle' })
 // Closing the panel must release the microphone even if `close()` wasn't used.
-watch(() => props.open, (open) => { if (!open) { teardown(); state.value = 'idle' } })
+watch(() => props.open, (open) => { if (!open) { teardown(); turnId++; state.value = 'idle'; heard.value = ''; note.value = '' } })
 onBeforeUnmount(teardown)
 
 function onKeydown(e: KeyboardEvent) {

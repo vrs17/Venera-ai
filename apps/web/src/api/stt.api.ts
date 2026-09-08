@@ -7,7 +7,8 @@
 // host would be exposed to the browser. The proxy also means the request
 // carries the session token.
 
-import { apiFetch } from './http'
+import { ApiError, apiFetch } from './http'
+import { toWav16k } from './wav'
 import type { Transcript } from '../types'
 
 /** The microphone needs a secure context: HTTPS, or localhost. Plain HTTP on a
@@ -27,19 +28,47 @@ export function secureUrl(): string {
   return window.location.href.replace(/^http:/, 'https:')
 }
 
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    const id = setTimeout(resolve, ms)
+    signal?.addEventListener('abort', () => { clearTimeout(id); reject(signal.reason ?? new DOMException('aborted', 'AbortError')) }, { once: true })
+  })
+
 export async function transcribe(
   audio: Blob,
   language: string,
   signal?: AbortSignal,
 ): Promise<Transcript> {
+  // Always upload WAV: the uz backend rejects WebM by extension and cannot
+  // decode it; WAV works on every route. Fall back to the raw blob only when
+  // the browser itself cannot decode what it recorded.
+  let upload = audio
+  let name = 'speech.wav'
+  try {
+    upload = await toWav16k(audio)
+  } catch {
+    name = audio.type.includes('ogg') ? 'speech.ogg' : audio.type.includes('mp4') ? 'speech.m4a' : 'speech.webm'
+  }
+  signal?.throwIfAborted()
+
   const form = new FormData()
-  // The extension matters: the router picks its decoder from the filename when
-  // the content type is generic.
-  const ext = audio.type.includes('ogg') ? 'ogg' : audio.type.includes('wav') ? 'wav' : 'webm'
-  form.append('file', audio, `speech.${ext}`)
+  form.append('file', upload, name)
   form.append('language', language)
-  // apiFetch leaves FormData alone so the browser sets the multipart boundary.
-  return apiFetch<Transcript>('/api/v1/stt/transcribe', { method: 'POST', body: form, signal })
+
+  // 503 means "queue full, try shortly" (router contract). One quiet retry
+  // covers the common case where a slot frees within a second; the user only
+  // sees an error if it is still busy after that.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await apiFetch<Transcript>('/api/v1/stt/transcribe', { method: 'POST', body: form, signal })
+    } catch (err) {
+      if (attempt === 0 && err instanceof ApiError && err.status === 503) {
+        await sleep(1500, signal)
+        continue
+      }
+      throw err
+    }
+  }
 }
 
 /** True when the page's Permissions-Policy forbids the microphone. Then
