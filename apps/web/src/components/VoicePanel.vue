@@ -29,10 +29,11 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { micAvailable, micBlockedByPolicy, secureUrl, transcribe } from '../api/stt.api'
+import { canSpeak, play, speak } from '../api/tts.api'
 import { localizeApiError } from '../api/errors'
 import { ApiError } from '../api/http'
 import { LOCALES } from '../i18n'
-import { MicIcon, MicOffIcon, XIcon } from '../icons'
+import { MicIcon, MicOffIcon, SpeakerIcon, XIcon } from '../icons'
 
 const props = defineProps<{
   open: boolean
@@ -73,6 +74,25 @@ let turnId = 0
 let turnTimer = 0
 let aborter: AbortController | null = null
 
+// --- Ovoz javobi (TTS) ------------------------------------------------------
+// Birinchi bosqich ATAYLAB aks-sado: tanilgan matnning O'ZI o'qib beriladi.
+// Shu tarzda STT va TTS zanjirini bitta gap bilan tekshirib bo'ladi - keyingi
+// bosqichda o'qiladigan matn suhbat javobiga almashadi.
+//
+// Alohida `AbortController`: `aborter` transkripsiya tugashi bilan
+// `teardown()` da bekor qilinadi, ya'ni undan keyin boshlangan sintez darhol
+// uzilib ketardi.
+// `<audio>` ning o'ziga havola SAQLANMAYDI - `play()` qaytargan `stop()`
+// ijroni to'xtatish bilan birga object URL ni ham bo'shatadi, ya'ni element
+// bilan to'g'ridan-to'g'ri ishlash uchun sabab qolmaydi.
+let stopHandle: (() => void) | null = null
+let speechAborter: AbortController | null = null
+const speaking = ref(false)
+/** Oxirgi tayyor audio - qayta tinglash uchun saqlanadi. */
+const speech = ref<Blob | null>(null)
+/** Brauzer avtomatik ijroga ruxsat bermadi: tugma ko'rsatiladi. */
+const speechBlocked = ref(false)
+
 /** Speech must be seen before silence can end the turn, otherwise the recorder
  *  stops instantly in a quiet room. */
 const SPEECH_RMS = 0.045
@@ -111,10 +131,31 @@ function fail(message: string, hint = '') {
   errorHint.value = hint
   state.value = 'error'
   teardown()
+  stopSpeaking()
 }
 
 /** Release every audio resource. Called on stop, on error, on close and on
  *  unmount — a missed path leaves the browser's recording indicator lit. */
+/** Faqat IJRONI to'xtatadi. `stopHandle` orqali - `pause()` ning o'zi
+ *  yetmaydi: object URL `play()` ichidagi `finish()` da bo'shatiladi, va uni
+ *  chetlab o'tsak butun WAV tab yopilguncha xotirada qolib ketadi. */
+function stopAudio() {
+  stopHandle?.()
+  stopHandle = null
+  speaking.value = false
+}
+
+/** Ijroni ham, KETAYOTGAN so'rovni ham to'xtatadi.
+ *
+ *  Ikkisi ATAYLAB ajratilgan: qayta tinglash uchun ijroni to'xtatish kerak,
+ *  lekin shu paytda ketayotgan yangi sintezni bekor qilish KERAK EMAS -
+ *  aks holda "qayta tinglash" tugmasi joriy turnning javobini o'ldirardi. */
+function stopSpeaking() {
+  speechAborter?.abort()
+  speechAborter = null
+  stopAudio()
+}
+
 function teardown() {
   cancelAnimationFrame(rafId)
   rafId = 0
@@ -164,6 +205,15 @@ function meter() {
 
 async function startListening() {
   if (!supported.value || state.value === 'listening') return
+  // MAJBURIY: oldingi turnning javobi hali yangrayotgan bo'lishi mumkin
+  // (masalan 'confirm' holatida sfera bosiladigan bo'lib qoladi). To'xtatmasak
+  // karnaydan chiqayotgan ovoz mikrofonga qaytadan yozilardi va sukunat
+  // o'lchagichini ham o'zi boshqarardi - ya'ni panel o'zini eshitardi.
+  stopSpeaking()
+  // Oldingi javob endi ekrandagi hech narsaga tegishli emas: tugma qolsa,
+  // u boshqa gapning audiosini taklif qilardi.
+  speech.value = null
+  speechBlocked.value = false
   heard.value = ''
   note.value = ''
   errorText.value = ''
@@ -258,6 +308,9 @@ async function handleRecorded() {
     }
     heard.value = text
     note.value = noteFor(result)
+    // Aks-sado suhbatga yuborishdan MUSTAQIL ishlaydi: sintez sekin bo'lsa
+    // ham savol darhol ketadi, sintez yiqilsa ham javob keladi.
+    void echo(text, turn)
     // Router docs: a low-confidence transcript has ~60-70% word error rate.
     // Do not act on it — show it and let the user decide.
     if (result.lowConfidence) {
@@ -293,6 +346,59 @@ function voiceErrorText(err: unknown): string {
   return localizeApiError(err, t)
 }
 
+/**
+ * Tanilgan matnni ovoz bilan qaytaradi (birinchi bosqich: aks-sado).
+ *
+ * Bu turnning ASOSIY ishi EMAS. Sintez yiqilsa transkript ekranda qoladi va
+ * savol suhbatga baribir ketadi - aks holda ishlaydigan STT natijasi
+ * ishlamayotgan TTS tufayli yo'qolardi.
+ */
+async function echo(text: string, turn: number) {
+  if (!canSpeak(String(locale.value))) return
+  speechAborter?.abort()
+  speechAborter = new AbortController()
+  try {
+    const blob = await speak(text, String(locale.value), speechAborter.signal)
+    if (turn !== turnId || !props.open) return
+    speech.value = blob
+    await playBlob(blob)
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') return
+    if (turn !== turnId || !props.open) return
+    // 501 = ovoz serverda hali yoqilmagan (sir sozlanmagan). Bu nosozlik
+    // EMAS, shuning uchun foydalanuvchiga xato ko'rsatilmaydi - u shunchaki
+    // ovozsiz ishlaydi.
+    if (err instanceof ApiError && err.status === 501) return
+    // `note` ni BOSIB O'TMAYMIZ: u yerda "quvur band, o'zingiz yuboring"
+    // yoki "yozuv kesildi" turgan bo'lishi mumkin, va ular ovoz
+    // yiqilganidan ko'ra muhimroq.
+    if (!note.value) note.value = t('voiceSpeakFailed')
+  }
+}
+
+/** Ijro. Rad etilishi XATO EMAS: brauzer avtomatik ijroga ruxsat bermasligi
+ *  mumkin (foydalanuvchi harakati bo'lmasa), va bunda tugma ko'rsatiladi. */
+async function playBlob(blob: Blob) {
+  stopAudio()                 // stopSpeaking() EMAS - so'rov tirik qolsin
+  const handle = play(blob)
+  stopHandle = handle.stop
+  speaking.value = true
+  speechBlocked.value = false
+  try {
+    await handle.done
+  } catch {
+    speechBlocked.value = true
+  } finally {
+    speaking.value = false
+    stopHandle = null
+  }
+}
+
+/** "Qayta tinglash" / avtomatik ijro rad etilganda "Tinglash". */
+function replay() {
+  if (speech.value) void playBlob(speech.value)
+}
+
 /** Notes shown under the heard text. Language is never mentioned here: voice
  *  always runs in the UI language and the system does not detect or switch. */
 function noteFor(r: { truncated: boolean }): string {
@@ -312,6 +418,9 @@ function confirmSend() {
 
 function close() {
   teardown()
+  stopSpeaking()
+  speech.value = null
+  speechBlocked.value = false
   turnId++          // anything still in flight is now stale
   state.value = 'idle'
   heard.value = ''
@@ -327,8 +436,18 @@ function onOrbClick() {
 // The pipeline finishing is what ends the "thinking" state.
 watch(() => props.busy, (busy) => { if (!busy && state.value === 'thinking') state.value = 'idle' })
 // Closing the panel must release the microphone even if `close()` wasn't used.
-watch(() => props.open, (open) => { if (!open) { teardown(); turnId++; state.value = 'idle'; heard.value = ''; note.value = '' } })
-onBeforeUnmount(teardown)
+watch(() => props.open, (open) => {
+  if (open) return
+  teardown()
+  stopSpeaking()
+  turnId++
+  state.value = 'idle'
+  heard.value = ''
+  note.value = ''
+  speech.value = null
+  speechBlocked.value = false
+})
+onBeforeUnmount(() => { teardown(); stopSpeaking() })
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') { e.preventDefault(); close() }
@@ -407,6 +526,19 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
         {{ heard }}
       </p>
       <p v-if="note" class="vp-note">{{ note }}</p>
+
+      <!-- Ovoz javobi. Ijro davom etayotgani ko'rinib turadi, chunki panel
+           o'zi jim: sfera esa mikrofonga qaraydi, karnayga emas. -->
+      <p v-if="speaking" class="vp-speaking">
+        <SpeakerIcon :size="14" />
+        {{ t('voiceSpeaking') }}
+      </p>
+      <div v-else-if="speech" class="vp-confirm">
+        <button class="vp-btn" @click="replay">
+          <SpeakerIcon :size="14" />
+          {{ speechBlocked ? t('voicePlay') : t('voiceReplay') }}
+        </button>
+      </div>
 
       <div v-if="state === 'confirm'" class="vp-confirm">
         <button class="vp-btn vp-btn--primary" @click="confirmSend">{{ t('voiceSendAnyway') }}</button>
@@ -770,6 +902,26 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
   gap: 10px;
   margin-top: 8px;
 }
+/* Ovoz chiqayotgani. Belgi va matn bir qatorda, mavzu aksentida - jimgina
+   sekin puls, chunki bu holat bir necha soniya turadi. */
+.vp-speaking {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--vp-icon);
+  animation: vp-speak-pulse 1.6s ease-in-out infinite;
+}
+@keyframes vp-speak-pulse {
+  0%, 100% { opacity: 0.62; }
+  50%      { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vp-speaking { animation: none; opacity: 1; }
+}
+/* Qayta tinglash tugmasi - belgi bilan. */
+.vp-btn { display: inline-flex; align-items: center; gap: 7px; }
 .vp-btn {
   border: 1px solid var(--vp-btn-border);
   background: var(--vp-btn-bg);

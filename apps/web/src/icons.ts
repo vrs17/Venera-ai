@@ -76,6 +76,24 @@ export const MicIcon: FunctionalComponent = () =>
     }),
   ])
 
+/** Ovoz chiqayotganini bildiradi: karnay va ikkita to'lqin. Mikrofon bilan
+ *  yonma-yon turadi, shuning uchun bir xil 16x16 to'rda chizilgan. */
+export const SpeakerIcon: FunctionalComponent<{ size?: number }> = (props) =>
+  h('svg', { width: props.size ?? 15, height: props.size ?? 15, viewBox: '0 0 16 16', fill: 'none' }, [
+    h('path', {
+      d: 'M8.5 2.5 5 5.5H2.5v5H5l3.5 3z',
+      stroke: 'currentColor',
+      'stroke-width': '1.4',
+      'stroke-linejoin': 'round',
+    }),
+    h('path', {
+      d: 'M11 5.5a3.5 3.5 0 0 1 0 5M13 3.5a6.5 6.5 0 0 1 0 9',
+      stroke: 'currentColor',
+      'stroke-width': '1.4',
+      'stroke-linecap': 'round',
+    }),
+  ])
+
 export const GlobeIcon: FunctionalComponent<{ size?: number }> = (props) =>
   h('svg', { width: props.size ?? 15, height: props.size ?? 15, viewBox: '0 0 18 18', fill: 'none' }, [
     h('circle', { cx: '9', cy: '9', r: '6.6', stroke: 'currentColor', 'stroke-width': '1.4' }),

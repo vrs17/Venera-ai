@@ -151,6 +151,77 @@ curl -s http://10.10.50.4:8006/health | python3 -m json.tool | head    # Router 
 journalctl --user -u venera-api.service -o cat | grep 'STT '           # qaysi backend ishlagani
 ```
 
+## TTS (matnni ovozga o'girish)
+
+Backend matnni TTS serveriga (`10.10.50.4:8200`) yuborib, WAV olib qaytaradi.
+Javob `audio/wav` (8000 Hz, mono - telefoniya sifati), JSON emas.
+
+| O'zgaruvchi | Default | Izoh |
+|---|---|---|
+| `TTS_BASE_URL` | `http://10.10.50.4:8200` | TTS serveri (ichki tarmoq) |
+| `TTS_CLIENT_ID` | `frontend` | serverdagi `AUTH_CLIENTS` dan |
+| `TTS_CLIENT_SECRET` | *(bo'sh)* | **sir.** Bo'sh bo'lsa ovoz o'chiq (501), qolgan hamma narsa ishlaydi |
+| `TTS_TIMEOUT` | `60` | BIR so'rov uchun, soniya |
+| `TTS_DEADLINE` | `100` | BUTUN `/speak` uchun devor-soat. nginx 120 s dan KAM bo'lishi shart |
+| `TTS_MAX_CONCURRENT` | `2` | bir vaqtda nechta sintez |
+| `TTS_VOICE` | `uz_female_calm` | yoki `uz_male_news` (erkak) |
+| `TTS_SPEED` | *(bo'sh -> 0.95)* | rasmiy 0.90, yangiliklar 1.0 |
+| `TTS_MAX_CHARS` | `600` | undan uzun matn so'z chegarasida qisqartiriladi |
+
+**Sir brauzerga hech qachon bermaydi.** Frontend `/api/v1/tts/speak` ga
+matn yuboradi, tokenni backend oladi va keshlaydi (24 soat). Agar frontend
+o'zi token olsa, `client_secret` JS bundle'ida va har bir tarmoq log'ida
+ochiq turardi.
+
+**Hozircha faqat o'zbek (lotin).** `uz-Cyrl` ATAYLAB yo'q - kirill matn lotin
+o'quvchiga berilsa harf-baharf noto'g'ri o'qiladi, translit esa alohida ish.
+`ru`/`en` uchun bu serverda ovoz umuman yo'q. Boshqa til so'ralsa 400, va
+frontend bunday tilda tugmani umuman ko'rsatmaydi (`TTS_LOCALES`).
+
+**Birinchi bosqich - aks-sado.** Ovoz paneli STT tanigan matnning O'ZINI
+o'qib beradi (suhbat javobini emas). Bu ikkala zanjirni bitta gap bilan
+tekshirish uchun; keyingi bosqichda o'qiladigan matn LLM javobiga almashadi.
+
+**Raqamlar - eng nozik joy.** Serverning `normalize_numbers` i ba'zi
+naqshlarda YIQILADI (jonli tekshirilgan):
+
+| Kirish | Serverda | Bizda |
+|---|---|---|
+| `8600123456789012` (16+ xona: karta, hisob) | HTTP 500 | oldindan tanib, normalizatsiyasiz yuboriladi |
+| `1.000.000`, `10.10.50.4`, `v1.2.3` | HTTP 422 | shu kabi |
+| `2450000 som` | `ikki million tort yuz ellik ming som` ✅ | tegilmaydi |
+
+Ya'ni `app/services/tts.py` dagi `risky_for_normalizer()` shu ikki naqshni
+qidiradi va topsa normalizatsiyani o'chiradi - xato javobdan ko'ra raqamni
+model o'zicha o'qigani afzal.
+
+**`download_url` ISHLATILMAYDI.** U `user_id` bo'yicha ENG SO'NGGI faylni
+beradi: ikki foydalanuvchi bir vaqtda so'rasa, biri boshqasining audiosini
+eshitardi. Fayl `audio_path` dagi unikal nom bo'yicha `/api/v1/tts/file/{nom}`
+dan olinadi.
+
+**Timeout byudjeti.** `/speak` IKKITA ketma-ket so'rov qiladi: `generate`,
+keyin faylni yuklab olish. `TTS_TIMEOUT` faqat bittasiga tegishli, ya'ni
+`TTS_DEADLINE` bo'lmasa jami 60+60=120 s ga yetib, nginx chegarasiga aynan
+urilardi - javob brauzerga yetib bormasdi, slot esa band turaverardi.
+Zanjir: bir so'rov 60 s < butun `/speak` 100 s < nginx 120 s.
+
+**Server bitta GPU'da KETMA-KET ishlaydi** va 429 qaytarmaydi - navbat
+cheksiz o'sadi. Shuning uchun chegara `TTS_MAX_CONCURRENT` bilan bu tomonda
+qo'yiladi: oshsa darhol 503 "band".
+
+**nginx CSP.** `media-src 'self' blob:` MAJBURIY. WAV `URL.createObjectURL()`
+orqali `<audio>` ga beriladi, `default-src 'self'` esa `blob:` ni qamramaydi.
+Usiz ovoz FAQAT ishlab chiqarishda, jimgina bloklanadi (Vite dev-serverda CSP
+yo'q, ya'ni lokalda ishlaydigandek ko'rinadi).
+
+Tekshirish:
+
+```bash
+curl -s http://10.10.50.4:8200/health | python3 -m json.tool      # model, GPU, ovozlar
+journalctl --user -u venera-api.service -o cat | grep 'TTS'       # sintez va token log'i
+```
+
 ## Avtomatik qayta ishga tushish
 
 | Holat | Xulq |

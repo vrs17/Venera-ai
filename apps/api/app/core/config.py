@@ -61,6 +61,34 @@ class Settings(BaseSettings):
     #: o'tib, faqat oxirida rad etilardi.
     stt_max_upload_mb: float = 10.0
 
+    # --- TTS (matnni ovozga o'girish) ---
+    #: TTS serveri. Ichki tarmoqda, VPN ortida - STT bilan bir xil hostda,
+    #: boshqa portda.
+    tts_base_url: str = "http://10.10.50.4:8200"
+    #: Klient sirlari TTS serverining `AUTH_CLIENTS` ro'yxatidan keladi.
+    #: `tts_client_secret` BO'SH bo'lsa ovoz sintezi o'chiq: endpoint 503
+    #: qaytaradi, qolgan hamma narsa ishlaydi. Sir FAQAT `.env` da.
+    tts_client_id: str = "frontend"
+    tts_client_secret: str = ""
+    #: Sintez ~2x realtime, lekin server BITTA GPU'da KETMA-KET ishlaydi:
+    #: navbatda kutish vaqti sintezning o'zidan uzunroq bo'lishi mumkin.
+    tts_timeout: float = 60.0
+    #: BUTUN `/speak` uchun devor-soat. `TTS_TIMEOUT` bitta so'rovga
+    #: tegishli, `/speak` esa IKKITA ketma-ket so'rov qiladi (sintez, keyin
+    #: faylni olish) - ya'ni usiz jami 120 s ga yetib, nginx chegarasiga
+    #: aynan urilardi. nginx 120 s dan KAM bo'lishi shart.
+    tts_deadline: float = 100.0
+    #: Server 429 qaytarmaydi - navbat cheksiz o'sadi. Chegarani o'zimiz
+    #: qo'yamiz: oshsa darhol 503 "band".
+    tts_max_concurrent: int = 2
+    #: Ovoz profili: `uz_female_calm` (ayol) yoki `uz_male_news` (erkak).
+    tts_voice: str = "uz_female_calm"
+    #: `null` -> server 0.95 ni oladi. Rasmiy matn uchun 0.90, yangiliklar 1.0.
+    tts_speed: float | None = None
+    #: Matn chegarasi. Uzun matn butun navbatni ushlab turadi, shuning uchun
+    #: qisqartiriladi (xato qaytarilmaydi - matn foydalanuvchi aytgan gapi).
+    tts_max_chars: int = 600
+
     # --- CORS ---
     #: Bo'sh bo'lsa CORS o'chirilgan: frontend nginx orqali BIR XIL originda
     #: turadi (`/api` proxy), ya'ni CORS umuman kerak emas. Faqat frontend
