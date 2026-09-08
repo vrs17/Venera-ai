@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import { askAi } from '../api/chat.api'
 import { localizeApiError } from '../api/errors'
 import { useAuth } from '../composables/useAuth'
+import { useWakeWord, WAKE_LOCALES, WAKE_STORAGE_KEY } from '../composables/useWakeWord'
 import type { ActorType, Phase, UIExchange } from '../types'
 import { applyTheme, getInitialTheme } from '../theme'
 import type { Theme } from '../theme'
@@ -17,7 +18,7 @@ import VoicePanel from '../components/VoicePanel.vue'
 import AnswerGlow from '../components/AnswerGlow.vue'
 import { MenuIcon } from '../icons'
 
-const { t } = useI18n({ useScope: 'global' })
+const { t, locale } = useI18n({ useScope: 'global' })
 const router = useRouter()
 // Identity now comes from the authenticated session (derived from the token by
 // the backend); the chat request carries only the question.
@@ -27,6 +28,40 @@ const phase = ref<Phase>('idle')
 const theme = ref<Theme>(getInitialTheme())
 const sidebarOpen = ref(false)
 const voiceOpen = ref(false)
+// Set only when the panel was opened by the wake word, so the assistant
+// answers out loud. Cleared on close: the next open, by button, is silent.
+const voiceGreeting = ref<string | null>(null)
+
+// --- "Salom Venera" ---------------------------------------------------------
+// OPT-IN, and off by default. It holds the microphone open for as long as the
+// page is, which is not something to switch on for someone without asking.
+const wakeEnabled = ref(localStorage.getItem(WAKE_STORAGE_KEY) === '1')
+watch(wakeEnabled, (value) => localStorage.setItem(WAKE_STORAGE_KEY, value ? '1' : '0'))
+const wakeSupported = computed(() => WAKE_LOCALES.includes(String(locale.value)))
+
+const { active: wakeActive } = useWakeWord({
+  enabled: wakeEnabled,
+  locale: computed(() => String(locale.value)),
+  paused: voiceOpen,
+  onWake: () => {
+    voiceGreeting.value = t('voiceGreeting')
+    voiceOpen.value = true
+  },
+})
+
+function toggleWake() {
+  wakeEnabled.value = !wakeEnabled.value
+}
+
+function openVoice() {
+  voiceGreeting.value = null      // opened by hand: no spoken greeting
+  voiceOpen.value = true
+}
+
+function closeVoice() {
+  voiceOpen.value = false
+  voiceGreeting.value = null
+}
 const collapsed = ref(localStorage.getItem('venera_sidebar_collapsed') === '1')
 watch(collapsed, (value) => localStorage.setItem('venera_sidebar_collapsed', value ? '1' : '0'))
 // User vs developer chat UI. User mode (default) hides the pipeline trace and
@@ -75,7 +110,7 @@ function onKeydown(e: KeyboardEvent) {
   // The voice panel is on top, so ESC closes that first — otherwise the
   // sidebar would toggle behind an open dialog and the microphone stay live.
   if (voiceOpen.value) {
-    voiceOpen.value = false
+    closeVoice()
     return
   }
   if (window.matchMedia('(max-width: 768px)').matches) {
@@ -179,8 +214,12 @@ const actorType = computed<ActorType>(() => (user.value?.actorType as ActorType)
         :open="sidebarOpen"
         :collapsed="collapsed"
         :dev-mode="devMode"
+        :wake="wakeEnabled"
+        :wake-active="wakeActive"
+        :wake-supported="wakeSupported"
         @toggle-theme="toggleTheme"
         @toggle-dev-mode="toggleDevMode"
+        @toggle-wake="toggleWake"
         @new-chat="newChat"
         @close="sidebarOpen = false"
         @toggle-collapse="toggleCollapse"
@@ -196,7 +235,7 @@ const actorType = computed<ActorType>(() => (user.value?.actorType as ActorType)
 
         <Welcome v-if="exchanges.length === 0" :name="displayName" :actor-type="actorType" @chip="send" />
         <Conversation v-else :exchanges="exchanges" :dev-mode="devMode" :busy="phase !== 'idle'" @regenerate="regenerate" />
-        <InputDock :phase="phase" :send="send" :stop="stop" @conversation="voiceOpen = true" />
+        <InputDock :phase="phase" :send="send" :stop="stop" @conversation="openVoice" />
         <AnswerGlow :phase="phase" />
 
         <VoicePanel
@@ -204,7 +243,8 @@ const actorType = computed<ActorType>(() => (user.value?.actorType as ActorType)
           :send="send"
           :busy="phase !== 'idle'"
           :answer="lastAnswer"
-          @close="voiceOpen = false"
+          :greeting="voiceGreeting"
+          @close="closeVoice"
         />
       </div>
     </div>

@@ -5,13 +5,26 @@ import type { AuthUser } from '../types'
 import type { Theme } from '../theme'
 import { LOCALES, setLocale } from '../i18n'
 import type { Locale } from '../i18n'
-import { ChevronDownIcon, CodeIcon, GlobeIcon, MoonIcon, PanelLeftIcon, PlusIcon, SunIcon } from '../icons'
+import { ChevronDownIcon, CodeIcon, EarIcon, GlobeIcon, MoonIcon, PanelLeftIcon, PlusIcon, SunIcon } from '../icons'
 import IdentityBar from './IdentityBar.vue'
 
-const props = defineProps<{ user: AuthUser | null; theme: Theme; open: boolean; collapsed: boolean; devMode: boolean }>()
+const props = defineProps<{
+  user: AuthUser | null
+  theme: Theme
+  open: boolean
+  collapsed: boolean
+  devMode: boolean
+  /** "Salom Venera" tinglash yoqilgan. */
+  wake: boolean
+  /** Mikrofon ochiq va tinglayapti - foydalanuvchi buni KO'RISHI kerak. */
+  wakeActive: boolean
+  /** Joriy tilda uyg'otish so'zi bor (hozircha faqat o'zbek). */
+  wakeSupported: boolean
+}>()
 const emit = defineEmits<{
   toggleTheme: []
   toggleDevMode: []
+  toggleWake: []
   newChat: []
   close: []
   toggleCollapse: []
@@ -96,6 +109,25 @@ function expandToLang() {
       >
         <CodeIcon :size="16" />
         <span v-if="!compact" class="sidebar__row-label">{{ t('developerMode') }}</span>
+        <span v-if="!compact" class="sidebar__switch" aria-hidden="true"><span class="sidebar__switch-knob" /></span>
+      </button>
+
+      <!-- "Salom Venera". Faqat uyg'otish so'zi bor tillarda ko'rinadi -
+           boshqa tilda tugma bosilsa hech narsa qilmasdi. -->
+      <button
+        v-if="wakeSupported"
+        class="sidebar__row"
+        :class="{ 'is-on': wake }"
+        :title="t('wakeWordHint')"
+        role="switch"
+        :aria-checked="wake"
+        @click="emit('toggleWake')"
+      >
+        <EarIcon :size="16" />
+        <span v-if="!compact" class="sidebar__row-label">
+          {{ t('wakeWord') }}
+          <span v-if="wakeActive" class="sidebar__live" :title="t('wakeWordActive')" aria-hidden="true" />
+        </span>
         <span v-if="!compact" class="sidebar__switch" aria-hidden="true"><span class="sidebar__switch-knob" /></span>
       </button>
 
@@ -384,5 +416,25 @@ function expandToLang() {
   .sidebar__toggle {
     display: none;
   }
+}
+/* Tinglash yoqilgan va mikrofon ochiq - pulsatsiya bilan. Foydalanuvchi
+   mikrofon ochiqligini HAR DOIM ko'rib turishi kerak. Nomi `__dot` EMAS:
+   u til tanlovidagi belgi uchun band. */
+.sidebar__live {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+  animation: sidebar-live 1.8s ease-in-out infinite;
+}
+@keyframes sidebar-live {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar__live { animation: none; opacity: 1; }
 }
 </style>

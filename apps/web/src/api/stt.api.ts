@@ -34,6 +34,20 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     signal?.addEventListener('abort', () => { clearTimeout(id); reject(signal.reason ?? new DOMException('aborted', 'AbortError')) }, { once: true })
   })
 
+/** Uploads a WAV that is ALREADY at the right rate — the wake-word listener
+ *  captures raw PCM at 16 kHz, so decoding and re-encoding it here would be
+ *  pure waste on a path that runs continuously. */
+export async function transcribeWav(
+  wav: Blob,
+  language: string,
+  signal?: AbortSignal,
+): Promise<Transcript> {
+  // No retry: nobody asked for this. A 503 means the router queue is full,
+  // and a wake check that retries would take a slot from someone who is
+  // actually waiting on a transcript.
+  return post(wav, 'speech.wav', language, signal, false)
+}
+
 export async function transcribe(
   audio: Blob,
   language: string,
@@ -50,7 +64,16 @@ export async function transcribe(
     name = audio.type.includes('ogg') ? 'speech.ogg' : audio.type.includes('mp4') ? 'speech.m4a' : 'speech.webm'
   }
   signal?.throwIfAborted()
+  return post(upload, name, language, signal)
+}
 
+async function post(
+  upload: Blob,
+  name: string,
+  language: string,
+  signal?: AbortSignal,
+  retry = true,
+): Promise<Transcript> {
   const form = new FormData()
   form.append('file', upload, name)
   form.append('language', language)
@@ -62,7 +85,7 @@ export async function transcribe(
     try {
       return await apiFetch<Transcript>('/api/v1/stt/transcribe', { method: 'POST', body: form, signal })
     } catch (err) {
-      if (attempt === 0 && err instanceof ApiError && err.status === 503) {
+      if (retry && attempt === 0 && err instanceof ApiError && err.status === 503) {
         await sleep(1500, signal)
         continue
       }

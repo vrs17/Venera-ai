@@ -237,6 +237,58 @@ curl -s http://10.10.50.4:8200/health | python3 -m json.tool      # model, GPU, 
 journalctl --user -u venera-api.service -o cat | grep 'TTS'       # sintez va token log'i
 ```
 
+## Uyg'otish so'zi: "Salom Venera"
+
+Sozlamada yoqilsa (yon panel -> "Uyg'otish so'zi"), suhbat sahifasi
+mikrofonni ochiq tutadi va "Salom Venera" eshitilganda ovoz paneli o'zi
+ochilib, salomlashib, tinglashni boshlaydi. **Sukut bo'yicha O'CHIQ.**
+
+**Nega opt-in.** Mikrofon sahifa ochiq turgan davomida ochiq qoladi. Buni
+foydalanuvchidan so'ramasdan yoqib qo'yish mumkin emas - shuning uchun
+tugma bor va yon panelda mikrofon ochiqligini ko'rsatuvchi pulsatsiyalanuvchi
+nuqta turadi.
+
+**Nega STT parki yiqilmaydi.** Router BUTUN park uchun ~10 parallel so'rov
+ko'taradi. Ochiq qolgan bir nechta brauzer butun call-center'ni to'sib
+qo'yishi mumkin edi. Shuning uchun tarmoqqa chiqish OXIRGI chora, oldida
+uchta lokal filtr bor (`src/composables/useWakeWord.ts`):
+
+| Filtr | Nima qiladi |
+|---|---|
+| Energiya (RMS) | sukunat brauzerdan UMUMAN chiqmaydi |
+| Uzunlik 350-2600 ms | "Salom Venera" ~1 s. Undan uzun nutq - oddiy suhbat, so'rovsiz TASHLANADI |
+| Sovish 2.5 s | uzluksiz gap-so'z ham daqiqasiga ~24 so'rovdan oshmaydi |
+
+Ya'ni jim xonada nol so'rov. Uyg'otish tekshiruvi 503 da QAYTA URINMAYDI -
+navbatni haqiqatan kutayotgan odamdan slot olmaslik uchun.
+
+**Nega xom PCM va `MediaRecorder` emas.** Uyg'otish so'zi qisqa, va RMS
+chegarasi kesilganda "Sa-" allaqachon o'tib ketgan bo'ladi. Halqasimon bufer
+0.45 s oldingi tovushni saqlaydi, ya'ni yozuv gapiruvchidan OLDIN boshlanadi.
+`AudioContext` STT tezligida (16 kHz) ochiladi - `encodeWavBytes` darhol
+kerakli formatni beradi, dekodlash/qayta namuna olish yo'q.
+
+**Nega eskirgan `ScriptProcessorNode`.** Uning o'rnini bosuvchi `AudioWorklet`
+protsessorni alohida modul URL'idan yuklaydi, odatdagi usul esa `blob:` URL.
+Bizning CSP `script-src 'self'` - u `blob:` ni bloklaydi, va FAQAT ishlab
+chiqarishda, jimgina. Eskirgan tugun bu muammodan xoli.
+
+**Moslashtirgich** (`isWakePhrase`) ham salom, ham nomni TALAB qiladi.
+Faqat nom yetarli emas: "Venera tizimi haqida ayting" degan oddiy gapda ham
+nom bor, panel ochilishi esa ishni bo'lib yuboradi. Nom Levenshtein masofasi
+<=2 bilan taqqoslanadi - model bir xil tovushni "venera", "vinera", "venira"
+deb yozadi.
+
+Jonli o'lchangan (TTS -> STT aylanmasi orqali):
+
+| Aytilgan | STT qaytargani | Uyg'otadimi |
+|---|---|---|
+| Salom Venera | `salom, venera.` | ha |
+| Assalomu alaykum Venera | `assalomu alaykum venera.` | ha |
+| Venera | `venerat` / `venera.` | yo'q - salom yo'q |
+
+Faqat `uz` va `uz-Cyrl` tillarida ko'rinadi: so'zning o'zi o'zbekcha.
+
 ## Avtomatik qayta ishga tushish
 
 | Holat | Xulq |

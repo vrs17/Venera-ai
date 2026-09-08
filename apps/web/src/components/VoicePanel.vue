@@ -44,6 +44,11 @@ const props = defineProps<{
   busy: boolean
   /** The most recent answer text, shown under the orb once it arrives. */
   answer?: string | null
+  /** Spoken once when the panel opens, before listening starts. Set when the
+   *  panel was opened by the wake word: the person spoke to summon it, so the
+   *  assistant answers out loud rather than showing a silent screen. Null when
+   *  the panel was opened by the button — a click is not a conversation. */
+  greeting?: string | null
 }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
@@ -435,6 +440,27 @@ function onOrbClick() {
 
 // The pipeline finishing is what ends the "thinking" state.
 watch(() => props.busy, (busy) => { if (!busy && state.value === 'thinking') state.value = 'idle' })
+/** Greets, then listens. The order matters: the greeting comes out of the
+ *  speakers, and `startListening()` stops any playback before opening the
+ *  microphone, so the assistant never records itself saying hello. */
+async function greetThenListen(text: string) {
+  // The state is already 'idle' here: the `open` watcher resets it on close.
+  // Assigning it again would narrow its type and hide the check below.
+  const turn = turnId
+  await echo(text, turn)
+  // The panel may have been closed, or the person may have tapped the orb
+  // themselves while the greeting played — either way this turn is stale.
+  if (turn !== turnId || !props.open || state.value === 'listening') return
+  void startListening()
+}
+
+// Opening with a greeting is the wake-word path.
+watch(() => props.open, (open) => {
+  if (!open) return
+  const greeting = props.greeting
+  if (greeting) void greetThenListen(greeting)
+}, { flush: 'post' })
+
 // Closing the panel must release the microphone even if `close()` wasn't used.
 watch(() => props.open, (open) => {
   if (open) return
