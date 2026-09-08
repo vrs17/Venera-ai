@@ -6,6 +6,14 @@
  * the chat pipeline. Nothing here talks to the STT server directly; see
  * `api/stt.api.ts` for why.
  *
+ * VISUALS. The reference is `assets/voice.gif`: a glowing sphere on near-black,
+ * glass-like colour sheets drifting inside it, a thin white rim with a bright
+ * spot travelling around it, and smoky violet loops outside. It is rebuilt here
+ * in CSS rather than shipped as the GIF — the GIF is 10 MB and cannot react to
+ * the microphone; the CSS version is a few hundred bytes and does. The panel is
+ * always dark (the `.dark-zone` tokens) regardless of the app theme, because the
+ * design only works on black.
+ *
  * The single most surprising failure this component has to explain is the
  * secure-context rule: over plain HTTP on a LAN address `navigator.mediaDevices`
  * is simply `undefined`. No prompt appears and no error is raised, so an
@@ -14,7 +22,6 @@
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { CSSProperties } from 'vue'
 import { micAvailable, secureUrl, transcribe } from '../api/stt.api'
 import { localizeApiError } from '../api/errors'
 import { LOCALES } from '../i18n'
@@ -240,222 +247,401 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === ' ' && supported.value) { e.preventDefault(); onOrbClick() }
 }
 
-const orbStyle = computed<CSSProperties>(() => {
-  const active = state.value === 'listening'
-  const scale = active ? 1 + level.value * 0.22 : 1
-  return {
-    width: '132px',
-    height: '132px',
-    borderRadius: '50%',
-    border: 'none',
-    cursor: supported.value ? 'pointer' : 'not-allowed',
-    display: 'grid',
-    placeItems: 'center',
-    color: active ? 'var(--accent-contrast)' : 'var(--text-secondary)',
-    background: active
-      ? 'var(--accent)'
-      : state.value === 'error'
-        ? 'var(--bad-bg)'
-        : 'var(--surface-hover)',
-    transform: `scale(${scale})`,
-    transition: 'background 0.3s, color 0.3s, transform 0.08s linear',
-    boxShadow: active
-      ? `0 0 ${18 + level.value * 46}px rgba(225, 25, 0, ${0.25 + level.value * 0.45}), var(--glass-shadow)`
-      : 'var(--glass-shadow)',
-  }
-})
+/** One CSS variable carries the microphone level into the stylesheet; every
+ *  reactive part of the orb (scale, rim glow, halo, wisp opacity) reads it
+ *  there. Keeping the maths in CSS means no per-frame style object churn. */
+const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
 </script>
 
 <template>
   <div
     v-if="open"
-    class="voice-overlay"
+    class="vp dark-zone"
+    :data-state="supported ? state : 'unsupported'"
+    :style="orbVars"
     role="dialog"
     aria-modal="true"
     :aria-label="t('voiceTitle')"
     tabindex="-1"
     @keydown="onKeydown"
   >
-    <div class="voice-sheet glass">
-      <header class="voice-head">
-        <span class="voice-title">{{ t('voiceTitle') }}</span>
-        <button class="voice-x" :aria-label="t('voiceClose')" :title="t('voiceClose')" @click="close">
-          <XIcon :size="17" />
-        </button>
-      </header>
+    <button class="vp-close" :aria-label="t('voiceClose')" :title="t('voiceClose')" @click="close">
+      <XIcon :size="18" />
+    </button>
 
-      <div class="voice-body">
-        <button
-          class="voice-orb"
-          :style="orbStyle"
-          :disabled="!supported || state === 'transcribing' || state === 'thinking'"
-          :aria-label="state === 'listening' ? t('voiceStopListening') : t('voiceTapToSpeak')"
-          @click="onOrbClick"
-        >
-          <MicOffIcon v-if="!supported" :size="34" />
+    <div class="vp-stage">
+      <!-- Soft violet light behind everything; breathes with the voice. -->
+      <div class="vp-halo" aria-hidden="true" />
+
+      <!-- Smoky loops drifting outside the sphere, deliberately off-centre. -->
+      <div class="vp-wisp vp-wisp-a" aria-hidden="true" />
+      <div class="vp-wisp vp-wisp-b" aria-hidden="true" />
+      <div class="vp-wisp vp-wisp-c" aria-hidden="true" />
+
+      <button
+        class="vp-orb"
+        :disabled="!supported || state === 'transcribing' || state === 'thinking'"
+        :aria-label="state === 'listening' ? t('voiceStopListening') : t('voiceTapToSpeak')"
+        @click="onOrbClick"
+      >
+        <!-- Glass sheets: large blurred colour fields orbiting the centre at
+             different speeds, overlapping with `screen` so they read as
+             translucent layers rather than opaque shapes. -->
+        <span class="vp-sheets" aria-hidden="true">
+          <span class="vp-sheet vp-sheet-cyan" />
+          <span class="vp-sheet vp-sheet-blue" />
+          <span class="vp-sheet vp-sheet-violet" />
+          <span class="vp-sheet vp-sheet-magenta" />
+        </span>
+        <!-- Thin white rim and its bloom. -->
+        <span class="vp-rim" aria-hidden="true" />
+        <!-- The bright spot that travels around the rim. -->
+        <span class="vp-spark" aria-hidden="true" />
+        <span class="vp-icon" aria-hidden="true">
+          <MicOffIcon v-if="!supported" :size="30" />
           <MicIcon v-else />
-        </button>
-
-        <p class="voice-status" :class="{ 'voice-status--bad': state === 'error' || !supported }">
-          {{ statusText }}
-        </p>
-
-        <p v-if="!supported" class="voice-sub">
-          {{ t('voiceNeedsHttpsHow') }}<br />
-          <a class="voice-link" :href="secureUrl()">{{ secureUrl() }}</a>
-        </p>
-        <p v-else-if="errorHint" class="voice-sub">{{ errorHint }}</p>
-        <p v-else class="voice-sub">{{ t('voiceHint') }}</p>
-
-        <div v-if="heard" class="voice-heard">
-          <span class="voice-heard-label">{{ t('voiceHeard') }}</span>
-          <p class="voice-heard-text">{{ heard }}</p>
-        </div>
-
-        <p v-if="answer && state === 'idle'" class="voice-answer">{{ answer }}</p>
-      </div>
-
-      <footer class="voice-foot">
-        <span v-if="supported">{{ t('voiceLangNote', { lang: langLabel }) }}</span>
-        <button v-if="state === 'error'" class="voice-retry" @click="onOrbClick">{{ t('voiceRetry') }}</button>
-      </footer>
+        </span>
+      </button>
     </div>
+
+    <div class="vp-text">
+      <p class="vp-status" :class="{ 'vp-status--bad': state === 'error' || !supported }">{{ statusText }}</p>
+
+      <p v-if="!supported" class="vp-sub">
+        {{ t('voiceNeedsHttpsHow') }}<br />
+        <a class="vp-link" :href="secureUrl()">{{ secureUrl() }}</a>
+      </p>
+      <p v-else-if="errorHint" class="vp-sub">{{ errorHint }}</p>
+      <p v-else-if="state === 'idle' && !heard" class="vp-sub">{{ t('voiceHint') }}</p>
+
+      <p v-if="heard" class="vp-heard">
+        <span class="vp-heard-label">{{ t('voiceHeard') }}</span>
+        {{ heard }}
+      </p>
+      <p v-if="answer && state === 'idle'" class="vp-answer">{{ answer }}</p>
+
+      <button v-if="state === 'error'" class="vp-retry" @click="onOrbClick">{{ t('voiceRetry') }}</button>
+    </div>
+
+    <p v-if="supported" class="vp-foot">{{ t('voiceLangNote', { lang: langLabel }) }}</p>
   </div>
 </template>
 
 <style scoped>
-.voice-overlay {
+/* ── Stage ─────────────────────────────────────────────────────────────── */
+.vp {
   position: absolute;
   inset: 0;
   z-index: 40;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: color-mix(in srgb, var(--bg) 72%, transparent);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  animation: fadeUp 0.28s ease both;
-}
-.voice-sheet {
-  width: 100%;
-  max-width: 460px;
-  border-radius: 26px;
-  padding: 16px 22px 18px;
-  box-shadow: var(--glass-shadow);
   display: flex;
   flex-direction: column;
-  gap: 14px;
-}
-.voice-head {
-  display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  /* The reference background: black with a hint of violet. Not a theme token
+     on purpose — this screen is dark in both themes. */
+  background: #040109;
+  color: #e9e6f5;
+  font-family: Figtree, sans-serif;
+  animation: fadeUp 0.32s ease both;
+  overflow: hidden;
+  --orb: clamp(180px, 34vmin, 260px);
+  --accent-a: #90d7f8; /* cyan   */
+  --accent-b: #2954b4; /* blue   */
+  --accent-c: #5a59be; /* violet */
+  --accent-d: #c02fd6; /* magenta */
+  --glow: 150, 160, 255;
 }
-.voice-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  letter-spacing: 0.01em;
-}
-.voice-x {
-  width: 30px;
-  height: 30px;
+.vp-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
   border: none;
   border-radius: 50%;
-  background: transparent;
-  color: var(--icon-muted);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.72);
   cursor: pointer;
+  transition: background 0.2s, color 0.2s;
 }
-.voice-x:hover {
-  background: var(--surface-hover);
-  color: var(--text);
+.vp-close:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
 }
-.voice-body {
+
+.vp-stage {
+  position: relative;
+  width: calc(var(--orb) * 2.4);
+  height: calc(var(--orb) * 2.4);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+/* ── Halo ──────────────────────────────────────────────────────────────── */
+.vp-halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(var(--glow), calc(0.22 + var(--lvl) * 0.35)) 0%,
+    rgba(90, 60, 200, calc(0.12 + var(--lvl) * 0.2)) 32%,
+    transparent 68%
+  );
+  filter: blur(6px);
+  transform: scale(calc(0.92 + var(--lvl) * 0.28));
+  transition: transform 0.12s linear;
+}
+
+/* ── Wisps ─────────────────────────────────────────────────────────────── */
+.vp-wisp {
+  position: absolute;
+  border-radius: 50%;
+  border: 14px solid transparent;
+  filter: blur(14px);
+  opacity: calc(0.35 + var(--lvl) * 0.4);
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+.vp-wisp-a {
+  width: calc(var(--orb) * 1.55);
+  height: calc(var(--orb) * 1.35);
+  border-color: rgba(120, 100, 235, 0.55) transparent rgba(70, 60, 170, 0.5) transparent;
+  animation: wispA 9s linear infinite;
+}
+.vp-wisp-b {
+  width: calc(var(--orb) * 1.9);
+  height: calc(var(--orb) * 1.6);
+  border-color: transparent rgba(95, 80, 215, 0.4) transparent rgba(140, 110, 255, 0.35);
+  animation: wispB 13s linear infinite reverse;
+}
+.vp-wisp-c {
+  width: calc(var(--orb) * 1.25);
+  height: calc(var(--orb) * 1.7);
+  border-color: rgba(60, 50, 160, 0.45) transparent transparent rgba(150, 120, 255, 0.3);
+  animation: wispC 7s ease-in-out infinite;
+}
+@keyframes wispA {
+  from { transform: translate(-6%, 3%) rotate(0deg); }
+  to   { transform: translate(-6%, 3%) rotate(360deg); }
+}
+@keyframes wispB {
+  from { transform: translate(5%, -4%) rotate(0deg); }
+  to   { transform: translate(5%, -4%) rotate(360deg); }
+}
+@keyframes wispC {
+  0%   { transform: translate(-3%, 5%) rotate(0deg) scale(1); }
+  50%  { transform: translate(4%, -3%) rotate(180deg) scale(1.08); }
+  100% { transform: translate(-3%, 5%) rotate(360deg) scale(1); }
+}
+
+/* ── Orb ───────────────────────────────────────────────────────────────── */
+.vp-orb {
+  position: relative;
+  width: var(--orb);
+  height: var(--orb);
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: #0a0a2a;
+  cursor: pointer;
+  overflow: hidden;
+  isolation: isolate;
+  transform: scale(calc(1 + var(--lvl) * 0.14));
+  transition: transform 0.1s linear;
+  box-shadow:
+    0 0 calc(20px + var(--lvl) * 40px) rgba(var(--glow), calc(0.45 + var(--lvl) * 0.4)),
+    0 0 calc(60px + var(--lvl) * 60px) rgba(110, 90, 255, calc(0.25 + var(--lvl) * 0.3));
+}
+.vp-orb:disabled {
+  cursor: default;
+}
+.vp-sheets {
+  position: absolute;
+  inset: -20%;
+  animation: sheetsSpin 22s linear infinite;
+}
+.vp-sheet {
+  position: absolute;
+  width: 78%;
+  height: 78%;
+  border-radius: 46% 54% 52% 48% / 55% 45% 55% 45%;
+  filter: blur(6px);
+  mix-blend-mode: screen;
+  opacity: 0.92;
+}
+.vp-sheet-cyan    { top: -6%;  left: 22%; background: var(--accent-a); animation: sheetA 8s ease-in-out infinite; }
+.vp-sheet-blue    { top: 26%;  left: 30%; background: var(--accent-b); animation: sheetB 11s ease-in-out infinite; }
+.vp-sheet-violet  { top: 18%;  left: -4%; background: var(--accent-c); animation: sheetC 9.5s ease-in-out infinite; }
+.vp-sheet-magenta { top: 4%;   left: 2%;  background: var(--accent-d); width: 58%; height: 58%; opacity: 0.8; animation: sheetD 7s ease-in-out infinite; }
+@keyframes sheetsSpin { to { transform: rotate(360deg); } }
+@keyframes sheetA {
+  0%, 100% { transform: translate(0, 0) rotate(0deg) scale(1); }
+  50%      { transform: translate(-10%, 12%) rotate(40deg) scale(1.1); }
+}
+@keyframes sheetB {
+  0%, 100% { transform: translate(0, 0) rotate(0deg) scale(1.05); }
+  50%      { transform: translate(12%, -8%) rotate(-35deg) scale(0.95); }
+}
+@keyframes sheetC {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  50%      { transform: translate(8%, 10%) rotate(55deg); }
+}
+@keyframes sheetD {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50%      { transform: translate(14%, 6%) scale(1.25); }
+}
+
+/* Thin white rim + bloom, drawn above the sheets. */
+.vp-rim {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, 0.95),
+    inset 0 0 calc(10px + var(--lvl) * 14px) rgba(var(--glow), 0.9),
+    inset 0 0 28px rgba(var(--glow), 0.35);
+  pointer-events: none;
+}
+/* The travelling highlight: a conic gradient masked down to the rim. */
+.vp-spark {
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(255, 255, 255, 0) 250deg,
+    rgba(255, 255, 255, 0.95) 300deg,
+    rgba(var(--glow), 0.8) 330deg,
+    transparent 360deg
+  );
+  -webkit-mask: radial-gradient(circle, transparent calc(50% - 6px), #000 calc(50% - 4px), #000 50%, transparent 51%);
+  mask: radial-gradient(circle, transparent calc(50% - 6px), #000 calc(50% - 4px), #000 50%, transparent 51%);
+  filter: blur(1.2px);
+  animation: sparkSpin 4s linear infinite;
+  pointer-events: none;
+}
+@keyframes sparkSpin { to { transform: rotate(360deg); } }
+
+.vp-icon {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.8);
+  filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.5));
+  transition: opacity 0.3s;
+}
+.vp-icon :deep(svg) {
+  width: 26px;
+  height: 26px;
+}
+
+/* ── State tuning ──────────────────────────────────────────────────────── */
+/* Listening: everything moves faster and glows harder; the mic icon fades so
+   the sphere itself is the feedback. */
+.vp[data-state='listening'] .vp-sheets { animation-duration: 9s; }
+.vp[data-state='listening'] .vp-spark  { animation-duration: 1.6s; }
+.vp[data-state='listening'] .vp-icon   { opacity: 0.35; }
+/* Transcribing / thinking: a steady breathing pulse while nothing is heard. */
+.vp[data-state='transcribing'] .vp-orb,
+.vp[data-state='thinking'] .vp-orb {
+  animation: breathe 1.6s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.06); }
+}
+/* Error / unsupported: the colour drains out. */
+.vp[data-state='error'] .vp-sheet,
+.vp[data-state='unsupported'] .vp-sheet { filter: blur(6px) saturate(0.25); opacity: 0.5; }
+.vp[data-state='error'] .vp-rim,
+.vp[data-state='unsupported'] .vp-rim { box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.5); }
+.vp[data-state='unsupported'] .vp-spark,
+.vp[data-state='unsupported'] .vp-wisp { animation-play-state: paused; opacity: 0.2; }
+
+/* ── Text ──────────────────────────────────────────────────────────────── */
+.vp-text {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 10px 0 4px;
+  gap: 8px;
+  max-width: 460px;
   text-align: center;
+  z-index: 1;
 }
-.voice-orb {
-  /* sizing and colour come from :style so they can follow the live mic level */
-  margin-bottom: 4px;
-}
-.voice-orb:disabled {
-  cursor: default;
-}
-.voice-status {
+.vp-status {
   margin: 0;
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 600;
-  color: var(--text);
+  color: #f2f0fb;
+  letter-spacing: 0.01em;
 }
-.voice-status--bad {
-  color: var(--bad-fg);
+.vp-status--bad {
+  color: #ff8a80;
 }
-.voice-sub {
+.vp-sub {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-muted);
-  max-width: 340px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: rgba(233, 230, 245, 0.62);
 }
-.voice-link {
-  color: var(--accent);
+.vp-link {
+  color: #9fb5ff;
   word-break: break-all;
 }
-.voice-heard {
-  width: 100%;
-  margin-top: 4px;
-  padding: 10px 14px;
-  border-radius: 14px;
-  background: var(--surface-sunken);
-  text-align: left;
+.vp-heard {
+  margin: 6px 0 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #f2f0fb;
 }
-.voice-heard-label {
+.vp-heard-label {
+  display: block;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-secondary);
+  letter-spacing: 0.08em;
+  color: rgba(233, 230, 245, 0.5);
+  margin-bottom: 2px;
 }
-.voice-heard-text {
+.vp-answer {
   margin: 4px 0 0;
-  font-size: 15px;
-  color: var(--text);
-}
-.voice-answer {
-  margin: 2px 0 0;
   font-size: 14px;
   line-height: 1.55;
-  color: var(--text-muted);
-  text-align: left;
-  max-height: 132px;
+  color: rgba(233, 230, 245, 0.78);
+  max-height: 120px;
   overflow-y: auto;
 }
-.voice-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 20px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.voice-retry {
-  border: none;
-  background: var(--accent);
-  color: var(--accent-contrast);
+.vp-retry {
+  margin-top: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
   border-radius: 999px;
-  padding: 6px 16px;
-  font-size: 13px;
+  padding: 7px 18px;
+  font-size: 13.5px;
   cursor: pointer;
 }
-@media (max-width: 520px) {
-  .voice-sheet {
-    max-width: none;
-  }
+.vp-retry:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+.vp-foot {
+  position: absolute;
+  bottom: 18px;
+  margin: 0;
+  font-size: 12px;
+  color: rgba(233, 230, 245, 0.42);
+}
+
+/* Motion is the whole point here, but people who asked for less get less. */
+@media (prefers-reduced-motion: reduce) {
+  .vp-sheets, .vp-sheet, .vp-spark, .vp-wisp { animation-duration: 60s; }
+  .vp-orb { transition: none; }
 }
 </style>

@@ -415,25 +415,34 @@ export const AppleIcon: FunctionalComponent<{ size?: number }> = (props) =>
   ])
 AppleIcon.props = ['size']
 
-/** Two speech bubbles — "conversation", distinct from the plain mic which
- *  means "dictate one message". */
-export const ConversationIcon: FunctionalComponent<{ size?: number }> = (props) =>
-  h('svg', { width: props.size ?? 16, height: props.size ?? 16, viewBox: '0 0 18 18', fill: 'none' }, [
-    h('path', {
-      d: 'M2.2 7.2a3 3 0 0 1 3-3h4.3a3 3 0 0 1 3 3v1.4a3 3 0 0 1-3 3H6.1L3.4 13.4a.35.35 0 0 1-.56-.28v-1.6a3 3 0 0 1-.64-1.85V7.2Z',
-      stroke: 'currentColor',
-      'stroke-width': '1.35',
-      'stroke-linejoin': 'round',
-    }),
-    h('path', {
-      d: 'M12.6 6.1h.3a2.6 2.6 0 0 1 2.6 2.6v1.2a2.6 2.6 0 0 1-.6 1.65v1.4a.3.3 0 0 1-.48.24l-2.1-1.6',
-      stroke: 'currentColor',
-      'stroke-width': '1.35',
-      'stroke-linecap': 'round',
-      'stroke-linejoin': 'round',
-      opacity: '0.55',
-    }),
-  ])
+/** Audio bars — the "voice mode" mark. Bars, not a mic: the mic to its left
+ *  already means "dictate one message", and two microphones side by side would
+ *  read as the same action twice. */
+export const ConversationIcon: FunctionalComponent<{ size?: number }> = (props) => {
+  const size = props.size ?? 18
+  // Heights are deliberately uneven — evenly stepped bars read as a chart.
+  const bars: [number, number][] = [
+    [4.5, 5],
+    [7.5, 9],
+    [10.5, 13],
+    [13.5, 7],
+  ]
+  return h(
+    'svg',
+    { width: size, height: size, viewBox: '0 0 18 18', fill: 'none' },
+    bars.map(([x, height]) =>
+      h('rect', {
+        key: x,
+        x: x - 0.9,
+        y: (18 - height) / 2,
+        width: 1.8,
+        height,
+        rx: 0.9,
+        fill: 'currentColor',
+      }),
+    ),
+  )
+}
 
 export const XIcon: FunctionalComponent<{ size?: number }> = (props) =>
   h('svg', { width: props.size ?? 18, height: props.size ?? 18, viewBox: '0 0 18 18', fill: 'none' }, [

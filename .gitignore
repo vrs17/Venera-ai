@@ -55,3 +55,7 @@ apps/api/app/static/swagger-ui*.css
 # DIQQAT: `swagger-init.js` BUNGA KIRMAYDI - u bizning manba kodimiz.
 # Umumiy `*.js` qoidasi uni ham yutib yuborardi va toza klonda `/api/docs`
 # 503 qaytarardi.
+
+# Ovoz paneli dizayn ma'lumotnomasi - 10 MB, koddan import qilinmaydi.
+# CSS varianti VoicePanel.vue da; GIF faqat solishtirish uchun diskda turadi.
+apps/web/src/assets/voice.gif

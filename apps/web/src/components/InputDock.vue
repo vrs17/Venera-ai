@@ -76,26 +76,23 @@ const disabledRoundButton: CSSProperties = {
 }
 const attachButtonStyle: CSSProperties = { ...disabledRoundButton, position: 'relative' }
 
-// A pill, not another round icon: this one opens a whole mode, and the three
-// circular buttons to its left are all single actions. The label carries that
-// difference; it collapses to the icon alone when the dock gets narrow.
+// A filled square-ish button, not another outlined circle: the three buttons to
+// its left are all single actions on the current message, this one switches the
+// whole interaction to voice. Solid fill is what separates the two groups, so
+// the label is no longer needed to carry that difference.
 const conversationBtnStyle = computed<CSSProperties>(() => ({
-  display: 'flex',
-  alignItems: 'center',
-  gap: '6px',
+  display: 'grid',
+  placeItems: 'center',
+  width: '38px',
   height: '38px',
-  padding: '0 14px',
   border: 'none',
-  borderRadius: '19px',
+  borderRadius: '12px',
   cursor: 'pointer',
   flexShrink: 0,
-  whiteSpace: 'nowrap',
-  fontFamily: 'Figtree, sans-serif',
-  fontSize: '13.5px',
-  fontWeight: 500,
-  background: convHover.value ? 'var(--accent)' : 'var(--surface-hover)',
-  color: convHover.value ? 'var(--accent-contrast)' : 'var(--text-muted)',
-  transition: 'background 0.25s, color 0.25s',
+  background: convHover.value ? 'var(--voice)' : 'var(--voice-soft)',
+  color: convHover.value ? '#FFFFFF' : 'var(--voice)',
+  transition: 'background 0.22s, color 0.22s, transform 0.1s',
+  transform: convHover.value ? 'scale(1.05)' : 'none',
 }))
 
 const textareaStyle: CSSProperties = {
@@ -240,23 +237,9 @@ const sendBtnStyle = computed<CSSProperties>(() => {
         @mouseenter="convHover = true"
         @mouseleave="convHover = false"
       >
-        <ConversationIcon :size="16" />
-        <span class="conv-label">{{ t('conversation') }}</span>
+        <ConversationIcon :size="18" />
       </button>
     </div>
     <div :style="{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }">{{ t('disclaimer') }}</div>
   </div>
 </template>
-
-<style scoped>
-/* Below ~560px the dock cannot hold the label and the textarea at once; the
-   icon alone still reads as "voice mode" next to the tooltip. */
-@media (max-width: 560px) {
-  .conv-label {
-    display: none;
-  }
-  .conv-btn {
-    padding: 0 11px !important;
-  }
-}
-</style>

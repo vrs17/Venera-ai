@@ -58,6 +58,9 @@
   --menu-shadow: 0 16px 44px rgba(26, 26, 26, 0.12);
 
   /* Frosted-glass surfaces (light). */
+  --voice: #2563EB;
+  --voice-soft: color-mix(in srgb, #2563EB 12%, transparent);
+
   --glass-bg: rgba(255, 255, 255, 0.5);
   --glass-bg-hover: rgba(255, 255, 255, 0.72);
   --glass-border: rgba(20, 20, 20, 0.08);
@@ -72,6 +75,8 @@
 }
 
 :root[data-theme='dark'] {
+  --voice: #6591F5;
+  --voice-soft: color-mix(in srgb, #6591F5 20%, transparent);
   color-scheme: dark;
 
   --accent: #FF453A;
@@ -132,6 +137,8 @@
    backdrop), so its greeting/chips/input dock stay legible while the rest of the app
    may be in light mode. Values mirror :root[data-theme='dark'] above; keep in sync. */
 .dark-zone {
+  --voice: #6591F5;
+  --voice-soft: color-mix(in srgb, #6591F5 20%, transparent);
   color-scheme: dark;
 
   --accent: #FF453A;
