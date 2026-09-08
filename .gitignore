@@ -33,6 +33,10 @@ publish/*.exe
 
 # --- Audio ---
 *.wav
+# ISTISNO: salomlashish audiosi test namunasi emas, BUILD KIRISHI -
+# `greeting.ts` uni import qiladi, ya'ni fayl bo'lmasa `vite build` umuman
+# yiqiladi. `tools/make_greeting.py` bilan qayta yasaladi.
+!apps/web/src/assets/greeting-uz.wav
 !apps/desktop/tests/fixtures/*.wav
 
 # --- OS ---

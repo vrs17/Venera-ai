@@ -148,6 +148,7 @@ export function useWakeWord(options: WakeWordOptions) {
   function shouldRun(): boolean {
     return (
       enabled.value &&
+      !blocked.value &&
       !paused.value &&
       WAKE_LOCALES.includes(locale.value) &&
       micAvailable() &&
@@ -163,10 +164,12 @@ export function useWakeWord(options: WakeWordOptions) {
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       })
     } catch {
-      // Refused, or no device. Do not retry in a loop — the browser will not
-      // change its mind without another user gesture.
+      // Refused, or no device. Stop trying for this session — the browser will
+      // not change its mind on its own. The stored preference is deliberately
+      // LEFT ON: turning it off here would mean a single accidental "Block"
+      // silently disables the feature forever, even after the person fixes
+      // the permission in site settings.
       blocked.value = true
-      enabled.value = false
       return
     }
     blocked.value = false

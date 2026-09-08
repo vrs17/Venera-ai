@@ -239,14 +239,38 @@ journalctl --user -u venera-api.service -o cat | grep 'TTS'       # sintez va to
 
 ## Uyg'otish so'zi: "Salom Venera"
 
-Sozlamada yoqilsa (yon panel -> "Uyg'otish so'zi"), suhbat sahifasi
-mikrofonni ochiq tutadi va "Salom Venera" eshitilganda ovoz paneli o'zi
-ochilib, salomlashib, tinglashni boshlaydi. **Sukut bo'yicha O'CHIQ.**
+Suhbat sahifasi mikrofonni ochiq tutadi va "Salom Venera" eshitilganda ovoz
+paneli o'zi ochilib, salomlashib, tinglashni boshlaydi. **Sukut bo'yicha
+YOQIQ** - tizimga kirgan zahoti ishlaydi, hech narsa bosish shart emas.
 
-**Nega opt-in.** Mikrofon sahifa ochiq turgan davomida ochiq qoladi. Buni
-foydalanuvchidan so'ramasdan yoqib qo'yish mumkin emas - shuning uchun
-tugma bor va yon panelda mikrofon ochiqligini ko'rsatuvchi pulsatsiyalanuvchi
-nuqta turadi.
+Yon paneldagi tugma qoladi (mikrofonning O'CHIRISH tugmasi har doim bo'lishi
+kerak), lekin faqat aniq `'0'` uni o'chiradi: yangi login, yangi brauzer,
+tozalangan xotira - hammasi tinglagan holda ochiladi. Mikrofon ochiqligi
+yon paneldagi pulsatsiyalanuvchi nuqta bilan ko'rinib turadi.
+
+Brauzer ruxsatni rad etsa, sozlama O'CHIRILMAYDI - faqat shu sessiyada
+qayta urinilmaydi. Aks holda bir marta tasodifan "Block" bosilsa, funksiya
+sayt sozlamalarida ruxsat tiklangandan keyin ham abadiy o'chiq qolardi.
+
+**Salomlashish OLDINDAN tayyorlangan.** Matn o'zgarmas, sintez esa ~2 s
+oladi va bitta GPU navbatida turadi - "Salom Venera" degan odam shuncha
+kutmasligi kerak. Fayl bir marta yasaladi:
+
+```bash
+cd ~/Venera/apps/api && venv/bin/python tools/make_greeting.py
+# -> apps/web/src/assets/greeting-uz.wav
+```
+
+Matn (`voiceGreeting`) o'zgarsa shu buyruq qayta bajariladi - ekrandagi va
+yangraydigan matn bir xil bo'lishi kerak. Fayl topilmasa jonli sintezga
+tushadi: yo'qolgan resurs kechikish beradi, salomlashishni yo'qotmaydi.
+
+**nginx MIME tuzog'i.** nginx'ning standart `mime.types` ida `.wav` UMUMAN
+yo'q (u yerdagi yagona "wav" - `x-shockwave-flash`), ya'ni audio
+`application/octet-stream` bo'lib ketardi. `X-Content-Type-Options: nosniff`
+bilan birga bu `<audio>` ni ijrodan bosh tortishga majbur qilardi.
+`/assets/` blokida `types` ro'yxati bor - u `types` ni KENGAYTIRMAYDI,
+ALMASHTIRADI, shuning uchun u yerda beriladigan hamma kengaytma sanalgan.
 
 **Nega STT parki yiqilmaydi.** Router BUTUN park uchun ~10 parallel so'rov
 ko'taradi. Ochiq qolgan bir nechta brauzer butun call-center'ni to'sib

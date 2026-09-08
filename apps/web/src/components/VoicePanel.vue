@@ -30,6 +30,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { micAvailable, micBlockedByPolicy, secureUrl, transcribe } from '../api/stt.api'
 import { canSpeak, play, speak } from '../api/tts.api'
+import { preparedGreeting } from '../api/greeting'
 import { localizeApiError } from '../api/errors'
 import { ApiError } from '../api/http'
 import { LOCALES } from '../i18n'
@@ -447,7 +448,18 @@ async function greetThenListen(text: string) {
   // The state is already 'idle' here: the `open` watcher resets it on close.
   // Assigning it again would narrow its type and hide the check below.
   const turn = turnId
-  await echo(text, turn)
+  // The prepared recording first: the greeting is fixed, so synthesising it
+  // again would make the person wait ~2 s in a GPU queue for a sentence we
+  // already know. Live synthesis stays as the fallback, so a missing or
+  // unreachable asset costs latency, never the greeting itself.
+  const prepared = await preparedGreeting(String(locale.value))
+  if (turn !== turnId || !props.open) return
+  if (prepared) {
+    speech.value = prepared
+    await playBlob(prepared)
+  } else {
+    await echo(text, turn)
+  }
   // The panel may have been closed, or the person may have tapped the orb
   // themselves while the greeting played — either way this turn is stale.
   if (turn !== turnId || !props.open || state.value === 'listening') return

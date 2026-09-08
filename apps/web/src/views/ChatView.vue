@@ -6,6 +6,7 @@ import { askAi } from '../api/chat.api'
 import { localizeApiError } from '../api/errors'
 import { useAuth } from '../composables/useAuth'
 import { useWakeWord, WAKE_LOCALES, WAKE_STORAGE_KEY } from '../composables/useWakeWord'
+import { warmGreeting } from '../api/greeting'
 import type { ActorType, Phase, UIExchange } from '../types'
 import { applyTheme, getInitialTheme } from '../theme'
 import type { Theme } from '../theme'
@@ -33,9 +34,11 @@ const voiceOpen = ref(false)
 const voiceGreeting = ref<string | null>(null)
 
 // --- "Salom Venera" ---------------------------------------------------------
-// OPT-IN, and off by default. It holds the microphone open for as long as the
-// page is, which is not something to switch on for someone without asking.
-const wakeEnabled = ref(localStorage.getItem(WAKE_STORAGE_KEY) === '1')
+// ON by default: the assistant should answer when spoken to, without anyone
+// having to find a switch first. The switch stays, because the microphone
+// must always have an off — but only an explicit '0' turns it off, so a fresh
+// login, a new browser, or cleared storage all come up listening.
+const wakeEnabled = ref(localStorage.getItem(WAKE_STORAGE_KEY) !== '0')
 watch(wakeEnabled, (value) => localStorage.setItem(WAKE_STORAGE_KEY, value ? '1' : '0'))
 const wakeSupported = computed(() => WAKE_LOCALES.includes(String(locale.value)))
 
@@ -119,6 +122,9 @@ function onKeydown(e: KeyboardEvent) {
     collapsed.value = !collapsed.value
   }
 }
+// Fetch the greeting now, while nobody is waiting: the first wake word should
+// play instantly, not after a round trip.
+onMounted(() => warmGreeting(String(locale.value)))
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
