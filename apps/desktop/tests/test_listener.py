@@ -434,3 +434,31 @@ def test_nosoz_sozlama_yiqitmaydi(tinglovchi):
     assert obj.start() is True
     wav = obj.capture_utterance(timeout=5.0, cancel=threading.Event())
     assert wav, "default'ga tushgan sozlama bilan ham segment qaytishi kerak"
+
+
+def test_nutq_ortasidagi_pauza_shovqin_polini_saqlaydi(tinglovchi):
+    """`pause()` nutq o'rtasida tushsa VAD polni YO'QOTMASLIGI kerak.
+
+    Ilgari `_want_reset` to'liq `vad.reset()` chaqirardi va `_floor` None
+    bo'lardi. Pauza davomida VAD freym ko'rmaydi, shuning uchun `resume()`
+    dan keyin u ko'rgan birinchi freymlar - foydalanuvchining javobi: pol
+    o'sha OVOZGA kalibrlanib, VAD kar bo'lib qolardi.
+    """
+    capture = SoxtaCapture(jimlik(45) + nutq(40, imzo=IMZO) + jimlik(60), pace=0.002)
+    gate = capture.hold_at(70)                     # jimlik(45) + nutq(25)
+    obj = tinglovchi(capture)
+    obj.start()
+
+    assert kut(lambda: capture.consumed >= 70), "darvozaga yetib borilmadi"
+    assert kut(lambda: obj.vad.speaking), "sinov sharti: VAD nutq o'rtasida bo'lishi kerak"
+    pol = obj.vad._floor
+    assert pol is not None
+
+    obj.pause()
+    gate.set()                                     # tick'lar davom etsin
+    assert kut(lambda: not obj._want_reset), "_want_reset qayta ishlanmadi"
+
+    assert obj.vad._floor is not None, \
+        "pol tashlab yuborilgan - reset() o'rniga reset_speech() bo'lishi kerak"
+    assert obj.vad._floor == pytest.approx(pol), "pauzada pol o'zgarmasligi kerak"
+    assert not obj.vad.speaking, "nutq holati tozalanishi kerak"

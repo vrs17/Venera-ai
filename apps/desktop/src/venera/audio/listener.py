@@ -447,7 +447,9 @@ class AudioListener:
         chunk = self._read()
         if self._want_reset:
             self._want_reset = False
-            self.vad.reset()
+            # To'liq reset() EMAS: u polni ham tashlab yuborardi va uyg'ongach
+            # VAD polni foydalanuvchining javobiga kalibrlab kar bo'lib qolardi.
+            self.vad.reset_speech()
         if chunk is None or getattr(chunk, "size", 0) == 0:
             self._check_alive()
             return

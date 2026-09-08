@@ -306,6 +306,23 @@ class EnergyVad:
 
     # --- ichki ---------------------------------------------------------------
 
+    def reset_speech(self) -> None:
+        """Nutq holatini tozalaydi, LEKIN o'lchangan shovqin polini SAQLAYDI.
+
+        `reset()` dan farqi shu. Pauzadan chiqishda aynan shu kerak: muammo -
+        VAD "gapiryapti" holatida qotib qolgani, pol emas. Pol bir necha
+        soniya oldin AYNI SHU xonada o'lchangan va hali ham to'g'ri.
+
+        To'liq `reset()` bu yerda halokatli: u `_floor` ni None qiladi, pauza
+        davomida esa VAD freym KO'RMAYDI (`listener._tick` pauzada erta
+        qaytadi), shuning uchun uyg'ongach u ko'radigan birinchi freymlar -
+        foydalanuvchining javobi. Pol o'sha OVOZGA kalibrlanadi (o'lchovda
+        0.077 vs jimlikdagi 0.0018) va VAD foydalanuvchi jim bo'lmaguncha kar
+        bo'lib qoladi - 15 soniyada bitta ham SPEECH_START chiqmadi.
+        """
+        self._end_speech()
+        self._forced_cuts = 0
+
     def _end_speech(self) -> None:
         self._speaking = False
         self._speech_time = 0.0

@@ -394,3 +394,52 @@ def test_kirish_freymi_ozgartirilmaydi(rng):
     oldin = frame.copy()
     vad.process(frame)
     assert np.array_equal(frame, oldin)
+
+
+# --- pauzadan keyingi karlik ------------------------------------------------
+# `listener.pause()` nutq O'RTASIDA tushsa `_want_reset` yoqiladi. Ilgari u
+# to'liq `vad.reset()` chaqirardi: `_floor` None bo'lardi, pauza davomida esa
+# VAD freym KO'RMAYDI, shuning uchun uyg'ongach u ko'rgan birinchi freymlar
+# foydalanuvchining javobi bo'lib, pol o'sha OVOZGA kalibrlanardi.
+
+def _polni_kalibrla(vad, rng):
+    run(vad, make(rng, [(LEAD, None, QUIET)]))
+    return vad
+
+
+def test_reset_speech_polni_saqlaydi(vad, rng):
+    _polni_kalibrla(vad, rng)
+    tinch_pol = vad._floor
+    run(vad, make(rng, [(30, SPEECH, QUIET)]))
+    assert vad.speaking, "sinov sharti: VAD nutq o'rtasida bo'lishi kerak"
+
+    vad.reset_speech()
+
+    assert not vad.speaking, "nutq holati tozalanishi kerak"
+    # Pol nutq davomida chegaralangan tarzda biroz suzadi - bu normal. Muhimi
+    # u NUTQ DARAJASIGA sakramasin: SPEECH poldan ~48 barobar baland.
+    assert 0.5 * tinch_pol < vad._floor < 1.5 * tinch_pol, \
+        f"pol {vad._floor / tinch_pol:.1f}x o'zgardi - reset_speech uni tashlab yuborgan"
+
+
+def test_pauzadan_keyin_javob_darhol_eshitiladi(vad, rng):
+    """Nazorat bilan bir xil bo'lishi kerak - karlik oynasi bo'lmasin."""
+    _polni_kalibrla(vad, rng)
+    run(vad, make(rng, [(30, SPEECH, QUIET)]))
+    vad.reset_speech()
+
+    # resume(): VAD ko'rgan birinchi freymlar - foydalanuvchining javobi.
+    javob = run(vad, make(rng, [(200, SPEECH, QUIET)]))
+    boshlanish = [i for i, e in javob if e is VadEvent.SPEECH_START]
+    assert boshlanish, "javob umuman eshitilmadi - VAD kar qolgan"
+    assert boshlanish[0] * FDUR < MIN_SPEECH + 3 * FDUR, \
+        f"javob {boshlanish[0] * FDUR:.2f} s kechikdi"
+
+
+def test_toliq_reset_hali_ham_polni_tashlaydi(vad, rng):
+    """`reset()` ning o'z ma'nosi o'zgarmagan - u haqiqatan hammasini tozalaydi."""
+    _polni_kalibrla(vad, rng)
+    assert vad._floor is not None
+    vad.reset()
+    assert vad._floor is None
+    assert vad._warm_left == WARMUP_SECONDS
