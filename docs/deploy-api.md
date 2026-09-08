@@ -155,6 +155,21 @@ Frontend uchun image qayta yig'iladi:
 ```bash
 cd ~/Venera/apps/web
 podman build -t localhost/venera-frontend:latest .
+
+# Orqaga qaytish nuqtasi. Busiz obraz faqat `latest` tegida qoladi:
+# keyingi build tegni tortib oladi, eskisi `<none>` bo'lib qoladi va
+# `podman image prune` uni butunlay o'chiradi - ya'ni rollback yo'li yo'q.
+podman tag localhost/venera-frontend:latest \
+  "localhost/venera-frontend:$(date +%F)-$(git rev-parse --short HEAD)"
+
+systemctl --user restart venera-frontend.service
+```
+
+Rollback kerak bo'lsa - `podman images localhost/venera-frontend` bilan
+kerakli tegni toping, uni `latest` ga qayting va xizmatni qayta ko'taring:
+
+```bash
+podman tag localhost/venera-frontend:<teg> localhost/venera-frontend:latest
 systemctl --user restart venera-frontend.service
 ```
 
