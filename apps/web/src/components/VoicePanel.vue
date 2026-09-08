@@ -440,7 +440,7 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
   --vp-orb-base: #f1f2ff;
   --vp-blend: multiply;
   --vp-rim: rgba(96, 88, 232, 0.85);
-  --vp-icon: rgba(40, 36, 90, 0.7);
+  --vp-icon: var(--accent); /* the ✦ spark colour - the one mark that must read on the pale sphere */
   --vp-glow: 118, 104, 255;
   --vp-glow-k: 0.5;
   --vp-halo-k: 0.45;
@@ -465,7 +465,7 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
   --vp-orb-base: #0a0a2a;
   --vp-blend: screen;
   --vp-rim: rgba(255, 255, 255, 0.95);
-  --vp-icon: rgba(255, 255, 255, 0.8);
+  --vp-icon: var(--accent);
   --vp-glow: 150, 160, 255;
   --vp-glow-k: 1;
   --vp-halo-k: 1;
@@ -676,7 +676,9 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
   display: grid;
   place-items: center;
   color: var(--vp-icon);
-  filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.25));
+  /* A faint light halo, not a dark one: the sphere interior is pale in both
+     themes, so a dark shadow would muddy the red instead of lifting it. */
+  filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.85));
   transition: opacity 0.3s;
 }
 .vp-icon :deep(svg) {
