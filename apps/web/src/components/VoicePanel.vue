@@ -28,7 +28,7 @@
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { micAvailable, secureUrl, transcribe } from '../api/stt.api'
+import { micAvailable, micBlockedByPolicy, secureUrl, transcribe } from '../api/stt.api'
 import { localizeApiError } from '../api/errors'
 import { LOCALES } from '../i18n'
 import { MicIcon, MicOffIcon, XIcon } from '../icons'
@@ -165,7 +165,10 @@ async function startListening() {
   } catch (err) {
     const name = (err as DOMException)?.name
     if (name === 'NotAllowedError' || name === 'SecurityError') {
-      fail(t('voiceDenied'), t('voiceDeniedHow'))
+      // Same error name for "the user clicked Block" and "the server header
+      // forbids it" - but the second has no prompt and no fix in the browser.
+      if (micBlockedByPolicy()) fail(t('voiceBlockedPolicy'), t('voiceBlockedPolicyHow'))
+      else fail(t('voiceDenied'), t('voiceDeniedHow'))
     } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
       fail(t('voiceNoMic'))
     } else {

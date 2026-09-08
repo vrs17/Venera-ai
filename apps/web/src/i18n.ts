@@ -220,6 +220,8 @@ const en = {
   voiceNoSpeech: 'Nothing was recognised. Try speaking a little closer.',
   voiceError: 'Voice could not be processed.',
   voiceRetry: 'Try again',
+  voiceBlockedPolicy: 'The site\u2019s security policy blocks the microphone.',
+  voiceBlockedPolicyHow: 'This is a server setting (Permissions-Policy), not a browser permission \u2014 the padlock menu cannot change it. Tell IT.',
 }
 
 export type MsgKey = keyof typeof en
@@ -377,6 +379,8 @@ const uz: Dict = {
   voiceNoSpeech: 'Hech nima tanilmadi. Biroz yaqinroq gapirib koʻring.',
   voiceError: 'Ovozni qayta ishlab boʻlmadi.',
   voiceRetry: 'Qayta urinish',
+  voiceBlockedPolicy: 'Saytning xavfsizlik siyosati mikrofonni taqiqlaydi.',
+  voiceBlockedPolicyHow: 'Bu server sozlamasi (Permissions-Policy), brauzer ruxsati emas \u2014 qulf menyusi uni o\u02bbzgartira olmaydi. IT ga ayting.',
 }
 
 const uzCyrl: Dict = {
@@ -531,6 +535,8 @@ const uzCyrl: Dict = {
   voiceNoSpeech: 'Ҳеч нима танилмади. Бироз яқинроқ гапириб кўринг.',
   voiceError: 'Овозни қайта ишлаб бўлмади.',
   voiceRetry: 'Қайта уриниш',
+  voiceBlockedPolicy: 'Сайтнинг хавфсизлик сиёсати микрофонни тақиқлайди.',
+  voiceBlockedPolicyHow: 'Бу сервер созламаси (Permissions-Policy), браузер рухсати эмас \u2014 қулф менюси уни ўзгартира олмайди. IT га айтинг.',
 }
 
 const ru: Dict = {
@@ -685,6 +691,8 @@ const ru: Dict = {
   voiceNoSpeech: 'Ничего не распознано. Попробуйте говорить ближе.',
   voiceError: 'Не удалось обработать голос.',
   voiceRetry: 'Повторить',
+  voiceBlockedPolicy: 'Политика безопасности сайта блокирует микрофон.',
+  voiceBlockedPolicyHow: 'Это настройка сервера (Permissions-Policy), а не разрешение браузера \u2014 меню замка её не изменит. Сообщите ИТ.',
 }
 
 export const i18n = createI18n({

@@ -41,3 +41,20 @@ export async function transcribe(
   // apiFetch leaves FormData alone so the browser sets the multipart boundary.
   return apiFetch<Transcript>('/api/v1/stt/transcribe', { method: 'POST', body: form, signal })
 }
+
+/** True when the page's Permissions-Policy forbids the microphone. Then
+ *  getUserMedia() rejects with NotAllowedError WITHOUT ever showing a prompt,
+ *  and no browser setting can override it — it is a server header, so the
+ *  only fix is on the server. Telling the user to check the padlock menu in
+ *  that case sends them on an errand that cannot succeed. */
+export function micBlockedByPolicy(): boolean {
+  type Policy = { allowsFeature(feature: string): boolean }
+  const doc = document as Document & { permissionsPolicy?: Policy; featurePolicy?: Policy }
+  const policy = doc.permissionsPolicy ?? doc.featurePolicy
+  if (!policy) return false // browser cannot tell us; let getUserMedia decide
+  try {
+    return !policy.allowsFeature('microphone')
+  } catch {
+    return false
+  }
+}
