@@ -5,6 +5,7 @@ Ularning uchtasi bitta sababdan edi: barge-in ijroni to'xtatmasdi, lekin
 `_play` ning `finally` bloki mikrofonni darhol ochardi.
 """
 
+import threading
 import time
 from pathlib import Path
 
@@ -271,3 +272,88 @@ def test_watchdog_tiklashni_qayta_uradi():
         assert orch._needs_audio_restore is False
     finally:
         orch.stop()
+
+
+# --- 5. Zombi tinglovchi thread'i ------------------------------------------
+
+class StuckCapture:
+    """`read()` join chegarasidan uzoq bloklaydi.
+
+    Haqiqiy hayotdagi sabab: `_check_alive()` -> `capture.reopen()` PortAudio
+    ichida qotib qoladi. O'shanda `stop()` ning join'i vaqt tugab qaytadi.
+    """
+
+    running = True
+    device = None
+
+    def __init__(self):
+        self.release = threading.Event()
+        self.reads = 0
+
+    def start(self):
+        return True
+
+    def stop(self):
+        pass
+
+    def read(self, timeout=0.5):
+        self.reads += 1
+        self.release.wait(30.0)
+        return None
+
+    def is_alive(self, tolerance=2.0):
+        return True
+
+    def reopen(self, rescan=False):
+        return False
+
+
+def test_zombi_thread_ustiga_ikkinchisi_kotarilmaydi():
+    """`_stop` yagona bayroq bo'lgani uchun keyingi `start()` uni tozalashi
+    bilan join'dan omon qolgan thread qayta yurib ketardi - natijada
+    `capture._queue` ning IKKITA iste'molchisi paydo bo'lardi va bloklar
+    ular orasida tasodifiy bo'linardi."""
+    from venera.audio.listener import AudioListener
+
+    capture = StuckCapture()
+    listener = AudioListener(capture=capture, sample_rate=16000, frame_size=512)
+    try:
+        assert listener.start(), "test asosi: tinglovchi ko'tarilishi kerak"
+        deadline = time.monotonic() + 2.0
+        while capture.reads == 0 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert capture.reads > 0, "test asosi: thread read() ichida bo'lishi kerak"
+
+        listener.stop()                       # join vaqt tugaydi
+        assert listener.zombie, "test asosi: thread join'dan omon qolishi kerak"
+        assert listener.stats["zombie"] is True, "zombi statistikada ko'rinmaydi"
+
+        assert listener.start() is False, "zombi ustiga ikkinchi thread ko'tarildi"
+        assert "to'xtamadi" in listener.error
+    finally:
+        capture.release.set()
+        time.sleep(0.3)
+
+
+def test_avlod_tokeni_zombini_tiriltirmaydi():
+    """Zombi `_stop` tozalanganda ham qayta yurmasligi kerak: u sikl boshida
+    o'z avlodi eskirganini ko'rib CHIQIB KETADI."""
+    from venera.audio.listener import AudioListener
+
+    capture = StuckCapture()
+    listener = AudioListener(capture=capture, sample_rate=16000, frame_size=512)
+    listener.start()
+    deadline = time.monotonic() + 2.0
+    while capture.reads == 0 and time.monotonic() < deadline:
+        time.sleep(0.02)
+    listener.stop()
+    thread = listener._thread
+    assert thread is not None and thread.is_alive()
+
+    listener._stop.clear()          # keyingi start() aynan shunday qiladi
+    capture.release.set()           # zombi read() dan chiqadi
+
+    chegara = time.monotonic() + 5.0
+    while thread.is_alive() and time.monotonic() < chegara:
+        time.sleep(0.05)
+    assert not thread.is_alive(), "zombi `_stop` tozalangach qayta yurib ketdi"

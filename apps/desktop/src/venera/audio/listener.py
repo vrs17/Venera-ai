@@ -163,6 +163,13 @@ class AudioListener:
         self._pre_roll_samples = int(self.pre_roll * self.sample_rate)
 
         self._thread: threading.Thread | None = None
+        #: Thread avlodi. `_stop` YAGONA bayroq bo'lgani uchun uni keyingi
+        #: `start()` tozalashi bilan JOIN'dan omon qolgan eski thread qayta
+        #: yurib ketardi - natijada `capture._queue` ning IKKITA iste'molchisi
+        #: paydo bo'lardi va bloklar ular orasida tasodifiy bo'linardi
+        #: (fayl boshidagi "ROPPA-ROSA BITTA" shartnomasi buziladi).
+        #: Har thread o'z avlodini oladi va `self._gen` o'zgarishi bilan chiqadi.
+        self._gen = 0
         self._stop = threading.Event()
         self._paused = threading.Event()
         self._ready = threading.Event()
@@ -211,7 +218,14 @@ class AudioListener:
             "reopens": self._reopens,
             "running": self.running,
             "paused": self.paused,
+            "zombie": self.zombie,
         }
+
+    @property
+    def zombie(self) -> bool:
+        """Eski thread join'dan omon qolganmi. Jim o'tmasligi uchun statistikada."""
+        thread = self._thread
+        return bool(thread is not None and thread.is_alive() and self._stop.is_set())
 
     def _overflow(self) -> int:
         """capture ichidagi PortAudio overflow hisoblagichi (bo'lmasa 0)."""
@@ -227,8 +241,14 @@ class AudioListener:
         """Threadni ko'taradi. Bloklamaydi. Muvaffaqiyatni qaytaradi."""
         if self.running:
             return self._ok
-        # Oldingi (to'xtagan) thread qoldig'ini tozalaymiz - `start()` qayta
-        # chaqirilishi mumkin (uyqudan uyg'onish, ekran qulfi ochilishi).
+        # Eski thread `stop()` dagi join'dan omon qolgan bo'lsa (odatda
+        # PortAudio `reopen()` ichida qotib), YANGISINI ko'tarmaymiz: ikkita
+        # thread bitta navbatdan o'qib, ikkalasi ham buzilgan audio olardi.
+        previous = self._thread
+        if previous is not None and previous.is_alive():
+            self._error = "eski tinglovchi thread'i hali to'xtamadi"
+            log.error("%s - qayta ishga tushirilmadi", self._error)
+            return False
         self._thread = None
         self._stop.clear()
         self._ready.clear()
@@ -245,7 +265,9 @@ class AudioListener:
         except Exception:  # noqa: BLE001 - soxta/qattiq obyektlar uchun
             log.debug("capture.on_level o'rnatilmadi")
 
-        thread = threading.Thread(target=self._run, name="audio-listener", daemon=True)
+        self._gen += 1
+        thread = threading.Thread(target=self._run, args=(self._gen,),
+                                  name="audio-listener", daemon=True)
         self._thread = thread
         thread.start()
         self._ready.wait(timeout=START_TIMEOUT)
@@ -256,9 +278,20 @@ class AudioListener:
     def stop(self) -> None:
         """Idempotent."""
         self._stop.set()
-        thread, self._thread = self._thread, None
+        # Avlodni oshiramiz: keyingi `start()` dagi `_stop.clear()` endi eski
+        # thread'ni tiriltira olmaydi - u sikl boshida o'z avlodi eskirganini
+        # ko'rib o'zi chiqib ketadi.
+        self._gen += 1
+        thread = self._thread
         if thread is not None and thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=READ_TIMEOUT * 4 + 1.0)
+        if thread is None or not thread.is_alive():
+            self._thread = None
+        else:
+            # Havolani SAQLAYMIZ - `start()` shu orqali qayta ishga tushirishni
+            # rad etadi. Uni None qilsak zombi ko'rinmas bo'lib qolardi.
+            log.error("audio-listener thread'i to'xtamadi - tinglovchi qayta "
+                      "ishga tushirilmaydi")
 
         # Kutayotgan so'rovni osilib qolishga qoldirmaymiz.
         with self._req_lock:
@@ -375,7 +408,7 @@ class AudioListener:
 
     # --- listener thread'i ---------------------------------------------------
 
-    def _run(self) -> None:
+    def _run(self, gen: int = 0) -> None:
         try:
             if not self._ensure_capture():
                 self._ok = False
@@ -392,7 +425,7 @@ class AudioListener:
         log.info("AudioListener ishga tushdi (%d Hz, freym %d)",
                  self.sample_rate, self.frame_size)
         try:
-            while not self._stop.is_set():
+            while not self._stop.is_set() and gen == self._gen:
                 self._tick()
         except Exception:  # noqa: BLE001
             log.exception("AudioListener sikli to'xtadi")

@@ -42,6 +42,23 @@ from .tokens import (  # noqa: F401 - BG/FG/... shu modul orqali ham ishlatiladi
 log = logging.getLogger(__name__)
 
 
+def _make_scene(tk, parent):
+    """Ovoz sahnasini quradi. Muvaffaqiyatsizlikda `None` qaytaradi.
+
+    Sahna - Tk'da eng kam sinalgan qism (ishlab chiqish mashinalarida
+    tkinter yo'q, tekshiruv PIL bilan qilingan). Uning xatosi holat oynasini
+    butunlay yo'qotmasligi kerak: oynasiz ilova buyruq ham qabul qilolmaydi,
+    jurnal ham ko'rsatolmaydi. Sahnasiz esa u to'liq ishlaydi.
+    """
+    try:
+        scene = VoiceScene(tk, parent)
+        scene.canvas.pack(fill="x", padx=16, pady=(10, 2))
+        return scene
+    except Exception:  # noqa: BLE001
+        log.exception("Ovoz sahnasi qurilmadi - oyna usiz davom etadi")
+        return None
+
+
 class StatusWindow:
     """Alohida thread'da yashaydigan holat oynasi."""
 
@@ -169,7 +186,17 @@ class StatusWindow:
             root.attributes("-topmost", True)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        self._build(tk, root)
+        try:
+            self._build(tk, root)
+        except Exception as exc:  # noqa: BLE001
+            # Bitta vidjetning xatosi butun oynani yo'qotmasin. Muhimi -
+            # `_ready` baribir qo'yiladi: aks holda `start()` chegaragacha
+            # osilib turardi va ilova o'lik oyna bilan davom etardi.
+            self._error = f"oyna qurilmadi: {exc}"
+            log.exception("Oyna qurilmadi")
+            self._alive = False
+            self._ready.set()
+            return
         root.withdraw()
         self._ready.set()
 
@@ -224,8 +251,7 @@ class StatusWindow:
 
         # Ovoz sahnasi: orb holatni, to'lqin esa mikrofon darajasini
         # ko'rsatadi - ikkalasi ham eski 10 px chizig'idan ko'ra o'qiladi.
-        scene = VoiceScene(tk, root)
-        scene.canvas.pack(fill="x", padx=16, pady=(10, 2))
+        scene = _make_scene(tk, root)
 
         entry_frame = tk.Frame(root, bg=BG)
         entry_frame.pack(fill="x", padx=16, pady=(14, 6))
