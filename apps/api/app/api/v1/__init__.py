@@ -10,10 +10,11 @@ davom etadi.
 
 from fastapi import APIRouter
 
-from . import auth, chat
+from . import auth, chat, stt
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(auth.router)
 router.include_router(chat.router)
+router.include_router(stt.router)
 
 __all__ = ["router"]

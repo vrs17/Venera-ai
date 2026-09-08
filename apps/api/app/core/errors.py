@@ -114,3 +114,14 @@ def unauthorized(message: str = "Avtorizatsiya talab qilinadi") -> HTTPException
         detail=message,
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+def error_status(code: int, message: str) -> HTTPException:
+    """Ixtiyoriy kod bilan xato. Javob shakli `install()` handler'idan keladi,
+    ya'ni frontend kutgan `message` maydoni bu yerda ham saqlanadi."""
+    return HTTPException(status_code=code, detail=message)
+
+
+def bad_request(message: str) -> HTTPException:
+    """400 - so'rovning o'zi noto'g'ri (til yo'q, fayl bo'sh, hajmi katta)."""
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)

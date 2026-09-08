@@ -41,6 +41,16 @@ class Settings(BaseSettings):
     #: `services/users.py` interfeysi o'zgarmaydi.
     users_file: Path = BASE_DIR / "config" / "users.yaml"
 
+    # --- STT (ovozni matnga o'girish) ---
+    #: STT Router manzili. Ichki tarmoqda, VPN ortida.
+    stt_base_url: str = "http://10.10.50.4:8006"
+    stt_timeout: float = 30.0
+    stt_attempts: int = 3
+    #: Yuklash chegarasi. Router o'zi ham 25 MB da to'xtatadi, lekin biz
+    #: undan OLDIN to'xtatamiz: aks holda katta fayl butun tarmoqni bosib
+    #: o'tib, faqat oxirida rad etilardi.
+    stt_max_upload_mb: float = 10.0
+
     # --- CORS ---
     #: Bo'sh bo'lsa CORS o'chirilgan: frontend nginx orqali BIR XIL originda
     #: turadi (`/api` proxy), ya'ni CORS umuman kerak emas. Faqat frontend

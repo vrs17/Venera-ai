@@ -13,6 +13,7 @@ import ChatSidebar from '../components/ChatSidebar.vue'
 import Welcome from '../components/Welcome.vue'
 import Conversation from '../components/Conversation.vue'
 import InputDock from '../components/InputDock.vue'
+import VoicePanel from '../components/VoicePanel.vue'
 import AnswerGlow from '../components/AnswerGlow.vue'
 import { MenuIcon } from '../icons'
 
@@ -25,6 +26,7 @@ const exchanges = ref<UIExchange[]>([])
 const phase = ref<Phase>('idle')
 const theme = ref<Theme>(getInitialTheme())
 const sidebarOpen = ref(false)
+const voiceOpen = ref(false)
 const collapsed = ref(localStorage.getItem('venera_sidebar_collapsed') === '1')
 watch(collapsed, (value) => localStorage.setItem('venera_sidebar_collapsed', value ? '1' : '0'))
 // User vs developer chat UI. User mode (default) hides the pipeline trace and
@@ -70,6 +72,12 @@ function toggleCollapse() {
 // (e.g. a future modal) already claimed the key.
 function onKeydown(e: KeyboardEvent) {
   if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return
+  // The voice panel is on top, so ESC closes that first — otherwise the
+  // sidebar would toggle behind an open dialog and the microphone stay live.
+  if (voiceOpen.value) {
+    voiceOpen.value = false
+    return
+  }
   if (window.matchMedia('(max-width: 768px)').matches) {
     sidebarOpen.value = !sidebarOpen.value
   } else {
@@ -136,6 +144,12 @@ function regenerate(id: string) {
   runPipeline(id, ex.question)
 }
 
+// The newest answer, for the voice panel to read back after a spoken turn.
+const lastAnswer = computed(() => {
+  const last = exchanges.value[exchanges.value.length - 1]
+  return last?.response?.answer ?? null
+})
+
 const displayName = computed(
   () => user.value?.fullName?.trim() || user.value?.email?.split('@')[0] || t('defaultName'),
 )
@@ -182,8 +196,16 @@ const actorType = computed<ActorType>(() => (user.value?.actorType as ActorType)
 
         <Welcome v-if="exchanges.length === 0" :name="displayName" :actor-type="actorType" @chip="send" />
         <Conversation v-else :exchanges="exchanges" :dev-mode="devMode" :busy="phase !== 'idle'" @regenerate="regenerate" />
-        <InputDock :phase="phase" :send="send" :stop="stop" />
+        <InputDock :phase="phase" :send="send" :stop="stop" @conversation="voiceOpen = true" />
         <AnswerGlow :phase="phase" />
+
+        <VoicePanel
+          :open="voiceOpen"
+          :send="send"
+          :busy="phase !== 'idle'"
+          :answer="lastAnswer"
+          @close="voiceOpen = false"
+        />
       </div>
     </div>
   </div>

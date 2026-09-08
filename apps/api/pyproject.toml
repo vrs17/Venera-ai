@@ -10,6 +10,9 @@ dependencies = [
     "pydantic-settings>=2.4",
     "PyJWT>=2.9",
     "PyYAML>=6.0",
+    # `File`/`Form` (ovoz yuklash) busiz ILOVA UMUMAN KO'TARILMAYDI -
+    # FastAPI ishga tushishda RuntimeError beradi.
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

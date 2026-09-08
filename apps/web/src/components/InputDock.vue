@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { CSSProperties } from 'vue'
 import type { Phase } from '../types'
-import { AttachIcon, MicIcon, SendIcon, StopIcon } from '../icons'
+import { AttachIcon, ConversationIcon, MicIcon, SendIcon, StopIcon } from '../icons'
 import BottomCurrent from './BottomCurrent.vue'
 
 // Grow the textarea up to ~7 lines, then scroll internally.
@@ -18,10 +18,14 @@ const props = defineProps<{
   stop?: () => void
 }>()
 
+// Opening the voice panel is the parent's business — the dock only asks.
+const emit = defineEmits<{ (e: 'conversation'): void }>()
+
 const { t } = useI18n({ useScope: 'global' })
 const value = ref('')
 const focused = ref(false)
 const hovering = ref(false)
+const convHover = ref(false)
 const taRef = ref<HTMLTextAreaElement | null>(null)
 
 const hasText = computed(() => value.value.trim().length > 0)
@@ -71,6 +75,28 @@ const disabledRoundButton: CSSProperties = {
   color: 'var(--icon-muted)',
 }
 const attachButtonStyle: CSSProperties = { ...disabledRoundButton, position: 'relative' }
+
+// A pill, not another round icon: this one opens a whole mode, and the three
+// circular buttons to its left are all single actions. The label carries that
+// difference; it collapses to the icon alone when the dock gets narrow.
+const conversationBtnStyle = computed<CSSProperties>(() => ({
+  display: 'flex',
+  alignItems: 'center',
+  gap: '6px',
+  height: '38px',
+  padding: '0 14px',
+  border: 'none',
+  borderRadius: '19px',
+  cursor: 'pointer',
+  flexShrink: 0,
+  whiteSpace: 'nowrap',
+  fontFamily: 'Figtree, sans-serif',
+  fontSize: '13.5px',
+  fontWeight: 500,
+  background: convHover.value ? 'var(--accent)' : 'var(--surface-hover)',
+  color: convHover.value ? 'var(--accent-contrast)' : 'var(--text-muted)',
+  transition: 'background 0.25s, color 0.25s',
+}))
 
 const textareaStyle: CSSProperties = {
   flex: 1,
@@ -205,7 +231,32 @@ const sendBtnStyle = computed<CSSProperties>(() => {
         <StopIcon v-if="busy" :size="24" />
         <SendIcon v-else stroke="currentColor" />
       </button>
+      <button
+        class="conv-btn"
+        :title="t('voiceTitle')"
+        :aria-label="t('voiceTitle')"
+        :style="conversationBtnStyle"
+        @click="emit('conversation')"
+        @mouseenter="convHover = true"
+        @mouseleave="convHover = false"
+      >
+        <ConversationIcon :size="16" />
+        <span class="conv-label">{{ t('conversation') }}</span>
+      </button>
     </div>
     <div :style="{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }">{{ t('disclaimer') }}</div>
   </div>
 </template>
+
+<style scoped>
+/* Below ~560px the dock cannot hold the label and the textarea at once; the
+   icon alone still reads as "voice mode" next to the tooltip. */
+@media (max-width: 560px) {
+  .conv-label {
+    display: none;
+  }
+  .conv-btn {
+    padding: 0 11px !important;
+  }
+}
+</style>

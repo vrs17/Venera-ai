@@ -36,6 +36,9 @@ PIPELINE_FIELDS = {
 # types.ts: BaseStage - har bosqichda bo'lishi shart
 BASE_STAGE_FIELDS = {"rawAnswer", "model", "adapter", "seconds"}
 
+# types.ts: Transcript
+TRANSCRIPT_FIELDS = {"text", "language", "durationSec", "lowConfidence"}
+
 
 def test_login_javobi_types_ts_ga_mos(client):
     body = client.post("/api/v1/auth/login", json=ADMIN).json()
@@ -91,3 +94,13 @@ def test_har_bosqichda_base_stage_maydonlari_bor(client, auth):
         stage = body[name]
         assert stage is not None, f"{name} bosqichi yo'q"
         assert BASE_STAGE_FIELDS <= set(stage), f"{name}: BaseStage maydonlari yetishmayapti"
+
+
+def test_transcript_javobi_types_ts_ga_mos():
+    """`TranscriptResponse` <-> `types.ts` dagi `Transcript`.
+
+    Sxemadan o'qiladi, HTTP orqali emas: STT serveri ichki tarmoqda va
+    testda chaqirilmaydi. Maydon nomlari baribir shu yerda qotiriladi.
+    """
+    from app.schemas.stt import TranscriptResponse
+    assert set(TranscriptResponse.model_fields) == TRANSCRIPT_FIELDS

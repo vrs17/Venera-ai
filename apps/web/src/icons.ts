@@ -414,3 +414,51 @@ export const AppleIcon: FunctionalComponent<{ size?: number }> = (props) =>
     }),
   ])
 AppleIcon.props = ['size']
+
+/** Two speech bubbles — "conversation", distinct from the plain mic which
+ *  means "dictate one message". */
+export const ConversationIcon: FunctionalComponent<{ size?: number }> = (props) =>
+  h('svg', { width: props.size ?? 16, height: props.size ?? 16, viewBox: '0 0 18 18', fill: 'none' }, [
+    h('path', {
+      d: 'M2.2 7.2a3 3 0 0 1 3-3h4.3a3 3 0 0 1 3 3v1.4a3 3 0 0 1-3 3H6.1L3.4 13.4a.35.35 0 0 1-.56-.28v-1.6a3 3 0 0 1-.64-1.85V7.2Z',
+      stroke: 'currentColor',
+      'stroke-width': '1.35',
+      'stroke-linejoin': 'round',
+    }),
+    h('path', {
+      d: 'M12.6 6.1h.3a2.6 2.6 0 0 1 2.6 2.6v1.2a2.6 2.6 0 0 1-.6 1.65v1.4a.3.3 0 0 1-.48.24l-2.1-1.6',
+      stroke: 'currentColor',
+      'stroke-width': '1.35',
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+      opacity: '0.55',
+    }),
+  ])
+
+export const XIcon: FunctionalComponent<{ size?: number }> = (props) =>
+  h('svg', { width: props.size ?? 18, height: props.size ?? 18, viewBox: '0 0 18 18', fill: 'none' }, [
+    h('path', {
+      d: 'M4.5 4.5l9 9M13.5 4.5l-9 9',
+      stroke: 'currentColor',
+      'stroke-width': '1.6',
+      'stroke-linecap': 'round',
+    }),
+  ])
+
+/** Mic with a slash — the microphone is unavailable or muted. */
+export const MicOffIcon: FunctionalComponent<{ size?: number }> = (props) =>
+  h('svg', { width: props.size ?? 18, height: props.size ?? 18, viewBox: '0 0 18 18', fill: 'none' }, [
+    h('path', {
+      d: 'M7 3.5a2 2 0 0 1 4 0v3.2M11 10.2a2 2 0 0 1-4-.5V8',
+      stroke: 'currentColor',
+      'stroke-width': '1.4',
+      'stroke-linecap': 'round',
+    }),
+    h('path', {
+      d: 'M4 8a5 5 0 0 0 7.4 4.4M14 8v.6M9 13.4V16',
+      stroke: 'currentColor',
+      'stroke-width': '1.4',
+      'stroke-linecap': 'round',
+    }),
+    h('path', { d: 'M2.6 2.6l12.8 12.8', stroke: 'currentColor', 'stroke-width': '1.4', 'stroke-linecap': 'round' }),
+  ])

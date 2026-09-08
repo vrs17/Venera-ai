@@ -182,3 +182,16 @@ export interface ApiErrorResponse {
   message: string
   path: string
 }
+
+/* ── Voice ─────────────────────────────────────────────────────────────── */
+
+/** POST /api/v1/stt/transcribe. Mirrors `app/schemas/stt.py` exactly —
+ *  `tests/test_contract.py` guards the pair. */
+export interface Transcript {
+  text: string
+  language: string
+  durationSec: number
+  /** The router is unsure. The uz backend sends `null` for this, which the
+   *  backend normalises to `false`, so it is always a boolean here. */
+  lowConfidence: boolean
+}
