@@ -10,9 +10,15 @@
  * glass-like colour sheets drifting inside it, a thin white rim with a bright
  * spot travelling around it, and smoky violet loops outside. It is rebuilt here
  * in CSS rather than shipped as the GIF — the GIF is 10 MB and cannot react to
- * the microphone; the CSS version is a few hundred bytes and does. The panel is
- * always dark (the `.dark-zone` tokens) regardless of the app theme, because the
- * design only works on black.
+ * the microphone; the CSS version is a few hundred bytes and does.
+ *
+ * THEMING. The reference is black, and the dark theme reproduces it. The light
+ * theme is not the same picture on a white page — a white rim and a white bloom
+ * vanish there. Instead the sphere gets a pale base, the colour sheets blend
+ * with `multiply` (glass on paper rather than light in a dark room), the rim
+ * turns violet and the glow becomes a soft coloured shadow. Every colour is a
+ * `--vp-*` variable set once per theme below; nothing else in the stylesheet
+ * knows which theme it is in.
  *
  * The single most surprising failure this component has to explain is the
  * secure-context rule: over plain HTTP on a LAN address `navigator.mediaDevices`
@@ -256,7 +262,7 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
 <template>
   <div
     v-if="open"
-    class="vp dark-zone"
+    class="vp"
     :data-state="supported ? state : 'unsupported'"
     :style="orbVars"
     role="dialog"
@@ -328,6 +334,60 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
 </template>
 
 <style scoped>
+/* ── Theme ─────────────────────────────────────────────────────────────── */
+/* Light is the default (matches :root); dark overrides below. Numeric `-k`
+   values scale glow/halo/wisp strength — light needs far less of all three. */
+.vp {
+  --vp-bg: var(--bg);
+  --vp-fg: var(--text);
+  --vp-fg-2: var(--text-muted);
+  --vp-fg-3: var(--text-secondary);
+  --vp-bad: var(--bad-fg);
+  --vp-link: #4f6de6;
+  --vp-btn-bg: rgba(20, 20, 20, 0.06);
+  --vp-btn-bg-hover: rgba(20, 20, 20, 0.12);
+  --vp-btn-fg: var(--text-muted);
+  --vp-btn-fg-hover: var(--text);
+  --vp-btn-border: rgba(20, 20, 20, 0.14);
+  --vp-orb-base: #f1f2ff;
+  --vp-blend: multiply;
+  --vp-rim: rgba(96, 88, 232, 0.85);
+  --vp-icon: rgba(40, 36, 90, 0.7);
+  --vp-glow: 118, 104, 255;
+  --vp-glow-k: 0.5;
+  --vp-halo-k: 0.45;
+  --vp-wisp-k: 0.55;
+  --accent-a: #7fd4f8; /* cyan    */
+  --accent-b: #6f9cf0; /* blue    */
+  --accent-c: #9b8cf0; /* violet  */
+  --accent-d: #d46ae6; /* magenta */
+}
+:root[data-theme='dark'] .vp {
+  --vp-bg: #040109;
+  --vp-fg: #f2f0fb;
+  --vp-fg-2: rgba(233, 230, 245, 0.62);
+  --vp-fg-3: rgba(233, 230, 245, 0.42);
+  --vp-bad: #ff8a80;
+  --vp-link: #9fb5ff;
+  --vp-btn-bg: rgba(255, 255, 255, 0.06);
+  --vp-btn-bg-hover: rgba(255, 255, 255, 0.14);
+  --vp-btn-fg: rgba(255, 255, 255, 0.72);
+  --vp-btn-fg-hover: #fff;
+  --vp-btn-border: rgba(255, 255, 255, 0.22);
+  --vp-orb-base: #0a0a2a;
+  --vp-blend: screen;
+  --vp-rim: rgba(255, 255, 255, 0.95);
+  --vp-icon: rgba(255, 255, 255, 0.8);
+  --vp-glow: 150, 160, 255;
+  --vp-glow-k: 1;
+  --vp-halo-k: 1;
+  --vp-wisp-k: 1;
+  --accent-a: #90d7f8;
+  --accent-b: #2954b4;
+  --accent-c: #5a59be;
+  --accent-d: #c02fd6;
+}
+
 /* ── Stage ─────────────────────────────────────────────────────────────── */
 .vp {
   position: absolute;
@@ -339,19 +399,12 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
   justify-content: center;
   gap: 8px;
   padding: 24px;
-  /* The reference background: black with a hint of violet. Not a theme token
-     on purpose — this screen is dark in both themes. */
-  background: #040109;
-  color: #e9e6f5;
+  background: var(--vp-bg);
+  color: var(--vp-fg);
   font-family: Figtree, sans-serif;
   animation: fadeUp 0.32s ease both;
   overflow: hidden;
   --orb: clamp(180px, 34vmin, 260px);
-  --accent-a: #90d7f8; /* cyan   */
-  --accent-b: #2954b4; /* blue   */
-  --accent-c: #5a59be; /* violet */
-  --accent-d: #c02fd6; /* magenta */
-  --glow: 150, 160, 255;
 }
 .vp-close {
   position: absolute;
@@ -363,14 +416,14 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
   place-items: center;
   border: none;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.72);
+  background: var(--vp-btn-bg);
+  color: var(--vp-btn-fg);
   cursor: pointer;
   transition: background 0.2s, color 0.2s;
 }
 .vp-close:hover {
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
+  background: var(--vp-btn-bg-hover);
+  color: var(--vp-btn-fg-hover);
 }
 
 .vp-stage {
@@ -389,8 +442,8 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
   border-radius: 50%;
   background: radial-gradient(
     circle,
-    rgba(var(--glow), calc(0.22 + var(--lvl) * 0.35)) 0%,
-    rgba(90, 60, 200, calc(0.12 + var(--lvl) * 0.2)) 32%,
+    rgba(var(--vp-glow), calc((0.22 + var(--lvl) * 0.35) * var(--vp-halo-k))) 0%,
+    rgba(90, 60, 200, calc((0.12 + var(--lvl) * 0.2) * var(--vp-halo-k))) 32%,
     transparent 68%
   );
   filter: blur(6px);
@@ -404,8 +457,8 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
   border-radius: 50%;
   border: 14px solid transparent;
   filter: blur(14px);
-  opacity: calc(0.35 + var(--lvl) * 0.4);
-  mix-blend-mode: screen;
+  opacity: calc((0.35 + var(--lvl) * 0.4) * var(--vp-wisp-k));
+  mix-blend-mode: var(--vp-blend);
   pointer-events: none;
 }
 .vp-wisp-a {
@@ -448,15 +501,15 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
   border-radius: 50%;
   border: none;
   padding: 0;
-  background: #0a0a2a;
+  background: var(--vp-orb-base);
   cursor: pointer;
   overflow: hidden;
   isolation: isolate;
   transform: scale(calc(1 + var(--lvl) * 0.14));
   transition: transform 0.1s linear;
   box-shadow:
-    0 0 calc(20px + var(--lvl) * 40px) rgba(var(--glow), calc(0.45 + var(--lvl) * 0.4)),
-    0 0 calc(60px + var(--lvl) * 60px) rgba(110, 90, 255, calc(0.25 + var(--lvl) * 0.3));
+    0 0 calc(20px + var(--lvl) * 40px) rgba(var(--vp-glow), calc((0.45 + var(--lvl) * 0.4) * var(--vp-glow-k))),
+    0 0 calc(60px + var(--lvl) * 60px) rgba(110, 90, 255, calc((0.25 + var(--lvl) * 0.3) * var(--vp-glow-k)));
 }
 .vp-orb:disabled {
   cursor: default;
@@ -472,7 +525,7 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
   height: 78%;
   border-radius: 46% 54% 52% 48% / 55% 45% 55% 45%;
   filter: blur(6px);
-  mix-blend-mode: screen;
+  mix-blend-mode: var(--vp-blend);
   opacity: 0.92;
 }
 .vp-sheet-cyan    { top: -6%;  left: 22%; background: var(--accent-a); animation: sheetA 8s ease-in-out infinite; }
@@ -497,15 +550,15 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
   50%      { transform: translate(14%, 6%) scale(1.25); }
 }
 
-/* Thin white rim + bloom, drawn above the sheets. */
+/* Thin rim + bloom, drawn above the sheets. */
 .vp-rim {
   position: absolute;
   inset: 0;
   border-radius: 50%;
   box-shadow:
-    inset 0 0 0 2px rgba(255, 255, 255, 0.95),
-    inset 0 0 calc(10px + var(--lvl) * 14px) rgba(var(--glow), 0.9),
-    inset 0 0 28px rgba(var(--glow), 0.35);
+    inset 0 0 0 2px var(--vp-rim),
+    inset 0 0 calc(10px + var(--lvl) * 14px) rgba(var(--vp-glow), calc(0.9 * var(--vp-glow-k))),
+    inset 0 0 28px rgba(var(--vp-glow), calc(0.35 * var(--vp-glow-k)));
   pointer-events: none;
 }
 /* The travelling highlight: a conic gradient masked down to the rim. */
@@ -518,7 +571,7 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
     transparent 0deg,
     rgba(255, 255, 255, 0) 250deg,
     rgba(255, 255, 255, 0.95) 300deg,
-    rgba(var(--glow), 0.8) 330deg,
+    rgba(var(--vp-glow), 0.8) 330deg,
     transparent 360deg
   );
   -webkit-mask: radial-gradient(circle, transparent calc(50% - 6px), #000 calc(50% - 4px), #000 50%, transparent 51%);
@@ -534,8 +587,8 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
   z-index: 2;
   display: grid;
   place-items: center;
-  color: rgba(255, 255, 255, 0.8);
-  filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.5));
+  color: var(--vp-icon);
+  filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.25));
   transition: opacity 0.3s;
 }
 .vp-icon :deep(svg) {
@@ -544,12 +597,9 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
 }
 
 /* ── State tuning ──────────────────────────────────────────────────────── */
-/* Listening: everything moves faster and glows harder; the mic icon fades so
-   the sphere itself is the feedback. */
 .vp[data-state='listening'] .vp-sheets { animation-duration: 9s; }
 .vp[data-state='listening'] .vp-spark  { animation-duration: 1.6s; }
 .vp[data-state='listening'] .vp-icon   { opacity: 0.35; }
-/* Transcribing / thinking: a steady breathing pulse while nothing is heard. */
 .vp[data-state='transcribing'] .vp-orb,
 .vp[data-state='thinking'] .vp-orb {
   animation: breathe 1.6s ease-in-out infinite;
@@ -562,7 +612,9 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
 .vp[data-state='error'] .vp-sheet,
 .vp[data-state='unsupported'] .vp-sheet { filter: blur(6px) saturate(0.25); opacity: 0.5; }
 .vp[data-state='error'] .vp-rim,
-.vp[data-state='unsupported'] .vp-rim { box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.5); }
+.vp[data-state='unsupported'] .vp-rim {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--vp-rim) 50%, transparent);
+}
 .vp[data-state='unsupported'] .vp-spark,
 .vp[data-state='unsupported'] .vp-wisp { animation-play-state: paused; opacity: 0.2; }
 
@@ -580,66 +632,65 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
   margin: 0;
   font-size: 17px;
   font-weight: 600;
-  color: #f2f0fb;
+  color: var(--vp-fg);
   letter-spacing: 0.01em;
 }
 .vp-status--bad {
-  color: #ff8a80;
+  color: var(--vp-bad);
 }
 .vp-sub {
   margin: 0;
   font-size: 13.5px;
   line-height: 1.55;
-  color: rgba(233, 230, 245, 0.62);
+  color: var(--vp-fg-2);
 }
 .vp-link {
-  color: #9fb5ff;
+  color: var(--vp-link);
   word-break: break-all;
 }
 .vp-heard {
   margin: 6px 0 0;
   font-size: 15px;
   line-height: 1.5;
-  color: #f2f0fb;
+  color: var(--vp-fg);
 }
 .vp-heard-label {
   display: block;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: rgba(233, 230, 245, 0.5);
+  color: var(--vp-fg-3);
   margin-bottom: 2px;
 }
 .vp-answer {
   margin: 4px 0 0;
   font-size: 14px;
   line-height: 1.55;
-  color: rgba(233, 230, 245, 0.78);
+  color: var(--vp-fg-2);
   max-height: 120px;
   overflow-y: auto;
 }
 .vp-retry {
   margin-top: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
+  border: 1px solid var(--vp-btn-border);
+  background: var(--vp-btn-bg);
+  color: var(--vp-fg);
   border-radius: 999px;
   padding: 7px 18px;
   font-size: 13.5px;
   cursor: pointer;
 }
 .vp-retry:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--vp-btn-bg-hover);
 }
 .vp-foot {
   position: absolute;
   bottom: 18px;
   margin: 0;
   font-size: 12px;
-  color: rgba(233, 230, 245, 0.42);
+  color: var(--vp-fg-3);
 }
 
-/* Motion is the whole point here, but people who asked for less get less. */
 @media (prefers-reduced-motion: reduce) {
   .vp-sheets, .vp-sheet, .vp-spark, .vp-wisp { animation-duration: 60s; }
   .vp-orb { transition: none; }
