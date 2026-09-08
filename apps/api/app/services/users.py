@@ -54,6 +54,51 @@ class StoredUser:
         )
 
 
+def example_password_hashes(path: Path) -> set[str]:
+    """`users.example.yaml` dagi parol xeshlari.
+
+    Namuna fayl git'da turadi va undagi parollar README da OCHIQ yozilgan.
+    Kimdir uni shundayligicha nusxalasa, jonli tizim git'da e'lon qilingan
+    parol bilan ishlaydi. Xeshlar qattiq yozilgani uchun oddiy satr
+    solishtiruvi yetarli - saltni qayta hisoblash shart emas.
+    """
+    try:
+        raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001 - namuna fayl bo'lmasligi normal
+        return set()
+    entries = raw.get("users") if isinstance(raw, dict) else raw
+    if not isinstance(entries, list):
+        return set()
+    return {
+        str(e["password_hash"]).strip()
+        for e in entries
+        if isinstance(e, dict) and e.get("password_hash")
+    }
+
+
+def _roles_of(value: object, *, path: Path, index: int) -> list[str]:
+    """Rollarni ro'yxatga keltiradi.
+
+    `roles: ADMIN` (qavssiz) yozilishi juda oson xato. Oddiy
+    `[str(r) for r in value]` uni SATR deb qabul qilib, harflarga bo'lib
+    yuborardi: ['A','D','M','I','N']. Natijada foydalanuvchi ADMIN emas,
+    besh xil ma'nosiz rolga ega bo'lardi - va hech qanday xato ko'rinmasdi.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        log.warning(
+            "%s: %d-yozuvda `roles` ro'yxat emas, satr (%r) - bitta rol deb olindi. "
+            "To'g'risi: roles: [%s]", path, index, value, value,
+        )
+        return [value.strip()] if value.strip() else []
+    if not isinstance(value, (list, tuple)):
+        log.error("%s: %d-yozuvda `roles` tushunarsiz turda (%s) - bo'sh qoldirildi",
+                  path, index, type(value).__name__)
+        return []
+    return [str(r).strip() for r in value if str(r).strip()]
+
+
 class UserStore:
     """Email bo'yicha qidirish va parol tekshirish."""
 
@@ -92,15 +137,38 @@ class UserStore:
             if not email or not password_hash:
                 log.warning("%s: %d-yozuvda email yoki password_hash yo'q", path, index)
                 continue
+
+            # Har bir yozuv ALOHIDA o'raladi. Busiz bitta xato belgi
+            # (`actor_id: 1a` -> ValueError) BUTUN ombor yuklanishini
+            # to'xtatardi va istisno `/api/health` gacha ko'tarilib, sog'liq
+            # tekshiruvini ham 500 qilardi - ya'ni yuqoridagi "hech qachon
+            # istisno tashlamaymiz" va'dasi buzilardi.
+            try:
+                actor_id = int(item.get("actor_id", index + 1))
+            except (TypeError, ValueError):
+                log.error(
+                    "%s: %d-yozuv (%s) actor_id butun son emas: %r - %d ishlatildi",
+                    path, index, email, item.get("actor_id"), index + 1,
+                )
+                actor_id = index + 1
+
+            if email in users:
+                # YAML dict emas, ro'yxat: takror email jimgina oldingisini
+                # ALMASHTIRARDI. Admin hisobini shu yo'l bilan yo'qotish oson.
+                log.error(
+                    "%s: %d-yozuv emaili takrorlanyapti (%s) - oldingi yozuv "
+                    "ALMASHTIRILDI", path, index, email,
+                )
+
             users[email] = StoredUser(
-                actor_id=int(item.get("actor_id", index + 1)),
+                actor_id=actor_id,
                 email=email,
                 full_name=str(item.get("full_name") or email),
                 password_hash=password_hash,
                 actor_type=str(item.get("actor_type") or "EMPLOYEE"),
                 position=item.get("position"),
                 department=item.get("department"),
-                roles=[str(r) for r in (item.get("roles") or [])],
+                roles=_roles_of(item.get("roles"), path=path, index=index),
                 password_change_required=bool(item.get("password_change_required", False)),
             )
 
@@ -109,6 +177,12 @@ class UserStore:
 
     def by_email(self, email: str) -> StoredUser | None:
         return self._users.get(str(email).strip().lower())
+
+    def emails_using(self, hashes: set[str]) -> list[str]:
+        """Berilgan xeshlardan birini ishlatayotgan hisoblar."""
+        if not hashes:
+            return []
+        return sorted(u.email for u in self._users.values() if u.password_hash in hashes)
 
     def authenticate(self, email: str, password: str) -> StoredUser | None:
         """Email + parol to'g'ri bo'lsa foydalanuvchi, aks holda None.

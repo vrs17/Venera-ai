@@ -31,6 +31,7 @@ from .api.deps import get_user_store
 from .api.v1 import router as v1_router
 from .core import errors
 from .core.config import settings
+from .services.users import example_password_hashes
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -146,6 +147,21 @@ def health() -> dict:
         warnings.append("secret_key default qiymatda - PRODUCTION uchun o'zgartiring")
     if len(store) == 0:
         warnings.append(f"foydalanuvchilar yuklanmadi ({settings.users_file})")
+
+    # `users.example.yaml` git'da, undagi parollar esa README da OCHIQ yozilgan.
+    # Uni nusxalab qoldirish eng oson va eng xavfli xato: tizim ishlaydi,
+    # hech nima buzilmaydi, va parol allaqachon e'lon qilingan bo'ladi.
+    # Buni AYTMASA hech kim sezmaydi - shu tekshiruv yo'qligi tufayli bir
+    # marta jonli tizimda aynan shunday bo'lgan.
+    demo = store.emails_using(
+        example_password_hashes(settings.users_file.parent / "users.example.yaml")
+    )
+    if demo:
+        warnings.append(
+            "NAMUNA PAROLLARI ISHLATILMOQDA (" + ", ".join(demo) + ") - "
+            "ular git'da ochiq yozilgan, DARHOL almashtiring: "
+            "venv/bin/python -m app.tools.hash_password"
+        )
 
     return {
         "status": "degraded" if warnings else "ok",

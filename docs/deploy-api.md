@@ -51,6 +51,19 @@ python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 Ikkalasi ham git'ga tushmaydi. Unutilsa `/api/health` `degraded` qaytaradi
 va sababini yozadi.
 
+**Parollarni ham ALBATTA almashtiring.** `users.example.yaml` git'da turadi,
+ya'ni undagi parolni repo'ni ko'ra oladigan har kim biladi - nusxani
+o'zgartirmasdan qoldirish parolni e'lon qilish bilan barobar:
+
+```bash
+venv/bin/python -m app.tools.hash_password    # har bir hisob uchun
+# chiqqan `password_hash` ni config/users.yaml ga qo'ying
+chmod 600 config/users.yaml .env
+```
+
+`/api/health` namuna xeshlari qolganini aniqlaydi va qaysi hisob ekanini
+aytadi.
+
 ## 3. Bir marta: Swagger fayllari
 
 
@@ -162,7 +175,7 @@ curl -s http://127.0.0.1:5173/api/health
 # 4. Login ishlayaptimi
 curl -s -X POST http://127.0.0.1:5173/api/v1/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@venera.uz","password":"venera2026"}'
+  -d '{"email":"admin@venera.uz","password":"SIZNING-PAROLINGIZ"}'
 
 # 5. Port TASHQARIGA ochilmaganini tasdiqlash
 ss -ltn | grep 8000     # 127.0.0.1:8000 bo'lishi kerak, *:8000 EMAS

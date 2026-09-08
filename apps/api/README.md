@@ -42,21 +42,27 @@ cd apps/web && npm run dev
 `apps/web/.env` dagi `VITE_API_TARGET` shu backend'ga qaraydi, ya'ni Vite
 `/api/*` so'rovlarini unga uzatadi va brauzerda CORS umuman kerak bo'lmaydi.
 
-## Demo hisoblar
+## Foydalanuvchilar
 
-`config/users.example.yaml` dagi ikkita hisob:
+`config/users.example.yaml` da ikkita namunaviy hisob bor: `admin@venera.uz`
+(ADMIN, RAG_ADMIN) va `demo@venera.uz` (USER).
 
-| Email | Parol | Rollar |
-|---|---|---|
-| `admin@venera.uz` | `venera2026` | ADMIN, RAG_ADMIN |
-| `demo@venera.uz` | `demo2026` | USER |
+> **Namuna fayldagi parollarni ISHLATMANG.** U git'da turadi, ya'ni undagi
+> parolni repo'ni ko'ra oladigan HAR KIM biladi. `cp users.example.yaml
+> users.yaml` qilib qoldirish yetarli emas - parollarni almashtirish SHART.
+>
+> `/api/health` buni tekshiradi: namuna xeshlari qolgan bo'lsa javob
+> `degraded` bo'ladi va qaysi hisob ekanini aytadi.
 
-Yangi foydalanuvchi qo'shish:
+Parol qo'yish yoki almashtirish:
 
 ```bash
-python -m app.tools.hash_password      # parol so'raydi, xesh beradi
-# chiqqan `password_hash` ni config/users.yaml ga qo'ying
+venv/bin/python -m app.tools.hash_password    # parol so'raydi (ekranda ko'rinmaydi)
+# chiqqan `password_hash` ni config/users.yaml dagi yozuvga qo'ying
+systemctl --user restart venera-api.service
 ```
+
+`config/users.yaml` git'ga tushmaydi va huquqi `600` bo'lishi kerak.
 
 Parol **hech qachon** ochiq saqlanmaydi — faqat PBKDF2 xeshi (600 000 iteratsiya).
 
