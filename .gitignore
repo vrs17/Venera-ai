@@ -43,6 +43,11 @@ Thumbs.db
 # Haqiqiy foydalanuvchilar va sirlar. Namunalar (.example) git da qoladi.
 apps/api/config/users.yaml
 apps/api/.env
+# Nusxalar ham: `.env.bak`, `.env.local`, `.env.2026-09-08` - ular ham
+# SECRET_KEY va TTS sirini saqlaydi, lekin yuqoridagi qator ularni
+# QAMRAMAYDI va ular jimgina commit'ga tushib ketishi mumkin.
+apps/api/.env.*
+!apps/api/.env.example
 apps/api/venv/
 __pycache__/
 *.egg-info/

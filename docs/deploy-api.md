@@ -168,6 +168,21 @@ Javob `audio/wav` (8000 Hz, mono - telefoniya sifati), JSON emas.
 | `TTS_SPEED` | *(bo'sh -> 0.95)* | rasmiy 0.90, yangiliklar 1.0 |
 | `TTS_MAX_CHARS` | `600` | undan uzun matn so'z chegarasida qisqartiriladi |
 
+**`TTS_CLIENT_SECRET` ga FAQAT sirning o'zi yoziladi.** TTS serverining
+`AUTH_CLIENTS` o'zgaruvchisi yozuvlarni `client_id:sir` ko'rinishida saqlaydi.
+Butun yozuvni ko'chirib qo'yish oson va oqibati chalg'ituvchi: server
+`401 client_id yoki client_secret noto'g'ri` qaytaradi, bizning tomonda esa
+hammasi joyida ko'rinadi. `:` dan KEYINGI qism olinadi:
+
+```bash
+# AUTH_CLIENTS=frontend:AbCd1234...,user:XyZ...
+#                       ^^^^^^^^^^^ faqat shu qism
+grep -c ':' <<< "$SIR"    # 0 bo'lishi kerak
+```
+
+Tekshirish (sirni ochmasdan): serverga token so'rovi 200 va `scope: tts`
+qaytarsa, qiymat to'g'ri.
+
 **Sir brauzerga hech qachon bermaydi.** Frontend `/api/v1/tts/speak` ga
 matn yuboradi, tokenni backend oladi va keshlaydi (24 soat). Agar frontend
 o'zi token olsa, `client_secret` JS bundle'ida va har bir tarmoq log'ida
