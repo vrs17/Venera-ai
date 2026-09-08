@@ -580,7 +580,17 @@ def run_check(config_path: Path | None = None) -> int:
     lines.append(f"Tray: {'mavjud' if app.tray.available else 'mavjud emas - ' + str(app.tray.error)}")
 
     report = "\n".join(lines)
-    log.debug("Tekshiruv natijasi:\n%s", report)
+    log.info("Tekshiruv natijasi:\n%s", report)
     if sys.stdout is not None:
         print(report)
+    else:
+        # --noconsole rejimida (Windows tray build) sys.stdout None bo'ladi va
+        # print() hech qayerga chiqmaydi. Hisobot yo'qolmasin - faylga yoziladi.
+        target = paths.log_dir() / "check.txt"
+        try:
+            paths.ensure_dirs()
+            target.write_text(report + "\n", encoding="utf-8")
+            log.info("Tekshiruv hisoboti yozildi: %s", target)
+        except OSError as exc:
+            log.warning("Tekshiruv hisoboti yozilmadi (%s): %s", target, exc)
     return 0

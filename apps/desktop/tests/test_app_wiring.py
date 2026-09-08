@@ -174,3 +174,40 @@ def test_stt_code_serverga_yaroqli():
     from venera.engines.stt_onprem import LANGUAGES
     i18n.bind("uz")
     assert i18n.stt_code() in LANGUAGES, "STT serveri bu kodni 400 bilan rad etadi"
+
+
+# --- --check hisoboti -------------------------------------------------------
+# Windows build `console=False` bilan yig'iladi (venera.spec), shuning uchun
+# jarayonda sys.stdout None bo'ladi va print() hech qayerga chiqmaydi.
+# 0.3.0 da `venera.exe --check` shu sababli mutlaqo bo'sh qaytardi.
+
+def _izolyatsiya(monkeypatch, tmp_path):
+    from venera import paths as paths_module
+    for name, sub in (("config_dir", "cfg"), ("state_dir", "state"), ("log_dir", "logs")):
+        monkeypatch.setattr(paths_module, name, lambda sub=sub: tmp_path / sub)
+    return paths_module
+
+
+def test_check_konsolsiz_rejimda_faylga_yoziladi(monkeypatch, tmp_path):
+    from venera.app import run_check
+
+    paths_module = _izolyatsiya(monkeypatch, tmp_path)
+    monkeypatch.setattr("sys.stdout", None)
+
+    assert run_check(Path("__yoq__.yaml")) == 0
+
+    report = (paths_module.log_dir() / "check.txt").read_text(encoding="utf-8")
+    assert "engines" in report, "hisobot bo'sh yoki chala"
+    assert "stt=" in report
+
+
+def test_check_konsolda_faylga_yozmaydi(monkeypatch, tmp_path, capsys):
+    from venera.app import run_check
+
+    paths_module = _izolyatsiya(monkeypatch, tmp_path)
+
+    assert run_check(Path("__yoq__.yaml")) == 0
+
+    assert "stt=" in capsys.readouterr().out
+    assert not (paths_module.log_dir() / "check.txt").exists(), \
+        "konsol bor ekan, ortiqcha fayl yaratilmasin"
