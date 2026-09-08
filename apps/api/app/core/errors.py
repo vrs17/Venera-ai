@@ -42,8 +42,19 @@ _NAMES = {
 }
 
 
-def error_response(request: Request, code: int, message: str) -> JSONResponse:
-    """`schemas.auth.ApiErrorResponse` shakliga mos javob."""
+def error_response(
+    request: Request,
+    code: int,
+    message: str,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    """`schemas.auth.ApiErrorResponse` shakliga mos javob.
+
+    `headers` ni O'TKAZIB YUBORISH mumkin emas: 401 javobning ma'nosi
+    `WWW-Authenticate` sarlavhasida. Usiz brauzer parol oynasini
+    KO'RSATMAYDI va foydalanuvchi shunchaki JSON xato ko'radi - hujjat
+    sahifasini ochib bo'lmaydi.
+    """
     return JSONResponse(
         status_code=code,
         content={
@@ -53,6 +64,7 @@ def error_response(request: Request, code: int, message: str) -> JSONResponse:
             "message": message,
             "path": request.url.path,
         },
+        headers=headers or None,
     )
 
 
@@ -62,7 +74,11 @@ def install(app: FastAPI) -> None:
     @app.exception_handler(StarletteHTTPException)
     async def _http(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         # HTTPException(detail=...) dagi matn `message` ga o'tadi.
-        return error_response(request, exc.status_code, str(exc.detail))
+        # `exc.headers` HAM ko'chiriladi - u yerda WWW-Authenticate turadi.
+        return error_response(
+            request, exc.status_code, str(exc.detail),
+            headers=getattr(exc, "headers", None),
+        )
 
     @app.exception_handler(RequestValidationError)
     async def _validation(request: Request, exc: RequestValidationError) -> JSONResponse:

@@ -27,7 +27,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api.deps import get_user_store
+from fastapi import Depends
+
+from .api.deps import docs_viewer, get_user_store
 from .api.v1 import router as v1_router
 from .core import errors
 from .core.config import settings
@@ -64,7 +66,7 @@ app = FastAPI(
     description="Venera AI - web ilova uchun backend.",
     docs_url=None,
     redoc_url=None,
-    openapi_url="/api/openapi.json",
+    openapi_url=None,
 )
 
 #: Swagger UI fayllari shu papkada turadi. Yuklab olish:
@@ -96,8 +98,20 @@ _DOCS_PAGE = """<!DOCTYPE html>
 </html>"""
 
 
+@app.get("/api/openapi.json", include_in_schema=False)
+def openapi_schema(_: str = Depends(docs_viewer)) -> dict:
+    """OpenAPI sxemasi - hujjat sahifasi bilan BIR XIL himoyada.
+
+    Sahifani qulflab, sxemani ochiq qoldirish ma'nosiz bo'lardi: qimmatli
+    ma'lumot aynan shu faylda (endpointlar, modellar, rol nomlari).
+    Brauzer Basic ma'lumotlarini shu originga o'zi qayta yuboradi, shuning
+    uchun foydalanuvchi ikkinchi marta parol kiritmaydi.
+    """
+    return app.openapi()
+
+
 @app.get("/api/docs", include_in_schema=False)
-def swagger_ui() -> HTMLResponse:
+def swagger_ui(_: str = Depends(docs_viewer)) -> HTMLResponse:
     """Swagger UI. Internetsiz ishlaydi va qattiq CSP ostida ham ochiladi."""
     if _SWAGGER_MISSING:
         # ATAYLAB xato sahifasi, BO'SH sahifa emas. CDN ga qaytish MA'NOSIZ:

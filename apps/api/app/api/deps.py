@@ -9,9 +9,13 @@ deb yozib, tokensiz test yozish mumkin.
 
 from __future__ import annotations
 
+import base64
+import binascii
+
 from functools import lru_cache
 
-from fastapi import Depends, Request
+from fastapi import Depends, Request, status
+from fastapi import HTTPException
 
 from ..core.config import settings
 from ..core.errors import unauthorized
@@ -59,3 +63,52 @@ def current_user(
         # 403 emas: sessiya endi yaroqsiz va qayta kirish kerak.
         raise unauthorized("Foydalanuvchi topilmadi")
     return user.to_public()
+
+
+def _basic_challenge(message: str) -> HTTPException:
+    """401 + `WWW-Authenticate: Basic` - brauzer parol oynasini ko'rsatadi.
+
+    `Bearer` EMAS: hujjat sahifasi brauzerda ochiladi va u yerda token
+    yuboradigan JS yo'q. Basic bilan brauzerning o'zi so'raydi.
+    """
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=message,
+        headers={"WWW-Authenticate": 'Basic realm="Venera API - hujjat"'},
+    )
+
+
+def docs_viewer(
+    request: Request,
+    store: UserStore = Depends(get_user_store),
+) -> str:
+    """Hujjat sahifasi uchun HTTP Basic tekshiruvi.
+
+    NEGA KERAK: sayt tashqi proksi orqali internetdan ochiq. Himoyasiz
+    `/api/docs` va `/api/openapi.json` har kimga butun endpoint ro'yxatini,
+    so'rov/javob modellarini va rol nomlarini beradi - ya'ni hujumchiga
+    nimani sinashni aytib beradi.
+
+    Alohida parol EMAS, mavjud hisoblar ishlatiladi: ikkinchi sir ikkinchi
+    unutiladigan joy bo'lardi.
+    """
+    header = request.headers.get("Authorization", "")
+    scheme, _, raw = header.partition(" ")
+    if scheme.lower() != "basic" or not raw.strip():
+        raise _basic_challenge("Hujjat uchun kirish talab qilinadi")
+
+    try:
+        decoded = base64.b64decode(raw.strip(), validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        raise _basic_challenge("Sarlavha buzilgan")
+
+    email, sep, password = decoded.partition(":")
+    if not sep:
+        raise _basic_challenge("Sarlavha buzilgan")
+
+    # `authenticate` mavjud bo'lmagan email uchun ham parolni tekshiradi -
+    # javob vaqti bo'yicha email borligini aniqlab bo'lmaydi.
+    user = store.authenticate(email, password)
+    if user is None:
+        raise _basic_challenge("Email yoki parol noto'g'ri")
+    return user.email
