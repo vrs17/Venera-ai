@@ -29,13 +29,14 @@ _client = SttClient(
     settings.stt_base_url,
     timeout=settings.stt_timeout,
     attempts=settings.stt_attempts,
+    max_concurrent=settings.stt_max_concurrent,
 )
 
 
 @router.post("/transcribe", response_model=TranscriptResponse)
 def transcribe(
     file: UploadFile = File(description="Audio (webm/ogg/wav)"),
-    language: str = Form(description="uz | uz-Cyrl | ru | en | zh"),
+    language: str = Form(description="uz | uz-Cyrl | ru | en - UI tili"),
     user: AuthUser = Depends(current_user),
 ) -> TranscriptResponse:
     """Audio -> matn.
@@ -79,4 +80,6 @@ def transcribe(
         language=result.language or stt_language,
         durationSec=result.duration_sec,
         lowConfidence=result.low_confidence,
+        truncated=result.truncated,
+        backend=result.backend,
     )

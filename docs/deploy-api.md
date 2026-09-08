@@ -109,6 +109,41 @@ systemctl --user restart venera-frontend.service
 
 ---
 
+## STT (ovozni matnga o'girish)
+
+Backend brauzerdan kelgan audioni STT Router'ga (`10.10.50.4:8006`) uzatadi.
+Sozlamalar `.env` da, hammasi ixtiyoriy:
+
+| O'zgaruvchi | Default | Izoh |
+|---|---|---|
+| `STT_BASE_URL` | `http://10.10.50.4:8006` | Router manzili (ichki tarmoq) |
+| `STT_TIMEOUT` | `150` | soniya. Router backend'ni 120 s kutadi, hujjat 180 tavsiya qiladi |
+| `STT_ATTEMPTS` | `3` | 502/503/504 da qayta urinish (jitter bilan) |
+| `STT_MAX_CONCURRENT` | `4` | shu ilovaning Router'dagi ulushi |
+| `STT_MAX_UPLOAD_MB` | `10` | brauzerdan qabul qilinadigan maksimal audio |
+
+**`STT_MAX_CONCURRENT` ni oshirishdan oldin.** Router BUTUN park uchun ~10
+parallel so'rov ko'taradi (o'lchangan: 25 da 503 lar boshlanadi). Web ilova,
+desktop park va boshqa klientlar shu 10 ni bo'lishadi. Chegaradan oshgan
+so'rov Router'ga bormasdan 503 oladi - frontend "band, keyinroq" deb
+ko'rsatadi.
+
+**Ovoz faqat UI tilida.** Foydalanuvchi tizimda qaysi tilni tanlagan bo'lsa
+(uz / uz-Cyrl / ru / en), STT ham shu tilda. Router hujjati
+`language_mismatch` da `detected_language` bilan qayta yuborishni tavsiya
+qiladi - bu ATAYLAB qilinmaydi (mahsulot qarori: tizim tilni o'zi
+almashtirmaydi). Mismatch faqat log'ga tushadi. `zh` tizimda yo'q, 400.
+
+`low_confidence` - matn chatga AVTOMATIK yuborilmaydi; panel foydalanuvchiga
+ko'rsatib, tasdiq so'raydi (hujjat: bunday matnda WER 60-70%).
+
+Tekshirish:
+
+```bash
+curl -s http://10.10.50.4:8006/health | python3 -m json.tool | head    # Router va backend'lar
+journalctl --user -u venera-api.service -o cat | grep 'STT '           # qaysi backend ishlagani
+```
+
 ## Avtomatik qayta ishga tushish
 
 | Holat | Xulq |

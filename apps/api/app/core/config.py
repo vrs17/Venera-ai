@@ -44,8 +44,15 @@ class Settings(BaseSettings):
     # --- STT (ovozni matnga o'girish) ---
     #: STT Router manzili. Ichki tarmoqda, VPN ortida.
     stt_base_url: str = "http://10.10.50.4:8006"
-    stt_timeout: float = 30.0
+    #: Router backend'ni 120 s kutadi (keyin 504); hujjat 180 s tavsiya qiladi.
+    #: Bizning navbatlar 30 s dan uzun emas, lekin Router navbati ostida
+    #: qisqa timeout so'rovni MUDDATIDAN OLDIN uzib, ishni bekorga yo'qotardi.
+    stt_timeout: float = 150.0
     stt_attempts: int = 3
+    #: BUTUN park uchun Router chegarasi ~10 parallel (o'lchangan: 25 da 503 lar
+    #: boshlanadi). Web ilova shuning bir qismini oladi - desktop park va boshqa
+    #: klientlarga joy qolsin. Oshsa - kutmasdan 503 "band" qaytaramiz.
+    stt_max_concurrent: int = 4
     #: Yuklash chegarasi. Router o'zi ham 25 MB da to'xtatadi, lekin biz
     #: undan OLDIN to'xtatamiz: aks holda katta fayl butun tarmoqni bosib
     #: o'tib, faqat oxirida rad etilardi.

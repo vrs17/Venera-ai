@@ -191,7 +191,13 @@ export interface Transcript {
   text: string
   language: string
   durationSec: number
-  /** The router is unsure. The uz backend sends `null` for this, which the
-   *  backend normalises to `false`, so it is always a boolean here. */
+  /** The router is unsure (measured WER ~60–70% when set). The uz backend
+   *  sends `null` for this, which the backend normalises to `false`, so it is
+   *  always a boolean here. The router docs say: do not act on it
+   *  automatically — the panel asks the user to confirm instead. */
   lowConfidence: boolean
+  /** Longer than the router's limit; the tail was dropped. */
+  truncated: boolean
+  /** `uzbek_stt` or `multilang` — which service answered. Debug only. */
+  backend: string
 }

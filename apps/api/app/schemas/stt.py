@@ -11,10 +11,13 @@ from pydantic import BaseModel, Field
 
 class TranscriptResponse(BaseModel):
     text: str = Field(description="Tanib olingan matn")
-    language: str = Field(default="", description="Router ishlatgan til")
+    language: str = Field(default="", description="Matn qaysi tilda tanildi - har doim so'ralgan til")
     durationSec: float = Field(default=0.0, description="Audio uzunligi (soniya)")
     lowConfidence: bool = Field(
         default=False,
-        description="Router matnga ishonchi past. uz backend buni `null` qaytaradi, "
-                    "shuning uchun bu yerda doim bool.",
+        description="Router matnga ishonchi past (WER ~60-70%). Hujjat: avtomatik "
+                    "harakat qilmang - foydalanuvchidan tasdiq oling. uz backend "
+                    "buni `null` qaytaradi, shuning uchun bu yerda doim bool.",
     )
+    truncated: bool = Field(default=False, description="Audio Router limitidan uzun bo'lib kesildi")
+    backend: str = Field(default="", description="`uzbek_stt` yoki `multilang` - debug uchun")

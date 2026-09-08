@@ -47,10 +47,12 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 
 const { t, locale } = useI18n({ useScope: 'global' })
 
-type State = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'error'
+type State = 'idle' | 'listening' | 'transcribing' | 'confirm' | 'thinking' | 'error'
 const state = ref<State>('idle')
 const level = ref(0)          // 0..1, drives the orb
 const heard = ref('')
+// A note under the heard text: "recognised as Russian", "audio was cut".
+const note = ref('')
 const errorText = ref('')
 const errorHint = ref('')
 
@@ -83,6 +85,7 @@ const statusText = computed(() => {
     case 'listening': return t('voiceListening')
     case 'transcribing': return t('voiceTranscribing')
     case 'thinking': return t('voiceThinking')
+    case 'confirm': return t('voiceUnsure')
     case 'error': return errorText.value
     default: return t('voiceTapToSpeak')
   }
@@ -152,6 +155,7 @@ function meter() {
 async function startListening() {
   if (!supported.value || state.value === 'listening') return
   heard.value = ''
+  note.value = ''
   errorText.value = ''
   errorHint.value = ''
   chunks = []
@@ -228,10 +232,29 @@ async function handleRecorded() {
       return
     }
     heard.value = text
+    note.value = noteFor(result)
+    // Router docs: a low-confidence transcript has ~60-70% word error rate.
+    // Do not act on it — show it and let the user decide.
+    if (result.lowConfidence) {
+      state.value = 'confirm'
+      return
+    }
     state.value = props.send(text) ? 'thinking' : 'idle'
   } catch (err) {
     fail(localizeApiError(err, t))
   }
+}
+
+/** Notes shown under the heard text. Language is never mentioned here: voice
+ *  always runs in the UI language and the system does not detect or switch. */
+function noteFor(r: { truncated: boolean }): string {
+  return r.truncated ? t('voiceTruncatedNote') : ''
+}
+
+/** "Send anyway" after a low-confidence transcript. */
+function confirmSend() {
+  if (state.value !== 'confirm' || !heard.value) return
+  state.value = props.send(heard.value) ? 'thinking' : 'idle'
 }
 
 function close() {
@@ -242,7 +265,7 @@ function close() {
 
 function onOrbClick() {
   if (state.value === 'listening') stopListening()
-  else if (state.value === 'idle' || state.value === 'error') void startListening()
+  else if (state.value === 'idle' || state.value === 'error' || state.value === 'confirm') void startListening()
 }
 
 // The pipeline finishing is what ends the "thinking" state.
@@ -327,6 +350,12 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
         <span class="vp-heard-label">{{ t('voiceHeard') }}</span>
         {{ heard }}
       </p>
+      <p v-if="note" class="vp-note">{{ note }}</p>
+
+      <div v-if="state === 'confirm'" class="vp-confirm">
+        <button class="vp-btn vp-btn--primary" @click="confirmSend">{{ t('voiceSendAnyway') }}</button>
+        <button class="vp-btn" @click="onOrbClick">{{ t('voiceRetry') }}</button>
+      </div>
       <p v-if="answer && state === 'idle'" class="vp-answer">{{ answer }}</p>
 
       <button v-if="state === 'error'" class="vp-retry" @click="onOrbClick">{{ t('voiceRetry') }}</button>
@@ -673,6 +702,36 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
   max-height: 120px;
   overflow-y: auto;
 }
+.vp-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--vp-fg-3);
+}
+.vp-confirm {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+.vp-btn {
+  border: 1px solid var(--vp-btn-border);
+  background: var(--vp-btn-bg);
+  color: var(--vp-fg);
+  border-radius: 999px;
+  padding: 8px 18px;
+  font-size: 13.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.vp-btn:hover { background: var(--vp-btn-bg-hover); }
+.vp-btn--primary {
+  border-color: transparent;
+  background: var(--voice);
+  color: #fff;
+}
+.vp-btn--primary:hover { filter: brightness(1.1); background: var(--voice); }
+/* Confirm: the sphere waits, dimmer, until the person decides. */
+.vp[data-state='confirm'] .vp-sheet { opacity: 0.55; }
+.vp[data-state='confirm'] .vp-spark { animation-duration: 8s; }
 .vp-retry {
   margin-top: 6px;
   border: 1px solid var(--vp-btn-border);

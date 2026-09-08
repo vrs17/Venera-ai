@@ -37,7 +37,7 @@ PIPELINE_FIELDS = {
 BASE_STAGE_FIELDS = {"rawAnswer", "model", "adapter", "seconds"}
 
 # types.ts: Transcript
-TRANSCRIPT_FIELDS = {"text", "language", "durationSec", "lowConfidence"}
+TRANSCRIPT_FIELDS = {"text", "language", "durationSec", "lowConfidence", "truncated", "backend"}
 
 
 def test_login_javobi_types_ts_ga_mos(client):
