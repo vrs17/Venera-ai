@@ -15,8 +15,8 @@ Windows'da, PowerShell'da:
 
 ```powershell
 cd C:\venera
-powershell -ExecutionPolicy Bypass -File packaging\build.ps1      # .exe yig'ish
-powershell -ExecutionPolicy Bypass -File packaging\install.ps1    # o'rnatish + avtostart
+powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1     # .exe yig'ish
+powershell -ExecutionPolicy Bypass -File packaging\windows\install.ps1   # o'rnatish + avtostart
 ```
 
 O'rnatilgandan keyin:
