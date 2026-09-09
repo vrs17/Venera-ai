@@ -34,6 +34,16 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     signal?.addEventListener('abort', () => { clearTimeout(id); reject(signal.reason ?? new DOMException('aborted', 'AbortError')) }, { once: true })
   })
 
+export interface WakeVerdict {
+  matched: boolean
+  text: string
+  reason: string
+  /** False when the check could not be performed at all — STT down, network
+   *  gone. That is NOT "not the wake word", and callers must not treat it as
+   *  a normal negative: it means try less often, not try again immediately. */
+  checked: boolean
+}
+
 /** One wake-word check. The verdict comes from the server, which also records
  *  the clip, the transcript and the reason — so "it only wakes if you say it
  *  perfectly" can be studied from real data rather than guessed at.
@@ -44,17 +54,15 @@ export async function checkWake(
   wav: Blob,
   language: string,
   signal?: AbortSignal,
-): Promise<{ matched: boolean; text: string; reason: string }> {
+): Promise<WakeVerdict> {
   const form = new FormData()
   form.append('file', wav, 'wake.wav')
   form.append('language', language)
   try {
-    return await apiFetch<{ matched: boolean; text: string; reason: string }>(
-      '/api/v1/stt/wake', { method: 'POST', body: form, signal },
-    )
+    return await apiFetch<WakeVerdict>('/api/v1/stt/wake', { method: 'POST', body: form, signal })
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') throw err
-    return { matched: false, text: '', reason: 'network' }
+    return { matched: false, text: '', reason: 'network', checked: false }
   }
 }
 

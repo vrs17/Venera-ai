@@ -503,6 +503,44 @@ pastdagi birinchi tuzoqqa qarang.
 
 ---
 
+## Ovoz ishlamay qolsa - birinchi qadam
+
+```bash
+curl -s http://127.0.0.1:8000/api/health | python3 -m json.tool
+```
+
+`/api/health` yuqoridagi ovoz xizmatlarini ham tekshiradi va nima
+ishlamayotganini oddiy til bilan aytadi. Bu qo'shilgan sabab: STT ning
+o'zbek backend'i o'chib qolganida ilova o'zi butunlay sog'lom ko'rinardi,
+uyg'otish so'zi esa jimgina ishlamay qo'yardi - buni faqat log'ni ochib
+ko'rgandagina bilish mumkin edi.
+
+```json
+{
+  "status": "degraded",
+  "upstream": {
+    "stt": { "status": "degraded", "broken": ["uzbek_stt"] },
+    "tts": { "status": "ok" }
+  },
+  "warnings": ["STT: o'zbek backend'i o'chgan (10.10.50.4 dagi 8002) - ..."]
+}
+```
+
+| Ogohlantirish | Qayerda tuzatiladi |
+|---|---|
+| `o'zbek backend'i o'chgan` | `10.10.50.4` da o'zbek STT xizmatini qayta ko'taring (port 8002) |
+| `STT Router javob bermayapti` | `10.10.50.4` da Router (port 8006) |
+| `TTS javob bermayapti` | `10.10.50.4` da TTS (port 8200) |
+
+Tekshiruv 30 soniya keshlanadi - `/api/health` monitoring tomonidan tez-tez
+so'raladi, har safar ikkita tashqi so'rov yuborish ularni ortiqcha bezovta
+qilardi.
+
+Uyg'otish tinglagichi ham buni sezadi: tekshirib bo'lmasa (`checked: false`)
+urinishlar oralig'i har nosozlikda ikkilanadi, 60 soniyagacha. O'chgan
+backend'ni har ikki soniyada urib turishning ma'nosi yo'q, tuzalganini esa
+bir daqiqa ichida sezadi.
+
 ## Ma'lum tuzoqlar
 
 **`/api/*` da 502, API o'zi esa ishlayapti.** Frontend xizmatida

@@ -50,6 +50,11 @@ const SILENCE_MS = 700        // silence that ends an utterance
 const MIN_MS = 350            // shorter than this is a cough, a click, a door
 const MAX_MS = 2600           // longer than this is conversation, not a wake phrase
 const COOLDOWN_MS = 2500      // hard ceiling on the request rate
+/** When the check cannot run at all — the STT backend is down — sending a
+ *  clip every few seconds achieves nothing and keeps a broken service busy.
+ *  The gap doubles per consecutive failure up to this ceiling, and resets the
+ *  moment one check succeeds, so recovery is noticed within a minute. */
+const MAX_BACKOFF_MS = 60_000
 const RMS_ON = 0.045          // hysteresis: a single threshold chatters at the
 const RMS_OFF = 0.022         // boundary and slices one utterance into many
 
@@ -94,6 +99,7 @@ export function useWakeWord(options: WakeWordOptions) {
   let capturedLen = 0
   let quietFrames = 0
   let lastRequest = 0
+  let failures = 0
   let overlong = false
 
   function shouldRun(): boolean {
@@ -155,6 +161,7 @@ export function useWakeWord(options: WakeWordOptions) {
     capturedLen = 0
     ringLen = 0
     overlong = false
+    failures = 0
     aborter?.abort()
     aborter = null
     if (node) {
@@ -252,7 +259,10 @@ export function useWakeWord(options: WakeWordOptions) {
     const seconds = clip.length / rate
     if (seconds * 1000 < MIN_MS) return
     const now = performance.now()
-    if (now - lastRequest < COOLDOWN_MS) return
+    const gap = failures
+      ? Math.min(COOLDOWN_MS * 2 ** failures, MAX_BACKOFF_MS)
+      : COOLDOWN_MS
+    if (now - lastRequest < gap) return
     lastRequest = now
 
     aborter?.abort()
@@ -262,6 +272,11 @@ export function useWakeWord(options: WakeWordOptions) {
       const wav = new Blob([encodeWavBytes(clip, rate)], { type: 'audio/wav' })
       const verdict = await checkWake(wav, locale.value, signal)
       if (signal.aborted || !shouldRun()) return
+      failures = verdict.checked ? 0 : failures + 1
+      if (!verdict.checked) {
+        console.debug('[wake] tekshirib bo`lmadi, keyingi urinish kechroq', failures)
+        return
+      }
       // Useful while tuning: the console shows what was actually heard, which
       // is usually nothing like what the person thinks they said.
       if (verdict.text) console.debug('[wake]', verdict.text, '->', verdict.reason)

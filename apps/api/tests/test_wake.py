@@ -154,7 +154,8 @@ def test_qaror_va_matn_qaytadi(client, auth, monkeypatch, tmp_path):
 
     body = client.post("/api/v1/stt/wake", files=_clip(),
                        data={"language": "uz"}, headers=auth).json()
-    assert body == {"text": "salom venera", "matched": True, "reason": "salom + nom"}
+    assert body == {"text": "salom venera", "matched": True,
+                    "reason": "salom + nom", "checked": True}
     assert (tmp_path / "wake.jsonl").exists(), "urinish yozilmadi"
 
 
@@ -173,7 +174,12 @@ def test_stt_xatosi_jim_otadi(client, auth, monkeypatch, tmp_path):
     response = client.post("/api/v1/stt/wake", files=_clip(),
                            data={"language": "uz"}, headers=auth)
     assert response.status_code == 200
-    assert response.json()["matched"] is False
+    body = response.json()
+    assert body["matched"] is False
+    # `checked=False` "uyg'otish so'zi emas" EMAS, "tekshirib bo'lmadi"
+    # degani. Klient buni ko'rib urinishlar oralig'ini uzaytiradi - o'chgan
+    # backend'ni har ikki soniyada urib turishning ma'nosi yo'q.
+    assert body["checked"] is False
 
 
 def test_katta_audio_rad_etiladi(client, auth):
@@ -183,3 +189,57 @@ def test_katta_audio_rad_etiladi(client, auth):
     response = client.post("/api/v1/stt/wake", files=big,
                            data={"language": "uz"}, headers=auth)
     assert response.status_code == 400
+
+
+# --- yuqoridagi xizmatlar holati --------------------------------------------
+
+
+def test_uz_backend_ochganda_health_aytadi():
+    """Ovoz zanjiri bizdan MUSTAQIL o'chadi va o'chganda ilova o'zi sog'lom
+    ko'rinadi. Aynan shunday bo'ldi: uz backend o'chganini faqat log'ni ochib
+    ko'rgandagina bilish mumkin edi."""
+    from app.services.upstream import warnings_for
+
+    warnings = warnings_for({
+        "stt": {"status": "degraded", "broken": ["uzbek_stt"]},
+        "tts": {"status": "ok"},
+    })
+    assert len(warnings) == 1
+    # Xabar NIMA ISHLAMASLIGINI aytadi, "degraded" demaydi.
+    assert "Salom Venera" in warnings[0] and "ISHLAMAYDI" in warnings[0]
+
+
+def test_hammasi_sogolom_bolsa_jim():
+    from app.services.upstream import warnings_for
+    assert warnings_for({"stt": {"status": "ok", "broken": []},
+                         "tts": {"status": "ok"}}) == []
+
+
+def test_router_umuman_javob_bermasa():
+    from app.services.upstream import warnings_for
+    warnings = warnings_for({"stt": {"status": "unreachable"}, "tts": {"status": "ok"}})
+    assert "STT Router javob bermayapti" in warnings[0]
+
+
+def test_upstream_keshlanadi(monkeypatch):
+    """`/api/health` monitoring tomonidan tez-tez so'raladi. Har safar ikkita
+    tashqi so'rov yuborish ularni ortiqcha bezovta qilardi."""
+    from app.services.upstream import UpstreamHealth
+
+    calls = []
+    health = UpstreamHealth("http://stt", "http://tts")
+    monkeypatch.setattr(health, "_get", lambda url: calls.append(url) or {"status": "ok"})
+    for _ in range(5):
+        health.snapshot()
+    assert len(calls) == 2, f"{len(calls)} ta so'rov - kesh ishlamadi"
+
+
+def test_upstream_yiqilsa_health_yiqilmaydi(monkeypatch):
+    """Tashqi xizmat javob bermasligi `/api/health` ni buzmasligi kerak -
+    aks holda monitoring butun ilovani o'chgan deb ko'rsatardi."""
+    from app.services.upstream import UpstreamHealth
+
+    health = UpstreamHealth("http://yoq.invalid", "http://yoq.invalid")
+    snapshot = health.snapshot()
+    assert snapshot["stt"]["status"] == "unreachable"
+    assert snapshot["tts"]["status"] == "unreachable"

@@ -33,6 +33,7 @@ from .api.deps import docs_viewer, get_user_store
 from .api.v1 import router as v1_router
 from .core import errors
 from .core.config import settings
+from .services.upstream import UpstreamHealth, warnings_for
 from .services.users import example_password_hashes
 
 logging.basicConfig(
@@ -146,6 +147,11 @@ if settings.cors_origins:
 app.include_router(v1_router)
 
 
+#: Yuqoridagi ovoz xizmatlari holati. Keshlanadi - `/api/health` monitoring
+#: tomonidan tez-tez so'raladi.
+_upstream = UpstreamHealth(settings.stt_base_url, settings.tts_base_url)
+
+
 @app.get("/api/health", tags=["service"])
 @app.get("/health", tags=["service"], include_in_schema=False)
 def health() -> dict:
@@ -177,8 +183,16 @@ def health() -> dict:
             "venv/bin/python -m app.tools.hash_password"
         )
 
+    # Yuqoridagi ovoz xizmatlari BIZDAN MUSTAQIL o'chadi, va o'chganda ilova
+    # o'zi butunlay sog'lom ko'rinadi - uyg'otish so'zi esa jimgina ishlamay
+    # qo'yadi. Aynan shunday bo'ldi: uz backend o'chganini faqat log'dan
+    # bilish mumkin edi.
+    upstream = _upstream.snapshot()
+    warnings.extend(warnings_for(upstream))
+
     return {
         "status": "degraded" if warnings else "ok",
+        "upstream": upstream,
         "version": settings.version,
         "users": len(store),
         "warnings": warnings,

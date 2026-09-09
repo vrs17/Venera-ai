@@ -137,7 +137,11 @@ def wake(
         # Uyg'otish tekshiruvi FON ishi: 503 (navbat to'la) bu yerda odatiy
         # hol va uni xato sifatida ko'rsatish noto'g'ri bo'lardi.
         log.info("Uyg'otish tekshiruvi o'tmadi (%s): %s", user.email, exc)
-        return WakeResponse(text="", matched=False, reason="stt xatosi")
+        # `checked=False`: bu "uyg'otish so'zi emas" degani EMAS, "tekshirib
+        # bo'lmadi" degani. Klient buni ko'rib urinishlar oralig'ini
+        # uzaytiradi - o'chgan backend'ni har ikki soniyada urib turishning
+        # ma'nosi yo'q.
+        return WakeResponse(text="", matched=False, reason="stt xatosi", checked=False)
 
     matched, reason = is_wake_phrase(result.text)
     if settings.wake_log_enabled:

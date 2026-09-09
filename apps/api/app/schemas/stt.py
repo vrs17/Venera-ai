@@ -34,3 +34,10 @@ class WakeResponse(BaseModel):
     text: str = Field(default="", description="STT nima eshitgani")
     matched: bool = Field(default=False, description="Uyg'otish so'zi tanildimi")
     reason: str = Field(default="", description="Nega tanildi yoki tanilmadi")
+    checked: bool = Field(
+        default=True,
+        description="Tekshiruv HAQIQATAN bajarildimi. `false` - STT javob "
+                    "bermadi, ya'ni matn yo'q va 'uyg'onmadi' xulosasi "
+                    "audioga emas, nosozlikka asoslangan. Klient shunda "
+                    "urinishlar oralig'ini uzaytiradi.",
+    )
