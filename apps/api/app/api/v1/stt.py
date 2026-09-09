@@ -20,7 +20,7 @@ from ...core.errors import bad_request, error_status
 from ...schemas.auth import AuthUser
 from ...schemas.stt import TranscriptResponse, WakeResponse
 from ...services.stt import LOCALE_TO_STT, SttClient, SttError
-from ...services.wake import WakeLog, is_wake_phrase
+from ...services.wake import FLAT_LIMIT, WakeLog, is_wake_phrase, measure
 from ..deps import current_user
 
 log = logging.getLogger(__name__)
@@ -145,7 +145,7 @@ def wake(
 
     matched, reason = is_wake_phrase(result.text)
     if settings.wake_log_enabled:
-        _wake_log.record(
+        entry = _wake_log.record(
             audio,
             actor_id=user.actorId,
             language=stt_language,
@@ -155,5 +155,13 @@ def wake(
             duration_sec=result.duration_sec,
             backend=result.backend,
         )
-    log.info("Uyg'otish: %r -> %s (%s)", result.text, "HA" if matched else "yo'q", reason)
-    return WakeResponse(text=result.text, matched=matched, reason=reason)
+        flat = entry.flat
+    else:
+        flat = measure(audio)[3]
+    # Buzilgan yozuvda "uyg'onmadi" ning aybi so'zda emas. Brauzer buni
+    # foydalanuvchiga aytadi - darvozani (OS/drayver) faqat u o'chira oladi,
+    # bizning hech qanday sozlamamiz unga yetmaydi.
+    distorted = flat > FLAT_LIMIT
+    log.info("Uyg'otish: %r -> %s (%s)%s", result.text, "HA" if matched else "yo'q", reason,
+             f" BUZILGAN tekis={flat:.0%}" if distorted else "")
+    return WakeResponse(text=result.text, matched=matched, reason=reason, distorted=distorted)

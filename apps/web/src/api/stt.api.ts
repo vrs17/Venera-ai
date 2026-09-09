@@ -42,6 +42,12 @@ export interface WakeVerdict {
    *  gone. That is NOT "not the wake word", and callers must not treat it as
    *  a normal negative: it means try less often, not try again immediately. */
   checked: boolean
+  /** The clip reached the server with speech cut into pulses and exact-zero
+   *  gaps between them — a noise gate somewhere before the browser (OS audio
+   *  enhancement, microphone driver, headset software). "Not the wake word"
+   *  then says nothing about the word; only the person can switch that gate
+   *  off, so the UI has to tell them. */
+  distorted: boolean
 }
 
 /** One wake-word check. The verdict comes from the server, which also records
@@ -62,7 +68,7 @@ export async function checkWake(
     return await apiFetch<WakeVerdict>('/api/v1/stt/wake', { method: 'POST', body: form, signal })
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') throw err
-    return { matched: false, text: '', reason: 'network', checked: false }
+    return { matched: false, text: '', reason: 'network', checked: false, distorted: false }
   }
 }
 

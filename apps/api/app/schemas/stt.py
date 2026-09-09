@@ -41,3 +41,11 @@ class WakeResponse(BaseModel):
                     "audioga emas, nosozlikka asoslangan. Klient shunda "
                     "urinishlar oralig'ini uzaytiradi.",
     )
+    distorted: bool = Field(
+        default=False,
+        description="Audio brauzerga yetguncha buzilgan: nutq ichida tekis "
+                    "nol uzunliklari (OS/drayver shovqin darvozasi). Bunda "
+                    "'uyg'onmadi' aybi so'zda emas, yozuvda - klient buni "
+                    "foydalanuvchiga ko'rsatadi, chunki darvozani faqat u "
+                    "o'chira oladi.",
+    )

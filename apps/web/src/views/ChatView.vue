@@ -39,7 +39,7 @@ const wakeEnabled = ref(localStorage.getItem(WAKE_STORAGE_KEY) !== '0')
 watch(wakeEnabled, (value) => localStorage.setItem(WAKE_STORAGE_KEY, value ? '1' : '0'))
 const wakeSupported = computed(() => WAKE_LOCALES.includes(String(locale.value)))
 
-const { active: wakeActive } = useWakeWord({
+const { active: wakeActive, distorted: wakeDistorted } = useWakeWord({
   enabled: wakeEnabled,
   locale: computed(() => String(locale.value)),
   paused: voiceOpen,
@@ -215,6 +215,7 @@ const actorType = computed<ActorType>(() => (user.value?.actorType as ActorType)
         :wake="wakeEnabled"
         :wake-active="wakeActive"
         :wake-supported="wakeSupported"
+        :wake-distorted="wakeDistorted"
         @toggle-theme="toggleTheme"
         @toggle-dev-mode="toggleDevMode"
         @toggle-wake="toggleWake"

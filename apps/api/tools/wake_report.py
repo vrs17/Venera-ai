@@ -79,13 +79,23 @@ def summary(entries: list[dict]) -> None:
         flat = [e.get("flat") for e in group if e.get("flat") is not None]
         broken = sum(1 for v in flat if v > FLAT_LIMIT)
         if flat:
-            print(f"{'':12} buzilgan yozuv (tekis > {FLAT_LIMIT:.0%}): {broken}/{len(flat)}"
+            # O'z sarlavhasi bilan: yuqoridagi qator nutq/peak bo'lmasa chiqmaydi,
+            # va bu qator o'shanda oldingi guruh ostida ko'rinib qolardi.
+            print(f"{label:12} buzilgan yozuv (tekis > {FLAT_LIMIT:.0%}): {broken}/{len(flat)}"
                   + ("   <- avval SHUNI tuzating, moslashtirgichni emas" if broken else ""))
 
     print("\nEng ko'p uchragan transkriptlar:")
     for text, count in Counter(e.get("text", "") for e in entries).most_common(15):
         verdict = "✓" if is_wake_phrase(text)[0] else " "
         print(f"  {verdict} {count:4d}  {text!r}")
+
+
+def _flat(entry: dict) -> str:
+    """`flat` yo'q qator (yangi ustundan oldingi yozuv) "-" bo'lib chiqadi.
+    0% deb ko'rsatish uni TOZA yozuv deb adashtirardi - ustun aynan buni
+    ajratish uchun qo'shilgan."""
+    value = entry.get("flat")
+    return "-" if value is None else f"{value * 100:.0f}%"
 
 
 def listing(entries: list[dict], only_misses: bool) -> None:
@@ -97,7 +107,7 @@ def listing(entries: list[dict], only_misses: bool) -> None:
         mark = "HA" if e.get("matched") else "-"
         print(f"{e.get('at','')[:19]:<20} {mark:<4} "
               f"{e.get('speech_sec', 0):5.2f}s {e.get('peak', 0):6.3f} "
-              f"{(e.get('flat') or 0) * 100:4.0f}%  "
+              f"{_flat(e):>5}  "
               f"{e.get('reason','')[:21]:<22} {e.get('text','')!r}  [{e.get('id','')}]")
 
 

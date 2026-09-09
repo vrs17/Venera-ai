@@ -337,14 +337,28 @@ qiladi, va qisqaroq kutish nomni keyingi turnga tashlab yuborardi.
 **Yozuv sozlamalari ovoz paneliniki bilan BIR XIL** (`echoCancellation`,
 `noiseSuppression`, `autoGainControl` - uchalasi yoqiq; `AudioContext` tabiiy
 tezlikda, har parcha `OfflineAudioContext` bilan 16 kHz ga keltiriladi -
-`toWav16k` bilan bitta yo'l). Bu ATAYLAB va o'lchov asosida: sozlamalar
-o'chirilganda Windows'dagi Chrome nutqni alohida impulslarga bo'lib, orasini
-tekis nol bilan to'ldirgan holda yetkazdi - odam buni "juda shovqinli" deb
-eshitdi, model esa hech narsa tanimadi. Uyg'otish jurnalidagi `flat` (hisobotda
-`tekis`) ustuni aynan shuni o'lchaydi: nutq ichidagi tekis nol ulushi. Toza
-nutqda ~0-6%, buzilgan yozuvlarda 22-29%. Hisobot 15% dan yuqorisini
-"buzilgan yozuv" deb belgilaydi - bunday holatda moslashtirgichni sozlash
-foydasiz, avval yozuv zanjiri tuzatiladi.
+`toWav16k` bilan bitta yo'l). Bu ATAYLAB: panel - transkript qilishi
+isbotlangan yagona yo'l, va Firefox 16 kHz kontekstga jonli oqim ulashni rad
+etadi.
+
+**Buzilgan yozuv - kod tuzata olmaydigan holat.** Bitta Windows/Chrome
+mashinada past ovozda aytilgan ibora DARVOZA bilan kesilgan holda keldi:
+nutq alohida impulslarga bo'lingan, orasi AYNAN NOL (unli ichidagi
+namunalarning 22-59% i, toza nutqda 0-6%). Odam buni "juda shovqinli" deb
+eshitdi, model esa hech narsa tanimadi. Bu brauzer sozlamalari yoqiq va
+o'chiq holda ham takrorlandi, baland ovozda esa yo'qoldi - ya'ni darvoza
+brauzerdan YUQORIDA (Windows "Audio enhancements", mikrofon drayveri,
+garnitura dasturi), va `getUserMedia` ning hech bir sozlamasi unga yetmaydi.
+Shuning uchun:
+
+* Server har parchada `flat` (hisobotda `tekis`) ni o'lchaydi - nutq
+  ichidagi tekis nol ulushi. 15% dan yuqorisi "buzilgan yozuv": bunday
+  holatda moslashtirgichni sozlash foydasiz.
+* `/stt/wake` javobida `distorted: true` qaytadi, brauzer esa yon panelda
+  uyg'otish qatori ostida nima qilish kerakligini ko'rsatadi (mikrofon
+  "audio enhancements" ni o'chirish yoki yaqinroq gapirish). Darvozani
+  faqat foydalanuvchi o'chira oladi - jim turish uni "aniq aytmadim" deb
+  o'ylashga majbur qilardi.
 
 **Nega eskirgan `ScriptProcessorNode`.** Uning o'rnini bosuvchi `AudioWorklet`
 protsessorni alohida modul URL'idan yuklaydi, odatdagi usul esa `blob:` URL.

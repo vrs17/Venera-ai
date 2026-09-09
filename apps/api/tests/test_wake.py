@@ -239,8 +239,32 @@ def test_qaror_va_matn_qaytadi(client, auth, monkeypatch, tmp_path):
     body = client.post("/api/v1/stt/wake", files=_clip(),
                        data={"language": "uz"}, headers=auth).json()
     assert body == {"text": "salom venera", "matched": True,
-                    "reason": "salom + nom", "checked": True}
+                    "reason": "salom + nom", "checked": True, "distorted": False}
     assert (tmp_path / "wake.jsonl").exists(), "urinish yozilmadi"
+
+
+def test_buzilgan_audio_haqida_aytiladi(client, auth, monkeypatch, tmp_path):
+    """Nutq darvoza bilan kesilgan bo'lsa, "uyg'onmadi" ning aybi so'zda
+    emas. Javobdagi `distorted` brauzerga buni foydalanuvchiga aytish
+    imkonini beradi - darvozani faqat u o'chira oladi."""
+    import io
+    from app.services.stt import Transcript
+    import app.api.v1.stt as module
+
+    monkeypatch.setattr(module._client, "transcribe",
+                        lambda audio, **kw: Transcript(text="assalomu alaykum", language="uz"))
+    monkeypatch.setattr(module, "_wake_log", WakeLog(tmp_path))
+    tone = _tone()
+    gated = _wav([v if (i % 320) < 64 else 0 for i, v in enumerate(tone)])
+
+    body = client.post("/api/v1/stt/wake", files={"file": ("wake.wav", io.BytesIO(gated), "audio/wav")},
+                       data={"language": "uz"}, headers=auth).json()
+    assert body["matched"] is False
+    assert body["distorted"] is True
+
+    clean = client.post("/api/v1/stt/wake", files={"file": ("wake.wav", io.BytesIO(_wav(tone)), "audio/wav")},
+                        data={"language": "uz"}, headers=auth).json()
+    assert clean["distorted"] is False
 
 
 def test_stt_xatosi_jim_otadi(client, auth, monkeypatch, tmp_path):

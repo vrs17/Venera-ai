@@ -20,6 +20,9 @@ const props = defineProps<{
   wakeActive: boolean
   /** Joriy tilda uyg'otish so'zi bor (hozircha faqat o'zbek). */
   wakeSupported: boolean
+  /** Server oxirgi parchani buzilgan deb topdi (nutq darvoza bilan kesilgan).
+   *  Buni faqat foydalanuvchi tuzata oladi - shuning uchun ko'rsatiladi. */
+  wakeDistorted: boolean
 }>()
 const emit = defineEmits<{
   toggleTheme: []
@@ -133,6 +136,12 @@ function expandToLang() {
         />
         <span v-if="!compact" class="sidebar__switch" aria-hidden="true"><span class="sidebar__switch-knob" /></span>
       </button>
+      <!-- Yozuv buzilgan: "uyg'onmadi" ning sababi so'zda emas, mikrofon
+           zanjirida. Bu holatda jim turish foydalanuvchini "aniq aytmadim"
+           deb o'ylashga majbur qilardi - aslida u hech narsa qila olmasdi. -->
+      <p v-if="wakeSupported && wake && wakeDistorted && !compact" class="sidebar__notice" role="status">
+        {{ t('wakeWordDistorted') }}
+      </p>
 
       <!-- Theme -->
       <button class="sidebar__row" :title="theme === 'dark' ? t('light') : t('dark')" @click="emit('toggleTheme')">
@@ -290,6 +299,18 @@ function expandToLang() {
 }
 .sidebar__row-label {
   white-space: nowrap;
+}
+/* Uyg'otish yozuvi buzilgani haqida eslatma - qator ostida, kichik. */
+.sidebar__notice {
+  margin: -2px 8px 6px 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text);
+  opacity: 0.85;
+  border-left: 2px solid var(--border-hover);
+  border-radius: 0 6px 6px 0;
+  background: var(--surface-hover);
 }
 /* Developer-mode pill switch. */
 .sidebar__row--switch.is-on {

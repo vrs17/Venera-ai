@@ -27,17 +27,24 @@
 //
 // THE CAPTURE SETTINGS ARE THE VOICE PANEL'S, DELIBERATELY. The panel's
 // recordings (browser processing on, native sample rate, resampled offline)
-// are the one route proven to transcribe on real machines. This file once
-// diverged from it — processing off, a 16 kHz AudioContext — on the theory
-// that the browser's noise filter was eating the quiet end of the phrase.
-// Measured, that theory was wrong and the divergence was the bug: with
-// processing off, Chrome on Windows delivered speech GATED into isolated
-// pulses with dead-flat zero between them (22-28% of each vowel was exactly
-// zero, against 6% in clean speech), which people heard as "very noisy" and
-// which no recogniser can read. The Uzbek model itself copes with genuine
-// noise down to 0 dB SNR; it cannot cope with speech that is not there.
-// The server measures that flat share on every clip (`flat` in the wake
-// log), so a regression here shows up as a number, not as a complaint.
+// are the one route proven to transcribe on real machines, and Firefox
+// refuses the alternative (a 16 kHz context fed by a live stream). This file
+// once diverged from it — processing off — on the theory that the browser's
+// noise filter was eating the quiet end of the phrase. That theory was wrong.
+//
+// WHAT THE RECORDINGS ACTUALLY SHOWED, AND WHAT THIS CODE CANNOT FIX. On one
+// Windows/Chrome machine, quietly spoken phrases arrived GATED: speech cut
+// into isolated pulses with runs of EXACT zero between them (22-59% of the
+// samples inside a vowel, against 0-6% in clean speech), which the person
+// heard as "very noisy" and which no recogniser can read. It happened with
+// browser processing off AND on, and vanished when the same person spoke
+// louder — so the gate sits upstream of the browser (OS "audio enhancement",
+// microphone driver, headset software), and no getUserMedia constraint
+// reaches it. The Uzbek model itself copes with genuine noise down to 0 dB
+// SNR; it cannot cope with speech that is not there. What we CAN do is
+// notice: the server measures that flat share on every clip (`flat` in the
+// wake log) and reports it back, and `distorted` below turns it into a hint
+// for the person, who is the only one able to switch the gate off.
 //
 // WHY ScriptProcessorNode, WHICH IS DEPRECATED. Its replacement, AudioWorklet,
 // loads its processor from a separate module URL. Our CSP is `script-src
@@ -125,6 +132,10 @@ export function useWakeWord(options: WakeWordOptions) {
   /** getUserMedia was refused, or there is no microphone. The toggle turns
    *  itself off rather than pretending to listen. */
   const blocked = ref(false)
+  /** The last clip the server saw was gated (see the header). Follows the
+   *  latest verdict, so the hint disappears as soon as a clean clip arrives —
+   *  which is how the person learns that whatever they changed worked. */
+  const distorted = ref(false)
 
   let stream: MediaStream | null = null
   let ctx: AudioContext | null = null
@@ -155,15 +166,22 @@ export function useWakeWord(options: WakeWordOptions) {
     )
   }
 
+  /** Resumes a context the autoplay policy parked. Bound once per start. */
+  function unlock() {
+    if (ctx && ctx.state !== 'running') void ctx.resume().catch(() => {})
+  }
+
   async function start() {
-    if (active.value || !shouldRun()) return
+    // Guard on the stream, not on `active`: a context the browser has left
+    // suspended is started but not active, and must not be started twice.
+    if (stream || !shouldRun()) return
     try {
-      // IDENTICAL to VoicePanel.vue, and keep it that way. Every departure
-      // from this line has been tried and measured against the recordings in
-      // the wake log, and every one made them worse: turning processing off
-      // produced the gated, "noisy" audio described at the top of this file,
-      // and turning auto-gain off buried the quieter second word. The panel's
-      // transcripts are the standard; the wake path has no reason to differ.
+      // IDENTICAL to VoicePanel.vue, and keep it that way. Departures from
+      // this line were tried and measured against the wake log and none
+      // helped: turning processing off did not remove the gating described at
+      // the top of this file, and turning auto-gain off buried the quieter
+      // second word. The panel's transcripts are the standard; the wake path
+      // has no reason to differ.
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       })
@@ -197,7 +215,21 @@ export function useWakeWord(options: WakeWordOptions) {
       mute.gain.value = 0
       node.connect(mute)
       mute.connect(ctx.destination)
-      active.value = true
+      // A context created without a user gesture can be left 'suspended' by
+      // the browser's autoplay policy — then onaudioprocess never fires and
+      // nothing is heard, silently. So the indicator follows the REAL state
+      // rather than our intent, and the first gesture on the page resumes
+      // the context. On most machines a context fed by getUserMedia starts
+      // running at once and none of this is needed; it is here for the rest.
+      const context = ctx
+      const reflect = () => { active.value = context.state === 'running' }
+      context.onstatechange = reflect
+      reflect()
+      if (context.state !== 'running') {
+        void context.resume().catch(() => {})
+        document.addEventListener('pointerdown', unlock, { once: true })
+        document.addEventListener('keydown', unlock, { once: true })
+      }
     } catch {
       stop()
     }
@@ -220,7 +252,12 @@ export function useWakeWord(options: WakeWordOptions) {
     }
     source?.disconnect()
     source = null
-    if (ctx && ctx.state !== 'closed') void ctx.close()
+    document.removeEventListener('pointerdown', unlock)
+    document.removeEventListener('keydown', unlock)
+    if (ctx) {
+      ctx.onstatechange = null
+      if (ctx.state !== 'closed') void ctx.close()
+    }
     ctx = null
     // Every track must stop, or the browser keeps the recording indicator lit
     // and the user believes they are still being listened to.
@@ -407,9 +444,10 @@ export function useWakeWord(options: WakeWordOptions) {
         console.debug('[wake] tekshirib bo`lmadi, keyingi urinish kechroq', failures)
         return
       }
+      distorted.value = verdict.distorted === true
       // Useful while tuning: the console shows what was actually heard, which
       // is usually nothing like what the person thinks they said.
-      if (verdict.text) console.debug('[wake]', verdict.text, '->', verdict.reason)
+      if (verdict.text) console.debug('[wake]', verdict.text, '->', verdict.reason, distorted.value ? '(yozuv buzilgan)' : '')
       if (verdict.matched) {
         stop()          // release the microphone BEFORE the panel asks for it
         onWake()
@@ -438,5 +476,5 @@ export function useWakeWord(options: WakeWordOptions) {
     stop()
   })
 
-  return { active, blocked }
+  return { active, blocked, distorted }
 }
