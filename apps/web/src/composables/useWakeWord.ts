@@ -133,7 +133,22 @@ export function useWakeWord(options: WakeWordOptions) {
     if (active.value || !shouldRun()) return
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        audio: {
+          // Noise suppression and echo cancellation are OFF on purpose.
+          // They are tuned to make speech comfortable for a human on a phone
+          // call, and they do that by removing exactly what a recogniser
+          // needs most: low-energy consonants and the quiet ends of words.
+          // "Venera" ends in one, and it is the half that kept disappearing —
+          // the transcripts came back as "assalomu alaykum", the model's most
+          // likely completion when the second word is gone.
+          // Echo cancellation has nothing to cancel here either: the panel is
+          // closed while this listens, so nothing is playing.
+          echoCancellation: false,
+          noiseSuppression: false,
+          // Auto-gain stays: it helps a quiet speaker, and the per-clip
+          // normalisation below covers what it is too slow to catch.
+          autoGainControl: true,
+        },
       })
     } catch {
       // Refused, or no device. Stop trying for this session — the browser will
@@ -286,15 +301,44 @@ export function useWakeWord(options: WakeWordOptions) {
       const level = Math.abs(sample)
       if (level > peak) peak = level
     }
-    if (peak < 0.02 || peak >= 0.9) return clip
+    if (peak < 0.02 || peak >= 0.9) return clip.slice()
     const gain = Math.min(0.9 / peak, 8)
     const out = new Float32Array(clip.length)
     for (let i = 0; i < clip.length; i++) out[i] = clip[i] * gain
     return out
   }
 
+  /**
+   * Cuts the silence around the phrase, keeping a short pad.
+   *
+   * A clip is roughly a third speech and two thirds silence: 0.45 s of
+   * pre-roll in front and up to 0.95 s of the silence that ended the turn
+   * behind. Handing the recogniser that much emptiness invites it to fill
+   * the space, and a wake phrase is short enough that the padding dominates.
+   *
+   * The threshold here is deliberately far below the VAD's: this only decides
+   * where to CUT, so being too eager would clip the very syllables the change
+   * above is trying to preserve.
+   */
+  function trim(clip: Float32Array, rate: number): Float32Array {
+    const pad = Math.round(rate * 0.2)
+    const win = Math.max(1, Math.round(rate * 0.02))
+    let first = -1
+    let last = -1
+    for (let at = 0; at + win <= clip.length; at += win) {
+      let sum = 0
+      for (let i = at; i < at + win; i++) sum += clip[i] * clip[i]
+      if (Math.sqrt(sum / win) > 0.008) {
+        if (first < 0) first = at
+        last = at + win
+      }
+    }
+    if (first < 0) return clip
+    return clip.subarray(Math.max(0, first - pad), Math.min(clip.length, last + pad))
+  }
+
   async function consider(raw: Float32Array, rate: number) {
-    const clip = normalize(raw)
+    const clip = normalize(trim(raw, rate))
     const seconds = clip.length / rate
     if (seconds * 1000 < MIN_MS) return
     const now = performance.now()
