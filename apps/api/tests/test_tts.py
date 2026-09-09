@@ -9,6 +9,7 @@ navbat chegarasi va xatolarni foydalanuvchiga ko'rsatish - haqiqiy kod.
 from __future__ import annotations
 
 import io
+import http.client
 import json
 import threading
 import urllib.error
@@ -18,21 +19,24 @@ import pytest
 
 from app.services.tts import (
     LOCALE_TO_TTS,
+    STREAM_FORMAT,
     TtsClient,
     TtsError,
     clip,
     risky_for_normalizer,
 )
 
-WAV = b"RIFF$\x00\x00\x00WAVEfmt "
+#: Bir bo'lak xom PCM (16-bit LE mono). Haqiqiy audio emas - biz
+#: baytlarning O'ZGARMASDAN o'tishini tekshiramiz.
+PCM = bytes(range(256)) * 4
 
 
 class FakeServer:
-    """Hujjatdagi javob shakllarini beradi va so'rovlarni yozib boradi.
+    """`/tts/stream` kontraktini taqlid qiladi.
 
-    ALMASHTIRISH NUQTASI `build_opener` - ya'ni klientning `_open` metodi,
+    ALMASHTIRISH NUQTASI `build_opener` - ya'ni klientning transport qatlami,
     HTTPError'ni TtsError'ga o'girish va sirni yashirish bilan birga, HAQIQIY
-    kod bo'lib qoladi. `_open` ning o'zi almashtirilsa aynan shu mantiq
+    kod bo'lib qoladi. Transportning o'zi almashtirilsa aynan shu mantiq
     testdan chetda qolardi.
     """
 
@@ -40,13 +44,15 @@ class FakeServer:
         self.calls: list[tuple[str, dict | None, dict]] = []
         #: Shu tokenlar endi yaroqsiz (401) - "muddati tugadi" ni modellaydi.
         self.dead_tokens: set[str] = set()
-        self.generate_status: int | None = None
-        self.audio_path = "/srv/shared/audio/7__deadbeef.wav"
+        self.stream_status: int | None = None
         self.issued = 0
+        self.sample_rate = 8000
+        self.chunks = [PCM, PCM, PCM]
+        #: Nechanchi bo'lakdan keyin ulanish uziladi (oqim o'rtasidagi nosozlik).
+        self.cut_after: int | None = None
 
     def open(self, request, timeout=None):
-        path = request.full_url.split("://", 1)[1].split("/", 1)[1]
-        path = "/" + path
+        path = "/" + request.full_url.split("://", 1)[1].split("/", 1)[1]
         payload = json.loads(request.data) if request.data else None
         token = (request.get_header("Authorization") or "").removeprefix("Bearer ")
         self.calls.append((path, payload, {"token": token}))
@@ -59,19 +65,17 @@ class FakeServer:
         if token in self.dead_tokens:
             raise _http_error(path, 401, "Token muddati tugagan")
 
-        if path == "/api/v1/tts/generate":
-            if self.generate_status:
-                raise _http_error(path, self.generate_status,
-                                  "TTS xatosi: list index out of range")
-            return _ok(json.dumps({
-                "user_id": payload["user_id"], "phone": payload["phone"], "status": "success",
-                "audio_path": self.audio_path,
-                "download_url": "http://10.10.50.4:8200/api/v1/tts/audio/7",
-                "duration_sec": 4.84, "normalized_text": payload["text"],
-            }).encode())
+        if path == "/api/v1/tts/stream":
+            if self.stream_status:
+                raise _http_error(path, self.stream_status,
+                                  "Matnni normalizatsiya qilib bo'lmadi: list index out of range")
+            return _stream(self.chunks, {
+                "x-stream-id": "abc123",
+                "x-chunk-count": str(len(self.chunks)),
+                "x-sample-rate": str(self.sample_rate),
+                "content-type": f"audio/L16; rate={self.sample_rate}; channels=1",
+            }, cut_after=self.cut_after)
 
-        if path.startswith("/api/v1/tts/file/"):
-            return _ok(WAV)
         raise AssertionError(f"kutilmagan yo'l: {path}")
 
 
@@ -80,6 +84,7 @@ class _ok:
 
     def __init__(self, data: bytes) -> None:
         self._data = data
+        self.headers: dict[str, str] = {}
 
     def __enter__(self):
         return self
@@ -87,8 +92,38 @@ class _ok:
     def __exit__(self, *exc):
         return False
 
-    def read(self) -> bytes:
-        return self._data
+    def read(self, size: int = -1) -> bytes:
+        if size is None or size < 0:
+            data, self._data = self._data, b""
+            return data
+        data, self._data = self._data[:size], self._data[size:]
+        return data
+
+    def close(self) -> None:
+        self._data = b""
+
+
+class _stream:
+    """Bo'lak-bo'lak beradigan javob. `read()` bo'lak chegarasida to'xtaydi -
+    haqiqiy chunked oqimdagi kabi."""
+
+    def __init__(self, chunks, headers, cut_after=None) -> None:
+        self._chunks = list(chunks)
+        self.headers = headers
+        self._cut_after = cut_after
+        self._served = 0
+        self.closed = False
+
+    def read(self, size: int = -1) -> bytes:
+        if self._cut_after is not None and self._served >= self._cut_after:
+            raise http.client.IncompleteRead(b"", 1)
+        if not self._chunks:
+            return b""
+        self._served += 1
+        return self._chunks.pop(0)
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def _http_error(path: str, code: int, detail: str) -> urllib.error.HTTPError:
@@ -115,13 +150,18 @@ def tts(server):
     return TtsClient("http://tts", "frontend", "s3cret")
 
 
+def drain(client, text="salom", **kwargs) -> bytes:
+    """Oqimni to'liq o'qib, PCM baytlarini qaytaradi."""
+    return b"".join(client.stream(text, **kwargs).chunks)
+
+
 # --- klient -----------------------------------------------------------------
 
 
 def test_token_bir_marta_olinadi(tts, server):
     """Token 24 soat yashaydi - har sintezda qayta so'rash ortiqcha yuk."""
     for _ in range(3):
-        tts.synthesize("salom", user_id="7")
+        drain(tts)
     tokens = [c for c in server.calls if c[0] == "/api/v1/auth/token"]
     assert len(tokens) == 1, f"token {len(tokens)} marta so'raldi"
 
@@ -130,52 +170,33 @@ def test_401_da_token_yangilanadi(tts, server):
     """Token so'rovlar ORASIDA eskiradi (24 soat yashaydi) yoki server qayta
     ishga tushadi. Foydalanuvchi buni ko'rmasligi kerak - bir marta jimgina
     yangilanadi va so'rov takrorlanadi."""
-    tts.synthesize("birinchi", user_id="7")
+    drain(tts, "birinchi")
     server.dead_tokens.add("tok1")          # keshdagi token endi yaroqsiz
     server.calls.clear()
 
-    speech = tts.synthesize("ikkinchi", user_id="7")
+    pcm = drain(tts, "ikkinchi")
 
-    assert speech.audio == WAV, "401 dan keyin tiklanmadi"
+    assert pcm, "401 dan keyin tiklanmadi"
     assert server.issued == 2, "token yangilanmadi"
 
 
 def test_401_bir_martadan_kop_urinilmaydi(tts, server):
     """Sir noto'g'ri bo'lsa har so'rov 401 beradi. Cheksiz aylanish serverga
     tinimsiz token so'rovi yog'dirardi."""
-    tts.synthesize("birinchi", user_id="7")
+    drain(tts, "birinchi")
     server.dead_tokens.update({"tok1", "tok2", "tok3"})
     with pytest.raises(TtsError) as caught:
-        tts.synthesize("ikkinchi", user_id="7")
+        drain(tts, "ikkinchi")
     assert caught.value.status == 401
     assert server.issued <= 2, f"token {server.issued} marta so'raldi"
 
 
 def test_sir_hech_qachon_qaytmaydi(tts, server):
     """Xato matnida sir bo'lsa u log'ga va foydalanuvchiga tushardi."""
-    server.generate_status = 500
+    server.stream_status = 500
     with pytest.raises(TtsError) as caught:
-        tts.synthesize("salom", user_id="7")
+        drain(tts)
     assert "s3cret" not in str(caught.value)
-
-
-def test_audio_download_url_dan_OLINMAYDI(tts, server):
-    """Hujjatdagi tuzoq: `download_url` `user_id` bo'yicha ENG SO'NGGI faylni
-    beradi. Ikki foydalanuvchi bir vaqtda so'rasa, biri boshqasining
-    audiosini eshitardi. Aynan fayl nomi bo'yicha olamiz."""
-    tts.synthesize("salom", user_id="7")
-    fetched = [c[0] for c in server.calls if c[0].startswith("/api/v1/tts/")]
-    assert "/api/v1/tts/file/7__deadbeef.wav" in fetched
-    assert not any("/audio/" in path for path in fetched), "download_url ishlatilgan"
-
-
-def test_buzuq_fayl_nomi_rad_etiladi(tts, server):
-    """Server nomi URL'ga qo'yilishidan oldin tekshiriladi."""
-    server.audio_path = "/srv/audio/../../../etc/passwd"
-    with pytest.raises(TtsError) as caught:
-        tts.synthesize("salom", user_id="7")
-    assert caught.value.status == 502
-    assert not any("passwd" in c[0] for c in server.calls), "traversal so'rov ketdi"
 
 
 @pytest.mark.parametrize("text", [
@@ -186,52 +207,27 @@ def test_buzuq_fayl_nomi_rad_etiladi(tts, server):
 def test_xavfli_raqamda_normalizatsiya_ochiriladi(tts, server, text):
     """Bu naqshlarda serverning normalizatori YIQILADI (jonli tekshirilgan).
     Oldindan tanib, normalizatsiyasiz yuboramiz - xato javobdan afzal."""
-    tts.synthesize(text, user_id="7")
-    generate = next(c for c in server.calls if c[0] == "/api/v1/tts/generate")
-    assert generate[1]["normalize_numbers"] is False
+    drain(tts, text)
+    call = next(c for c in server.calls if c[0] == "/api/v1/tts/stream")
+    assert call[1]["normalize_numbers"] is False
 
 
 def test_oddiy_raqamda_normalizatsiya_qoladi(tts, server):
     """2450000 -> "ikki million ..." - bu ISHLAYDI va o'chirilmasligi kerak."""
-    tts.synthesize("Qarzdorlik 2450000 som", user_id="7")
-    generate = next(c for c in server.calls if c[0] == "/api/v1/tts/generate")
-    assert generate[1]["normalize_numbers"] is True
+    drain(tts, "Qarzdorlik 2450000 som")
+    call = next(c for c in server.calls if c[0] == "/api/v1/tts/stream")
+    assert call[1]["normalize_numbers"] is True
 
 
-def test_email_serverga_ketmaydi(tts, server):
-    """`user_id` fayl nomiga kiradi va server fayllarni HECH QACHON
-    o'chirmaydi - u yerga shaxsiy ma'lumot yozilmaydi."""
-    tts.synthesize("salom", user_id="7")
-    generate = next(c for c in server.calls if c[0] == "/api/v1/tts/generate")
-    assert generate[1]["user_id"] == "7"
-    assert "@" not in json.dumps(generate[1])
-
-
-def test_navbat_toladi_503(server, monkeypatch):
-    """Server BITTA GPU'da ketma-ket ishlaydi va 429 qaytarmaydi. Chegarani
-    o'zimiz qo'ymasak, navbat cheksiz o'sardi va hamma timeout'ga uchrardi."""
-    client = TtsClient("http://tts", "frontend", "s3cret", max_concurrent=1, queue_wait=0.05)
-    started = threading.Event()
-    release = threading.Event()
-    real_open = server.open
-
-    def slow(request, timeout=None):
-        if request.full_url.endswith("/generate"):
-            started.set()
-            release.wait(3.0)
-        return real_open(request, timeout)
-
-    server.open = slow                           # type: ignore[method-assign]
-    thread = threading.Thread(target=lambda: client.synthesize("uzoq", user_id="7"))
-    thread.start()
-    try:
-        assert started.wait(3.0), "birinchi so'rov boshlanmadi"
-        with pytest.raises(TtsError) as caught:
-            client.synthesize("ikkinchi", user_id="8")
-        assert caught.value.status == 503
-    finally:
-        release.set()
-        thread.join(5.0)
+def test_shaxsiy_malumot_serverga_ketmaydi(tts, server):
+    """`/generate` `user_id` ni TALAB qilardi va uni fayl nomiga yozardi, fayl
+    esa hech qachon o'chirilmasdi. `/stream` da bunday maydon umuman yo'q -
+    ya'ni bizning foydalanuvchimiz haqida u yerda hech narsa qolmaydi."""
+    drain(tts)
+    call = next(c for c in server.calls if c[0] == "/api/v1/tts/stream")
+    assert set(call[1]) == {"text", "voice_profile", "speed",
+                            "normalize_numbers", "format", "chunk_sec"}
+    assert "@" not in json.dumps(call[1])
 
 
 def test_sirsiz_501(server):
@@ -242,40 +238,9 @@ def test_sirsiz_501(server):
     client = TtsClient("http://tts", "frontend", "")
     assert not client.configured
     with pytest.raises(TtsError) as caught:
-        client.synthesize("salom", user_id="7")
+        drain(client)
     assert caught.value.status == 501
     assert not server.calls, "sirsiz holda serverga so'rov ketdi"
-
-
-def test_deadline_ikkinchi_sorovni_cheklaydi(server):
-    """`/speak` IKKITA ketma-ket so'rov qiladi. Bitta so'rov timeout'i
-    yetmaydi: 60 + 60 = 120 s, nginx esa aynan 120 s da uzadi va javob
-    brauzerga yetib bormaydi. Ikkinchi so'rov qolgan byudjetni oladi."""
-    client = TtsClient("http://tts", "frontend", "s3cret", timeout=60.0, deadline=5.0)
-    seen: list[float | None] = []
-    real = server.open
-
-    def record(request, timeout=None):
-        seen.append(timeout)
-        return real(request, timeout)
-
-    server.open = record                         # type: ignore[method-assign]
-    client.synthesize("salom", user_id="7")
-    # Oxirgi so'rov - faylni olish. U `timeout` (60) ni EMAS, `deadline` (5)
-    # dan qolganini olishi kerak.
-    assert seen[-1] is not None and seen[-1] <= 5.0, f"fayl so'rovi {seen[-1]} s oldi"
-
-
-def test_deadline_tugasa_504(server, monkeypatch):
-    """Byudjet tugagach kutishning ma'nosi yo'q - javobni hech kim ko'rmaydi."""
-    import app.services.tts as module
-    client = TtsClient("http://tts", "frontend", "s3cret", deadline=5.0)
-    # 1-chaqiruv: `started`. 2-chaqiruv: `_left()` - byudjet allaqachon tugagan.
-    clock = iter([0.0, 99.0])
-    monkeypatch.setattr(module.time, "monotonic", lambda: next(clock, 99.0))
-    with pytest.raises(TtsError) as caught:
-        client.synthesize("salom", user_id="7")
-    assert caught.value.status == 504
 
 
 def test_uzun_matn_qisqartiriladi():
@@ -321,22 +286,6 @@ def test_risky_ishlaydiganlarga_tegmaydi(text):
     assert not risky_for_normalizer(text), f"ishlaydigan holat tuzoq deb belgilandi: {text}"
 
 
-def test_dict_bolmagan_javob_502(tts, server, monkeypatch):
-    """200 bilan `null` yoki ro'yxat kelsa, `.get()` AttributeError berardi -
-    u TtsError EMAS va butun so'rovni 500 ga aylantirardi."""
-    real = server.open
-
-    def bad(request, timeout=None):
-        if request.full_url.endswith("/generate"):
-            return _ok(b"null")
-        return real(request, timeout)
-
-    server.open = bad                            # type: ignore[method-assign]
-    with pytest.raises(TtsError) as caught:
-        tts.synthesize("salom", user_id="7")
-    assert caught.value.status == 502
-
-
 def test_qisqa_ttl_da_kesh_olmaydi(server, monkeypatch):
     """`max(60, ttl) - 60` NOL berardi: qisqa muddatli token bilan har
     so'rov yangi token so'rardi."""
@@ -351,8 +300,8 @@ def test_qisqa_ttl_da_kesh_olmaydi(server, monkeypatch):
 
     server.open = short_ttl                      # type: ignore[method-assign]
     client = TtsClient("http://tts", "frontend", "s3cret")
-    client.synthesize("bir", user_id="7")
-    client.synthesize("ikki", user_id="7")
+    drain(client, "bir")
+    drain(client, "ikki")
     assert server.issued == 1, f"token {server.issued} marta so'raldi"
 
 
@@ -370,9 +319,141 @@ def test_sir_xato_matnidan_ochiriladi(tts, server):
 
     server.open = echoes_body                    # type: ignore[method-assign]
     with pytest.raises(TtsError) as caught:
-        tts.synthesize("salom", user_id="7")
+        drain(tts)
     assert "s3cret" not in str(caught.value)
     assert "***" in str(caught.value)
+
+
+
+def test_generate_ISHLATILMAYDI(tts, server):
+    """`/generate` butun xabar tayyor bo'lgunicha jim turadi (19 s xabar
+    uchun 11 s) va faylni serverda qoldiradi. `/stream` da birinchi bayt
+    ~1.1 s da keladi va fayl umuman yaratilmaydi."""
+    drain(tts)
+    paths = [c[0] for c in server.calls]
+    assert "/api/v1/tts/stream" in paths
+    assert not any("generate" in p or "/audio/" in p or "/file/" in p for p in paths), paths
+
+
+def test_l16_soraladi(tts, server):
+    """`wav` EMAS: oqim boshida umumiy uzunlik noma'lum, shuning uchun server
+    sarlavhaga 0xFFFFFFFF yozadi va pleyerlar davomiylikni 74 soat deb
+    ko'rsatadi."""
+    drain(tts)
+    call = next(c for c in server.calls if c[0] == "/api/v1/tts/stream")
+    assert call[1]["format"] == STREAM_FORMAT == "l16"
+    assert 0.5 <= call[1]["chunk_sec"] <= 10, "server bu diapazondan tashqarisiga 422 beradi"
+
+
+def test_baytlar_ozgarmasdan_otadi(tts, server):
+    server.chunks = [b"\x01\x02", b"\x03\x04", b"\x05\x06"]
+    assert drain(tts) == b"\x01\x02\x03\x04\x05\x06"
+
+
+def test_bolaklar_alohida_keladi(tts, server):
+    """Oqimning butun ma'nosi shu: bo'laklar YIG'ILMAYDI, kelgani zahoti
+    uzatiladi. Bitta baytga birlashtirilsa TTFB afzalligi yo'qolardi."""
+    server.chunks = [PCM, PCM, PCM]
+    parts = list(tts.stream("salom").chunks)
+    assert len(parts) == 3, f"{len(parts)} ta bo'lak - oqim yig'ilib qolgan"
+
+
+def test_sarlavhalar_oqiladi(tts, server):
+    server.sample_rate = 16000
+    speech = tts.stream("salom")
+    assert speech.sample_rate == 16000, "chastota qattiq yozilgan"
+    assert speech.chunk_count == 3
+    assert speech.stream_id == "abc123"
+    list(speech.chunks)
+
+
+def test_sarlavha_yoq_bolsa_default(tts, server, monkeypatch):
+    """Sarlavha yetishmasa 8000 ga tushamiz - lekin yiqilmaymiz."""
+    real = server.open
+
+    def no_headers(request, timeout=None):
+        response = real(request, timeout)
+        if hasattr(response, "headers") and "x-sample-rate" in response.headers:
+            response.headers = {}
+        return response
+
+    server.open = no_headers                     # type: ignore[method-assign]
+    speech = tts.stream("salom")
+    assert speech.sample_rate == 8000
+    list(speech.chunks)
+
+
+def test_oqim_ortasida_uzilsa_502(tts, server):
+    """Server 200 yuborib bo'lgach statusni o'zgartira olmaydi, shuning uchun
+    ulanishni ATAYLAB uzadi. Bu jimgina o'tib ketmasligi kerak."""
+    server.cut_after = 2
+    stream = tts.stream("salom")
+    got = []
+    with pytest.raises(TtsError) as caught:
+        for part in stream.chunks:
+            got.append(part)
+    assert caught.value.status == 502
+    assert len(got) == 2, "uzilishdan oldingi bo'laklar berilmadi"
+    assert "abc123" in str(caught.value), "stream_id log uchun xabarda yo'q"
+
+
+def test_slot_oqim_tugagach_bosaydi(server):
+    """Slot oqim DAVOMIDA band turadi. Erta bo'shatilsa, ikkinchi so'rov
+    GPU'ni bir vaqtda bo'lishib, ikkalasining ham TTFB'sini buzardi."""
+    client = TtsClient("http://tts", "frontend", "s3cret", max_concurrent=1, queue_wait=0.05)
+    stream = client.stream("birinchi")
+    with pytest.raises(TtsError) as caught:
+        client.stream("ikkinchi")
+    assert caught.value.status == 503, "oqim ochiq turganda slot bo'sh ko'rindi"
+    list(stream.chunks)                          # oqimni tugatamiz
+    list(client.stream("uchinchi").chunks)        # endi o'tishi kerak
+
+
+def test_slot_xatoda_ham_bosaydi(server):
+    """Oqim ochilishida xato bo'lsa slot qaytarilmasa, ilova bir necha
+    xatodan keyin butunlay to'xtab qolardi."""
+    client = TtsClient("http://tts", "frontend", "s3cret", max_concurrent=1, queue_wait=0.05)
+    server.stream_status = 500
+    for _ in range(3):
+        with pytest.raises(TtsError):
+            client.stream("salom")
+    server.stream_status = None
+    assert b"".join(client.stream("salom").chunks), "slot sizib ketdi"
+
+
+def test_uzilgan_oqim_ham_slotni_bosaydi(server):
+    client = TtsClient("http://tts", "frontend", "s3cret", max_concurrent=1, queue_wait=0.05)
+    server.cut_after = 1
+    with pytest.raises(TtsError):
+        list(client.stream("salom").chunks)
+    server.cut_after = None
+    assert b"".join(client.stream("salom").chunks), "uzilishdan keyin slot sizdi"
+
+
+def test_synthesize_wav_haqiqiy_sarlavha_yozadi():
+    """Serverning `format=wav` i oqim boshida uzunlikni bilmaydi va
+    0xFFFFFFFF yozadi. Oflayn fayl uchun bu yaramaydi - saytdagi audio
+    74 soat deb ko'rinardi."""
+    import wave, io as _io
+    fake = FakeServer()
+
+    class Opener:
+        def open(self, request, timeout=None):
+            return fake.open(request, timeout)
+
+    import urllib.request as _u
+    original = _u.build_opener
+    _u.build_opener = lambda *a, **kw: Opener()
+    try:
+        data = TtsClient("http://tts", "frontend", "s3cret").synthesize_wav("salom")
+    finally:
+        _u.build_opener = original
+
+    with wave.open(_io.BytesIO(data)) as w:
+        assert w.getframerate() == 8000
+        assert w.getnchannels() == 1
+        assert w.getsampwidth() == 2
+        assert w.getnframes() == len(PCM) * 3 // 2
 
 
 # --- endpoint ---------------------------------------------------------------
@@ -388,14 +469,19 @@ def test_tokensiz_rad_etiladi(client, server):
     assert not server.calls, "autentifikatsiyasiz TTS serveriga so'rov ketdi"
 
 
-def test_wav_qaytadi(client, auth, monkeypatch, server):
+def test_pcm_oqimi_qaytadi(client, auth, monkeypatch, server):
     import app.api.v1.tts as module
     monkeypatch.setattr(module, "_client", TtsClient("http://tts", "frontend", "s3cret"))
     response = _speak(client, auth, language="uz")
     assert response.status_code == 200
-    assert response.headers["content-type"] == "audio/wav"
-    assert response.content == WAV
+    assert response.headers["content-type"].startswith("audio/L16")
+    assert "rate=8000" in response.headers["content-type"]
+    assert response.content == PCM * 3
     assert response.headers["cache-control"] == "no-store"
+    # nginx uchun: bu yo'lda buferlash o'chiq bo'lishi kerak, aks holda u
+    # butun oqimni yig'ib beradi va streaming ma'nosini yo'qotadi.
+    assert response.headers["x-accel-buffering"] == "no"
+    assert response.headers["x-venera-sample-rate"] == "8000"
 
 
 @pytest.mark.parametrize("language", ["ru", "en", "uz-Cyrl", "zh"])
@@ -411,7 +497,7 @@ def test_faqat_uz(client, auth, monkeypatch, server, language):
 
 def test_xato_ichki_hostni_ochmaydi(client, auth, monkeypatch, server):
     """Xabarda `10.10.50.4` yoki sir ko'rinsa, u brauzerga chiqib ketardi."""
-    server.generate_status = 500
+    server.stream_status = 500
     import app.api.v1.tts as module
     monkeypatch.setattr(module, "_client", TtsClient("http://10.10.50.4:8200", "frontend", "s3cret"))
     response = _speak(client, auth, language="uz")

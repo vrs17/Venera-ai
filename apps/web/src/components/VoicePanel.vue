@@ -29,7 +29,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { micAvailable, micBlockedByPolicy, secureUrl, transcribe } from '../api/stt.api'
-import { canSpeak, play, speak } from '../api/tts.api'
+import { canSpeak, play, speakStream } from '../api/tts.api'
 import { preparedGreeting } from '../api/greeting'
 import { localizeApiError } from '../api/errors'
 import { ApiError } from '../api/http'
@@ -364,10 +364,31 @@ async function echo(text: string, turn: number) {
   speechAborter?.abort()
   speechAborter = new AbortController()
   try {
-    const blob = await speak(text, String(locale.value), speechAborter.signal)
-    if (turn !== turnId || !props.open) return
-    speech.value = blob
-    await playBlob(blob)
+    // Streamed: playback starts on the first chunk (~1 s) instead of after the
+    // whole sentence is synthesised (~11 s for a long one). `speakStream`
+    // resolves once the headers are in, which is also where every server-side
+    // error has already surfaced — so a failure here is still a plain error,
+    // not a silently truncated answer.
+    const playback = await speakStream(text, String(locale.value), speechAborter.signal)
+    if (turn !== turnId || !props.open) {
+      playback.stop()
+      return
+    }
+    stopAudio()
+    stopHandle = playback.stop
+    speaking.value = true
+    speechBlocked.value = false
+    // The replay blob only exists once the stream has finished; wiring it up
+    // here rather than awaiting it keeps the button from appearing early.
+    void playback.recorded.then((blob) => {
+      if (blob && turn === turnId) speech.value = blob
+    })
+    try {
+      await playback.done
+    } finally {
+      speaking.value = false
+      stopHandle = null
+    }
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') return
     if (turn !== turnId || !props.open) return

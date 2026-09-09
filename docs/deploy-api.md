@@ -153,19 +153,33 @@ journalctl --user -u venera-api.service -o cat | grep 'STT '           # qaysi b
 
 ## TTS (matnni ovozga o'girish)
 
-Backend matnni TTS serveriga (`10.10.50.4:8200`) yuborib, WAV olib qaytaradi.
-Javob `audio/wav` (8000 Hz, mono - telefoniya sifati), JSON emas.
+Backend matnni TTS serverining **`/api/v1/tts/stream`** iga yuboradi va
+kelgan baytlarni o'sha zahoti brauzerga uzatadi. Javob - `audio/L16` xom PCM
+(sarlavhasiz, 16-bit LE mono, 8000 Hz), JSON emas.
+
+**`/tts/generate` ISHLATILMAYDI.** U butun xabar tayyor bo'lgunicha jim
+turadi, faylni serverda qoldiradi (`{user_id}__{uuid}.wav`, hech qachon
+o'chirilmaydi) va uni ikkinchi so'rov bilan olib kelish kerak. Jonli
+o'lchov (351 belgi, ~24 s audio):
+
+| | Foydalanuvchi qancha kutadi |
+|---|---|
+| `/generate` | **2.93 s** jim |
+| `/stream` | **1.11 s** da birinchi ovoz |
+
+`/stream` da `user_id` maydoni umuman yo'q - ya'ni bizning foydalanuvchimiz
+haqida TTS serverida hech narsa qolmaydi.
 
 | O'zgaruvchi | Default | Izoh |
 |---|---|---|
 | `TTS_BASE_URL` | `http://10.10.50.4:8200` | TTS serveri (ichki tarmoq) |
 | `TTS_CLIENT_ID` | `frontend` | serverdagi `AUTH_CLIENTS` dan |
 | `TTS_CLIENT_SECRET` | *(bo'sh)* | **sir.** Bo'sh bo'lsa ovoz o'chiq (501), qolgan hamma narsa ishlaydi |
-| `TTS_TIMEOUT` | `60` | BIR so'rov uchun, soniya |
-| `TTS_DEADLINE` | `100` | BUTUN `/speak` uchun devor-soat. nginx 120 s dan KAM bo'lishi shart |
+| `TTS_TIMEOUT` | `60` | BO'LAKLAR ORASIDAGI kutish, soniya - oqim uzunligi emas |
 | `TTS_MAX_CONCURRENT` | `2` | bir vaqtda nechta sintez |
 | `TTS_VOICE` | `uz_female_calm` | yoki `uz_male_news` (erkak) |
 | `TTS_SPEED` | *(bo'sh -> 0.95)* | rasmiy 0.90, yangiliklar 1.0 |
+| `TTS_CHUNK_SEC` | `1.5` | bo'lakning maqsadli davomiyligi (server 0.5-10 talab qiladi) |
 | `TTS_MAX_CHARS` | `600` | undan uzun matn so'z chegarasida qisqartiriladi |
 
 **`TTS_CLIENT_SECRET` ga FAQAT sirning o'zi yoziladi.** TTS serverining
@@ -210,16 +224,38 @@ Ya'ni `app/services/tts.py` dagi `risky_for_normalizer()` shu ikki naqshni
 qidiradi va topsa normalizatsiyani o'chiradi - xato javobdan ko'ra raqamni
 model o'zicha o'qigani afzal.
 
-**`download_url` ISHLATILMAYDI.** U `user_id` bo'yicha ENG SO'NGGI faylni
-beradi: ikki foydalanuvchi bir vaqtda so'rasa, biri boshqasining audiosini
-eshitardi. Fayl `audio_path` dagi unikal nom bo'yicha `/api/v1/tts/file/{nom}`
-dan olinadi.
+**Nega `l16`, `wav` emas.** Oqim boshida umumiy uzunlik hali noma'lum,
+shuning uchun server `format=wav` da WAV sarlavhasidagi ikkala hajm maydoniga
+`0xFFFFFFFF` yozadi: audio to'g'ri, lekin pleyerlar davomiylikni **74 soat**
+deb ko'rsatadi. Brauzer PCM ni `<audio>` bilan ocholmaydi, lekin u baribir
+ocholmasdi: `<audio src>` GET yuboradi va `Authorization` sarlavhasini
+tashiy olmaydi, MediaSource esa PCM/WAV ni umuman qabul qilmaydi (faqat
+segmentlangan mp4/webm). Shuning uchun frontend PCM ni Web Audio bilan
+bo'lak-bo'lak rejalashtiradi (`api/tts.api.ts`).
 
-**Timeout byudjeti.** `/speak` IKKITA ketma-ket so'rov qiladi: `generate`,
-keyin faylni yuklab olish. `TTS_TIMEOUT` faqat bittasiga tegishli, ya'ni
-`TTS_DEADLINE` bo'lmasa jami 60+60=120 s ga yetib, nginx chegarasiga aynan
-urilardi - javob brauzerga yetib bormasdi, slot esa band turaverardi.
-Zanjir: bir so'rov 60 s < butun `/speak` 100 s < nginx 120 s.
+**`TTS_CHUNK_SEC` ni oshirmang.** Ta'siri matnga bog'liq: birinchi jumla uzun
+bo'lsa, 3.0 da birinchi bo'lak butun jumlani qamrab oladi va TTFB ~5x
+sekinlashadi; 10.0 da streaming umuman yo'qoladi.
+
+**nginx BUFERLASHI O'CHIQ bo'lishi SHART.** nginx sukut bo'yicha butun
+javobni yig'ib, keyin bir yo'la beradi - bu streaming'ni butunlay bekor
+qiladi. `deploy/nginx.container.conf` da shu yo'l uchun alohida `location`
+bor (`proxy_buffering off`). Tekshirish: javobda `Transfer-Encoding: chunked`
+bo'lishi va `Content-Length` BO'LMASLIGI kerak.
+
+```bash
+curl -s -N -X POST http://127.0.0.1:5173/api/v1/tts/speak \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"text":"Salom, bu sinov.","language":"uz"}' \
+  -o /dev/null -w 'birinchi bayt %{time_starttransfer}s | jami %{time_total}s\n'
+# birinchi bayt ~1.1 s bo'lishi kerak. Agar u jami vaqtga teng bo'lsa -
+# kimdir buferlayapti.
+```
+
+**Timeout byudjeti.** `TTS_TIMEOUT` (60 s) endi BO'LAKLAR ORASIDAGI kutish -
+oqim uzunligi emas. Bo'laklar odatda 1-2 s oralab keladi, ya'ni chegara
+faqat server butunlay jim qolganda ishlaydi. Umumiy oqim audio davomiyligiga
+bog'liq va nginx `proxy_read_timeout` ham bo'laklar orasida hisoblanadi.
 
 **Server bitta GPU'da KETMA-KET ishlaydi** va 429 qaytarmaydi - navbat
 cheksiz o'sadi. Shuning uchun chegara `TTS_MAX_CONCURRENT` bilan bu tomonda

@@ -1,21 +1,30 @@
-"""Matnni ovozga o'girish.
+"""Matnni ovozga o'girish - OQIM bilan.
 
-Brauzer matnni shu yerga yuboradi, biz TTS serveriga borib WAV olib qaytaramiz.
+Brauzer matnni shu yerga yuboradi, biz TTS serverining `/tts/stream` iga
+borib, kelgan baytlarni o'sha zahoti brauzerga uzatamiz.
+
+NEGA OQIM. To'liq sintez 19 s xabar uchun 11 s oladi; oqimda birinchi bayt
+~1.1 s da keladi. Odam savolini berib bo'lgach 11 soniya jim ekranga qarab
+o'tirmasligi kerak.
 
 NEGA TO'G'RIDAN-TO'G'RI EMAS - STT bilan bir xil sabab (`v1/stt.py`), ustiga
 yana bittasi: TTS serverining `client_secret` i BRAUZERGA HECH QACHON
 berilmasligi kerak. Agar frontend o'zi token olsa, sir JS bundle'ida yoki
-tarmoq panelida ochiq turardi va uni ko'rgan har kim butun TTS parkidan
-foydalana olardi.
+tarmoq panelida ochiq turardi.
 
-Javob - `audio/wav` baytlari (8000 Hz, mono). JSON emas.
+Javob - `audio/L16` xom PCM (sarlavhasiz, 16-bit little-endian mono).
+Brauzer buni `<audio>` bilan ocholmaydi va ATAYLAB shunday: `format=wav` da
+server oqim boshida umumiy uzunlikni bilmagani uchun sarlavhaga `0xFFFFFFFF`
+yozadi va pleyerlar davomiylikni 74 soat deb ko'rsatadi. Frontend PCM ni
+Web Audio bilan bo'lak-bo'lak ijro qiladi (`api/tts.api.ts`).
 """
 
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 
 from ...core.config import settings
 from ...core.errors import bad_request, error_status
@@ -33,16 +42,15 @@ _client = TtsClient(
     settings.tts_client_secret,
     timeout=settings.tts_timeout,
     max_concurrent=settings.tts_max_concurrent,
-    deadline=settings.tts_deadline,
 )
 
 #: Foydalanuvchiga ko'rinadigan xabarlar - status bo'yicha, ichki matnsiz.
 #: Ichki host va sir xabarga HECH QACHON tushmaydi.
+#:
 #: Yuqoridagi 401/403 bu yerda ATAYLAB yo'q. Ular "bizning `client_secret`
 #: noto'g'ri yoki scope yetmaydi" degani - ya'ni SOZLAMA xatosi. Brauzerga
 #: 401 qaytarish "sessiyangiz tugadi" degan ma'no berardi, holbuki
-#: foydalanuvchi token'i mutlaqo joyida. Ular 502 ga tushadi va sabab
-#: faqat log'da qoladi (operator uchun).
+#: foydalanuvchi token'i mutlaqo joyida. Ular 502 ga tushadi.
 _MESSAGES = {
     501: "Ovoz javobi hali yoqilmagan",
     503: "Ovoz xizmati band, biroz kutib qayta urinib ko'ring",
@@ -55,15 +63,16 @@ _MESSAGES = {
 
 @router.post(
     "/speak",
-    response_class=Response,
-    responses={200: {"content": {"audio/wav": {}}, "description": "WAV, 8000 Hz, mono"}},
+    response_class=StreamingResponse,
+    responses={200: {"content": {"audio/L16": {}},
+                     "description": "Xom PCM oqimi, 16-bit LE mono"}},
 )
-def speak(body: SpeakRequest, user: AuthUser = Depends(current_user)) -> Response:
-    """Matn -> WAV.
+def speak(body: SpeakRequest, user: AuthUser = Depends(current_user)) -> StreamingResponse:
+    """Matn -> PCM oqimi.
 
-    `async def` EMAS, ataylab: klient bloklaydigan `urllib` ishlatadi va
-    sintez soniyalab davom etadi. Oddiy `def` bilan FastAPI uni threadpool'da
-    ishlatadi, event loop esa bo'sh qoladi.
+    `async def` EMAS, ataylab: klient bloklaydigan `urllib` ishlatadi. Oddiy
+    `def` bilan FastAPI uni threadpool'da ishlatadi va event loop bo'sh
+    qoladi - aks holda bitta uzun oqim butun serverni to'xtatib qo'yardi.
     """
     if LOCALE_TO_TTS.get(body.language) is None:
         # Birinchi bosqich ataylab faqat o'zbek (lotin): model shu til uchun,
@@ -75,13 +84,15 @@ def speak(body: SpeakRequest, user: AuthUser = Depends(current_user)) -> Respons
         raise bad_request("matn bo'sh")
 
     try:
-        speech = _client.synthesize(
+        # Oqim SHU YERDA ochiladi, generator ichida emas: validatsiya
+        # xatolari (422, 500, 503) shunda oddiy HTTP javobi bo'lib chiqadi.
+        # Generator ichida ochilsa, biz allaqachon 200 yuborib bo'lgan
+        # bo'lardik va xato faqat uzilgan ulanish bo'lib ko'rinardi.
+        speech = _client.stream(
             text,
-            # Fayl nomiga tushadi va server fayllarni o'chirmaydi - shuning
-            # uchun email emas, ichki raqamli id.
-            user_id=str(user.actorId),
             voice=body.voice or settings.tts_voice,
             speed=settings.tts_speed,
+            chunk_sec=settings.tts_chunk_sec,
             max_chars=settings.tts_max_chars,
         )
     except TtsError as exc:
@@ -89,13 +100,29 @@ def speak(body: SpeakRequest, user: AuthUser = Depends(current_user)) -> Respons
         status = exc.status if exc.status in _MESSAGES else 502
         raise error_status(status, _MESSAGES[status]) from exc
 
-    return Response(
-        content=speech.audio,
-        media_type=speech.content_type,
+    def body_iter():
+        try:
+            yield from speech.chunks
+        except TtsError as exc:
+            # Oqim o'rtasida uzildi. Statusni endi o'zgartirib bo'lmaydi
+            # (200 ketib bo'lgan), shuning uchun biz ham ulanishni tugatamiz
+            # - brauzer buni tugallanmagan oqim deb ko'radi, xuddi
+            # yuqoridagi server bizga ko'rsatgani kabi. Sabab log'da.
+            log.warning("TTS oqimi (%s): %s", user.email, exc)
+
+    return StreamingResponse(
+        body_iter(),
+        media_type=f"audio/L16; rate={speech.sample_rate}; channels=1",
         headers={
             # Audio foydalanuvchiga xos - proksi yoki brauzer keshiga tushmasin.
             "Cache-Control": "no-store",
-            "X-Venera-Duration": f"{speech.duration_sec:.2f}",
+            "X-Venera-Sample-Rate": str(speech.sample_rate),
+            "X-Venera-Chunks": str(speech.chunk_count),
             "X-Venera-Truncated": "1" if speech.truncated else "0",
+            # nginx uchun: bu yo'lda buferlash O'CHIQ bo'lishi kerak, aks
+            # holda u butun oqimni yig'ib, keyin bir yo'la beradi va TTFB
+            # afzalligi yo'qoladi. Sarlavha konfiguratsiyaga qo'shimcha
+            # himoya - `location` sozlamasi asosiy.
+            "X-Accel-Buffering": "no",
         },
     )

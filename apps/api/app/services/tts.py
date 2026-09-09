@@ -9,8 +9,16 @@ qiladi va shu farqlar bu modulning butun shaklini belgilaydi:
      navbatda kutadi va server 429 QAYTARMAYDI - shunchaki javob kechikadi.
      Ya'ni ortiqcha yukni O'ZIMIZ to'xtatishimiz kerak (semafora), aks holda
      navbat cheksiz o'sadi va hamma timeout'ga uchraydi.
-  3. AUDIO IKKINCHI SO'ROVDA. `generate` faqat yo'lni qaytaradi, faylni
-     alohida olish kerak.
+  3. AUDIO OQIM BILAN KELADI. `/tts/stream` matnni tinish belgilari bo'yicha
+     bo'laklaydi va HAR BO'LAKNI tayyor bo'lishi bilan yuboradi. 19 s xabar
+     uchun birinchi bayt 11.1 s o'rniga 1.1 s da keladi - odam butun sintezni
+     kutib o'tirmaydi.
+
+`/tts/generate` ATAYLAB ISHLATILMAYDI. U butun xabar tayyor bo'lgunча jim
+turadi, ustiga faylni serverda qoldiradi (`{user_id}__{uuid}.wav`, hech qachon
+o'chirilmaydi) va uni ikkinchi so'rov bilan olib kelish kerak. `/stream` da
+fayl umuman yaratilmaydi va `user_id` ham so'ralmaydi - ya'ni bizning
+foydalanuvchimiz haqida u yerda hech narsa qolmaydi.
 
 `urllib` STT klientidagi kabi - ishlab chiqarish uchun yangi paket qo'shilmaydi.
 Modul BLOKLAYDI; endpoint ataylab oddiy `def` bo'lib, FastAPI uni threadpool'da
@@ -19,17 +27,20 @@ ishlatadi.
 
 from __future__ import annotations
 
+import contextlib
 import http.client
+import io
 import json
 import logging
 import re
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
+import wave
 
-from dataclasses import dataclass
+from collections.abc import Iterator
+from dataclasses import dataclass, field
 from socket import timeout as socket_timeout
 
 log = logging.getLogger(__name__)
@@ -59,10 +70,25 @@ _DIGIT_RUN = re.compile(r"\d[\d\s\u00a0.,-]{10,}\d")
 _DOTTED_GROUPS = re.compile(r"\d+(?:\.\d+){2,}")
 _LOOKS_LIKE_DATE = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{4}$")
 
-#: Fayl nomi javobdan keladi, lekin URL'ga qo'yishdan oldin tekshiriladi:
-#: `../../etc/passwd` ko'rinishidagi nom serverdan kelgan taqdirda ham
-#: bizning so'rovimiz orqali kengaytirilib ketmasin.
-_SAFE_FILENAME = re.compile(r"^[A-Za-z0-9._-]{1,120}\.wav$")
+#: Bo'lakning maqsadli davomiyligi (soniya). Hujjat jonli qo'ng'iroq uchun
+#: 1.0-2.0 ni tavsiya qiladi: kattaroq qiymatda birinchi bo'lak uzayadi va
+#: TTFB afzalligi yo'qoladi (3.0 da ~5x sekinroq), kichigida esa bo'laklar
+#: mayda bo'lib, GPU navbatiga ortiqcha ish tushadi.
+DEFAULT_CHUNK_SEC = 1.5
+
+#: `l16` - sarlavhasiz xom PCM, 16-bit little-endian mono.
+#:
+#: NEGA `wav` EMAS: oqim boshida umumiy uzunlik hali noma'lum, shuning uchun
+#: server WAV sarlavhasidagi ikkala hajm maydoniga `0xFFFFFFFF` yozadi.
+#: Audio to'g'ri, lekin pleyerlar davomiylikni 74 SOAT deb ko'rsatadi.
+#: Brauzer PCM ni `<audio>` bilan ocholmaydi, lekin biz uni baribir
+#: Web Audio bilan bo'lak-bo'lak ijro qilamiz - ya'ni sarlavha kerak emas.
+STREAM_FORMAT = "l16"
+
+#: Soketdan bir marta o'qiladigan hajm. 3200 bayt = 8 kHz da 200 ms.
+#: KICHIK bo'lishi SHART: katta bufer baytlar tayyor bo'lsa ham to'lguncha
+#: kutib turadi va butun TTFB afzalligini yeb qo'yadi.
+_READ_SIZE = 3200
 
 
 class TtsError(Exception):
@@ -74,15 +100,24 @@ class TtsError(Exception):
         self.retryable = retryable
 
 
-@dataclass(frozen=True)
-class Speech:
-    audio: bytes
-    #: WAV, 8000 Hz, mono, 16-bit - telefoniya sifati, hi-fi emas.
-    content_type: str = "audio/wav"
-    duration_sec: float = 0.0
-    #: Modelga AYNAN nima berilgani. Faqat log va debug uchun.
-    normalized_text: str = ""
-    voice: str = ""
+@dataclass
+class SpeechStream:
+    """Boshlanib bo'lgan oqim.
+
+    Sarlavhalar allaqachon kelgan - server ularni BIRINCHI bo'lak tayyor
+    bo'lgach yuboradi, ya'ni bu obyekt qo'lga tekkanda validatsiya xatolari
+    (401/403/422/500) allaqachon o'tib bo'lgan. Qolgani faqat baytlar.
+    """
+
+    #: Chiqish chastotasi. QATTIQ YOZILMAYDI - server `x-sample-rate` da
+    #: aytadi va u deploy'ga qarab o'zgarishi mumkin.
+    sample_rate: int
+    #: Bo'laklar SONI (bayt hajmi emas).
+    chunk_count: int
+    #: Server log'i bilan bog'lash uchun (`x-stream-id`).
+    stream_id: str
+    #: Xom PCM baytlari. Bir marta o'qiladi.
+    chunks: Iterator[bytes] = field(repr=False, default_factory=lambda: iter(()))
     #: Matn chegaradan uzun bo'lib qisqartirilgan.
     truncated: bool = False
 
@@ -129,7 +164,6 @@ class TtsClient:
         timeout: float = 60.0,
         max_concurrent: int = 2,
         queue_wait: float = 1.0,
-        deadline: float = 100.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.client_id = client_id
@@ -137,7 +171,6 @@ class TtsClient:
         self.timeout = timeout
         self.max_concurrent = max(1, max_concurrent)
         self.queue_wait = queue_wait
-        self.deadline = deadline
         self._slots = threading.BoundedSemaphore(self.max_concurrent)
         self._token_lock = threading.Lock()
         self._token: str | None = None
@@ -184,21 +217,21 @@ class TtsClient:
 
     # --- sintez ---------------------------------------------------------
 
-    def synthesize(
+    def stream(
         self,
         text: str,
         *,
-        user_id: str,
         voice: str = "uz_female_calm",
         speed: float | None = None,
         normalize_numbers: bool = True,
+        chunk_sec: float = DEFAULT_CHUNK_SEC,
         max_chars: int = 600,
-    ) -> Speech:
-        """Matn -> WAV baytlari.
+    ) -> SpeechStream:
+        """Matn -> boshlanib bo'lgan PCM oqimi.
 
-        `user_id` FAYL NOMIGA kiradi va server fayllarni hech qachon
-        o'chirmaydi, shuning uchun bu yerga email yoki telefon EMAS, faqat
-        ichki raqamli id beriladi.
+        Chaqiruvchi `chunks` ni OXIRIGACHA o'qishi yoki `close()` qilishi
+        SHART: slot va yuqoridagi ulanish shu generator tugaguncha band
+        turadi. FastAPI `StreamingResponse` ikkalasini ham o'zi bajaradi.
         """
         if not self.configured:
             # 503 EMAS: 503 "band, keyinroq urinib ko'ring" degani va klientni
@@ -212,91 +245,89 @@ class TtsClient:
             raise TtsError("matn bo'sh", status=400)
 
         # Normalizator ba'zi raqamlarda yiqiladi - bunday matnni OLDINDAN
-        # tanib, normalizatsiyasiz yuboramiz (500/422 dan ko'ra shu yaxshi).
+        # tanib, normalizatsiyasiz yuboramiz. `/stream` da bu 422 beradi
+        # (`/generate` da 500 edi), lekin ikkalasi ham foydalanuvchi uchun
+        # "ovoz yo'q" degani.
         if normalize_numbers and risky_for_normalizer(clean):
             log.info("TTS: xavfli raqam naqshi - normalize_numbers o'chirildi")
             normalize_numbers = False
 
         if not self._slots.acquire(timeout=self.queue_wait):
-            # Server bitta GPU'da KETMA-KET ishlaydi va 429 qaytarmaydi:
-            # navbatni o'zimiz cheklamasak, u cheksiz o'sadi.
+            # Server BITTA GPU'da ketma-ket ishlaydi va 429 QAYTARMAYDI:
+            # navbatni o'zimiz cheklamasak, u cheksiz o'sadi. Hujjat: har
+            # qo'shimcha parallel so'rov TTFB'ga ~1.1 s qo'shadi.
             raise TtsError(
                 f"ilova TTS chegarasida ({self.max_concurrent} parallel)",
                 status=503, retryable=True,
             )
-        # Devor-soat. BITTA so'rov uchun timeout YETMAYDI: `/speak` ikkita
-        # KETMA-KET so'rov qiladi (generate, keyin faylni olish), ya'ni
-        # 60 s + 60 s = 120 s - nginx aynan 120 s da uzadi va javob brauzerga
-        # yetib bormaydi, slot esa hali band turadi. Shuning uchun ikkinchi
-        # so'rovga qolgan byudjet beriladi.
-        started = time.monotonic()
-        try:
-            payload = self._generate(clean, user_id, voice, speed, normalize_numbers)
-            audio = self._download(payload, self._left(started))
-        finally:
-            self._slots.release()
 
-        return Speech(
-            audio=audio,
-            duration_sec=float(payload.get("duration_sec") or 0.0),
-            normalized_text=str(payload.get("normalized_text") or clean),
-            voice=voice,
+        released = False
+        try:
+            response = self._open_stream(clean, voice, speed, normalize_numbers, chunk_sec)
+        except BaseException:
+            self._slots.release()
+            raise
+
+        def headers_of(name: str, default: str = "") -> str:
+            # Sim ustida sarlavhalar KICHIK harfda keladi; `http.client`
+            # ularni registrsiz qidiradi, lekin default'ni o'zimiz beramiz.
+            return response.headers.get(name) or default
+
+        sample_rate = _int_or(headers_of("x-sample-rate"), 8000)
+        chunk_count = _int_or(headers_of("x-chunk-count"), 0)
+        stream_id = headers_of("x-stream-id", "?")
+        log.info("TTS oqim %s: %d bo'lak, %d Hz, ovoz=%s, normalize=%s",
+                 stream_id, chunk_count, sample_rate, voice, normalize_numbers)
+
+        def pump() -> Iterator[bytes]:
+            nonlocal released
+            try:
+                while True:
+                    # Kichik bo'lak: bufer katta bo'lsa TTFB afzalligi
+                    # yeyiladi - baytlar tayyor bo'lsa ham kutib turadi.
+                    part = response.read(_READ_SIZE)
+                    if not part:
+                        return
+                    yield part
+            except (TimeoutError, socket_timeout) as exc:
+                raise TtsError("TTS oqimi to'xtab qoldi (timeout)", status=504) from exc
+            except (http.client.HTTPException, OSError) as exc:
+                # Oqim O'RTASIDA nosozlik: server ulanishni ATAYLAB uzadi,
+                # chunki 200 yuborilgandan keyin statusni o'zgartirib
+                # bo'lmaydi. Sabab server log'ida, `x-stream-id` bo'yicha.
+                raise TtsError(f"TTS oqimi uzildi ({stream_id}): {exc}", status=502) from exc
+            finally:
+                with contextlib.suppress(Exception):
+                    response.close()
+                if not released:
+                    released = True
+                    self._slots.release()
+
+        return SpeechStream(
+            sample_rate=sample_rate,
+            chunk_count=chunk_count,
+            stream_id=stream_id,
+            chunks=pump(),
             truncated=truncated,
         )
 
-    def _left(self, started: float) -> float:
-        """Byudjetdan qolgan vaqt. Tugagan bo'lsa 504 - kutishning ma'nosi
-        yo'q, javobni endi hech kim ko'rmaydi."""
-        remaining = self.deadline - (time.monotonic() - started)
-        if remaining < 1.0:
-            raise TtsError("TTS byudjeti tugadi", status=504)
-        return min(self.timeout, remaining)
+    def synthesize_wav(self, text: str, **kwargs) -> bytes:
+        """Oqimni to'liq yig'ib, HAQIQIY WAV qaytaradi.
 
-    def _generate(
-        self,
-        text: str,
-        user_id: str,
-        voice: str,
-        speed: float | None,
-        normalize_numbers: bool,
-    ) -> dict:
-        body = json.dumps(
-            {
-                "user_id": user_id,
-                # Server majburiy qiladi, lekin bizda telefon yo'q va kerak
-                # ham emas - u faqat javobga qaytadi (passthrough).
-                "phone": "-",
-                "text": text,
-                "voice_profile": voice,
-                "speed": speed,
-                "normalize_numbers": normalize_numbers,
-            }
-        ).encode("utf-8")
-        payload = self._json_request("/api/v1/tts/generate", body=body)
-        status = str(payload.get("status") or "")
-        if status and status != "success":
-            raise TtsError(f"TTS: {payload.get('error') or status}", status=502)
-        log.info("TTS: %.2f s audio, ovoz=%s, normalize=%s",
-                 float(payload.get("duration_sec") or 0.0), voice, normalize_numbers)
-        return payload
-
-    def _download(self, payload: dict, timeout: float) -> bytes:
-        """Aynan shu sintezning faylini oladi.
-
-        JAVOBDAGI `download_url` ISHLATILMAYDI. U `user_id` bo'yicha ENG
-        SO'NGGI faylni beradi, ya'ni ikki so'rov bir vaqtda ketsa (yoki bitta
-        batch ichida bir xil `user_id` ikki marta bo'lsa) ikkalasi ham bitta
-        faylga ishora qiladi va kimdir boshqasining audiosini eshitadi.
-        `audio_path` dagi nom esa har sintez uchun UNIKAL (`{user_id}__{uuid}`).
+        Faqat oflayn ishlar uchun (masalan salomlashish faylini tayyorlash):
+        bu yerda kutish muhim emas, to'g'ri uzunlikli sarlavha esa muhim.
+        Serverning `format=wav` i buni BERMAYDI - u oqim boshida uzunlikni
+        bilmagani uchun `0xFFFFFFFF` yozadi.
         """
-        raw = str(payload.get("audio_path") or "")
-        filename = raw.rsplit("/", 1)[-1]
-        if not _SAFE_FILENAME.match(filename):
-            raise TtsError(f"TTS fayl nomi kutilmagan: {filename[:60]!r}", status=502)
-        data = self._raw_request(f"/api/v1/tts/file/{urllib.parse.quote(filename)}", timeout)
-        if not data:
-            raise TtsError("TTS bo'sh fayl qaytardi", status=502)
-        return data
+        speech = self.stream(text, **kwargs)
+        pcm = b"".join(speech.chunks)
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(speech.sample_rate)
+            out.writeframes(pcm)
+        return buffer.getvalue()
 
     # --- transport ------------------------------------------------------
 
@@ -312,9 +343,6 @@ class TtsClient:
         if not isinstance(payload, dict):
             raise TtsError(f"TTS javobi kutilmagan turda: {type(payload).__name__}", status=502)
         return payload
-
-    def _raw_request(self, path: str, timeout: float | None = None) -> bytes:
-        return self._send(path, body=None, authorized=True, accept="*/*", timeout=timeout)
 
     def _send(self, path: str, *, body: bytes | None, authorized: bool, accept: str,
               timeout: float | None = None) -> bytes:
@@ -344,36 +372,103 @@ class TtsClient:
 
     def _open(self, path: str, body: bytes | None, headers: dict[str, str],
               timeout: float | None = None) -> bytes:
-        request = urllib.request.Request(
+        with _mapped_errors(self.client_secret):
+            with self._opener().open(
+                self._request(path, body, headers), timeout=timeout or self.timeout
+            ) as response:
+                return response.read()
+
+    def _open_stream(self, text: str, voice: str, speed: float | None,
+                     normalize_numbers: bool, chunk_sec: float):
+        """`/tts/stream` ni ochadi va javob obyektini QAYTARADI - o'qilmagan.
+
+        Sarlavhalar birinchi bo'lak tayyor bo'lgach keladi (~1.1 s), ya'ni
+        shu yerga qaytgan bo'lsak validatsiya allaqachon o'tgan: 401, 403,
+        422 va birinchi bo'lakdagi 500 shu chaqiruvda `HTTPError` bo'lib
+        ko'tariladi. Undan keyingi nosozlik esa endi HTTP xatosi emas -
+        ulanish uziladi, va uni `pump()` tutadi.
+        """
+        body = json.dumps({
+            "text": text,
+            "voice_profile": voice,
+            "speed": speed,
+            "normalize_numbers": normalize_numbers,
+            "format": STREAM_FORMAT,
+            "chunk_sec": chunk_sec,
+        }).encode("utf-8")
+
+        # 401 da token bir marta yangilanadi - `_send` dagi kabi, lekin bu
+        # yerda javob O'QILMAYDI, shuning uchun alohida sikl.
+        for attempt in (0, 1):
+            headers = {
+                "Accept": "*/*",
+                "Content-Type": "application/json",
+                "Content-Length": str(len(body)),
+                "Authorization": f"Bearer {self._valid_token()}",
+            }
+            try:
+                with _mapped_errors(self.client_secret):
+                    return self._opener().open(
+                        self._request("/api/v1/tts/stream", body, headers),
+                        timeout=self.timeout,
+                    )
+            except TtsError as exc:
+                if exc.status == 401 and attempt == 0:
+                    log.info("TTS: token rad etildi, yangilanmoqda")
+                    self._drop_token()
+                    continue
+                raise
+        raise TtsError("TTS javob bermadi", status=502)
+
+    def _request(self, path: str, body: bytes | None, headers: dict[str, str]):
+        return urllib.request.Request(
             f"{self.base_url}{path}",
             data=body,
             method="POST" if body is not None else "GET",
             headers=headers,
         )
+
+    @staticmethod
+    def _opener():
         # Ichki manzil korporativ proksi orqali KETMASLIGI kerak.
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        try:
-            with opener.open(request, timeout=timeout or self.timeout) as response:
-                return response.read()
-        except urllib.error.HTTPError as exc:
-            status = exc.code
-            # Sir REDAKSIYA qilinadi: server 422 da so'rov tanasini o'zicha
-            # qaytarishi mumkin (FastAPI validatsiya xatosi `input` ni aynan
-            # ko'chiradi), va u token so'rovi tanasi - ya'ni `client_secret`.
-            # U yerdan xabar log'ga va keyin xato zanjiriga tushardi.
-            detail = _redact(_detail(exc), self.client_secret)
-            # 401 yuqorida tutiladi (token yangilash). 422 - matn
-            # normalizatordan o'tmadi, 500 - GPU/model xatosi: ikkalasi ham
-            # qayta urinishdan tuzalmaydi.
-            mapped = status if status in (400, 401, 403, 422, 503) else 502
-            raise TtsError(f"TTS {status}: {detail}", status=mapped) from exc
-        except urllib.error.URLError as exc:
-            raise TtsError(f"TTS serveriga ulanib bo'lmadi: {exc.reason}",
-                           status=503, retryable=True) from exc
-        except (TimeoutError, socket_timeout) as exc:
-            raise TtsError("TTS javob bermadi (timeout)", status=504) from exc
-        except (http.client.HTTPException, OSError) as exc:
-            raise TtsError(f"TTS ulanishi uzildi: {exc}", status=503, retryable=True) from exc
+        return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+@contextlib.contextmanager
+def _mapped_errors(secret: str):
+    """`urllib` xatolarini `TtsError` ga o'giradi.
+
+    Alohida funksiya, chunki oddiy so'rov ham, oqim ochilishi ham AYNAN bir
+    xil xaritaga muhtoj - ikki nusxada saqlash esa ularni vaqt o'tib
+    ajralib ketishiga olib borardi.
+    """
+    try:
+        yield
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        # Sir REDAKSIYA qilinadi: server 422 da so'rov tanasini o'zicha
+        # qaytarishi mumkin (FastAPI validatsiya xatosi `input` ni aynan
+        # ko'chiradi), va u token so'rovi tanasi - ya'ni `client_secret`.
+        detail = _redact(_detail(exc), secret)
+        # 401 chaqiruvchida tutiladi (token yangilash). 422 - matn
+        # normalizatordan o'tmadi, 500 - GPU/model xatosi: ikkalasi ham
+        # qayta urinishdan tuzalmaydi.
+        mapped = status if status in (400, 401, 403, 422, 503) else 502
+        raise TtsError(f"TTS {status}: {detail}", status=mapped) from exc
+    except urllib.error.URLError as exc:
+        raise TtsError(f"TTS serveriga ulanib bo'lmadi: {exc.reason}",
+                       status=503, retryable=True) from exc
+    except (TimeoutError, socket_timeout) as exc:
+        raise TtsError("TTS javob bermadi (timeout)", status=504) from exc
+    except (http.client.HTTPException, OSError) as exc:
+        raise TtsError(f"TTS ulanishi uzildi: {exc}", status=503, retryable=True) from exc
+
+
+def _int_or(value: str, fallback: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
 
 
 def _redact(text: str, secret: str) -> str:

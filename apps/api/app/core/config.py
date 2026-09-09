@@ -70,14 +70,11 @@ class Settings(BaseSettings):
     #: qaytaradi, qolgan hamma narsa ishlaydi. Sir FAQAT `.env` da.
     tts_client_id: str = "frontend"
     tts_client_secret: str = ""
-    #: Sintez ~2x realtime, lekin server BITTA GPU'da KETMA-KET ishlaydi:
-    #: navbatda kutish vaqti sintezning o'zidan uzunroq bo'lishi mumkin.
+    #: BO'LAKLAR ORASIDAGI kutish - oqim uzunligi EMAS. Bo'laklar odatda
+    #: 1-2 s oralab keladi, ya'ni bu chegara faqat server butunlay jim
+    #: qolganda ishlaydi. Sintez GPU navbatida turishi mumkin, shuning
+    #: uchun birinchi bo'lak uchun ham shu qiymat.
     tts_timeout: float = 60.0
-    #: BUTUN `/speak` uchun devor-soat. `TTS_TIMEOUT` bitta so'rovga
-    #: tegishli, `/speak` esa IKKITA ketma-ket so'rov qiladi (sintez, keyin
-    #: faylni olish) - ya'ni usiz jami 120 s ga yetib, nginx chegarasiga
-    #: aynan urilardi. nginx 120 s dan KAM bo'lishi shart.
-    tts_deadline: float = 100.0
     #: Server 429 qaytarmaydi - navbat cheksiz o'sadi. Chegarani o'zimiz
     #: qo'yamiz: oshsa darhol 503 "band".
     tts_max_concurrent: int = 2
@@ -85,6 +82,11 @@ class Settings(BaseSettings):
     tts_voice: str = "uz_female_calm"
     #: `null` -> server 0.95 ni oladi. Rasmiy matn uchun 0.90, yangiliklar 1.0.
     tts_speed: float | None = None
+    #: Bo'lakning maqsadli davomiyligi (soniya). Hujjat jonli qo'ng'iroq
+    #: uchun 1.0-2.0 ni tavsiya qiladi: 3.0 da birinchi bo'lak butun
+    #: jumlani qamrab, TTFB ~5x sekinlashadi; 10.0 da streaming umuman
+    #: yo'qoladi. Server 0.5-10 dan tashqarisiga 422 beradi.
+    tts_chunk_sec: float = 1.5
     #: Matn chegarasi. Uzun matn butun navbatni ushlab turadi, shuning uchun
     #: qisqartiriladi (xato qaytarilmaydi - matn foydalanuvchi aytgan gapi).
     tts_max_chars: int = 600
