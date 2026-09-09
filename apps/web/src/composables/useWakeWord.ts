@@ -48,16 +48,30 @@ export const WAKE_STORAGE_KEY = 'venera_wake_word'
 const PREROLL_S = 0.45        // samples kept from before speech was noticed
 /** Silence that ends an utterance.
  *
- *  MEASURED, not guessed. With 700 ms the recorded speech in failed attempts
- *  was 0.65-0.85 s against 1.05-1.70 s in successful ones: the timer was
- *  starting during the quiet second half of "Salom Venera" and the clip was
- *  ending while the person still spoke. */
-const SILENCE_MS = 950
+ *  MEASURED, twice. At 700 ms the recorded speech in failed attempts ran
+ *  0.65-0.85 s against 1.05-1.70 s in successful ones. At 950 ms it was still
+ *  0.3-0.5 s of actual speech — one word — because people say "Salom" and
+ *  pause before "Venera", and the pause ended the turn. The second half then
+ *  became its own utterance and was thrown away by the cooldown below, which
+ *  is why the log only ever showed "salom ..." and never the name.
+ *
+ *  1.4 s comfortably spans a natural pause between two words. The cost is
+ *  latency after the phrase ends, and for a wake word that is the right
+ *  trade: hearing it late beats not hearing it. */
+const SILENCE_MS = 1400
 const MIN_MS = 350            // shorter than this is a cough, a click, a door
-/** Longer than this is conversation, not a wake phrase. Raised with
- *  SILENCE_MS so a fully captured phrase still fits under the gate — the two
- *  must move together, or the fix above would be undone by this one. */
-const MAX_MS = 3200
+/** Longer than this is conversation, not a wake phrase.
+ *
+ *  Measured on the TRIMMED clip, i.e. on speech, not on the silence that
+ *  ended the turn. Measuring the raw capture instead made this fight the
+ *  setting above: every extra millisecond of pause tolerance ate into the
+ *  budget, so a phrase with a slightly long pause was thrown away for being
+ *  "conversation" when it was mostly silence. */
+const MAX_MS = 3000
+/** Hard bound on how much audio one utterance may hold, so a room that never
+ *  goes quiet cannot grow the buffer without limit. Deliberately far above
+ *  MAX_MS: this is a memory guard, not the wake-phrase rule. */
+const CAPTURE_MAX_MS = 6000
 const COOLDOWN_MS = 2500      // hard ceiling on the request rate
 /** When the check cannot run at all — the STT backend is down — sending a
  *  clip every few seconds achieves nothing and keeps a broken service busy.
@@ -145,14 +159,13 @@ export function useWakeWord(options: WakeWordOptions) {
           // closed while this listens, so nothing is playing.
           echoCancellation: false,
           noiseSuppression: false,
-          // Auto-gain is off for the same family of reasons. It reacts inside
-          // a single word, so it lifts the quiet tail of one phrase and
-          // flattens the loud start of the next, and it was pushing peaks to
-          // 1.0 — measured at 0.996-1.000 on real clips, right against the
-          // ceiling. The per-clip normalisation below does the same job
-          // deterministically, after the fact, where it can see the whole
-          // phrase and can guarantee it never clips.
-          autoGainControl: false,
+          // Auto-gain stays ON. Turning it off was a mistake: it did stop the
+          // peaks touching 1.0, but the clipping it was blamed for affected
+          // 0.02% of samples — inaudible — while the quiet second word of the
+          // phrase lost the only thing lifting it out of the noise. Our own
+          // normalisation cannot replace it, because it scales the whole clip
+          // by one factor and so preserves the very ratio that is the problem.
+          autoGainControl: true,
         },
       })
     } catch {
@@ -236,10 +249,10 @@ export function useWakeWord(options: WakeWordOptions) {
     captured.push(new Float32Array(input))
     capturedLen += input.length
 
-    if (capturedLen / rate > MAX_MS / 1000) {
-      // Too long to be the wake phrase. Drop it and wait for silence before
-      // arming again — this is the gate that keeps ordinary conversation off
-      // the network entirely.
+    if (capturedLen / rate > CAPTURE_MAX_MS / 1000) {
+      // Far past any wake phrase — someone is talking. Drop what we have and
+      // wait for silence before arming again, so a continuous conversation
+      // cannot grow this buffer without limit.
       overlong = true
       captured = []
       capturedLen = 0
@@ -375,12 +388,27 @@ export function useWakeWord(options: WakeWordOptions) {
   async function consider(raw: Float32Array, rate: number) {
     const clip = normalize(trim(highpass(raw, rate), rate))
     const seconds = clip.length / rate
-    if (seconds * 1000 < MIN_MS) return
+    if (seconds * 1000 < MIN_MS) {
+      console.debug('[wake] juda qisqa, yuborilmadi', Math.round(seconds * 1000), 'ms')
+      return
+    }
+    if (seconds * 1000 > MAX_MS) {
+      // Conversation, not a summons. This is the gate that keeps ordinary
+      // speech off the network entirely.
+      console.debug('[wake] juda uzun, yuborilmadi', Math.round(seconds * 1000), 'ms')
+      return
+    }
     const now = performance.now()
     const gap = failures
       ? Math.min(COOLDOWN_MS * 2 ** failures, MAX_BACKOFF_MS)
       : COOLDOWN_MS
-    if (now - lastRequest < gap) return
+    if (now - lastRequest < gap) {
+      // Dropped here means the server never sees it, so it leaves no trace in
+      // the wake log — which is exactly how a phrase split into two turns
+      // stayed invisible for so long. Say so in the console.
+      console.debug('[wake] sovish oynasida, yuborilmadi')
+      return
+    }
     lastRequest = now
 
     aborter?.abort()
