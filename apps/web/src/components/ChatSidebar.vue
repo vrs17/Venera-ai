@@ -116,7 +116,7 @@ function expandToLang() {
            boshqa tilda tugma bosilsa hech narsa qilmasdi. -->
       <button
         v-if="wakeSupported"
-        class="sidebar__row"
+        class="sidebar__row sidebar__row--switch"
         :class="{ 'is-on': wake }"
         :title="t('wakeWordHint')"
         role="switch"
@@ -124,10 +124,13 @@ function expandToLang() {
         @click="emit('toggleWake')"
       >
         <EarIcon :size="16" />
-        <span v-if="!compact" class="sidebar__row-label">
-          {{ t('wakeWord') }}
-          <span v-if="wakeActive" class="sidebar__live" :title="t('wakeWordActive')" aria-hidden="true" />
-        </span>
+        <span v-if="!compact" class="sidebar__row-label">{{ t('wakeWord') }}</span>
+        <span
+          v-if="!compact && wakeActive"
+          class="sidebar__live"
+          :title="t('wakeWordActive')"
+          aria-hidden="true"
+        />
         <span v-if="!compact" class="sidebar__switch" aria-hidden="true"><span class="sidebar__switch-knob" /></span>
       </button>
 
@@ -417,17 +420,19 @@ function expandToLang() {
     display: none;
   }
 }
-/* Tinglash yoqilgan va mikrofon ochiq - pulsatsiya bilan. Foydalanuvchi
-   mikrofon ochiqligini HAR DOIM ko'rib turishi kerak. Nomi `__dot` EMAS:
-   u til tanlovidagi belgi uchun band. */
+/* Mikrofon ochiq. Qizil - yozuv indikatorining umumiy tili, lekin yolg'iz
+   qizil nuqta xato belgisiga o'xshab ketadi: halqa uni "efirda" ma'nosiga
+   yaqinlashtiradi. Yorliq ICHIDA emas, yonida turadi - u yerda `nowrap`
+   uni harflarga yopishtirib qo'yardi.
+   Nomi `__dot` EMAS: u til tanlovidagi belgi uchun band. */
 .sidebar__live {
-  display: inline-block;
+  flex-shrink: 0;
   width: 6px;
   height: 6px;
-  margin-left: 6px;
+  margin-left: -4px;
   border-radius: 50%;
   background: var(--accent);
-  vertical-align: middle;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
   animation: sidebar-live 1.8s ease-in-out infinite;
 }
 @keyframes sidebar-live {
