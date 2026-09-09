@@ -13,9 +13,11 @@ import json
 import pytest
 
 from app.services.wake import (
+    FLAT_LIMIT,
     WakeLog,
     distance,
     is_wake_phrase,
+    measure,
     normalize_heard,
 )
 
@@ -98,6 +100,69 @@ def test_distance():
     assert distance("venera", "venera") == 0
     assert distance("venera", "vinera") == 1
     assert distance("venera", "butunlay boshqa") > 3
+
+
+# --- o'lchov ----------------------------------------------------------------
+
+
+def _wav(samples: list[int], rate: int = 16000) -> bytes:
+    import array
+    import io
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(array.array("h", samples).tobytes())
+    return buf.getvalue()
+
+
+def _tone(seconds: float = 1.0, hz: int = 200, rate: int = 16000) -> list[int]:
+    import math
+    return [int(8000 * math.sin(2 * math.pi * hz * i / rate)) for i in range(int(rate * seconds))]
+
+
+def test_olchov_buzilgan_yozuvni_topadi():
+    """Jonli holat: brauzer nutqni alohida impulslarga bo'lib, orasini nol
+    bilan to'ldirgan. Odam buni "shovqin" deb eshitadi, model esa hech
+    narsa eshitmaydi. Bu raqamsiz muammo moslashtirgichga yuklanardi."""
+    tone = _tone()
+    # Har 20 ms dan faqat 4 ms qoladi - haqiqiy yozuvlardagi manzara.
+    gated = [v if (i % 320) < 64 else 0 for i, v in enumerate(tone)]
+
+    _, _, speech, clean = measure(_wav(tone))
+    _, _, _, broken = measure(_wav(gated))
+
+    assert speech > 0.9
+    assert clean < 0.05                # uzluksiz to'lqinda tekis nol yo'q
+    assert broken > 0.5
+    assert clean < FLAT_LIMIT < broken
+
+
+def test_olchov_jimlikni_nutq_demaydi():
+    """Nutq yo'q bo'lsa tekis ulush ham 0 - jimlik "buzilgan" emas."""
+    peak, rms, speech, flat = measure(_wav([0] * 16000))
+    assert (peak, rms, speech, flat) == (0.0, 0.0, 0.0, 0.0)
+
+
+def test_olchov_yaroqsiz_wavda_yiqilmaydi():
+    assert measure(b"") == (0.0, 0.0, 0.0, 0.0)
+    assert measure(b"RIFF" + b"\0" * 100) == (0.0, 0.0, 0.0, 0.0)
+
+
+def test_jurnal_buzilishni_yozadi(tmp_path):
+    """`flat` qatorga tushadi - hisobot shundan "avval yozuvni tuzating"
+    deb ayta oladi."""
+    tone = _tone()
+    gated = [v if (i % 320) < 64 else 0 for i, v in enumerate(tone)]
+    log = WakeLog(tmp_path)
+    entry = log.record(_wav(gated), actor_id=1, language="uz", text="assalomu alaykum",
+                       matched=False, reason="nom yo'q")
+    assert entry.flat > FLAT_LIMIT
+    row = json.loads((tmp_path / "wake.jsonl").read_text().splitlines()[0])
+    assert row["flat"] == entry.flat
 
 
 # --- jurnal -----------------------------------------------------------------

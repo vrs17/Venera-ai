@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import settings  # noqa: E402
-from app.services.wake import is_wake_phrase  # noqa: E402
+from app.services.wake import FLAT_LIMIT, is_wake_phrase  # noqa: E402
 
 
 def rows(directory: Path) -> list[dict]:
@@ -76,6 +76,11 @@ def summary(entries: list[dict]) -> None:
                   f"eng baland o'rtacha {sum(peaks)/len(peaks):.3f}")
             print(f"{'':12} qisqa nutq (<0.9s): "
                   f"{sum(1 for v in speech if v < 0.9)}/{len(speech)}")
+        flat = [e.get("flat") for e in group if e.get("flat") is not None]
+        broken = sum(1 for v in flat if v > FLAT_LIMIT)
+        if flat:
+            print(f"{'':12} buzilgan yozuv (tekis > {FLAT_LIMIT:.0%}): {broken}/{len(flat)}"
+                  + ("   <- avval SHUNI tuzating, moslashtirgichni emas" if broken else ""))
 
     print("\nEng ko'p uchragan transkriptlar:")
     for text, count in Counter(e.get("text", "") for e in entries).most_common(15):
@@ -84,14 +89,15 @@ def summary(entries: list[dict]) -> None:
 
 
 def listing(entries: list[dict], only_misses: bool) -> None:
-    print(f"{'vaqt':<20} {'uyg':<4} {'nutq':>6} {'peak':>6}  {'sabab':<22} matn")
-    print("-" * 110)
+    print(f"{'vaqt':<20} {'uyg':<4} {'nutq':>6} {'peak':>6} {'tekis':>5}  {'sabab':<22} matn")
+    print("-" * 116)
     for e in entries:
         if only_misses and e.get("matched"):
             continue
         mark = "HA" if e.get("matched") else "-"
         print(f"{e.get('at','')[:19]:<20} {mark:<4} "
-              f"{e.get('speech_sec', 0):5.2f}s {e.get('peak', 0):6.3f}  "
+              f"{e.get('speech_sec', 0):5.2f}s {e.get('peak', 0):6.3f} "
+              f"{(e.get('flat') or 0) * 100:4.0f}%  "
               f"{e.get('reason','')[:21]:<22} {e.get('text','')!r}  [{e.get('id','')}]")
 
 

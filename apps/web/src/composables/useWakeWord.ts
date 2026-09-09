@@ -24,8 +24,20 @@
 // crosses the threshold, "Sa-" is already gone, and a recorder started at that
 // moment loses the first syllable of a two-word phrase. A ring buffer of raw
 // samples keeps a pre-roll, so the clip starts before the speaker did.
-// The AudioContext runs at the STT rate, so `encodeWavBytes` produces exactly
-// the 16 kHz mono WAV the uz backend wants, with no decode/resample step.
+//
+// THE CAPTURE SETTINGS ARE THE VOICE PANEL'S, DELIBERATELY. The panel's
+// recordings (browser processing on, native sample rate, resampled offline)
+// are the one route proven to transcribe on real machines. This file once
+// diverged from it — processing off, a 16 kHz AudioContext — on the theory
+// that the browser's noise filter was eating the quiet end of the phrase.
+// Measured, that theory was wrong and the divergence was the bug: with
+// processing off, Chrome on Windows delivered speech GATED into isolated
+// pulses with dead-flat zero between them (22-28% of each vowel was exactly
+// zero, against 6% in clean speech), which people heard as "very noisy" and
+// which no recogniser can read. The Uzbek model itself copes with genuine
+// noise down to 0 dB SNR; it cannot cope with speech that is not there.
+// The server measures that flat share on every clip (`flat` in the wake
+// log), so a regression here shows up as a number, not as a complaint.
 //
 // WHY ScriptProcessorNode, WHICH IS DEPRECATED. Its replacement, AudioWorklet,
 // loads its processor from a separate module URL. Our CSP is `script-src
@@ -35,7 +47,7 @@
 
 import { onBeforeUnmount, ref, watch } from 'vue'
 import type { Ref } from 'vue'
-import { encodeWavBytes, TARGET_RATE } from '../api/wav'
+import { encodeWavBytes, resampleTo16k, TARGET_RATE } from '../api/wav'
 import { checkWake, micAvailable } from '../api/stt.api'
 
 /** Locales whose speakers say the Uzbek wake phrase. The phrase itself is the
@@ -146,27 +158,14 @@ export function useWakeWord(options: WakeWordOptions) {
   async function start() {
     if (active.value || !shouldRun()) return
     try {
+      // IDENTICAL to VoicePanel.vue, and keep it that way. Every departure
+      // from this line has been tried and measured against the recordings in
+      // the wake log, and every one made them worse: turning processing off
+      // produced the gated, "noisy" audio described at the top of this file,
+      // and turning auto-gain off buried the quieter second word. The panel's
+      // transcripts are the standard; the wake path has no reason to differ.
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          // Noise suppression and echo cancellation are OFF on purpose.
-          // They are tuned to make speech comfortable for a human on a phone
-          // call, and they do that by removing exactly what a recogniser
-          // needs most: low-energy consonants and the quiet ends of words.
-          // "Venera" ends in one, and it is the half that kept disappearing —
-          // the transcripts came back as "assalomu alaykum", the model's most
-          // likely completion when the second word is gone.
-          // Echo cancellation has nothing to cancel here either: the panel is
-          // closed while this listens, so nothing is playing.
-          echoCancellation: false,
-          noiseSuppression: false,
-          // Auto-gain stays ON. Turning it off was a mistake: it did stop the
-          // peaks touching 1.0, but the clipping it was blamed for affected
-          // 0.02% of samples — inaudible — while the quiet second word of the
-          // phrase lost the only thing lifting it out of the noise. Our own
-          // normalisation cannot replace it, because it scales the whole clip
-          // by one factor and so preserves the very ratio that is the problem.
-          autoGainControl: true,
-        },
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       })
     } catch {
       // Refused, or no device. Stop trying for this session — the browser will
@@ -179,9 +178,11 @@ export function useWakeWord(options: WakeWordOptions) {
     }
     blocked.value = false
     try {
-      // Ask for the STT rate directly: the browser resamples once, in native
-      // code, and everything downstream is already in the right format.
-      ctx = new AudioContext({ sampleRate: TARGET_RATE })
+      // Native rate, resampled to 16 kHz per clip (see `consider`). A context
+      // pinned to 16 kHz made the browser resample the live microphone stream
+      // instead — the one step the panel never takes, and one Firefox refuses
+      // altogether, throwing on the rate mismatch.
+      ctx = new AudioContext()
       const rate = ctx.sampleRate
       ring = new Float32Array(Math.ceil(PREROLL_S * rate))
       ringLen = 0
@@ -304,31 +305,6 @@ export function useWakeWord(options: WakeWordOptions) {
   }
 
   /**
-   * Removes what is below speech: mains hum, fan rumble, desk thumps.
-   *
-   * With the browser's noise suppression off (it was eating the ends of
-   * words) this is what is left to do about noise, and it is the half worth
-   * removing: nothing in Uzbek speech lives under ~80 Hz, so cutting there
-   * costs no intelligibility while taking out the energy that both dominates
-   * the noise floor and gets multiplied by the normalisation below.
-   *
-   * One pole, in place of a proper filter: it is a few lines, runs once per
-   * clip, and the steeper response a biquad would give buys nothing here.
-   */
-  function highpass(clip: Float32Array, rate: number): Float32Array {
-    const rc = 1 / (2 * Math.PI * 80)
-    const dt = 1 / rate
-    const a = rc / (rc + dt)
-    const out = new Float32Array(clip.length)
-    let previous = 0
-    for (let i = 1; i < clip.length; i++) {
-      out[i] = a * (out[i - 1] + clip[i] - previous)
-      previous = clip[i]
-    }
-    return out
-  }
-
-  /**
    * Scales the clip so its loudest point is near full scale.
    *
    * MEASURED: in the failed attempts the name was spoken far more quietly
@@ -359,10 +335,10 @@ export function useWakeWord(options: WakeWordOptions) {
   /**
    * Cuts the silence around the phrase, keeping a short pad.
    *
-   * A clip is roughly a third speech and two thirds silence: 0.45 s of
-   * pre-roll in front and up to 0.95 s of the silence that ended the turn
-   * behind. Handing the recogniser that much emptiness invites it to fill
-   * the space, and a wake phrase is short enough that the padding dominates.
+   * A clip is mostly silence: 0.45 s of pre-roll in front and up to 1.4 s of
+   * the silence that ended the turn behind. Handing the recogniser that much
+   * emptiness invites it to fill the space, and a wake phrase is short enough
+   * that the padding dominates.
    *
    * The threshold here is deliberately far below the VAD's: this only decides
    * where to CUT, so being too eager would clip the very syllables the change
@@ -386,8 +362,16 @@ export function useWakeWord(options: WakeWordOptions) {
   }
 
   async function consider(raw: Float32Array, rate: number) {
-    const clip = normalize(trim(highpass(raw, rate), rate))
-    const seconds = clip.length / rate
+    let resampled: Float32Array
+    try {
+      resampled = await resampleTo16k(raw, rate)
+    } catch (err) {
+      // No OfflineAudioContext, or a rate it will not take. Nothing to send.
+      console.debug('[wake] qayta namunalab bo`lmadi', err)
+      return
+    }
+    const clip = normalize(trim(resampled, TARGET_RATE))
+    const seconds = clip.length / TARGET_RATE
     if (seconds * 1000 < MIN_MS) {
       console.debug('[wake] juda qisqa, yuborilmadi', Math.round(seconds * 1000), 'ms')
       return
@@ -415,7 +399,7 @@ export function useWakeWord(options: WakeWordOptions) {
     aborter = new AbortController()
     const signal = aborter.signal
     try {
-      const wav = new Blob([encodeWavBytes(clip, rate)], { type: 'audio/wav' })
+      const wav = new Blob([encodeWavBytes(clip, TARGET_RATE)], { type: 'audio/wav' })
       const verdict = await checkWake(wav, locale.value, signal)
       if (signal.aborted || !shouldRun()) return
       failures = verdict.checked ? 0 : failures + 1

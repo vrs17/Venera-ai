@@ -57,6 +57,13 @@ MAX_WORDS = 5
 #: salomning boshini kesib qoladi yoki model uni yutib yuboradi.
 NAME_ONLY_WORDS = 2
 
+#: Nutq ichidagi "tekis nol" ulushi shundan oshsa yozuv BUZILGAN: brauzer
+#: nutqni alohida impulslarga bo'lib, orasini nol bilan to'ldirgan. O'LCHANGAN:
+#: buzilgan yozuvlarda 0.22-0.29, toza nutqda 0.06. Bunday audioni hech
+#: qanday model o'qiy olmaydi - moslashtirgichni sozlash foydasiz, yozuv
+#: zanjirini tuzatish kerak.
+FLAT_LIMIT = 0.15
+
 
 def distance(a: str, b: str, max_distance: int = 3) -> int:
     """Levenshtein, ahamiyati qolmagach to'xtaydi."""
@@ -132,25 +139,31 @@ def is_wake_phrase(text: str) -> tuple[bool, str]:
     return False, "salom yo'q"
 
 
-def measure(wav: bytes, *, floor: float = 0.015) -> tuple[float, float, float]:
-    """WAV -> (eng baland nuqta, o'rtacha quvvat, nutq soniyalari).
+def measure(wav: bytes, *, floor: float = 0.015) -> tuple[float, float, float, float]:
+    """WAV -> (eng baland nuqta, o'rtacha quvvat, nutq soniyalari, tekis ulush).
 
     Bu SERVERDA hisoblanadi, klientdan so'ralmaydi: klient yuborgan raqamga
     ishonish uni tekshirib bo'lmaydigan qiladi, va aynan shu raqamlar
     keyinchalik qaror qabul qilishga asos bo'ladi.
+
+    TEKIS ULUSH - nutq oralig'idagi 1 ms bo'laklardan nechtasi amalda nol.
+    Haqiqiy nutqda unli tovush uzluksiz to'lqin, ya'ni 1 ms ichida nol
+    bo'lib qolmaydi. Bu raqam katta bo'lsa, yozuv modelga yetguncha
+    buzilgan: transkript "noto'g'ri" emas, audio yo'q.
     """
+    empty = 0.0, 0.0, 0.0, 0.0
     try:
         with wave.open(io.BytesIO(wav)) as source:
             rate = source.getframerate()
             frames = source.readframes(source.getnframes())
         if source.getsampwidth() != 2 or not rate:
-            return 0.0, 0.0, 0.0
+            return empty
         samples = array.array("h")
         samples.frombytes(frames[: len(frames) - len(frames) % 2])
     except (wave.Error, EOFError, ValueError):
-        return 0.0, 0.0, 0.0
+        return empty
     if not samples:
-        return 0.0, 0.0, 0.0
+        return empty
 
     peak = max(abs(s) for s in samples) / 32768
     total = math.sqrt(sum(s * s for s in samples) / len(samples)) / 32768
@@ -162,8 +175,17 @@ def measure(wav: bytes, *, floor: float = 0.015) -> tuple[float, float, float]:
         i for i in range(0, len(samples) - window, window)
         if math.sqrt(sum(s * s for s in samples[i:i + window]) / window) / 32768 > floor
     ]
-    speech = ((loud[-1] + window) - loud[0]) / rate if loud else 0.0
-    return peak, total, speech
+    if not loud:
+        return peak, total, 0.0, 0.0
+    begin, end = loud[0], loud[-1] + window
+    speech = (end - begin) / rate
+
+    # 1 ms bo'lak butunlay 33/32768 (~0.001) dan past bo'lsa - tekis nol.
+    step = max(1, rate // 1000)
+    blocks = range(begin, end - step + 1, step)
+    flat_blocks = sum(1 for i in blocks if max(abs(s) for s in samples[i:i + step]) < 33)
+    flat = flat_blocks / len(blocks) if len(blocks) else 0.0
+    return peak, total, speech, flat
 
 
 # --- Yozib borish -----------------------------------------------------------
@@ -192,6 +214,9 @@ class WakeAttempt:
     #: bo'lganini shu ko'rsatadi: muvaffaqiyatsizlarda 0.65-0.85 s edi,
     #: muvaffaqiyatlilarda 1.05-1.70 s.
     speech_sec: float = 0.0
+    #: Nutq ichidagi tekis nol ulushi (0..1), `measure` ga qarang. FLAT_LIMIT
+    #: dan yuqorisi - yozuv brauzerdayoq buzilgan; "shovqin" deb eshitiladi.
+    flat: float = 0.0
 
 
 class WakeLog:
@@ -225,7 +250,15 @@ class WakeLog:
         duration_sec: float = 0.0,
         backend: str = "",
     ) -> WakeAttempt:
-        peak, rms, speech = measure(audio)
+        peak, rms, speech, flat = measure(audio)
+        if flat > FLAT_LIMIT:
+            # Bu holatda transkriptni o'rganish vaqt isrofi - nutqning o'zi
+            # yetib kelmagan. Sababi klient tomonida, log shuni aytsin.
+            log.warning(
+                "Uyg'otish audiosi buzilgan: nutqning %d%% qismi tekis nol - "
+                "brauzer yozuv zanjiri (getUserMedia sozlamalari) tekshirilsin",
+                round(flat * 100),
+            )
         attempt_id = f"{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
         name = f"{attempt_id}.wav"
         entry = WakeAttempt(
@@ -242,6 +275,7 @@ class WakeLog:
             peak=round(peak, 3),
             rms=round(rms, 4),
             speech_sec=round(speech, 2),
+            flat=round(flat, 3),
         )
         with self._lock:
             try:

@@ -322,7 +322,7 @@ uchta lokal filtr bor (`src/composables/useWakeWord.ts`):
 | Filtr | Nima qiladi |
 |---|---|
 | Energiya (RMS) | sukunat brauzerdan UMUMAN chiqmaydi |
-| Uzunlik 350-2600 ms | "Salom Venera" ~1 s. Undan uzun nutq - oddiy suhbat, so'rovsiz TASHLANADI |
+| Uzunlik 350-3000 ms | nutqning o'zi o'lchanadi (jimlik kesib tashlangach). "Salom Venera" ~1 s; undan uzun - oddiy suhbat, so'rovsiz TASHLANADI |
 | Sovish 2.5 s | uzluksiz gap-so'z ham daqiqasiga ~24 so'rovdan oshmaydi |
 
 Ya'ni jim xonada nol so'rov. Uyg'otish tekshiruvi 503 da QAYTA URINMAYDI -
@@ -331,8 +331,20 @@ navbatni haqiqatan kutayotgan odamdan slot olmaslik uchun.
 **Nega xom PCM va `MediaRecorder` emas.** Uyg'otish so'zi qisqa, va RMS
 chegarasi kesilganda "Sa-" allaqachon o'tib ketgan bo'ladi. Halqasimon bufer
 0.45 s oldingi tovushni saqlaydi, ya'ni yozuv gapiruvchidan OLDIN boshlanadi.
-`AudioContext` STT tezligida (16 kHz) ochiladi - `encodeWavBytes` darhol
-kerakli formatni beradi, dekodlash/qayta namuna olish yo'q.
+Turn 1.4 s jimlikdan keyin tugaydi - odamlar "Salom" dan keyin qisqa pauza
+qiladi, va qisqaroq kutish nomni keyingi turnga tashlab yuborardi.
+
+**Yozuv sozlamalari ovoz paneliniki bilan BIR XIL** (`echoCancellation`,
+`noiseSuppression`, `autoGainControl` - uchalasi yoqiq; `AudioContext` tabiiy
+tezlikda, har parcha `OfflineAudioContext` bilan 16 kHz ga keltiriladi -
+`toWav16k` bilan bitta yo'l). Bu ATAYLAB va o'lchov asosida: sozlamalar
+o'chirilganda Windows'dagi Chrome nutqni alohida impulslarga bo'lib, orasini
+tekis nol bilan to'ldirgan holda yetkazdi - odam buni "juda shovqinli" deb
+eshitdi, model esa hech narsa tanimadi. Uyg'otish jurnalidagi `flat` (hisobotda
+`tekis`) ustuni aynan shuni o'lchaydi: nutq ichidagi tekis nol ulushi. Toza
+nutqda ~0-6%, buzilgan yozuvlarda 22-29%. Hisobot 15% dan yuqorisini
+"buzilgan yozuv" deb belgilaydi - bunday holatda moslashtirgichni sozlash
+foydasiz, avval yozuv zanjiri tuzatiladi.
 
 **Nega eskirgan `ScriptProcessorNode`.** Uning o'rnini bosuvchi `AudioWorklet`
 protsessorni alohida modul URL'idan yuklaydi, odatdagi usul esa `blob:` URL.
@@ -385,7 +397,8 @@ venv/bin/python tools/wake_report.py --replay    # HOZIRGI qoidalar bilan qayta 
 ```
 
 Jurnalda transkriptdan tashqari AUDIO O'LCHOVI ham bor - `speech_sec`
-(jimliksiz nutq uzunligi), `peak`, `rms`. Aynan shular birinchi haqiqiy
+(jimliksiz nutq uzunligi), `peak`, `rms`, `flat` (nutq ichidagi tekis nol
+ulushi - yozuv brauzerdayoq buzilganini ko'rsatadi, yuqoriga qarang). Aynan shular birinchi haqiqiy
 muammoni ochib berdi: muvaffaqiyatsiz urinishlarda nutq 0.65-0.85 s,
 muvaffaqiyatlilarda 1.05-1.70 s edi - ya'ni yozuv "Salom Venera" ning
 o'rtasida kesilardi, va model past qolgan ikkinchi so'z o'rniga

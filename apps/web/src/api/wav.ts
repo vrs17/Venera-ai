@@ -54,15 +54,35 @@ export async function toWav16k(blob: Blob): Promise<Blob> {
   } finally {
     void ctx.close()
   }
-  const frames = Math.max(1, Math.ceil(decoded.duration * TARGET_RATE))
-  // OfflineAudioContext does the resampling (and the channel downmix, since
-  // the destination is mono) with the browser's own filter — far better than
-  // hand-rolled linear interpolation.
+  return new Blob([encodeWavBytes(await renderTo16k(decoded), TARGET_RATE)], { type: 'audio/wav' })
+}
+
+/** Resample raw mono samples captured at `sampleRate` to 16 kHz.
+ *
+ *  Same path as `toWav16k`, on purpose: the voice panel's recordings go
+ *  through exactly this and are the one capture route proven to transcribe.
+ *  Asking the browser for a 16 kHz AudioContext instead would resample the
+ *  LIVE microphone stream — a step Firefox refuses outright (it throws on a
+ *  rate mismatch) and that the panel never takes. */
+export async function resampleTo16k(samples: Float32Array, sampleRate: number): Promise<Float32Array> {
+  if (sampleRate === TARGET_RATE) return samples
+  const frames = Math.max(1, Math.ceil((samples.length / sampleRate) * TARGET_RATE))
   const offline = new OfflineAudioContext(1, frames, TARGET_RATE)
-  const source = offline.createBufferSource()
-  source.buffer = decoded
-  source.connect(offline.destination)
+  const buffer = offline.createBuffer(1, samples.length, sampleRate)
+  buffer.getChannelData(0).set(samples)
+  return renderTo16k(buffer, offline)
+}
+
+/** Renders any AudioBuffer to mono 16 kHz. OfflineAudioContext does the
+ *  resampling (and the channel downmix, since the destination is mono) with
+ *  the browser's own filter — far better than hand-rolled interpolation. */
+async function renderTo16k(buffer: AudioBuffer, offline?: OfflineAudioContext): Promise<Float32Array> {
+  const frames = Math.max(1, Math.ceil(buffer.duration * TARGET_RATE))
+  const ctx = offline ?? new OfflineAudioContext(1, frames, TARGET_RATE)
+  const source = ctx.createBufferSource()
+  source.buffer = buffer
+  source.connect(ctx.destination)
   source.start(0)
-  const rendered = await offline.startRendering()
-  return new Blob([encodeWavBytes(rendered.getChannelData(0), TARGET_RATE)], { type: 'audio/wav' })
+  const rendered = await ctx.startRendering()
+  return rendered.getChannelData(0)
 }
