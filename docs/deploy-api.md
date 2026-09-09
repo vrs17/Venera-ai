@@ -288,6 +288,12 @@ Brauzer ruxsatni rad etsa, sozlama O'CHIRILMAYDI - faqat shu sessiyada
 qayta urinilmaydi. Aks holda bir marta tasodifan "Block" bosilsa, funksiya
 sayt sozlamalarida ruxsat tiklangandan keyin ham abadiy o'chiq qolardi.
 
+**Panel HAR DOIM tanishtirish bilan ochiladi** - uyg'otish so'zi bilan ham,
+tugma bilan ham. Ovoz paneli ochilib jim turishi buzuq ko'rinadi va odam
+gapirish kerakmi-yo'qmi deb taxmin qilishga majbur bo'ladi; kim javob
+berayotganini eshitish buni hal qiladi. Yozuv tayyor bo'lgani uchun ikkala
+yo'lda ham kutish yo'q.
+
 **Salomlashish OLDINDAN tayyorlangan.** Matn o'zgarmas, sintez esa ~2 s
 oladi va bitta GPU navbatida turadi - "Salom Venera" degan odam shuncha
 kutmasligi kerak. Fayl bir marta yasaladi:

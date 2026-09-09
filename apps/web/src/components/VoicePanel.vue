@@ -45,10 +45,12 @@ const props = defineProps<{
   busy: boolean
   /** The most recent answer text, shown under the orb once it arrives. */
   answer?: string | null
-  /** Spoken once when the panel opens, before listening starts. Set when the
-   *  panel was opened by the wake word: the person spoke to summon it, so the
-   *  assistant answers out loud rather than showing a silent screen. Null when
-   *  the panel was opened by the button — a click is not a conversation. */
+  /** Spoken once when the panel opens, before listening starts.
+   *
+   *  Both ways in get it — the wake word and the button. Opening a voice
+   *  panel and being met with silence reads as broken, and the person then
+   *  has to guess whether to speak; hearing who answered settles that. The
+   *  recording is prepared ahead of time, so it costs no wait either way. */
   greeting?: string | null
 }>()
 const emit = defineEmits<{ (e: 'close'): void }>()

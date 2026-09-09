@@ -29,9 +29,6 @@ const phase = ref<Phase>('idle')
 const theme = ref<Theme>(getInitialTheme())
 const sidebarOpen = ref(false)
 const voiceOpen = ref(false)
-// Set only when the panel was opened by the wake word, so the assistant
-// answers out loud. Cleared on close: the next open, by button, is silent.
-const voiceGreeting = ref<string | null>(null)
 
 // --- "Salom Venera" ---------------------------------------------------------
 // ON by default: the assistant should answer when spoken to, without anyone
@@ -46,10 +43,7 @@ const { active: wakeActive } = useWakeWord({
   enabled: wakeEnabled,
   locale: computed(() => String(locale.value)),
   paused: voiceOpen,
-  onWake: () => {
-    voiceGreeting.value = t('voiceGreeting')
-    voiceOpen.value = true
-  },
+  onWake: () => { voiceOpen.value = true },
 })
 
 function toggleWake() {
@@ -57,13 +51,11 @@ function toggleWake() {
 }
 
 function openVoice() {
-  voiceGreeting.value = null      // opened by hand: no spoken greeting
   voiceOpen.value = true
 }
 
 function closeVoice() {
   voiceOpen.value = false
-  voiceGreeting.value = null
 }
 const collapsed = ref(localStorage.getItem('venera_sidebar_collapsed') === '1')
 watch(collapsed, (value) => localStorage.setItem('venera_sidebar_collapsed', value ? '1' : '0'))
@@ -249,7 +241,7 @@ const actorType = computed<ActorType>(() => (user.value?.actorType as ActorType)
           :send="send"
           :busy="phase !== 'idle'"
           :answer="lastAnswer"
-          :greeting="voiceGreeting"
+          :greeting="t('voiceGreeting')"
           @close="closeVoice"
         />
       </div>
