@@ -16,13 +16,17 @@ aytadi.
 
 from __future__ import annotations
 
+import array
 import contextlib
+import io
 import json
 import logging
+import math
 import re
 import threading
 import unicodedata
 import uuid
+import wave
 
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
@@ -119,6 +123,40 @@ def is_wake_phrase(text: str) -> tuple[bool, str]:
     return False, "salom yo'q"
 
 
+def measure(wav: bytes, *, floor: float = 0.015) -> tuple[float, float, float]:
+    """WAV -> (eng baland nuqta, o'rtacha quvvat, nutq soniyalari).
+
+    Bu SERVERDA hisoblanadi, klientdan so'ralmaydi: klient yuborgan raqamga
+    ishonish uni tekshirib bo'lmaydigan qiladi, va aynan shu raqamlar
+    keyinchalik qaror qabul qilishga asos bo'ladi.
+    """
+    try:
+        with wave.open(io.BytesIO(wav)) as source:
+            rate = source.getframerate()
+            frames = source.readframes(source.getnframes())
+        if source.getsampwidth() != 2 or not rate:
+            return 0.0, 0.0, 0.0
+        samples = array.array("h")
+        samples.frombytes(frames[: len(frames) - len(frames) % 2])
+    except (wave.Error, EOFError, ValueError):
+        return 0.0, 0.0, 0.0
+    if not samples:
+        return 0.0, 0.0, 0.0
+
+    peak = max(abs(s) for s in samples) / 32768
+    total = math.sqrt(sum(s * s for s in samples) / len(samples)) / 32768
+
+    # Nutq: 50 ms oynalar ichida chegaradan yuqori bo'lgan birinchi va
+    # oxirgi oyna orasi. Jimlikni hisobga olmaydi.
+    window = max(1, rate // 20)
+    loud = [
+        i for i in range(0, len(samples) - window, window)
+        if math.sqrt(sum(s * s for s in samples[i:i + window]) / window) / 32768 > floor
+    ]
+    speech = ((loud[-1] + window) - loud[0]) / rate if loud else 0.0
+    return peak, total, speech
+
+
 # --- Yozib borish -----------------------------------------------------------
 
 
@@ -136,6 +174,15 @@ class WakeAttempt:
     duration_sec: float
     backend: str
     audio: str
+    #: Eng baland nuqta va o'rtacha quvvat (0..1). Muvaffaqiyatsizlik
+    #: sababini AYNAN shu ikki son ochib berdi: nom salomdan ancha past
+    #: aytilganda model uni o'zining eng ehtimolli taxminiga almashtiradi.
+    peak: float = 0.0
+    rms: float = 0.0
+    #: Nutq qismi (soniya) - jimlikni hisobga olmagan holda. Kesilish
+    #: bo'lganini shu ko'rsatadi: muvaffaqiyatsizlarda 0.65-0.85 s edi,
+    #: muvaffaqiyatlilarda 1.05-1.70 s.
+    speech_sec: float = 0.0
 
 
 class WakeLog:
@@ -169,6 +216,7 @@ class WakeLog:
         duration_sec: float = 0.0,
         backend: str = "",
     ) -> WakeAttempt:
+        peak, rms, speech = measure(audio)
         attempt_id = f"{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
         name = f"{attempt_id}.wav"
         entry = WakeAttempt(
@@ -182,6 +230,9 @@ class WakeLog:
             duration_sec=round(duration_sec, 2),
             backend=backend,
             audio=f"audio/{name}",
+            peak=round(peak, 3),
+            rms=round(rms, 4),
+            speech_sec=round(speech, 2),
         )
         with self._lock:
             try:

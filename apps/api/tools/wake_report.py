@@ -62,6 +62,21 @@ def summary(entries: list[dict]) -> None:
     print("\nSabablar:")
     for reason, count in Counter(e.get("reason", "?") for e in entries).most_common():
         print(f"  {count:5d}  {reason}")
+    # Kesilish va past ovoz - ikkita eng ehtimolli sabab, va ular
+    # transkriptdan emas, AUDIODAN ko'rinadi.
+    woke = [e for e in entries if e.get("matched")]
+    missed = [e for e in entries if not e.get("matched")]
+    for label, group in (("uyg'ongan", woke), ("uyg'onmagan", missed)):
+        if not group:
+            continue
+        speech = [e.get("speech_sec", 0) for e in group if e.get("speech_sec")]
+        peaks = [e.get("peak", 0) for e in group if e.get("peak")]
+        if speech and peaks:
+            print(f"\n{label:12} nutq o'rtacha {sum(speech)/len(speech):.2f}s, "
+                  f"eng baland o'rtacha {sum(peaks)/len(peaks):.3f}")
+            print(f"{'':12} qisqa nutq (<0.9s): "
+                  f"{sum(1 for v in speech if v < 0.9)}/{len(speech)}")
+
     print("\nEng ko'p uchragan transkriptlar:")
     for text, count in Counter(e.get("text", "") for e in entries).most_common(15):
         verdict = "✓" if is_wake_phrase(text)[0] else " "
@@ -69,14 +84,15 @@ def summary(entries: list[dict]) -> None:
 
 
 def listing(entries: list[dict], only_misses: bool) -> None:
-    print(f"{'vaqt':<21} {'uyg':<4} {'sabab':<26} matn")
-    print("-" * 100)
+    print(f"{'vaqt':<20} {'uyg':<4} {'nutq':>6} {'peak':>6}  {'sabab':<22} matn")
+    print("-" * 110)
     for e in entries:
         if only_misses and e.get("matched"):
             continue
         mark = "HA" if e.get("matched") else "-"
-        print(f"{e.get('at','')[:19]:<21} {mark:<4} {e.get('reason','')[:25]:<26} "
-              f"{e.get('text','')!r}  [{e.get('id','')}]")
+        print(f"{e.get('at','')[:19]:<20} {mark:<4} "
+              f"{e.get('speech_sec', 0):5.2f}s {e.get('peak', 0):6.3f}  "
+              f"{e.get('reason','')[:21]:<22} {e.get('text','')!r}  [{e.get('id','')}]")
 
 
 def replay(entries: list[dict]) -> None:

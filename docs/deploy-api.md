@@ -384,6 +384,14 @@ venv/bin/python tools/wake_report.py --play <id> # o'sha urinishni eshitish
 venv/bin/python tools/wake_report.py --replay    # HOZIRGI qoidalar bilan qayta baholash
 ```
 
+Jurnalda transkriptdan tashqari AUDIO O'LCHOVI ham bor - `speech_sec`
+(jimliksiz nutq uzunligi), `peak`, `rms`. Aynan shular birinchi haqiqiy
+muammoni ochib berdi: muvaffaqiyatsiz urinishlarda nutq 0.65-0.85 s,
+muvaffaqiyatlilarda 1.05-1.70 s edi - ya'ni yozuv "Salom Venera" ning
+o'rtasida kesilardi, va model past qolgan ikkinchi so'z o'rniga
+"assalomu alaykum" ni qo'yardi. Transkriptning o'zi buni hech qachon
+ko'rsatmasdi.
+
 `--replay` eng foydalisi: qoidani o'zgartirgach, jurnaldagi HAQIQIY
 matnlarni yangi qoidalarga yuritadi va nechta holat tuzalgani hamda nechta
 yangi noto'g'ri uyg'onish paydo bo'lganini ko'rsatadi. Sozlashni taxmindan

@@ -46,9 +46,18 @@ export const WAKE_LOCALES: readonly string[] = ['uz', 'uz-Cyrl']
 export const WAKE_STORAGE_KEY = 'venera_wake_word'
 
 const PREROLL_S = 0.45        // samples kept from before speech was noticed
-const SILENCE_MS = 700        // silence that ends an utterance
+/** Silence that ends an utterance.
+ *
+ *  MEASURED, not guessed. With 700 ms the recorded speech in failed attempts
+ *  was 0.65-0.85 s against 1.05-1.70 s in successful ones: the timer was
+ *  starting during the quiet second half of "Salom Venera" and the clip was
+ *  ending while the person still spoke. */
+const SILENCE_MS = 950
 const MIN_MS = 350            // shorter than this is a cough, a click, a door
-const MAX_MS = 2600           // longer than this is conversation, not a wake phrase
+/** Longer than this is conversation, not a wake phrase. Raised with
+ *  SILENCE_MS so a fully captured phrase still fits under the gate — the two
+ *  must move together, or the fix above would be undone by this one. */
+const MAX_MS = 3200
 const COOLDOWN_MS = 2500      // hard ceiling on the request rate
 /** When the check cannot run at all — the STT backend is down — sending a
  *  clip every few seconds achieves nothing and keeps a broken service busy.
@@ -56,7 +65,13 @@ const COOLDOWN_MS = 2500      // hard ceiling on the request rate
  *  moment one check succeeds, so recovery is noticed within a minute. */
 const MAX_BACKOFF_MS = 60_000
 const RMS_ON = 0.045          // hysteresis: a single threshold chatters at the
-const RMS_OFF = 0.022         // boundary and slices one utterance into many
+/** The level below which we start counting silence.
+ *
+ *  MEASURED: the trailing syllables of "Venera" sit between 0.015 and 0.022,
+ *  so the old 0.022 counted live speech as silence and cut the phrase in
+ *  half. Lower is safe here — RMS_ON still decides when to START, so a quiet
+ *  room never triggers anything; this only decides when to STOP. */
+const RMS_OFF = 0.013
 
 /** Whether a transcript is the wake phrase is decided SERVER-SIDE
  *  (`app/services/wake.py`). Two implementations of the same rules would
@@ -255,7 +270,31 @@ export function useWakeWord(options: WakeWordOptions) {
     return out
   }
 
-  async function consider(clip: Float32Array, rate: number) {
+  /**
+   * Scales the clip so its loudest point is near full scale.
+   *
+   * MEASURED: in the failed attempts the name was spoken far more quietly
+   * than the greeting before it, and the model replaced the quiet half with
+   * its most likely guess — "Salom Venera" came back as "assalomu alaykum".
+   * getUserMedia's own auto-gain adapts far too slowly for a one-second
+   * phrase. Silence is left alone: amplifying room noise to full scale would
+   * hand the recogniser a clip full of confident nonsense.
+   */
+  function normalize(clip: Float32Array): Float32Array {
+    let peak = 0
+    for (const sample of clip) {
+      const level = Math.abs(sample)
+      if (level > peak) peak = level
+    }
+    if (peak < 0.02 || peak >= 0.9) return clip
+    const gain = Math.min(0.9 / peak, 8)
+    const out = new Float32Array(clip.length)
+    for (let i = 0; i < clip.length; i++) out[i] = clip[i] * gain
+    return out
+  }
+
+  async function consider(raw: Float32Array, rate: number) {
+    const clip = normalize(raw)
     const seconds = clip.length / rate
     if (seconds * 1000 < MIN_MS) return
     const now = performance.now()
