@@ -91,6 +91,20 @@ class Settings(BaseSettings):
     #: qisqartiriladi (xato qaytarilmaydi - matn foydalanuvchi aytgan gapi).
     tts_max_chars: int = 600
 
+    # --- Uyg'otish so'zi jurnali ---
+    #: "Salom Venera" urinishlari yozib boriladi: audio + transkript + qaror.
+    #: Muammoni TAXMIN bilan emas, dalil bilan tuzatish uchun - qaysi
+    #: aytilish qanday transkribe qilingani ko'rinmasa, moslashtirgichni
+    #: sozlash ko'r-ko'rona bo'ladi.
+    #:
+    #: OVOZ YOZUVLARI SHAXSIY MA'LUMOT. Papka `.gitignore` da. Kerak
+    #: bo'lmaganda `WAKE_LOG_ENABLED=false` bilan butunlay o'chiriladi.
+    wake_log_enabled: bool = True
+    wake_log_dir: Path = BASE_DIR / "data" / "wake"
+    #: Shuncha audiodan ortig'i o'chiriladi (eng eskisidan). JSONL qatorlari
+    #: qoladi - ular kichkina va statistika uchun kerak.
+    wake_log_max_files: int = 500
+
     # --- CORS ---
     #: Bo'sh bo'lsa CORS o'chirilgan: frontend nginx orqali BIR XIL originda
     #: turadi (`/api` proxy), ya'ni CORS umuman kerak emas. Faqat frontend

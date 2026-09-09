@@ -18,8 +18,9 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile
 from ...core.config import settings
 from ...core.errors import bad_request, error_status
 from ...schemas.auth import AuthUser
-from ...schemas.stt import TranscriptResponse
+from ...schemas.stt import TranscriptResponse, WakeResponse
 from ...services.stt import LOCALE_TO_STT, SttClient, SttError
+from ...services.wake import WakeLog, is_wake_phrase
 from ..deps import current_user
 
 log = logging.getLogger(__name__)
@@ -36,6 +37,12 @@ _client = SttClient(
 #: Foydalanuvchiga ko'rinadigan xabarlar - status bo'yicha, ichki matnsiz.
 #: 503 = band (qayta urinsa bo'ladi), 504 = juda uzoq, 413 = katta,
 #: 415 = format, 400/422 = audio qabul qilinmadi, 502 = xizmat javob bermadi.
+_wake_log = WakeLog(settings.wake_log_dir, max_files=settings.wake_log_max_files)
+
+#: Uyg'otish parchasi qisqa (0.35-2.6 s). Undan kattasi tinglagichdan
+#: kelmaydi, ya'ni bu chegara xato yoki suiiste'mol belgisi.
+_WAKE_MAX_BYTES = 1024 * 1024
+
 _MESSAGES = {
     503: "Ovoz xizmati band, biroz kutib qayta urinib ko'ring",
     504: "Ovozni qayta ishlash juda uzoq cho'zildi - qisqaroq gapirib ko'ring",
@@ -90,3 +97,59 @@ def transcribe(
         truncated=result.truncated,
         backend=result.backend,
     )
+
+
+@router.post("/wake", response_model=WakeResponse)
+def wake(
+    file: UploadFile = File(description="Qisqa audio parcha (WAV 16 kHz mono)"),
+    language: str = Form(description="uz | uz-Cyrl - UI tili"),
+    user: AuthUser = Depends(current_user),
+) -> WakeResponse:
+    """Uyg'otish so'zi tekshiruvi.
+
+    `/transcribe` DAN ALOHIDA, garchi ikkalasi ham STT ga borsa ham:
+
+      * QAROR shu yerda qabul qilinadi. Brauzerda qolsa, server nima uchun
+        uyg'onmaganini bilmasdi va moslashtirgichni sozlash uchun frontend
+        obrazini har safar qayta yig'ish kerak bo'lardi.
+      * Urinish YOZIB BORILADI - audio, transkript va sabab bir joyda.
+        Aynan shu ma'lumot "juda aniq aytmasa uyg'onmaydi" degan muammoni
+        taxmin bilan emas, dalil bilan tuzatish imkonini beradi.
+      * Xato JIM. Hech kim hech narsa so'ramagan: navbat to'la bo'lsa yoki
+        audio yaroqsiz bo'lsa, javob shunchaki "uyg'onmadi" bo'ladi. Har
+        necha soniyada ekranda xato chiqishi sukunatdan yomonroq.
+    """
+    stt_language = LOCALE_TO_STT.get(language)
+    if stt_language is None:
+        raise bad_request(f"til qo'llab-quvvatlanmaydi: {language}")
+
+    audio = file.file.read()
+    if not audio or len(audio) > _WAKE_MAX_BYTES:
+        raise bad_request("audio yaroqsiz")
+
+    try:
+        result = _client.transcribe(
+            audio,
+            language=stt_language,
+            content_type=file.content_type or "audio/wav",
+        )
+    except SttError as exc:
+        # Uyg'otish tekshiruvi FON ishi: 503 (navbat to'la) bu yerda odatiy
+        # hol va uni xato sifatida ko'rsatish noto'g'ri bo'lardi.
+        log.info("Uyg'otish tekshiruvi o'tmadi (%s): %s", user.email, exc)
+        return WakeResponse(text="", matched=False, reason="stt xatosi")
+
+    matched, reason = is_wake_phrase(result.text)
+    if settings.wake_log_enabled:
+        _wake_log.record(
+            audio,
+            actor_id=user.actorId,
+            language=stt_language,
+            text=result.text,
+            matched=matched,
+            reason=reason,
+            duration_sec=result.duration_sec,
+            backend=result.backend,
+        )
+    log.info("Uyg'otish: %r -> %s (%s)", result.text, "HA" if matched else "yo'q", reason)
+    return WakeResponse(text=result.text, matched=matched, reason=reason)

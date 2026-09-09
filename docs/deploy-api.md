@@ -339,19 +339,72 @@ protsessorni alohida modul URL'idan yuklaydi, odatdagi usul esa `blob:` URL.
 Bizning CSP `script-src 'self'` - u `blob:` ni bloklaydi, va FAQAT ishlab
 chiqarishda, jimgina. Eskirgan tugun bu muammodan xoli.
 
-**Moslashtirgich** (`isWakePhrase`) ham salom, ham nomni TALAB qiladi.
-Faqat nom yetarli emas: "Venera tizimi haqida ayting" degan oddiy gapda ham
-nom bor, panel ochilishi esa ishni bo'lib yuboradi. Nom Levenshtein masofasi
-<=2 bilan taqqoslanadi - model bir xil tovushni "venera", "vinera", "venira"
-deb yozadi.
+**Moslashtirgich** qoidalari:
+
+* Nom Levenshtein masofasi <=2 bilan taqqoslanadi - model bir xil tovushni
+  "venera", "vinera", "venira" deb yozadi. Nomzod so'z uzunligi >=5 bo'lishi
+  shart, aks holda "vera", "era" ham nom deb qabul qilinardi.
+* Nom uzun so'z ICHIDA ham qidiriladi: model so'zlarni qo'shib yuboradi
+  ("salomvenera") yoki bo'g'inni noto'g'ri joyda ajratadi - jonli o'lchovda
+  "Salom Venera, qalaysan" `salom, vener aqlaysan` bo'lib qaytdi.
+* Salom + nom -> uyg'onadi.
+* 2 yoki undan kam so'z bo'lsa NOMNING O'ZI yetarli. Salomni MAJBURIY qilish
+  amalda ko'p o'tkazib yuborishga olib keldi: VAD salomning boshini kesib
+  qoladi yoki model uni yutib yuboradi. Uzun gap baribir o'tmaydi.
+* 5 so'zdan uzun gap chaqiriq emas: "Venera tizimi haqida ayting" da ham nom
+  bor, lekin panelni ochish kerak emas.
+
+### Urinishlar yozib boriladi
+
+Har bir urinish diskka tushadi: **audio + STT transkripti + qaror + SABAB**.
+Sababsiz jurnal foydasiz - "uyg'onmadi" degan yozuv nimani tuzatish
+kerakligini aytmaydi, "nom topildi, lekin salom yo'q" esa aytadi.
+
+```
+apps/api/data/wake/
+  wake.jsonl              # har qator - bitta urinish
+  audio/<id>.wav          # o'sha urinishning ovozi
+```
+
+| O'zgaruvchi | Default | Izoh |
+|---|---|---|
+| `WAKE_LOG_ENABLED` | `true` | `false` - hech narsa yozilmaydi |
+| `WAKE_LOG_DIR` | `apps/api/data/wake` | |
+| `WAKE_LOG_MAX_FILES` | `500` | eski audiolar o'chiriladi; JSONL qatorlari qoladi |
+
+> **Bu odamlarning ovozi - shaxsiy ma'lumot.** Papka `.gitignore` da va u
+> yerda email emas, ichki `actor_id` saqlanadi. Kerak bo'lmaganda
+> `WAKE_LOG_ENABLED=false` bilan butunlay o'chiring.
+
+```bash
+cd ~/Venera/apps/api
+venv/bin/python tools/wake_report.py             # umumiy: nechta, qaysi sabablar
+venv/bin/python tools/wake_report.py --misses    # faqat uyg'onmaganlar
+venv/bin/python tools/wake_report.py --play <id> # o'sha urinishni eshitish
+venv/bin/python tools/wake_report.py --replay    # HOZIRGI qoidalar bilan qayta baholash
+```
+
+`--replay` eng foydalisi: qoidani o'zgartirgach, jurnaldagi HAQIQIY
+matnlarni yangi qoidalarga yuritadi va nechta holat tuzalgani hamda nechta
+yangi noto'g'ri uyg'onish paydo bo'lganini ko'rsatadi. Sozlashni taxmindan
+o'lchovga aylantiradi.
+
+**Qaror SERVERDA** (`app/services/wake.py`), brauzerda emas: u audio va matn
+bilan bir joyda yozilishi kerak, qoidalarni o'zgartirish frontend obrazini
+qayta yig'ishni talab qilmasligi kerak, va ikki tilda ikki nusxa vaqt o'tib
+albatta ajralib ketardi.
 
 Jonli o'lchangan (TTS -> STT aylanmasi orqali):
 
 | Aytilgan | STT qaytargani | Uyg'otadimi |
 |---|---|---|
-| Salom Venera | `salom, venera.` | ha |
+| Salom Venera (ayol ovozi) | `salom, venera.` | ha |
+| Salom Venera (erkak ovozi) | `salom venera.` | ha |
 | Assalomu alaykum Venera | `assalomu alaykum venera.` | ha |
-| Venera | `venerat` / `venera.` | yo'q - salom yo'q |
+| Venera | `venera.` | ha - qisqa chaqiriq |
+| Salom Venera, qalaysan | `salom, vener aqlaysan.` | ha |
+| Bugun havo issiq | `bugun havo issiq.` | yo'q - nom yo'q |
+| Venera tizimi haqida ayting | `generat tizimi haqida ayting.` | yo'q |
 
 Faqat `uz` va `uz-Cyrl` tillarida ko'rinadi: so'zning o'zi o'zbekcha.
 

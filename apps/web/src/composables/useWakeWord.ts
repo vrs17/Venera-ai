@@ -36,7 +36,7 @@
 import { onBeforeUnmount, ref, watch } from 'vue'
 import type { Ref } from 'vue'
 import { encodeWavBytes, TARGET_RATE } from '../api/wav'
-import { micAvailable, transcribeWav } from '../api/stt.api'
+import { checkWake, micAvailable } from '../api/stt.api'
 
 /** Locales whose speakers say the Uzbek wake phrase. The phrase itself is the
  *  same in both scripts — only the transcript's spelling differs, and the
@@ -53,61 +53,12 @@ const COOLDOWN_MS = 2500      // hard ceiling on the request rate
 const RMS_ON = 0.045          // hysteresis: a single threshold chatters at the
 const RMS_OFF = 0.022         // boundary and slices one utterance into many
 
-/** How close a word must be to count as the name. Uzbek STT will produce
- *  "vinera", "venira", "venera" for the same sound. */
-const NAME = 'venera'
-const NAME_DISTANCE = 2
-/** Uzbek greetings, including the pieces "assalomu alaykum" breaks into. The
- *  name ALONE is deliberately not enough: "Venera" appears in ordinary
- *  sentences about the system, and opening a full-screen panel is disruptive
- *  enough that a false positive costs more than a missed wake. */
-const GREETINGS = ['salom', 'assalom', 'assalomu', 'alaykum', 'aleykum', 'salomlar']
-
-/** Levenshtein, bailing out once the distance can no longer matter. */
-export function distance(a: string, b: string, max = 3): number {
-  if (a === b) return 0
-  if (Math.abs(a.length - b.length) > max) return max + 1
-  let prev = Array.from({ length: b.length + 1 }, (_, i) => i)
-  for (let i = 1; i <= a.length; i++) {
-    const row = [i]
-    let best = i
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1
-      row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + cost)
-      best = Math.min(best, row[j])
-    }
-    if (best > max) return max + 1
-    prev = row
-  }
-  return prev[b.length]
-}
-
-/** Lowercase, drop the several apostrophes Uzbek orthography uses
- *  interchangeably (o' / oʻ / o’), and reduce to words. */
-export function normalizeHeard(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[''`ʻʼ‘’]/g, '')
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-/**
- * Is this transcript the wake phrase?
- *
- * Requires BOTH a greeting and the name, and rejects anything longer than a
- * short phrase — a sentence that merely mentions Venera is not a summons.
+/** Whether a transcript is the wake phrase is decided SERVER-SIDE
+ *  (`app/services/wake.py`). Two implementations of the same rules would
+ *  drift, and only the server can record the clip next to its verdict —
+ *  which is what makes the rules tunable from evidence instead of guesswork.
+ *  Tuning them there also needs no frontend rebuild.
  */
-export function isWakePhrase(text: string): boolean {
-  const words = normalizeHeard(text).split(' ').filter(Boolean)
-  if (words.length === 0 || words.length > 4) return false
-  // Length floor on the candidate: without it, distance<=2 from "venera"
-  // also admits "vera", "era" and other common short words.
-  const named = words.some((w) => w.length >= 5 && distance(w, NAME, NAME_DISTANCE) <= NAME_DISTANCE)
-  if (!named) return false
-  return words.some((w) => GREETINGS.some((g) => distance(w, g, 2) <= 2))
-}
 
 export interface WakeWordOptions {
   /** The user turned the feature on. */
@@ -309,9 +260,12 @@ export function useWakeWord(options: WakeWordOptions) {
     const signal = aborter.signal
     try {
       const wav = new Blob([encodeWavBytes(clip, rate)], { type: 'audio/wav' })
-      const result = await transcribeWav(wav, locale.value, signal)
+      const verdict = await checkWake(wav, locale.value, signal)
       if (signal.aborted || !shouldRun()) return
-      if (isWakePhrase(result.text)) {
+      // Useful while tuning: the console shows what was actually heard, which
+      // is usually nothing like what the person thinks they said.
+      if (verdict.text) console.debug('[wake]', verdict.text, '->', verdict.reason)
+      if (verdict.matched) {
         stop()          // release the microphone BEFORE the panel asks for it
         onWake()
       }

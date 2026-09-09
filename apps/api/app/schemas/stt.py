@@ -21,3 +21,16 @@ class TranscriptResponse(BaseModel):
     )
     truncated: bool = Field(default=False, description="Audio Router limitidan uzun bo'lib kesildi")
     backend: str = Field(default="", description="`uzbek_stt` yoki `multilang` - debug uchun")
+
+
+class WakeResponse(BaseModel):
+    """Uyg'otish tekshiruvi natijasi.
+
+    Qaror SERVERDA qabul qilinadi - brauzer faqat `matched` ga qaraydi.
+    `reason` va `text` diagnostika uchun: brauzer konsolida nima
+    eshitilganini ko'rish, moslashtirgichni sozlashda juda qimmat.
+    """
+
+    text: str = Field(default="", description="STT nima eshitgani")
+    matched: bool = Field(default=False, description="Uyg'otish so'zi tanildimi")
+    reason: str = Field(default="", description="Nega tanildi yoki tanilmadi")

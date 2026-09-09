@@ -31,6 +31,12 @@ release/*.exe
 release/*.zip
 publish/*.exe
 
+# --- Uyg'otish so'zi jurnali ---
+# OVOZ YOZUVLARI. Bu odamlarning ovozi - shaxsiy ma'lumot, va u hech qachon
+# repoga tushmasligi kerak. Papka diagnostika uchun, `WAKE_LOG_ENABLED=false`
+# bilan butunlay o'chiriladi.
+apps/api/data/
+
 # --- Audio ---
 *.wav
 # ISTISNO: salomlashish audiosi test namunasi emas, BUILD KIRISHI -

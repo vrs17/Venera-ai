@@ -34,18 +34,28 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     signal?.addEventListener('abort', () => { clearTimeout(id); reject(signal.reason ?? new DOMException('aborted', 'AbortError')) }, { once: true })
   })
 
-/** Uploads a WAV that is ALREADY at the right rate — the wake-word listener
- *  captures raw PCM at 16 kHz, so decoding and re-encoding it here would be
- *  pure waste on a path that runs continuously. */
-export async function transcribeWav(
+/** One wake-word check. The verdict comes from the server, which also records
+ *  the clip, the transcript and the reason — so "it only wakes if you say it
+ *  perfectly" can be studied from real data rather than guessed at.
+ *
+ *  Never throws (except on abort): nobody asked for anything yet, so a full
+ *  queue or a bad clip is simply "did not wake". */
+export async function checkWake(
   wav: Blob,
   language: string,
   signal?: AbortSignal,
-): Promise<Transcript> {
-  // No retry: nobody asked for this. A 503 means the router queue is full,
-  // and a wake check that retries would take a slot from someone who is
-  // actually waiting on a transcript.
-  return post(wav, 'speech.wav', language, signal, false)
+): Promise<{ matched: boolean; text: string; reason: string }> {
+  const form = new FormData()
+  form.append('file', wav, 'wake.wav')
+  form.append('language', language)
+  try {
+    return await apiFetch<{ matched: boolean; text: string; reason: string }>(
+      '/api/v1/stt/wake', { method: 'POST', body: form, signal },
+    )
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err
+    return { matched: false, text: '', reason: 'network' }
+  }
 }
 
 export async function transcribe(
@@ -72,7 +82,6 @@ async function post(
   name: string,
   language: string,
   signal?: AbortSignal,
-  retry = true,
 ): Promise<Transcript> {
   const form = new FormData()
   form.append('file', upload, name)
@@ -85,7 +94,7 @@ async function post(
     try {
       return await apiFetch<Transcript>('/api/v1/stt/transcribe', { method: 'POST', body: form, signal })
     } catch (err) {
-      if (retry && attempt === 0 && err instanceof ApiError && err.status === 503) {
+      if (attempt === 0 && err instanceof ApiError && err.status === 503) {
         await sleep(1500, signal)
         continue
       }
