@@ -145,9 +145,14 @@ export function useWakeWord(options: WakeWordOptions) {
           // closed while this listens, so nothing is playing.
           echoCancellation: false,
           noiseSuppression: false,
-          // Auto-gain stays: it helps a quiet speaker, and the per-clip
-          // normalisation below covers what it is too slow to catch.
-          autoGainControl: true,
+          // Auto-gain is off for the same family of reasons. It reacts inside
+          // a single word, so it lifts the quiet tail of one phrase and
+          // flattens the loud start of the next, and it was pushing peaks to
+          // 1.0 — measured at 0.996-1.000 on real clips, right against the
+          // ceiling. The per-clip normalisation below does the same job
+          // deterministically, after the fact, where it can see the whole
+          // phrase and can guarantee it never clips.
+          autoGainControl: false,
         },
       })
     } catch {
@@ -286,6 +291,31 @@ export function useWakeWord(options: WakeWordOptions) {
   }
 
   /**
+   * Removes what is below speech: mains hum, fan rumble, desk thumps.
+   *
+   * With the browser's noise suppression off (it was eating the ends of
+   * words) this is what is left to do about noise, and it is the half worth
+   * removing: nothing in Uzbek speech lives under ~80 Hz, so cutting there
+   * costs no intelligibility while taking out the energy that both dominates
+   * the noise floor and gets multiplied by the normalisation below.
+   *
+   * One pole, in place of a proper filter: it is a few lines, runs once per
+   * clip, and the steeper response a biquad would give buys nothing here.
+   */
+  function highpass(clip: Float32Array, rate: number): Float32Array {
+    const rc = 1 / (2 * Math.PI * 80)
+    const dt = 1 / rate
+    const a = rc / (rc + dt)
+    const out = new Float32Array(clip.length)
+    let previous = 0
+    for (let i = 1; i < clip.length; i++) {
+      out[i] = a * (out[i - 1] + clip[i] - previous)
+      previous = clip[i]
+    }
+    return out
+  }
+
+  /**
    * Scales the clip so its loudest point is near full scale.
    *
    * MEASURED: in the failed attempts the name was spoken far more quietly
@@ -301,8 +331,13 @@ export function useWakeWord(options: WakeWordOptions) {
       const level = Math.abs(sample)
       if (level > peak) peak = level
     }
-    if (peak < 0.02 || peak >= 0.9) return clip.slice()
-    const gain = Math.min(0.9 / peak, 8)
+    // 0.8, not 0.9: a little headroom means rounding on the way to 16-bit
+    // never touches the ceiling. The gain ceiling matters more — at 8x a
+    // clip with a quiet speaker came back with its room noise amplified
+    // just as hard, which is what made the recordings unpleasant to listen
+    // to without making the words any clearer.
+    if (peak < 0.02 || peak >= 0.8) return clip.slice()
+    const gain = Math.min(0.8 / peak, 4)
     const out = new Float32Array(clip.length)
     for (let i = 0; i < clip.length; i++) out[i] = clip[i] * gain
     return out
@@ -338,7 +373,7 @@ export function useWakeWord(options: WakeWordOptions) {
   }
 
   async function consider(raw: Float32Array, rate: number) {
-    const clip = normalize(trim(raw, rate))
+    const clip = normalize(trim(highpass(raw, rate), rate))
     const seconds = clip.length / rate
     if (seconds * 1000 < MIN_MS) return
     const now = performance.now()

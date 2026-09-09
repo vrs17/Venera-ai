@@ -93,13 +93,22 @@ def normalize_heard(text: str) -> str:
 def _is_name(word: str) -> bool:
     """Shu so'z "venera" mi?
 
-    Uzun so'z ichida ham qidiriladi: model ba'zan so'zlarni qo'shib yuboradi
-    ("salomvenera"), va bunday holatda butun so'z bilan taqqoslash hech qachon
-    mos kelmasdi.
+    Chegara so'z uzunligiga qarab o'sadi. Sabab jonli yozuvlardan: model
+    nomni "minera", "mener", "verenam", "venira" deb qaytaradi - qancha uzun
+    bo'lsa, shuncha ko'p qo'shimcha harf qo'shadi, lekin qisqa so'zda esa
+    kengroq chegara "vera", "era" kabi oddiy so'zlarni ham nom deb qabul
+    qilardi.
+
+    Uzun so'z ICHIDA ham qidiriladi: model so'zlarni qo'shib yuboradi
+    ("salomvenera"), va bunday holatda butun so'z bilan taqqoslash hech
+    qachon mos kelmasdi.
     """
-    if len(word) >= NAME_MIN_LEN and distance(word, NAME, NAME_DISTANCE) <= NAME_DISTANCE:
+    if len(word) < NAME_MIN_LEN:
+        return False
+    limit = 2 if len(word) <= len(NAME) else 3
+    if distance(word, NAME, limit) <= limit:
         return True
-    if len(word) > len(NAME) + 2:
+    if len(word) > len(NAME) + 1:
         for size in (len(NAME), len(NAME) + 1):
             if distance(word[-size:], NAME, 1) <= 1 or distance(word[:size], NAME, 1) <= 1:
                 return True

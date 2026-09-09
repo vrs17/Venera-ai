@@ -21,6 +21,13 @@ from app.services.wake import (
 
 
 @pytest.mark.parametrize("text", [
+    # Bu ro'yxat TAXMIN emas: hammasi jonli jurnaldan olingan, ya'ni odam
+    # "Salom Venera" deganda model AYNAN shunday yozgan.
+    "salou minera.",
+    "salom verenam.",
+    "salom, mener.",
+    "salom venera.",
+    "venera, venera. salom, venera.",
     "salom, venera.",                 # <- STT dan AYNAN shu qaytadi
     "assalomu alaykum venera.",       # <- va shu
     "Salom Venera",
@@ -43,6 +50,18 @@ def test_uygotadi(text):
 
 
 @pytest.mark.parametrize("text", [
+    # Bular ham jonli jurnaldan: model nomni BUTUNLAY yo'qotgan holatlar.
+    # Ularda uyg'otish uchun hech qanday asos yo'q - "assalomu alaykum" esa
+    # odamlar bir-biriga aytadigan gap, va unga uyg'onish tinimsiz noto'g'ri
+    # ochilishga olib kelardi.
+    "assalomu alaykum.",
+    "salomu alaykum.",
+    "salom beringlar.",
+    "avvalo beringlar.",
+    "salom, o'yinlar.",
+    "salomera.",
+    "avvaliga yana",
+    "musiqa",
     "venera tizimi haqida malumot bering",   # gap ichida nom
     "salom qanday yordam bera olasan venera menga",
     "menga venera haqida ayting",
