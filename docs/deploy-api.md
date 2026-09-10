@@ -469,9 +469,9 @@ brauzer -> /api/v1/chat/stream (Venera)  ->  POST /api/chat/stream (Assistant)
 **Sozlash** (`.env`):
 
 ```
-ASSISTANT_BASE_URL=http://10.10.50.4:8080
-ASSISTANT_CLIENT_ID=<ilova kredensiali>
-ASSISTANT_CLIENT_SECRET=<ilova siri>
+HRM_ASSISTANT_BASE_URL=http://10.10.50.4:8080
+HRM_ASSISTANT_CLIENT_ID=<ilova kredensiali>
+HRM_ASSISTANT_CLIENT_SECRET=<ilova siri>
 ```
 
 Bo'sh qolsa `/api/health` `degraded` bo'lib, "CHAT ISHLAMAYDI" deb aytadi va
@@ -483,7 +483,7 @@ savol umuman yuborilmaydi - xizmat 401 qaytarardi va u foydalanuvchiga
 | Kadr | Nima |
 |---|---|
 | `stage` | o'tkinchi holat ("Hujjatlar qidirilmoqda") - kutish paytida ko'rsatiladi |
-| `sources` | iqtiboslar (`[1]`) va HRM chaqiruvlari (`[T1]`) |
+| `sources` | iqtiboslar (`[1]`) va HRM chaqiruvlari (`[T1]`). DIQQAT: jonli xizmat ro'yxatni `items` kalitida yuboradi, hujjatdagi bir martalik javobda esa `sources` - ikkalasi ham o'qiladi |
 | `artifact` | yaratilgan ariza fayli (DOCX/PDF) |
 | `token` | javob matni bo'laklari |
 | `done` | yakun: `route` (`rules`/`hrm`/`both`/`clarify`) |
@@ -493,6 +493,23 @@ savol umuman yuborilmaydi - xizmat 401 qaytarardi va u foydalanuvchiga
 o'chirilgan**. Aks holda nginx butun javobni yig'ib, oxirida bir yo'la
 berardi - ya'ni odam javob yozilayotganini ko'rmaydi va oqimning ma'nosi
 qolmaydi.
+
+**O'LCHANGAN (2026-09-10, `rules` yo'nalishi).** Birinchi ikki `stage` kadri
+**0.00 s** da keladi, keyin ~15 s jimlik (xizmat o'ylaydi), so'ng qolgan
+hamma narsa birdan. Ya'ni:
+
+* Transport buferlamaydi - aks holda birinchi kadr ham 15 s kutardi.
+* **Tokenlarni xizmatning O'ZI birdan yuboradi**: 57 token 0.02 s ichida.
+  To'g'ridan-to'g'ri `10.10.50.4:8080` ga borilganda ham AYNAN shunday
+  (15.24 s, 0.02 s cho'zilish), ya'ni bu bizning qatlamimizdan emas.
+  Venera qo'shadigan ustama ~0.4 s.
+* Shu sababli hozir ko'zga ko'rinadigan foyda - **jonli `stage` matni**
+  ("Savol turi aniqlanmoqda..."), harf-harf yozilish emas. Xizmat
+  tokenlarni sekinlashtira boshlasa (kadrlarda `paced: true` bor), UI
+  hech qanday o'zgarishsiz darhol shundan foydalanadi.
+
+Buni tekshirish oson: birinchi kadr qancha vaqtda kelganini qarash kifoya.
+Agar u ham oxirgisi bilan birga kelsa - buferlash yoqilib qolgan.
 
 **Fayl havolalari qayta yoziladi.** Xizmat bergan `docx_url` ichki manzilni
 ko'rsatadi; Venera uni `/api/v1/chat/artifact/{token}/{kind}` ga o'giradi va

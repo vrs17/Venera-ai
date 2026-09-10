@@ -153,7 +153,12 @@ export interface ChatFrame {
   /** stage: human status text. token: the piece of answer to append. error: user-safe message. */
   text?: string
   stage?: string
+  /** The live service sends the citations under `items`; the documented
+   *  one-shot response calls the same list `sources`. Both are read - the
+   *  difference is invisible until a real answer comes back, and picking
+   *  one meant the proof list was silently always empty. */
   sources?: AnswerSource[]
+  items?: AnswerSource[]
   artifact?: AnswerArtifact
   /** artifact frames may carry the fields inline instead of nested. */
   docx_url?: string | null

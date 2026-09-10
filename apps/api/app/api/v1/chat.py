@@ -37,11 +37,11 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 _assistant = AssistantClient(
-    settings.assistant_base_url,
-    settings.assistant_client_id,
-    settings.assistant_client_secret,
-    timeout=settings.assistant_timeout,
-    max_concurrent=settings.assistant_max_concurrent,
+    settings.hrm_assistant_base_url,
+    settings.hrm_assistant_client_id,
+    settings.hrm_assistant_client_secret,
+    timeout=settings.hrm_assistant_timeout,
+    max_concurrent=settings.hrm_assistant_max_concurrent,
 )
 
 #: Foydalanuvchiga ko'rinadigan xabarlar - status bo'yicha, ichki matnsiz.
@@ -104,7 +104,7 @@ def stream(body: StreamRequest, user: AuthUser = Depends(current_user)) -> Strea
             # HRM hisobini ulash qo'shilganda faqat shu qator o'zgaradi.
             hrm_token=None,
             hrm_employee=body.hrmEmployee,
-            max_chars=settings.assistant_max_question_chars,
+            max_chars=settings.hrm_assistant_max_question_chars,
         )
     except AssistantError as exc:
         raise _fail(exc, user, "savol") from exc

@@ -302,6 +302,24 @@ def test_tashqi_havola_saqlanadi(client, server):
     assert art["docx_url"] == "https://example.org/a.docx"
 
 
+def test_jonli_kadr_shakli(client, server):
+    """AYNAN jonli xizmatdan kelgan shakl: iqtiboslar `items` ostida, hujjat
+    kaliti `HR_045` - pastki chiziq bilan. Ikkalasi ham dastlabki kodda
+    e'tibordan chetda qolgan va natijada manbalar ro'yxati JIMGINA bo'sh
+    bo'lardi."""
+    server.frames = [frame(type="sources", items=[
+        {"kind": "doc", "doc_id": "HR_045", "title": "ichki mehnat tartibi qoidalari",
+         "section": "70", "page": 22, "preview_available": True},
+    ])]
+    items = collect(client.stream("salom", user_id="venera:1"))[0]["items"]
+    assert items[0]["docUrl"] == "/api/v1/chat/doc/HR_045#page=22"
+
+
+def test_pastki_chiziqli_hujjat_kaliti_yuklanadi(client, server):
+    client.fetch_doc("HR_045")
+    assert server.calls[0]["path"] == "/doc/HR_045"
+
+
 def test_iqtibos_hujjatiga_havola_qoshiladi(client):
     """Bank muhitida majburiy: xodim ASL hujjatni ocha olishi kerak."""
     sources = collect(client.stream("salom", user_id="venera:1"))[1]["sources"]

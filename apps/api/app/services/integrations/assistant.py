@@ -66,7 +66,16 @@ ARTIFACT_KINDS = ("preview", "docx", "pdf")
 
 #: `{token}` - yuqoridagi xizmat bergan bir martalik kalit. Uni URL'dan shu
 #: naqsh bilan ajratamiz: absolyut ham, nisbiy havola ham mos keladi.
-_ARTIFACT_URL = re.compile(r"/api/hr/artifacts/(?P<token>[A-Za-z0-9._~-]{1,256})/(?P<kind>\w+)")
+#:
+#: `\w` pastki chiziqni ham qamraydi, va bu MUHIM: jonli xizmat hujjat
+#: kalitlarini `HR_045` ko'rinishida beradi. Undan avvalgi tor ro'yxatda
+#: pastki chiziq yo'q edi, ya'ni haqiqiy hujjatlarning HECH BIRIGA havola
+#: qo'yilmasdi - va buni faqat jonli javobni ko'rib bilish mumkin edi.
+_ARTIFACT_URL = re.compile(r"/api/hr/artifacts/(?P<token>[\w.~-]{1,256})/(?P<kind>\w+)")
+
+#: Yo'lga qo'yiladigan kalit uchun ruxsat etilgan belgilar. Yo'l ajratgichi
+#: va nuqtali ketma-ketlik yo'q, ya'ni papkadan chiqib bo'lmaydi.
+_SAFE_KEY = re.compile(r"[\w.~:-]{1,128}")
 
 #: Bitta kadr uchun eng ko'p uzunlik. `sources` kadri eng kattasi, lekin
 #: undan ham kattasi kelishi xizmat nosozligini bildiradi va butun
@@ -324,7 +333,7 @@ class AssistantClient:
 
     def fetch_doc(self, doc_id: str) -> tuple[str, str, Iterator[bytes]]:
         """Iqtibos qilingan hujjat PDF'i."""
-        if not doc_id or not re.fullmatch(r"[A-Za-z0-9._~:-]{1,128}", doc_id):
+        if not doc_id or not _SAFE_KEY.fullmatch(doc_id):
             raise AssistantError("hujjat kaliti yaroqsiz", status=400)
         return self._download(f"/doc/{urllib.parse.quote(doc_id, safe='')}")
 
@@ -455,7 +464,7 @@ def _rewrite_sources(frame: dict[str, Any]) -> None:
                 continue
             doc_id = item.get("doc_id")
             if item.get("kind") == "doc" and isinstance(doc_id, str) and doc_id:
-                if re.fullmatch(r"[A-Za-z0-9._~:-]{1,128}", doc_id):
+                if _SAFE_KEY.fullmatch(doc_id):
                     item["docUrl"] = f"/api/v1/chat/doc/{urllib.parse.quote(doc_id, safe='')}"
                 page = item.get("page")
                 if isinstance(page, int) and page > 0 and item.get("docUrl"):

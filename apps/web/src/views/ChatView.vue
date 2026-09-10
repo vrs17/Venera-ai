@@ -192,7 +192,7 @@ function runPipeline(id: string, question: string) {
         patch(id, { stage: frame.text?.trim() || frame.stage || null })
         break
       case 'sources':
-        patch(id, { sources: frame.sources ?? [] })
+        patch(id, { sources: frame.sources ?? frame.items ?? [] })
         break
       case 'artifact': {
         // The fields come either nested under `artifact` or inline.
