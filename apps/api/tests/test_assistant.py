@@ -135,7 +135,7 @@ def server(monkeypatch):
 
 
 @pytest.fixture
-def client(server) -> AssistantClient:
+def assistant(server) -> AssistantClient:
     return AssistantClient(BASE, "venera", SECRET, timeout=5, max_concurrent=2)
 
 
@@ -146,8 +146,8 @@ def collect(stream) -> list[dict]:
 # --- so'rov ---------------------------------------------------------------
 
 
-def test_soro_vni_kredensial_bilan_yuboradi(client, server):
-    stream = client.stream("Ta'til necha kun?", user_id="venera:21", chat_id="c-1")
+def test_soro_vni_kredensial_bilan_yuboradi(assistant, server):
+    stream = assistant.stream("Ta'til necha kun?", user_id="venera:21", chat_id="c-1")
     collect(stream)
 
     call = server.calls[0]
@@ -163,26 +163,26 @@ def test_soro_vni_kredensial_bilan_yuboradi(client, server):
     assert call["encoding"] == "identity"
 
 
-def test_bosh_maydonlar_yuborilmaydi(client, server):
+def test_bosh_maydonlar_yuborilmaydi(assistant, server):
     """`chat_id` bo'sh bo'lsa YUBORILMAYDI - bo'sh satr yuqoridagi xizmatda
     "shu nomli suhbat" bo'lib qolardi va hamma xotirasiz turn bir joyga
     to'planardi."""
-    collect(client.stream("salom", user_id="venera:1"))
+    collect(assistant.stream("salom", user_id="venera:1"))
     assert set(server.calls[0]["body"]) == {"question", "user_id"}
 
 
-def test_hrm_tokeni_berilsa_otadi(client, server):
-    collect(client.stream("Men bugun kechikdimmi?", user_id="venera:1",
+def test_hrm_tokeni_berilsa_otadi(assistant, server):
+    collect(assistant.stream("Men bugun kechikdimmi?", user_id="venera:1",
                           hrm_token="hrm-jwt", hrm_employee="Mamajonov"))
     assert server.calls[0]["body"]["hrm_token"] == "hrm-jwt"
     assert server.calls[0]["body"]["hrm_employee"] == "Mamajonov"
 
 
-def test_audit_kaliti_yuboriladi_va_xizmatnikisi_ustun(client, server):
+def test_audit_kaliti_yuboriladi_va_xizmatnikisi_ustun(assistant, server):
     """`X-Request-Id` biz tomonidan yuboriladi, lekin xizmat o'zinikini
     qaytarsa AUDIT kaliti o'shanikisi - ikki tizimda bir kalit bilan
     izlash uchun."""
-    stream = client.stream("salom", user_id="venera:1")
+    stream = assistant.stream("salom", user_id="venera:1")
     assert server.calls[0]["request_id"]
     assert stream.request_id == "served-1"
 
@@ -199,16 +199,16 @@ def test_sozlanmagan_klient_hech_narsa_yubormaydi(server):
 
 
 @pytest.mark.parametrize("question", ["", "   "])
-def test_bosh_savol_rad_etiladi(client, server, question):
+def test_bosh_savol_rad_etiladi(assistant, server, question):
     with pytest.raises(AssistantError) as exc:
-        client.stream(question, user_id="venera:1")
+        assistant.stream(question, user_id="venera:1")
     assert exc.value.status == 400
     assert server.calls == []
 
 
-def test_juda_uzun_savol_yuborilmaydi(client, server):
+def test_juda_uzun_savol_yuborilmaydi(assistant, server):
     with pytest.raises(AssistantError) as exc:
-        client.stream("a" * 50, user_id="venera:1", max_chars=10)
+        assistant.stream("a" * 50, user_id="venera:1", max_chars=10)
     assert exc.value.status == 400
     assert server.calls == []
 
@@ -216,21 +216,21 @@ def test_juda_uzun_savol_yuborilmaydi(client, server):
 # --- kadrlar --------------------------------------------------------------
 
 
-def test_kadrlar_otadi(client):
-    frames = collect(client.stream("salom", user_id="venera:1"))
+def test_kadrlar_otadi(assistant):
+    frames = collect(assistant.stream("salom", user_id="venera:1"))
     assert [f["type"] for f in frames] == ["stage", "sources", "token", "token", "done"]
     assert "".join(f["text"] for f in frames if f["type"] == "token") == \
         "Yillik ta'til 21 kalendar kun."
 
 
-def test_natija_yakunda_yoziladi(client):
-    stream = client.stream("salom", user_id="venera:1")
+def test_natija_yakunda_yoziladi(assistant):
+    stream = assistant.stream("salom", user_id="venera:1")
     collect(stream)
     assert stream.outcome["route"] == "both"
     assert stream.outcome["frames"] == 5
 
 
-def test_buzuq_qatorlar_tashlanadi(client, server):
+def test_buzuq_qatorlar_tashlanadi(assistant, server):
     """Buzuq kadrni o'zgarmasdan uzatish oson yo'l bo'lardi, lekin unda
     brauzerdagi tahlilchi HAR kadrda xatoga tayyor turishi kerak edi."""
     server.frames = [
@@ -241,29 +241,29 @@ def test_buzuq_qatorlar_tashlanadi(client, server):
         b"\n",
         frame(type="token", text="ok"),
     ]
-    frames = collect(client.stream("salom", user_id="venera:1"))
+    frames = collect(assistant.stream("salom", user_id="venera:1"))
     assert frames == [{"type": "token", "text": "ok"}]
 
 
-def test_notanish_kadr_turi_otadi(client, server):
+def test_notanish_kadr_turi_otadi(assistant, server):
     """Xizmat yangi kadr qo'shsa, Venera'ni qayta yozmasdan ishlashi kerak."""
     server.frames = [frame(type="thinking", text="..."), frame(type="done", route="rules")]
-    assert [f["type"] for f in collect(client.stream("s", user_id="venera:1"))] == \
+    assert [f["type"] for f in collect(assistant.stream("s", user_id="venera:1"))] == \
         ["thinking", "done"]
 
 
-def test_oqim_chegarasi(client, server, monkeypatch):
+def test_oqim_chegarasi(assistant, server, monkeypatch):
     """Cheksiz oqim serverni ham, brauzerni ham qulflab qo'yardi."""
     monkeypatch.setattr(mod, "_MAX_STREAM_BYTES", 200)
     server.frames = [frame(type="token", text="x" * 50) for _ in range(20)]
-    frames = collect(client.stream("salom", user_id="venera:1"))
+    frames = collect(assistant.stream("salom", user_id="venera:1"))
     assert 0 < len(frames) < 20
 
 
 # --- havolalar ------------------------------------------------------------
 
 
-def test_ariza_havolalari_venera_yoliga_ogiriladi(client, server):
+def test_ariza_havolalari_venera_yoliga_ogiriladi(assistant, server):
     """Havola ICHKI manzilni ko'rsatadi - brauzer unga yetib bormaydi."""
     server.frames = [frame(
         type="artifact", title="Ariza", doc_id="d9",
@@ -271,38 +271,38 @@ def test_ariza_havolalari_venera_yoliga_ogiriladi(client, server):
         pdf_url="/api/hr/artifacts/tok-A1/pdf",
         preview_url=f"{BASE}/api/hr/artifacts/tok-A1/preview",
     )]
-    art = collect(client.stream("ariza", user_id="venera:1"))[0]
+    art = collect(assistant.stream("ariza", user_id="venera:1"))[0]
     assert art["docx_url"] == "/api/v1/chat/artifact/tok-A1/docx"
     assert art["pdf_url"] == "/api/v1/chat/artifact/tok-A1/pdf"
     assert art["preview_url"] == "/api/v1/chat/artifact/tok-A1/preview"
     assert BASE not in json.dumps(art)
 
 
-def test_ariza_kadri_ichma_ich_bolsa_ham(client, server):
+def test_ariza_kadri_ichma_ich_bolsa_ham(assistant, server):
     """Xizmat kadrni bir daraja pastga tushirsa havolalar JIMGINA ishlamay
     qo'yardi - shuning uchun ikkala shakl ham qo'llanadi."""
     server.frames = [frame(type="artifact", artifact={
         "title": "Ariza", "docx_url": f"{BASE}/api/hr/artifacts/tok-B2/docx"})]
-    art = collect(client.stream("ariza", user_id="venera:1"))[0]
+    art = collect(assistant.stream("ariza", user_id="venera:1"))[0]
     assert art["artifact"]["docx_url"] == "/api/v1/chat/artifact/tok-B2/docx"
 
 
-def test_tanilmagan_ichki_havola_olib_tashlanadi(client, server):
+def test_tanilmagan_ichki_havola_olib_tashlanadi(assistant, server):
     """Ochilmaydigan havolani ko'rsatishdan ko'ra ko'rsatmaslik yaxshi, va
     ichki topologiya tashqariga chiqmaydi."""
     server.frames = [frame(type="artifact", docx_url=f"{BASE}/some/other/path")]
-    art = collect(client.stream("ariza", user_id="venera:1"))[0]
+    art = collect(assistant.stream("ariza", user_id="venera:1"))[0]
     assert art["docx_url"] is None
 
 
-def test_tashqi_havola_saqlanadi(client, server):
+def test_tashqi_havola_saqlanadi(assistant, server):
     """Ichki bo'lmagan havolaga tegilmaydi."""
     server.frames = [frame(type="artifact", docx_url="https://example.org/a.docx")]
-    art = collect(client.stream("ariza", user_id="venera:1"))[0]
+    art = collect(assistant.stream("ariza", user_id="venera:1"))[0]
     assert art["docx_url"] == "https://example.org/a.docx"
 
 
-def test_jonli_kadr_shakli(client, server):
+def test_jonli_kadr_shakli(assistant, server):
     """AYNAN jonli xizmatdan kelgan shakl: iqtiboslar `items` ostida, hujjat
     kaliti `HR_045` - pastki chiziq bilan. Ikkalasi ham dastlabki kodda
     e'tibordan chetda qolgan va natijada manbalar ro'yxati JIMGINA bo'sh
@@ -311,152 +311,152 @@ def test_jonli_kadr_shakli(client, server):
         {"kind": "doc", "doc_id": "HR_045", "title": "ichki mehnat tartibi qoidalari",
          "section": "70", "page": 22, "preview_available": True},
     ])]
-    items = collect(client.stream("salom", user_id="venera:1"))[0]["items"]
+    items = collect(assistant.stream("salom", user_id="venera:1"))[0]["items"]
     assert items[0]["docUrl"] == "/api/v1/chat/doc/HR_045#page=22"
 
 
-def test_pastki_chiziqli_hujjat_kaliti_yuklanadi(client, server):
-    client.fetch_doc("HR_045")
+def test_pastki_chiziqli_hujjat_kaliti_yuklanadi(assistant, server):
+    assistant.fetch_doc("HR_045")
     assert server.calls[0]["path"] == "/doc/HR_045"
 
 
-def test_iqtibos_hujjatiga_havola_qoshiladi(client):
+def test_iqtibos_hujjatiga_havola_qoshiladi(assistant):
     """Bank muhitida majburiy: xodim ASL hujjatni ocha olishi kerak."""
-    sources = collect(client.stream("salom", user_id="venera:1"))[1]["sources"]
+    sources = collect(assistant.stream("salom", user_id="venera:1"))[1]["sources"]
     doc, hrm = sources
     assert doc["docUrl"] == "/api/v1/chat/doc/policy-7#page=12"
     assert doc["doc_id"] == "policy-7"      # xizmatning o'z kaliti saqlanadi
     assert "docUrl" not in hrm              # HRM chaqiruvi hujjat emas
 
 
-def test_yaroqsiz_hujjat_kaliti_havola_bermaydi(client, server):
+def test_yaroqsiz_hujjat_kaliti_havola_bermaydi(assistant, server):
     server.frames = [frame(type="sources", sources=[
         {"kind": "doc", "doc_id": "../../etc/passwd"},
         {"kind": "doc", "doc_id": ""},
     ])]
-    sources = collect(client.stream("salom", user_id="venera:1"))[0]["sources"]
+    sources = collect(assistant.stream("salom", user_id="venera:1"))[0]["sources"]
     assert all("docUrl" not in item for item in sources)
 
 
 # --- xatolar --------------------------------------------------------------
 
 
-def test_401_sozlama_xatosi_sifatida_502_ga_tushadi(client, server):
+def test_401_sozlama_xatosi_sifatida_502_ga_tushadi(assistant, server):
     """401 "bizning kredensial noto'g'ri" degani. Brauzerga 401 qaytarish
     foydalanuvchini mutlaqo joyida bo'lgan sessiyasidan chiqarib
     yuborardi."""
     server.status = 401
     with pytest.raises(AssistantError) as exc:
-        client.stream("salom", user_id="venera:1")
+        assistant.stream("salom", user_id="venera:1")
     assert exc.value.status == 502
 
 
 @pytest.mark.parametrize("status,expected", [
     (400, 400), (404, 404), (422, 422), (503, 503), (403, 502), (500, 502),
 ])
-def test_status_xaritasi(client, server, status, expected):
+def test_status_xaritasi(assistant, server, status, expected):
     server.status = status
     with pytest.raises(AssistantError) as exc:
-        client.stream("salom", user_id="venera:1")
+        assistant.stream("salom", user_id="venera:1")
     assert exc.value.status == expected
 
 
-def test_sir_xato_matnida_qolmaydi(client, server):
+def test_sir_xato_matnida_qolmaydi(assistant, server):
     """Xizmat 422 da so'rov tanasini qaytarishi mumkin, va unda sir bo'ladi."""
     server.status = 422
     server.echo_secret = True
     with pytest.raises(AssistantError) as exc:
-        client.stream("salom", user_id="venera:1")
+        assistant.stream("salom", user_id="venera:1")
     assert SECRET not in str(exc.value)
     assert "***" in str(exc.value)
 
 
-def test_ulanmasa_503(client, server, monkeypatch):
+def test_ulanmasa_503(assistant, server, monkeypatch):
     class Dead:
         def open(self, request, timeout=None):
             raise urllib.error.URLError("Connection refused")
 
     monkeypatch.setattr(urllib.request, "build_opener", lambda *a, **kw: Dead())
     with pytest.raises(AssistantError) as exc:
-        client.stream("salom", user_id="venera:1")
+        assistant.stream("salom", user_id="venera:1")
     assert exc.value.status == 503
     assert exc.value.retryable is True
 
 
-def test_oqim_ortasida_timeout(client, server):
+def test_oqim_ortasida_timeout(assistant, server):
     """Kadrlar orasidagi jimlik - nosozlik. Xato oqim ICHIDA chiqadi."""
     server.timeout_after = 2
-    stream = client.stream("salom", user_id="venera:1")
+    stream = assistant.stream("salom", user_id="venera:1")
     with pytest.raises(AssistantError) as exc:
         collect(stream)
     assert exc.value.status == 504
 
 
-def test_oqim_ortasida_uzilish(client, server):
+def test_oqim_ortasida_uzilish(assistant, server):
     """Ulanish uzilishi ham `AssistantError` bo'lishi SHART: chaqiruvchi
     faqat shu turni kutadi, boshqasi brauzerga kutilmagan uzilish bo'lib
     ko'rinardi."""
     server.cut_after = 2
-    stream = client.stream("salom", user_id="venera:1")
+    stream = assistant.stream("salom", user_id="venera:1")
     with pytest.raises(AssistantError) as exc:
         collect(stream)
     assert exc.value.status == 503
 
 
-def test_juda_katta_kadr_oqimni_toxtatadi(client, server, monkeypatch):
+def test_juda_katta_kadr_oqimni_toxtatadi(assistant, server, monkeypatch):
     monkeypatch.setattr(mod, "_MAX_LINE_BYTES", 32)
     server.frames = [frame(type="token", text="x" * 500), frame(type="done", route="rules")]
-    assert collect(client.stream("salom", user_id="venera:1")) == []
+    assert collect(assistant.stream("salom", user_id="venera:1")) == []
 
 
 # --- navbat ---------------------------------------------------------------
 
 
-def test_navbat_chegarasi(client, server):
+def test_navbat_chegarasi(assistant, server):
     """Yuqorida bitta LLM turadi. Chegaradan oshsa xizmatga BORMASDAN 503 -
     navbatni boshqa chaqiruvchilar uchun to'ldirib qo'ymaslik uchun."""
-    first = client.stream("a", user_id="venera:1")
-    second = client.stream("b", user_id="venera:2")
+    first = assistant.stream("a", user_id="venera:1")
+    second = assistant.stream("b", user_id="venera:2")
     with pytest.raises(AssistantError) as exc:
-        client.stream("c", user_id="venera:3")
+        assistant.stream("c", user_id="venera:3")
     assert exc.value.status == 503
     assert exc.value.retryable is True
 
     collect(first)
     # Slot oqim TUGAGANDA bo'shaydi - javob kelganda emas.
-    client.stream("d", user_id="venera:4")
+    assistant.stream("d", user_id="venera:4")
     collect(second)
 
 
-def test_slot_ochilmagan_oqimdan_keyin_qaytadi(client, server):
+def test_slot_ochilmagan_oqimdan_keyin_qaytadi(assistant, server):
     """Birinchi nosozlik navbatni abadiy egallab qolmasligi kerak."""
     server.status = 500
     for _ in range(5):
         with pytest.raises(AssistantError):
-            client.stream("salom", user_id="venera:1")
+            assistant.stream("salom", user_id="venera:1")
     server.status = None
-    collect(client.stream("salom", user_id="venera:1"))
+    collect(assistant.stream("salom", user_id="venera:1"))
 
 
-def test_uzilgan_oqim_ham_slotni_qaytaradi(client, server):
+def test_uzilgan_oqim_ham_slotni_qaytaradi(assistant, server):
     server.cut_after = 1
     for _ in range(4):
         with pytest.raises(AssistantError):
-            collect(client.stream("salom", user_id="venera:1"))
+            collect(assistant.stream("salom", user_id="venera:1"))
     server.cut_after = None
-    collect(client.stream("salom", user_id="venera:1"))
+    collect(assistant.stream("salom", user_id="venera:1"))
 
 
-def test_javob_yopiladi(client, server):
-    collect(client.stream("salom", user_id="venera:1"))
+def test_javob_yopiladi(assistant, server):
+    collect(assistant.stream("salom", user_id="venera:1"))
     assert server.last.closed is True
 
 
 # --- fayllar --------------------------------------------------------------
 
 
-def test_ariza_fayli(client, server):
-    content_type, name, chunks = client.fetch_artifact("tok-A1", "docx")
+def test_ariza_fayli(assistant, server):
+    content_type, name, chunks = assistant.fetch_artifact("tok-A1", "docx")
     assert content_type == "application/pdf"
     assert name == "ariza.pdf"
     assert b"".join(chunks) == b"%PDF-1.4 fake"
@@ -465,42 +465,42 @@ def test_ariza_fayli(client, server):
 
 
 @pytest.mark.parametrize("kind", ["preview", "docx", "pdf"])
-def test_ariza_fayl_turlari(client, kind):
-    client.fetch_artifact("tok-A1", kind)
+def test_ariza_fayl_turlari(assistant, kind):
+    assistant.fetch_artifact("tok-A1", kind)
 
 
-def test_notogri_fayl_turi(client, server):
+def test_notogri_fayl_turi(assistant, server):
     with pytest.raises(AssistantError) as exc:
-        client.fetch_artifact("tok-A1", "exe")
+        assistant.fetch_artifact("tok-A1", "exe")
     assert exc.value.status == 400
     assert server.calls == []
 
 
 @pytest.mark.parametrize("token", ["../../secret", "a b", "tok/../x", ""])
-def test_yaroqsiz_fayl_kaliti(client, server, token):
+def test_yaroqsiz_fayl_kaliti(assistant, server, token):
     with pytest.raises(AssistantError) as exc:
-        client.fetch_artifact(token, "docx")
+        assistant.fetch_artifact(token, "docx")
     assert exc.value.status == 400
     assert server.calls == []
 
 
 @pytest.mark.parametrize("doc_id", ["../../etc/passwd", "a/b", "", "x" * 200])
-def test_yaroqsiz_hujjat_kaliti(client, server, doc_id):
+def test_yaroqsiz_hujjat_kaliti(assistant, server, doc_id):
     with pytest.raises(AssistantError) as exc:
-        client.fetch_doc(doc_id)
+        assistant.fetch_doc(doc_id)
     assert exc.value.status == 400
     assert server.calls == []
 
 
-def test_hujjat_pdfi(client, server):
-    client.fetch_doc("policy-7")
+def test_hujjat_pdfi(assistant, server):
+    assistant.fetch_doc("policy-7")
     assert server.calls[0]["path"] == "/doc/policy-7"
 
 
-def test_fayl_chegarasi(client, server, monkeypatch):
+def test_fayl_chegarasi(assistant, server, monkeypatch):
     monkeypatch.setattr(mod, "_MAX_FILE_BYTES", 8)
     server.file_bytes = b"x" * 100
-    _, _, chunks = client.fetch_doc("policy-7")
+    _, _, chunks = assistant.fetch_doc("policy-7")
     assert len(b"".join(chunks)) <= 100      # birinchi bo'lakdan keyin to'xtaydi
 
 
@@ -521,8 +521,8 @@ def test_fayl_nomi_tozalanadi(disposition, expected):
 # --- yig'ib olish ---------------------------------------------------------
 
 
-def test_ask_javobni_yigadi(client):
-    result = client.ask("Ta'til necha kun?", user_id="venera:1")
+def test_ask_javobni_yigadi(assistant):
+    result = assistant.ask("Ta'til necha kun?", user_id="venera:1")
     assert result["answer"] == "Yillik ta'til 21 kalendar kun."
     assert result["route"] == "both"
     assert result["requestId"] == "served-1"
@@ -531,13 +531,86 @@ def test_ask_javobni_yigadi(client):
     assert result["error"] is None
 
 
-def test_ask_xato_kadrini_qaytaradi(client, server):
+# --- endpoint: kimlik va sozlamadagi token ---------------------------------
+
+
+@pytest.fixture
+def api(monkeypatch, assistant, client):
+    """Endpoint soxta transport ustida: `/chat/stream` ning O'ZI tekshiriladi.
+    `client` - conftest'dagi HTTP klienti, `assistant` - shu fayldagi
+    integratsiya klienti."""
+    import app.api.v1.chat as module
+    monkeypatch.setattr(module, "_assistant", assistant)
+    return module, client
+
+
+def test_endpoint_kimlikni_tokendan_oladi(api, auth, server):
+    """`user_id` SO'ROV TANASIDAN emas, sessiyadan. Aks holda klient o'zini
+    boshqa xodim deb tanishtirib, o'sha odamning suhbat tarixiga kirardi -
+    xizmatda xotira `(user_id, chat_id)` bo'yicha saqlanadi."""
+    _, app_client = api
+    response = app_client.post("/api/v1/chat/stream", headers=auth,
+                               json={"question": "salom", "chatId": "c-9",
+                                     "user_id": "boshqa-odam"})
+    assert response.status_code == 200
+    body = server.calls[0]["body"]
+    assert body["user_id"] == "venera:1"        # admin fikstura actor_id
+    assert body["chat_id"] == "c-9"
+    assert "boshqa-odam" not in json.dumps(body)
+
+
+def test_endpoint_sozlamadagi_hrm_tokenini_uzatadi(api, auth, server, monkeypatch):
+    """VAQTINCHALIK yechim: `.env` dagi umumiy token. Uzatilmasa jonli HRM
+    savollari `auth_missing` bilan qaytardi."""
+    module, app_client = api
+    monkeypatch.setattr(module.settings, "hrm_token", "jwt-from-env")
+    app_client.post("/api/v1/chat/stream", headers=auth, json={"question": "salom"})
+    assert server.calls[0]["body"]["hrm_token"] == "jwt-from-env"
+
+
+def test_endpoint_token_bosh_bolsa_yubormaydi(api, auth, server, monkeypatch):
+    """Bo'sh satr YUBORILMAYDI: xizmat uni yaroqsiz sessiya deb qabul qilib,
+    hujjatlar bo'yicha savolni ham buzishi mumkin edi."""
+    module, app_client = api
+    monkeypatch.setattr(module.settings, "hrm_token", "")
+    app_client.post("/api/v1/chat/stream", headers=auth, json={"question": "salom"})
+    assert "hrm_token" not in server.calls[0]["body"]
+
+
+def test_endpoint_kadrlarni_ozgartirmasdan_uzatadi(api, auth):
+    module, app_client = api
+    response = app_client.post("/api/v1/chat/stream", headers=auth,
+                               json={"question": "salom"})
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-venera-request-id"] == "served-1"
+    kinds = [json.loads(line)["type"] for line in response.text.splitlines() if line.strip()]
+    assert kinds == ["stage", "sources", "token", "token", "done"]
+
+
+def test_endpoint_tokensiz_rad_etiladi(api):
+    _, app_client = api
+    assert app_client.post("/api/v1/chat/stream", json={"question": "salom"}).status_code == 401
+
+
+def test_endpoint_sozlanmagan_xizmat_haqida_aytadi(api, auth, monkeypatch):
+    """Kredensial bo'lmasa foydalanuvchi TUSHUNARLI xabar olishi kerak -
+    xizmatning 401 i esa "sessiyangiz tugadi" bo'lib ko'rinardi."""
+    module, app_client = api
+    monkeypatch.setattr(module._assistant, "client_id", "")
+    response = app_client.post("/api/v1/chat/stream", headers=auth,
+                               json={"question": "salom"})
+    assert response.status_code == 501
+    assert response.json()["message"] == "Savol-javob xizmati hali sozlanmagan"
+
+
+def test_ask_xato_kadrini_qaytaradi(assistant, server):
     """`auth_missing` - HRM tokeni yo'q. Bu XATO EMAS, holat: hujjatlar
     bo'yicha savollar ishlaydi, jonli HRM ma'lumoti esa yo'q."""
     server.frames = [
         frame(type="error", code="auth_missing", text="HRM sessiyasi kerak"),
         frame(type="done", route=None),
     ]
-    result = client.ask("Bugun kechikdimmi?", user_id="venera:1")
+    result = assistant.ask("Bugun kechikdimmi?", user_id="venera:1")
     assert result["error"] == {"code": "auth_missing", "text": "HRM sessiyasi kerak"}
     assert result["answer"] == ""

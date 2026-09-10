@@ -128,6 +128,25 @@ class Settings(BaseSettings):
     #: 100 KB matnni tarmoqqa chiqarib, keyin rad javobini olish ma'nosiz.
     hrm_assistant_max_question_chars: int = 2000
 
+    #: HRM sessiya token'i (JWT) - JONLI HRM ma'lumoti uchun.
+    #:
+    #: VAQTINCHALIK YECHIM VA BITTA MUHIM OQIBATI BOR. Xizmat bu token'ni
+    #: "so'rayotgan odamning O'Z sessiyasi" deb qabul qiladi va hujjatda
+    #: aytilganidek, token bilan "men / I" degani TOKEN EGASI hisoblanadi.
+    #: Ya'ni bu yerda bitta umumiy token turgan paytda Venera'ning HAR
+    #: QANDAY foydalanuvchisi "men bugun kechikdimmi?" deb so'rasa, javob
+    #: token EGASI haqida bo'ladi. Shuning uchun `/api/health` bu token
+    #: qo'yilganini ogohlantirish sifatida ko'rsatadi.
+    #:
+    #: Bo'sh bo'lsa jonli HRM savollari `auth_missing` bilan qaytadi, va bu
+    #: TO'G'RI xatti-harakat: boshqa odamning huquqi bilan javob berishdan
+    #: ko'ra javob bermaslik yaxshi. Hujjatlar bo'yicha savollar ishlaydi.
+    #:
+    #: Muddati tugagach xizmat yana `auth_missing` qaytaradi - token'ni
+    #: `.env` da yangilash kerak. Doimiy yechim: foydalanuvchi o'z HRM
+    #: hisobi bilan kirsin va token sessiyadan olinsin.
+    hrm_token: str = ""
+
     # --- CORS ---
     #: Bo'sh bo'lsa CORS o'chirilgan: frontend nginx orqali BIR XIL originda
     #: turadi (`/api` proxy), ya'ni CORS umuman kerak emas. Faqat frontend

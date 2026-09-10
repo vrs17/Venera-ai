@@ -62,6 +62,15 @@ async function take(url: string, filename: string) {
   }
 }
 
+/** The marker as it appears IN THE ANSWER TEXT. The service sends it bare
+ *  ("T1") while the answer cites it as "[T1]", so the brackets are added
+ *  when they are missing - otherwise the reader has to guess that the "T1"
+ *  in the list is the "[T1]" in the sentence above it. */
+function marker(call: AnswerSource, index: number): string {
+  const raw = call.marker?.trim() || `T${index + 1}`
+  return raw.startsWith('[') ? raw : `[${raw}]`
+}
+
 /** File name for a cited document: its title, or the id as a fallback. */
 function docName(source: AnswerSource): string {
   const base = (source.title?.trim() || source.doc_id || 'hujjat').replace(/[^\w.\- ]+/g, '_')
@@ -111,7 +120,7 @@ function docName(source: AnswerSource): string {
       <span class="proof__title">{{ t('sourcesHrm') }}</span>
       <ul class="proof__list">
         <li v-for="(call, i) in calls" :key="(call.marker || '') + i">
-          <span class="proof__marker">{{ call.marker || `[T${i + 1}]` }}</span>
+          <span class="proof__marker">{{ marker(call, i) }}</span>
           <code class="proof__tool">{{ call.tool }}</code>
           <span v-if="call.status && call.status !== 'ok'" class="proof__bad"> · {{ call.status }}</span>
           <span v-else-if="call.digest" class="proof__muted"> · {{ call.digest }}</span>

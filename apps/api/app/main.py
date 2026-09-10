@@ -199,6 +199,16 @@ def health() -> dict:
             "(.env: HRM_ASSISTANT_CLIENT_ID, HRM_ASSISTANT_CLIENT_SECRET)"
         )
 
+    # Umumiy HRM token'i - VAQTINCHALIK yechim, va uni unutib qo'yish oson.
+    # Xizmat hujjatiga ko'ra token bilan "men" degani TOKEN EGASI, ya'ni
+    # har qanday foydalanuvchi "men bugun kechikdimmi?" deb so'rasa javob
+    # o'sha bitta odam haqida bo'ladi. Buni AYTMASA hech kim sezmaydi.
+    if settings.hrm_token:
+        warnings.append(
+            "HRM_TOKEN sozlamada turibdi - UMUMIY token: jonli HRM javoblari "
+            "har kim uchun TOKEN EGASI haqida bo'ladi. Vaqtincha, sinov uchun."
+        )
+
     return {
         "status": "degraded" if warnings else "ok",
         "upstream": upstream,

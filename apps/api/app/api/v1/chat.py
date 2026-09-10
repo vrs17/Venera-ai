@@ -96,13 +96,18 @@ def stream(body: StreamRequest, user: AuthUser = Depends(current_user)) -> Strea
             # ketmasligi kerak - suhbat xotirasi shu kalit bo'yicha.
             user_id=f"venera:{user.actorId}",
             chat_id=body.chatId,
-            # HRM TOKENI HOZIRCHA YO'Q. Venera kimligi (users.yaml) HRM
-            # kimligidan alohida, ya'ni foydalanuvchining HRM sessiyasi
-            # bizda yo'q. Usiz "jonli" HRM savoliga xizmat `auth_missing`
-            # kodli xato kadri qaytaradi va frontend buni tushunarli
-            # xabarga o'giradi - hujjatlar bo'yicha savollar esa ISHLAYDI.
-            # HRM hisobini ulash qo'shilganda faqat shu qator o'zgaradi.
-            hrm_token=None,
+            # HRM TOKENI SOZLAMADAN, sessiyadan emas - VAQTINCHALIK.
+            #
+            # Venera kimligi (users.yaml) HRM kimligidan alohida, ya'ni
+            # foydalanuvchining o'z HRM sessiyasi bizda yo'q. Shu bosqichda
+            # `.env` dagi bitta umumiy token ishlatiladi, va uning ochiq
+            # oqibati bor: xizmat hujjatiga ko'ra token bilan "men" degani
+            # TOKEN EGASI, ya'ni har kim so'rasa javob o'sha odam haqida
+            # bo'ladi. `core/config.py` va `/api/health` shuni aytadi.
+            #
+            # Bo'sh bo'lsa `None` ketadi va jonli savol `auth_missing`
+            # bilan qaytadi - hujjatlar bo'yicha savollar esa ishlaydi.
+            hrm_token=settings.hrm_token or None,
             hrm_employee=body.hrmEmployee,
             max_chars=settings.hrm_assistant_max_question_chars,
         )

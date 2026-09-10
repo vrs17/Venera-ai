@@ -518,14 +518,44 @@ faylni o'zi olib beradi. Iqtibos qilingan hujjat uchun
 shu sababli frontend ularni `<a href>` bilan emas, token bilan `fetch`
 qilib yuklab oladi.
 
-**HRM JONLI MA'LUMOTI HOZIRCHA YO'Q.** Xizmat "men bugun kechikdimmi?" kabi
-savol uchun foydalanuvchining O'Z HRM sessiyasini (`hrm_token`) talab qiladi
-va boshqa odamning huquqi bilan hech qachon javob bermaydi. Venera kimligi
-(`config/users.yaml`) esa HRM kimligidan alohida, ya'ni bizda o'sha token
-yo'q. Shu holatda xizmat `auth_missing` kodli xato kadri qaytaradi va
-frontend buni tushunarli xabarga o'giradi. **Hujjatlar va qoidalar bo'yicha
-savollar to'liq ishlaydi.** Ulash uchun kerak bo'ladigan qaror: Venera'ga
-kirish HRM hisobi bilan bo'ladimi, yoki HRM hisobi alohida ulanadimi.
+### Jonli HRM ma'lumoti va `HRM_TOKEN`
+
+"Men bugun kechikdimmi?" kabi savol uchun xizmat foydalanuvchining HRM
+sessiyasini (`hrm_token`) talab qiladi va boshqa odamning huquqi bilan hech
+qachon javob bermaydi. Venera kimligi (`config/users.yaml`) esa HRM
+kimligidan alohida - ya'ni sessiyadan olinadigan token bizda yo'q.
+
+**Hozirgi bosqich: `.env` da bitta umumiy token.**
+
+```
+HRM_TOKEN=<HRM JWT>
+```
+
+Buning OCHIQ oqibati bor va u xizmat hujjatida yozilgan: *"With a token, the
+token's own account is the default"* - ya'ni token bilan **"men" degani
+TOKEN EGASI**. Venera'ning qaysi foydalanuvchisi so'rasa ham, jonli javob
+o'sha bitta odam haqida bo'ladi. Shuning uchun:
+
+* `/api/health` bu token qo'yilganini **ogohlantirish** sifatida ko'rsatadi
+  (`degraded`) - vaqtinchalik yechim unutilib ketmasligi uchun.
+* Har so'rov jurnalga KIM so'raganini yozadi (`Assistant javobi
+  (email): request_id=...`), ya'ni audit izida mos kelmaslik ko'rinadi.
+* Boshqa odam nomidan so'rash kerak bo'lsa `hrmEmployee` maydoni bor -
+  lekin HRM huquqlari baribir token egasining huquqlari bo'lib qoladi.
+
+Token muddati tuganda xizmat yana `auth_missing` qaytaradi: `.env` da
+yangilab, `systemctl --user restart venera-api.service`.
+
+`HRM_TOKEN` bo'sh bo'lsa jonli savollar `auth_missing` bilan qaytadi va
+frontend "HRM hisobingiz ulanmagan" deb aytadi. Bu TO'G'RI xatti-harakat:
+boshqa odamning huquqi bilan javob berishdan ko'ra javob bermaslik yaxshi.
+**Hujjatlar va qoidalar bo'yicha savollar har holatda ishlaydi.**
+
+**Doimiy yechim** (hali qilinmagan): foydalanuvchi o'z HRM hisobi bilan
+kirsin va token sessiyadan olinsin. Ikki yo'l bor - Venera'ga kirishning
+o'zi HRM orqali bo'lishi, yoki HRM hisobi alohida ulanishi. Kod tomonida
+ikkalasi ham bitta joyni o'zgartiradi: `api/v1/chat.py` dagi
+`hrm_token=settings.hrm_token or None`.
 
 **Tekshirish** (soxta xizmat bilan, kredensialsiz ham ishlaydi):
 
