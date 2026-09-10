@@ -399,6 +399,24 @@ export function useWakeWord(options: WakeWordOptions) {
   }
 
   async function consider(raw: Float32Array, rate: number) {
+    // The cooldown is checked FIRST, before the `await` below. Two reasons.
+    // It must stay a synchronous gate: with an await in front of it, two
+    // utterances could both read `lastRequest` before either wrote it and
+    // both go out, defeating the one rule that bounds our share of a router
+    // the whole fleet depends on. And a clip inside the window is dropped
+    // anyway, so resampling it first would be work for nothing.
+    const now = performance.now()
+    const gap = failures
+      ? Math.min(COOLDOWN_MS * 2 ** failures, MAX_BACKOFF_MS)
+      : COOLDOWN_MS
+    if (now - lastRequest < gap) {
+      // Dropped here means the server never sees it, so it leaves no trace in
+      // the wake log — which is exactly how a phrase split into two turns
+      // stayed invisible for so long. Say so in the console.
+      console.debug('[wake] sovish oynasida, yuborilmadi')
+      return
+    }
+
     let resampled: Float32Array
     try {
       resampled = await resampleTo16k(raw, rate)
@@ -419,18 +437,9 @@ export function useWakeWord(options: WakeWordOptions) {
       console.debug('[wake] juda uzun, yuborilmadi', Math.round(seconds * 1000), 'ms')
       return
     }
-    const now = performance.now()
-    const gap = failures
-      ? Math.min(COOLDOWN_MS * 2 ** failures, MAX_BACKOFF_MS)
-      : COOLDOWN_MS
-    if (now - lastRequest < gap) {
-      // Dropped here means the server never sees it, so it leaves no trace in
-      // the wake log — which is exactly how a phrase split into two turns
-      // stayed invisible for so long. Say so in the console.
-      console.debug('[wake] sovish oynasida, yuborilmadi')
-      return
-    }
-    lastRequest = now
+    // Claimed only now that the clip is really going out: a clip dropped for
+    // length must not spend the next 2.5 s of budget.
+    lastRequest = performance.now()
 
     aborter?.abort()
     aborter = new AbortController()
