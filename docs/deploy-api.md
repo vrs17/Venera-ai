@@ -443,6 +443,95 @@ Jonli o'lchangan (TTS -> STT aylanmasi orqali):
 
 Faqat `uz` va `uz-Cyrl` tillarida ko'rinadi: so'zning o'zi o'zbekcha.
 
+## Savol-javob: HR Assistant
+
+Chat javobi Venera ichida yasalmaydi. U yuqoridagi **BRB-TECH HR Assistant
+API** dan keladi (`10.10.50.4:8080`): o'sha xizmat hujjatlar bo'yicha RAG va
+HRM connector'ini o'z ichida birlashtiradi, ya'ni Venera uchun bu BITTA
+endpoint.
+
+```
+brauzer -> /api/v1/chat/stream (Venera)  ->  POST /api/chat/stream (Assistant)
+                                              |-> hujjatlar (RAG, Qdrant)
+                                              `-> HRM connector (hrm-mcp)
+```
+
+**Nega brauzer to'g'ridan-to'g'ri bormaydi.** Uch sabab, har biri yetarli:
+
+1. `X-Client-Secret` - ILOVANING siri. Frontend o'zi yuborsa, sir JS
+   bundle'ida va tarmoq panelida ochiq turardi.
+2. `10.10.50.4` ichki manzil - brauzer unga umuman yetib bormaydi
+   (foydalanuvchi `llm.brb-tech.uz` orqali keladi).
+3. Kimlik: `user_id` server tomonidan Venera token'idan qo'yiladi. Klient
+   uni o'zi yuborsa, boshqa xodimning suhbat tarixiga kirardi - xizmatda
+   xotira `(user_id, chat_id)` bo'yicha saqlanadi.
+
+**Sozlash** (`.env`):
+
+```
+ASSISTANT_BASE_URL=http://10.10.50.4:8080
+ASSISTANT_CLIENT_ID=<ilova kredensiali>
+ASSISTANT_CLIENT_SECRET=<ilova siri>
+```
+
+Bo'sh qolsa `/api/health` `degraded` bo'lib, "CHAT ISHLAMAYDI" deb aytadi va
+savol umuman yuborilmaydi - xizmat 401 qaytarardi va u foydalanuvchiga
+"sessiyangiz tugadi" bo'lib ko'rinardi.
+
+**Javob NDJSON oqimi**: har qatorda bitta kadr, kelishi bilan uzatiladi.
+
+| Kadr | Nima |
+|---|---|
+| `stage` | o'tkinchi holat ("Hujjatlar qidirilmoqda") - kutish paytida ko'rsatiladi |
+| `sources` | iqtiboslar (`[1]`) va HRM chaqiruvlari (`[T1]`) |
+| `artifact` | yaratilgan ariza fayli (DOCX/PDF) |
+| `token` | javob matni bo'laklari |
+| `done` | yakun: `route` (`rules`/`hrm`/`both`/`clarify`) |
+| `error` | tokenlar o'rniga: `code` va foydalanuvchiga xavfsiz `text` |
+
+`nginx` da alohida `location = /api/v1/chat/stream` bor: **buferlash va gzip
+o'chirilgan**. Aks holda nginx butun javobni yig'ib, oxirida bir yo'la
+berardi - ya'ni odam javob yozilayotganini ko'rmaydi va oqimning ma'nosi
+qolmaydi.
+
+**Fayl havolalari qayta yoziladi.** Xizmat bergan `docx_url` ichki manzilni
+ko'rsatadi; Venera uni `/api/v1/chat/artifact/{token}/{kind}` ga o'giradi va
+faylni o'zi olib beradi. Iqtibos qilingan hujjat uchun
+`/api/v1/chat/doc/{doc_id}`. Ikkalasi ham Venera sessiyasini talab qiladi,
+shu sababli frontend ularni `<a href>` bilan emas, token bilan `fetch`
+qilib yuklab oladi.
+
+**HRM JONLI MA'LUMOTI HOZIRCHA YO'Q.** Xizmat "men bugun kechikdimmi?" kabi
+savol uchun foydalanuvchining O'Z HRM sessiyasini (`hrm_token`) talab qiladi
+va boshqa odamning huquqi bilan hech qachon javob bermaydi. Venera kimligi
+(`config/users.yaml`) esa HRM kimligidan alohida, ya'ni bizda o'sha token
+yo'q. Shu holatda xizmat `auth_missing` kodli xato kadri qaytaradi va
+frontend buni tushunarli xabarga o'giradi. **Hujjatlar va qoidalar bo'yicha
+savollar to'liq ishlaydi.** Ulash uchun kerak bo'ladigan qaror: Venera'ga
+kirish HRM hisobi bilan bo'ladimi, yoki HRM hisobi alohida ulanadimi.
+
+**Tekshirish** (soxta xizmat bilan, kredensialsiz ham ishlaydi):
+
+```bash
+cd ~/Venera/apps/api
+venv/bin/python -m pytest -q tests/test_assistant.py     # 58 test, tarmoqsiz
+```
+
+Jonli tekshirish:
+
+```bash
+TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"...","password":"..."}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+
+curl -s -N -X POST http://127.0.0.1:8000/api/v1/chat/stream \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"question":"Yillik ta'\''til necha kun?","chatId":"c-1"}'
+```
+
+Kadrlar BIR-BIR kelishi kerak. Hammasi birdan kelsa - buferlash yoqilib
+qolgan (nginx `location` ini tekshiring).
+
 ## Avtomatik qayta ishga tushish
 
 | Holat | Xulq |

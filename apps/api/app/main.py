@@ -190,6 +190,15 @@ def health() -> dict:
     upstream = _upstream.snapshot()
     warnings.extend(warnings_for(upstream))
 
+    # Savol-javob zanjiri kredensialsiz JIMGINA ishlamaydi: har savol
+    # yuqoridagi xizmatdan 401 olardi va foydalanuvchi buni "xizmat
+    # javob bermadi" deb ko'rardi. Sozlanmaganini AYTAMIZ.
+    if not (settings.assistant_client_id and settings.assistant_client_secret):
+        warnings.append(
+            "assistant_client_id/secret bo'sh - CHAT ISHLAMAYDI "
+            "(.env: ASSISTANT_CLIENT_ID, ASSISTANT_CLIENT_SECRET)"
+        )
+
     return {
         "status": "degraded" if warnings else "ok",
         "upstream": upstream,

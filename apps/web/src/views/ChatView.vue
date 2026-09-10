@@ -2,12 +2,12 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { askAi } from '../api/chat.api'
+import { streamAsk } from '../api/chat.api'
 import { localizeApiError } from '../api/errors'
 import { useAuth } from '../composables/useAuth'
 import { useWakeWord, WAKE_LOCALES, WAKE_STORAGE_KEY } from '../composables/useWakeWord'
 import { warmGreeting } from '../api/greeting'
-import type { ActorType, Phase, UIExchange } from '../types'
+import type { ActorType, ChatFrame, Phase, PipelineResponse, UIExchange } from '../types'
 import { applyTheme, getInitialTheme } from '../theme'
 import type { Theme } from '../theme'
 import AmbientBackground from '../components/AmbientBackground.vue'
@@ -68,6 +68,17 @@ watch(devMode, (value) => localStorage.setItem('venera_dev_mode', value ? '1' : 
 // Imperative, non-reactive (the React useRef equivalent) — a plain let, not a ref.
 let abortController: AbortController | null = null
 
+// One conversation, one key. The assistant keeps its memory per
+// (user_id, chat_id), so follow-up questions ("va o'tgan oyda?") only work
+// while this stays the same — and "New chat" MUST change it, or the previous
+// conversation would bleed into the new one.
+function freshChatId(): string {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+let chatId = freshChatId()
+
 watch(theme, (value) => applyTheme(value), { immediate: true })
 onBeforeUnmount(() => abortController?.abort())
 
@@ -80,6 +91,7 @@ function newChat() {
   abortController = null
   exchanges.value = []
   phase.value = 'idle'
+  chatId = freshChatId()
 }
 
 // User-initiated cancel. Mark the in-flight exchange so PipelineResult can
@@ -134,22 +146,100 @@ function patch(id: string, p: Partial<UIExchange>) {
   exchanges.value = exchanges.value.map((e) => (e.id === id ? { ...e, ...p } : e))
 }
 
-// Run (or re-run) the pipeline for an existing exchange. Shared by send and
+// The answer arrives as text, not as a pipeline trace, so it is wrapped in
+// the shape the result view already knows. Everything the streamed route does
+// not have stays null and the view shows the assistant's own route instead.
+function streamedResponse(answer: string): PipelineResponse {
+  return {
+    finalStatus: 'READY_FOR_HR_RAG',
+    domain: 'HR',
+    domainReason: null,
+    guard: null,
+    intent: null,
+    orchestrator: null,
+    access: null,
+    retrieval: null,
+    answer,
+  }
+}
+
+// `auth_missing` is the one code worth translating: it means the question
+// needed live HRM data and this person has no HRM session here, which is a
+// setup fact the assistant cannot phrase for us. For every other code the
+// assistant's own text is user-safe and more specific than anything we could
+// invent, so it is shown as-is.
+function errorText(frame: ChatFrame): string {
+  if (frame.code === 'auth_missing') return t('chatHrmNotConnected')
+  return frame.text?.trim() || t('chatFailed')
+}
+
+// Run (or re-run) the question for an existing exchange. Shared by send and
 // regenerate so both paths handle abort/error/timing identically.
 function runPipeline(id: string, question: string) {
   phase.value = 'sending'
   const t0 = performance.now()
   const controller = new AbortController()
   abortController = controller
+  let answer = ''
+  let failure: string | null = null
 
-  askAi(question, controller.signal)
-    .then((response) => {
-      patch(id, { response, error: null, durationMs: performance.now() - t0 })
+  const onFrame = (frame: ChatFrame) => {
+    // A frame that arrives after Stop must not resurrect the exchange the
+    // user just cancelled.
+    if (controller.signal.aborted) return
+    switch (frame.type) {
+      case 'stage':
+        patch(id, { stage: frame.text?.trim() || frame.stage || null })
+        break
+      case 'sources':
+        patch(id, { sources: frame.sources ?? [] })
+        break
+      case 'artifact': {
+        // The fields come either nested under `artifact` or inline.
+        const { type: _type, ...inline } = frame
+        patch(id, { artifact: frame.artifact ?? inline })
+        break
+      }
+      case 'token':
+        answer += frame.text ?? ''
+        // The response object appears with the FIRST token, which is what
+        // swaps the "Thinking" loader for the answer being written.
+        patch(id, { response: streamedResponse(answer), stage: null, error: null })
+        break
+      case 'error':
+        failure = errorText(frame)
+        break
+      case 'done':
+        patch(id, { route: frame.route ?? null, stage: null })
+        break
+      default:
+        break
+    }
+  }
+
+  streamAsk(question, onFrame, { chatId, signal: controller.signal })
+    .then(() => {
+      const durationMs = performance.now() - t0
+      if (failure && !answer) {
+        // Nothing useful arrived: the error shell with Regenerate is the
+        // honest view.
+        patch(id, { error: failure, stage: null, durationMs })
+      } else {
+        patch(id, {
+          response: streamedResponse(answer),
+          // An error after a partial answer is a NOTE, not a failure: the
+          // part that arrived is still worth reading.
+          warning: failure,
+          error: null,
+          stage: null,
+          durationMs,
+        })
+      }
       phase.value = 'idle'
     })
     .catch((err: unknown) => {
       if (err instanceof DOMException && err.name === 'AbortError') return
-      patch(id, { error: localizeApiError(err, t), durationMs: performance.now() - t0 })
+      patch(id, { error: localizeApiError(err, t), stage: null, durationMs: performance.now() - t0 })
       phase.value = 'idle'
     })
 }
@@ -163,7 +253,10 @@ function send(text: string): boolean {
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `ex-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
-  exchanges.value = [...exchanges.value, { id, question: trimmed, response: null, error: null, durationMs: null }]
+  exchanges.value = [
+    ...exchanges.value,
+    { id, question: trimmed, response: null, error: null, durationMs: null, stage: null },
+  ]
   runPipeline(id, trimmed)
   return true
 }
@@ -173,7 +266,10 @@ function regenerate(id: string) {
   if (phase.value !== 'idle') return
   const ex = exchanges.value.find((e) => e.id === id)
   if (!ex) return
-  patch(id, { response: null, error: null, cancelled: false, durationMs: null })
+  patch(id, {
+    response: null, error: null, cancelled: false, durationMs: null,
+    stage: null, sources: [], artifact: null, warning: null, route: null,
+  })
   runPipeline(id, ex.question)
 }
 

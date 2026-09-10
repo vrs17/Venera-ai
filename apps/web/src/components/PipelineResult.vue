@@ -11,6 +11,7 @@ import TraceStages from './TraceStages.vue'
 import ThinkingLoader from './ThinkingLoader.vue'
 import MessageActions from './MessageActions.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
+import AnswerSources from './AnswerSources.vue'
 
 const props = defineProps<{
   exchange: UIExchange
@@ -148,7 +149,10 @@ const answerCopyText = computed(() => {
 
     <template v-else-if="!exchange.response">
       <TraceSkeleton v-if="devMode" />
-      <ThinkingLoader v-else />
+      <!-- The assistant says what it is doing ("searching documents"); that
+           beats a generic "Thinking" because it tells the person the wait has
+           a reason. Falls back to the loader before the first stage frame. -->
+      <ThinkingLoader v-else :status="exchange.stage || undefined" />
     </template>
 
     <ResultShell v-else :badge="displayBadge">
@@ -183,11 +187,24 @@ const answerCopyText = computed(() => {
 
       <MarkdownMessage v-if="exchange.response.answer" :source="exchange.response.answer" :style="{ marginBottom: '4px' }" />
 
+      <!-- Something failed AFTER part of the answer arrived. The answer stays;
+           this says what is missing from it. -->
+      <div v-if="exchange.warning" class="result__warning" role="status">{{ exchange.warning }}</div>
+
+      <AnswerSources :sources="exchange.sources" :artifact="exchange.artifact" />
+
       <MessageActions :copy-text="answerCopyText" :busy="busy" @regenerate="emit('regenerate')" />
 
-      <!-- Developer-only: the full pipeline trace and the round-trip timing. -->
-      <div v-if="devMode" :style="{ marginTop: '14px' }">
+      <!-- Developer-only: the full pipeline trace and the round-trip timing.
+           The streamed route has no stage trace to show (the assistant does
+           that work inside itself), so it reports its route and audit key
+           instead - an empty gate list would read as "nothing happened". -->
+      <div v-if="devMode && exchange.response.guard" :style="{ marginTop: '14px' }">
         <TraceStages :response="exchange.response" :default-open="true" />
+      </div>
+      <div v-else-if="devMode && (exchange.route || exchange.requestId)" class="result__audit">
+        <span v-if="exchange.route">{{ t('answerRoute', { route: exchange.route }) }}</span>
+        <span v-if="exchange.requestId" class="result__rid">{{ exchange.requestId }}</span>
       </div>
 
       <div
@@ -199,3 +216,27 @@ const answerCopyText = computed(() => {
     </ResultShell>
   </div>
 </template>
+
+<style scoped>
+.result__warning {
+  margin: 10px 0 2px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--warn-fg);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-bd);
+  border-radius: 8px;
+}
+.result__audit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.result__rid {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+</style>

@@ -7,14 +7,20 @@ import { useI18n } from 'vue-i18n'
  * brand-tinted highlight sweeping through it and three breathing dots. Honest
  * about being busy without exposing any pipeline internals. The ✦ avatar is
  * static so it morphs cleanly into the resolved answer's avatar.
+ *
+ * `status` replaces that single word when the assistant reports what it is
+ * actually doing ("searching documents"). It is the assistant's own text, in
+ * the language of the question, so it is NOT translated here.
  */
+const props = defineProps<{ status?: string }>()
 const { t } = useI18n({ useScope: 'global' })
+const word = () => props.status?.trim() || t('thinking')
 </script>
 
 <template>
-  <div class="think" role="status" :aria-label="t('thinking')">
+  <div class="think" role="status" :aria-label="word()">
     <span class="think__spark" aria-hidden="true">✦</span>
-    <span class="think__word">{{ t('thinking') }}</span>
+    <span class="think__word">{{ word() }}</span>
     <span class="think__dots" aria-hidden="true">
       <span class="think__dot" />
       <span class="think__dot" />

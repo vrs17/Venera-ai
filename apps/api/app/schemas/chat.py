@@ -118,6 +118,25 @@ class AskRequest(BaseModel):
     question: str
 
 
+class StreamRequest(BaseModel):
+    """`POST /chat/stream` tanasi.
+
+    KIMLIK BU YERDA YO'Q, va bu ataylab: `user_id` server tomonidan
+    `Authorization` token'idan qo'yiladi. Klient uni o'zi yuborsa, boshqa
+    xodimning suhbat tarixiga kirib olardi - yuqoridagi xizmatda xotira
+    `(user_id, chat_id)` bo'yicha saqlanadi.
+    """
+
+    question: str
+    #: Suhbat kaliti. Bir xil kalitli savollar bir-birini ESLAYDI. Klient
+    #: o'zi yaratadi (brauzerdagi suhbat oynasi), va u `user_id` bilan
+    #: birga ishlatilgani uchun boshqa odamning suhbatiga tushib qolmaydi.
+    chatId: str | None = Field(default=None, max_length=64)
+    #: Savoldagi "men" kim ekanini aniqlashtiradi (ism yoki id). Odatda
+    #: kerak emas - HRM token'ining o'z egasi hisoblanadi.
+    hrmEmployee: str | None = Field(default=None, max_length=120)
+
+
 class PipelineResponse(BaseModel):
     """types.ts: PipelineResponse
 

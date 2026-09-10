@@ -105,6 +105,69 @@ export interface PipelineResponse {
 
 export type Phase = 'idle' | 'sending'
 
+/* ---- Streamed answer (POST /api/v1/chat/stream) ----
+ *
+ * The backend proxies the HR Assistant's NDJSON frames: one JSON object per
+ * line. Field names are the assistant's own (snake_case) — renaming them here
+ * would mean maintaining a translation table for a contract we do not own,
+ * and every new field would silently go missing. The two exceptions are
+ * added by our backend, so they are ours to name.
+ */
+
+/** One proof item under an answer: a cited document or one HRM tool call. */
+export interface AnswerSource {
+  kind?: 'doc' | 'hrm' | (string & {})
+  /** The [n] marker in the answer text (documents). */
+  citation_index?: number
+  doc_id?: string
+  title?: string
+  section?: string
+  page?: number
+  /** The [Tn] marker in the answer text (HRM calls). */
+  marker?: string
+  /** HRM tool that was called, e.g. hrm_today_late. */
+  tool?: string
+  status?: string
+  /** Short code-built summary of what the call returned. */
+  digest?: string
+  /** ADDED BY OUR BACKEND: the path this browser can actually open. The
+   *  assistant's own URL points at an internal host the browser cannot reach. */
+  docUrl?: string | null
+}
+
+/** A generated application file (leave request), when the answer produced one. */
+export interface AnswerArtifact {
+  title?: string
+  doc_id?: string
+  /** ADDED BY OUR BACKEND: proxied paths, see AnswerSource.docUrl. */
+  docx_url?: string | null
+  pdf_url?: string | null
+  preview_url?: string | null
+  expires_at?: string
+}
+
+/** One NDJSON line. `type` is open: the assistant may add frames, and an
+ *  unknown one must be ignored rather than crash the reader. */
+export interface ChatFrame {
+  type: 'stage' | 'sources' | 'artifact' | 'token' | 'done' | 'error' | (string & {})
+  /** stage: human status text. token: the piece of answer to append. error: user-safe message. */
+  text?: string
+  stage?: string
+  sources?: AnswerSource[]
+  artifact?: AnswerArtifact
+  /** artifact frames may carry the fields inline instead of nested. */
+  docx_url?: string | null
+  pdf_url?: string | null
+  preview_url?: string | null
+  title?: string
+  doc_id?: string
+  /** done: which side answered. */
+  route?: string | null
+  /** error: machine-readable cause, e.g. auth_missing. */
+  code?: string
+  request_id?: string
+}
+
 export interface UIExchange {
   id: string
   question: string
@@ -115,6 +178,21 @@ export interface UIExchange {
   cancelled?: boolean
   /** Wall-clock duration measured client-side; the per-stage `seconds` come from the server. */
   durationMs: number | null
+  /** Live status from the assistant while the answer is still coming
+   *  ("searching documents"). Cleared once the first token arrives. */
+  stage?: string | null
+  /** Citations and HRM tool calls behind the answer. */
+  sources?: AnswerSource[]
+  /** The generated application file, when there is one. */
+  artifact?: AnswerArtifact | null
+  /** rules | hrm | both | clarify — shown in developer mode. */
+  route?: string | null
+  /** Audit key: the same value is in the assistant's own log. */
+  requestId?: string | null
+  /** An `error` frame that arrived AFTER some of the answer. The answer is
+   *  kept and this is shown under it — discarding a partial answer because
+   *  its last step failed throws away the part that was useful. */
+  warning?: string | null
 }
 
 /* ---- Backend auth contract (handoff doc) ---- */

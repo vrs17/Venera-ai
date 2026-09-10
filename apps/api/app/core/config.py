@@ -105,6 +105,29 @@ class Settings(BaseSettings):
     #: qoladi - ular kichkina va statistika uchun kerak.
     wake_log_max_files: int = 500
 
+    # --- HR Assistant (savolga javob beradigan yuqori xizmat) ---
+    #: BRB-TECH HR Assistant API: hujjatlar bo'yicha RAG + HRM connector,
+    #: bitta `/api/chat/stream` endpointi ortida. Venera uchun BU YAGONA
+    #: kirish nuqtasi - HRM ga to'g'ridan-to'g'ri borilmaydi.
+    assistant_base_url: str = "http://10.10.50.4:8080"
+    #: ILOVANING kredensiallari (`X-Client-Id` / `X-Client-Secret`). Usiz
+    #: xizmat 401 qaytaradi, shuning uchun savol umuman yuborilmaydi -
+    #: `/api/health` esa buni ogohlantirish sifatida ko'rsatadi.
+    #:
+    #: SIR BRAUZERGA HECH QACHON BERILMAYDI: frontend faqat Venera'ning
+    #: o'z `/api/v1/chat/stream` yo'liga boradi.
+    assistant_client_id: str = ""
+    assistant_client_secret: str = ""
+    #: Kadrlar ORASIDAGI eng uzun tanaffus, butun javob vaqti emas: LLM
+    #: javobi bir daqiqadan oshishi normal, bir daqiqa JIMLIK - nosozlik.
+    assistant_timeout: int = 120
+    #: Yuqorida bitta LLM turadi. Bu bizning ulushimiz - oshsa xizmatga
+    #: bormasdan 503 qaytariladi.
+    assistant_max_concurrent: int = 4
+    #: Undan uzun savol yuborilmaydi. Chegara xizmatda ham bor, lekin
+    #: 100 KB matnni tarmoqqa chiqarib, keyin rad javobini olish ma'nosiz.
+    assistant_max_question_chars: int = 2000
+
     # --- CORS ---
     #: Bo'sh bo'lsa CORS o'chirilgan: frontend nginx orqali BIR XIL originda
     #: turadi (`/api` proxy), ya'ni CORS umuman kerak emas. Faqat frontend
