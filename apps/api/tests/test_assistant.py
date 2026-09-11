@@ -173,11 +173,17 @@ def test_bosh_maydonlar_yuborilmaydi(assistant, server):
     assert set(server.calls[0]["body"]) == {"question", "user_id"}
 
 
-def test_hrm_tokeni_berilsa_otadi(assistant, server):
+def test_hrm_tokeni_tokens_xaritasida_ketadi(assistant, server):
+    """`tokens: {"hrm": ...}`, `hrm_token` EMAS - jonli o'lchov: qisqa
+    shakl bilan xizmat `auth_missing` qaytaradi, xarita bilan esa to'liq
+    javob beradi (bir xil token, 2026-09-11)."""
     collect(assistant.stream("Men bugun kechikdimmi?", user_id="venera:1",
-                          hrm_token="hrm-jwt", hrm_employee="Mamajonov"))
-    assert server.calls[0]["body"]["hrm_token"] == "hrm-jwt"
-    assert server.calls[0]["body"]["hrm_employee"] == "Mamajonov"
+                             hrm_token="hrm-jwt", hrm_employee="Mamajonov"))
+    body = server.calls[0]["body"]
+    assert body["tokens"] == {"hrm": "hrm-jwt"}
+    assert body["hrm_employee"] == "Mamajonov"
+    # Buzuq yo'l ustun kelib qolmasligi uchun qisqa shakl YUBORILMAYDI.
+    assert "hrm_token" not in body
 
 
 def test_audit_kaliti_yuboriladi_va_xizmatnikisi_ustun(assistant, server):
@@ -724,8 +730,8 @@ def test_endpoint_hrm_tokenini_har_sorovda_oqiydi(api, auth, server, monkeypatch
     app_client.post("/api/v1/chat/stream", headers=auth, json={"question": "salom"})
     app_client.post("/api/v1/chat/stream", headers=auth, json={"question": "salom"})
 
-    assert server.calls[0]["body"]["hrm_token"] == "birinchi-jwt"
-    assert server.calls[1]["body"]["hrm_token"] == "ikkinchi-jwt"
+    assert server.calls[0]["body"]["tokens"] == {"hrm": "birinchi-jwt"}
+    assert server.calls[1]["body"]["tokens"] == {"hrm": "ikkinchi-jwt"}
 
 
 def test_endpoint_token_bosh_bolsa_yubormaydi(api, auth, server, monkeypatch):
@@ -734,6 +740,7 @@ def test_endpoint_token_bosh_bolsa_yubormaydi(api, auth, server, monkeypatch):
     module, app_client = api
     monkeypatch.setattr(module, "hrm_token_now", lambda: "")
     app_client.post("/api/v1/chat/stream", headers=auth, json={"question": "salom"})
+    assert "tokens" not in server.calls[0]["body"]
     assert "hrm_token" not in server.calls[0]["body"]
 
 

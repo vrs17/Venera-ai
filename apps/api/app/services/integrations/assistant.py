@@ -202,7 +202,18 @@ class AssistantClient:
         if chat_id:
             payload["chat_id"] = chat_id
         if hrm_token:
-            payload["hrm_token"] = hrm_token
+            # `tokens` XARITASI, `hrm_token` qisqa shakli EMAS - O'LCHANGAN.
+            #
+            # Hujjatda "hrm_token is the shorthand for tokens['hrm']" deb
+            # yozilgan, lekin jonli xizmatda (2026-09-11) qisqa shakl
+            # ISHLAMAYDI: aynan bir xil token bilan `hrm_token` yuborilsa
+            # `auth_missing` qaytadi, `tokens: {"hrm": ...}` yuborilsa esa
+            # to'liq javob keladi. Token o'zi joyida edi - HRM ning
+            # `/api/account` i o'sha token bilan 200 qaytardi.
+            #
+            # Ikkalasini birga yuborish YO'Q: buzuq yo'l ustun kelib
+            # qolsa, muammo yana qaytardi.
+            payload["tokens"] = {"hrm": hrm_token}
         if hrm_employee:
             payload["hrm_employee"] = hrm_employee
 

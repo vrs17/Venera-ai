@@ -572,6 +572,23 @@ yopishadigan narsalarni oladi.
 `.env` ni qo'lda tahrirlash ham ishlaydi - registr (`hrm_token` /
 `HRM_TOKEN`) va qo'shtirnoq muhim emas.
 
+**TUZOQ: `hrm_token` qisqa shakli ISHLAMAYDI.** Xizmat hujjati
+*"hrm_token is the shorthand for tokens['hrm']"* deb aytadi, lekin jonli
+o'lchovda (2026-09-11) faqat XARITA shakli ishlaydi:
+
+```jsonc
+{"tokens": {"hrm": "<jwt>"}}   // ishlaydi
+{"hrm_token": "<jwt>"}          // auth_missing, AYNAN bir xil token bilan
+```
+
+Buni topish oson emas edi, chunki xato token yaroqsiz bo'lgandagi xato
+bilan bir xil ko'rinadi. Ajratish usuli: token'ni HRM ning o'ziga
+sinash - `curl https://hrm-api.brb-tech.uz/api/account -H "Authorization:
+Bearer <jwt>"`. 200 kelsa token joyida, demak muammo shaklda.
+
+Ikkalasini birga yuborish YO'Q: buzuq yo'l ustun kelib qolsa muammo
+qaytardi.
+
 **`exp` HAQIQIY umr emas.** `/api/health` va vosita token aytgan muddatni
 ko'rsatadi, lekin HRM sessiyani undan oldin ham bekor qiladi: jonli
 o'lchovda `exp` 10 soat ko'rsatgan token amalda bir necha daqiqada
