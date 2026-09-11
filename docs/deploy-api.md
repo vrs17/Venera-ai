@@ -543,8 +543,40 @@ o'sha bitta odam haqida bo'ladi. Shuning uchun:
 * Boshqa odam nomidan so'rash kerak bo'lsa `hrmEmployee` maydoni bor -
   lekin HRM huquqlari baribir token egasining huquqlari bo'lib qoladi.
 
-Token muddati tuganda xizmat yana `auth_missing` qaytaradi: `.env` da
-yangilab, `systemctl --user restart venera-api.service`.
+#### Token'ni almashtirish - QAYTA ISHGA TUSHIRISH KERAK EMAS
+
+HRM sessiyasi bir necha daqiqada tugaydi, ya'ni token kuniga o'n marta
+almashadi. Shuning uchun API uni `.env` dan **har so'rovda** o'qiydi
+(`core/config.py`, `hrm_token_now`): fayl o'zgargani `stat` bilan
+aniqlanadi, o'zgarmagan bo'lsa diskka borilmaydi ham. Har almashtirishda
+restart qilish ayni vaqtda oqib turgan javoblarni kesib yuborardi.
+
+```bash
+cd ~/Venera/apps/api
+
+# Yozish (token ekranga chiqmaydi, faqat muddati ko'rsatiladi)
+venv/bin/python tools/set_hrm_token.py 'eyJhbGciOi...'
+
+# Yoki nusxadan / fayldan
+cat /tmp/token.txt | venv/bin/python tools/set_hrm_token.py -
+
+# Hozirgi holat
+venv/bin/python tools/set_hrm_token.py --show
+```
+
+Vosita `.env` ni ATOMIK yozadi (yonidagi vaqtinchalik fayl + `os.replace`),
+huquqlarini (600) saqlaydi, takroriy `hrm_token` qatorlarini tozalaydi va
+`Bearer ` prefiksi, qo'shtirnoq, yangi qator kabi nusxa-ko'chirishda
+yopishadigan narsalarni oladi.
+
+`.env` ni qo'lda tahrirlash ham ishlaydi - registr (`hrm_token` /
+`HRM_TOKEN`) va qo'shtirnoq muhim emas.
+
+**`exp` HAQIQIY umr emas.** `/api/health` va vosita token aytgan muddatni
+ko'rsatadi, lekin HRM sessiyani undan oldin ham bekor qiladi: jonli
+o'lchovda `exp` 10 soat ko'rsatgan token amalda bir necha daqiqada
+yaroqsiz bo'ldi. Shuning uchun "hali 9 soat bor" degan xulosaga
+ishonmang - `auth_missing` kelsa token'ni almashtiring.
 
 `HRM_TOKEN` bo'sh bo'lsa jonli savollar `auth_missing` bilan qaytadi va
 frontend "HRM hisobingiz ulanmagan" deb aytadi. Bu TO'G'RI xatti-harakat:

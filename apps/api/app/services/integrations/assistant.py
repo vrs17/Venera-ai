@@ -39,12 +39,14 @@ iqtibos qilingan hujjat PDF'i uchun ham (`fetch_doc`).
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import http.client
 import json
 import logging
 import re
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -484,6 +486,58 @@ def _filename(disposition: str, path: str) -> str:
         raw = urllib.parse.unquote(raw)
     clean = re.sub(r"[^\w.\- ]+", "_", raw).strip(" .") or "hujjat"
     return clean[:120]
+
+
+# --- HRM token holati ------------------------------------------------------
+
+
+def token_seconds_left(token: str) -> int | None:
+    """JWT tugashigacha qolgan soniya. `None` - o'qib bo'lmadi.
+
+    Imzo TEKSHIRILMAYDI va tekshirilmasligi kerak: bizda HRM ning ochiq
+    kaliti yo'q, va bu yerda qaror ham qabul qilinmaydi. Haqiqiy tekshiruv
+    HRM ning o'zida; bu faqat "nega ishlamayapti" degan savolga bir
+    qatorda javob berish uchun - token muddati tugaganini bilmasdan
+    odam nosozlikni boshqa joyda izlaydi.
+
+    Token MAZMUNI hech qayerga yozilmaydi - faqat `exp` o'qiladi.
+    """
+    parts = (token or "").split(".")
+    if len(parts) != 3:
+        return None
+    payload = parts[1]
+    payload += "=" * (-len(payload) % 4)
+    try:
+        data = json.loads(base64.urlsafe_b64decode(payload.encode()))
+    except Exception:  # noqa: BLE001 - buzuq token diagnostikani buzmasin
+        return None
+    exp = data.get("exp") if isinstance(data, dict) else None
+    if not isinstance(exp, (int, float)):
+        return None
+    return int(exp - time.time())
+
+
+def token_warning(token: str) -> str | None:
+    """`/api/health` uchun bir qatorli holat. `None` - aytishga hojat yo'q.
+
+    `exp` HAQIQIY umr emas, faqat TOKEN AYTGAN muddat: HRM sessiyani
+    o'zidan oldin ham bekor qilishi mumkin (jonli o'lchov: `exp` 10 soat
+    ko'rsatgan token amalda bir necha daqiqada yaroqsiz bo'ldi). Shuning
+    uchun xabarda "exp bo'yicha" deb aytiladi - aks holda odam "hali 9
+    soat bor" deb, muammoni butunlay boshqa joyda izlardi.
+    """
+    if not token:
+        return None
+    shared = ("umumiy token: jonli HRM javoblari har kim uchun TOKEN EGASI "
+              "haqida bo'ladi")
+    left = token_seconds_left(token)
+    if left is None:
+        return f"hrm_token o'qib bo'lmadi (JWT emas?) - jonli HRM ishlamaydi; {shared}"
+    if left <= 0:
+        return (f"hrm_token MUDDATI TUGAGAN ({-left} s oldin) - jonli HRM savollari "
+                "ishlamaydi, .env dagi qiymatni yangilang")
+    return (f"hrm_token o'rnatilgan (exp bo'yicha {left // 60} daq qoldi, lekin HRM "
+            f"sessiyani oldin ham bekor qilishi mumkin) - vaqtincha, {shared}")
 
 
 @contextlib.contextmanager

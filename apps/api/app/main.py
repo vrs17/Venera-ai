@@ -32,7 +32,8 @@ from fastapi import Depends
 from .api.deps import docs_viewer, get_user_store
 from .api.v1 import router as v1_router
 from .core import errors
-from .core.config import settings
+from .core.config import hrm_token_now, settings
+from .services.integrations.assistant import token_warning
 from .services.upstream import UpstreamHealth, warnings_for
 from .services.users import example_password_hashes
 
@@ -199,15 +200,13 @@ def health() -> dict:
             "(.env: HRM_ASSISTANT_CLIENT_ID, HRM_ASSISTANT_CLIENT_SECRET)"
         )
 
-    # Umumiy HRM token'i - VAQTINCHALIK yechim, va uni unutib qo'yish oson.
-    # Xizmat hujjatiga ko'ra token bilan "men" degani TOKEN EGASI, ya'ni
-    # har qanday foydalanuvchi "men bugun kechikdimmi?" deb so'rasa javob
-    # o'sha bitta odam haqida bo'ladi. Buni AYTMASA hech kim sezmaydi.
-    if settings.hrm_token:
-        warnings.append(
-            "HRM_TOKEN sozlamada turibdi - UMUMIY token: jonli HRM javoblari "
-            "har kim uchun TOKEN EGASI haqida bo'ladi. Vaqtincha, sinov uchun."
-        )
+    # Umumiy HRM token'i - VAQTINCHALIK yechim, uni unutib qo'yish oson, va
+    # muddati bir necha daqiqada tugaydi. Ikkalasi ham shu bir qatorda
+    # aytiladi: aks holda "nega jonli savol ishlamayapti" degan savolga
+    # javob faqat log'da bo'lardi.
+    token_note = token_warning(hrm_token_now())
+    if token_note:
+        warnings.append(token_note)
 
     return {
         "status": "degraded" if warnings else "ok",

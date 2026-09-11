@@ -21,7 +21,7 @@ import logging
 from fastapi import APIRouter, Depends, Path
 from fastapi.responses import StreamingResponse
 
-from ...core.config import settings
+from ...core.config import hrm_token_now, settings
 from ...core.errors import error_status
 from ...schemas.auth import AuthUser
 from ...schemas.chat import AskRequest, PipelineResponse, StreamRequest
@@ -105,9 +105,15 @@ def stream(body: StreamRequest, user: AuthUser = Depends(current_user)) -> Strea
             # TOKEN EGASI, ya'ni har kim so'rasa javob o'sha odam haqida
             # bo'ladi. `core/config.py` va `/api/health` shuni aytadi.
             #
+            # `hrm_token_now()`, `settings.hrm_token` EMAS: HRM sessiyasi
+            # bir necha daqiqada tugaydi, ya'ni token tez-tez almashadi.
+            # Sozlama obyekti faylni faqat import paytida o'qigan bo'lardi
+            # va yangi qiymat uchun restart kerak bo'lardi - har necha
+            # daqiqada restart esa oqib turgan javoblarni kesardi.
+            #
             # Bo'sh bo'lsa `None` ketadi va jonli savol `auth_missing`
             # bilan qaytadi - hujjatlar bo'yicha savollar esa ishlaydi.
-            hrm_token=settings.hrm_token or None,
+            hrm_token=hrm_token_now() or None,
             hrm_employee=body.hrmEmployee,
             max_chars=settings.hrm_assistant_max_question_chars,
         )

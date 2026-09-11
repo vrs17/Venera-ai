@@ -22,6 +22,8 @@ from app.services.integrations.assistant import (
     AssistantClient,
     AssistantError,
     _filename,
+    token_seconds_left,
+    token_warning,
 )
 
 BASE = "http://assistant.test"
@@ -518,6 +520,158 @@ def test_fayl_nomi_tozalanadi(disposition, expected):
     assert _filename(disposition, "/doc/policy-7") == expected
 
 
+# --- token holati ---------------------------------------------------------
+
+
+def _jwt(exp: int | None) -> str:
+    """Imzosiz, faqat `exp` bor JWT shakli - `token_seconds_left` imzoni
+    tekshirmaydi va tekshirmasligi kerak (HRM ochiq kaliti bizda yo'q)."""
+    import base64
+    body = {} if exp is None else {"exp": exp}
+    raw = base64.urlsafe_b64encode(json.dumps(body).encode()).decode().rstrip("=")
+    return f"header.{raw}.signature"
+
+
+def test_token_muddati_oqiladi():
+    import time
+    left = token_seconds_left(_jwt(int(time.time()) + 600))
+    assert left is not None and 590 < left <= 600
+
+
+def test_tugagan_token_manfiy_qaytaradi():
+    import time
+    left = token_seconds_left(_jwt(int(time.time()) - 30))
+    assert left is not None and left < 0
+
+
+@pytest.mark.parametrize("value", ["", "bir.qism", "a.b.c", "not-a-jwt", "a." * 3])
+def test_yaroqsiz_token_yiqitmaydi(value):
+    """Buzuq token DIAGNOSTIKANI buzmasligi kerak: `/api/health` shu
+    funksiyani chaqiradi va u yiqilsa butun holat sahifasi yiqilardi."""
+    assert token_seconds_left(value) is None
+
+
+def test_exp_yoq_bolsa_none():
+    assert token_seconds_left(_jwt(None)) is None
+
+
+def test_ogohlantirish_tugagan_tokenni_aytadi():
+    import time
+    note = token_warning(_jwt(int(time.time()) - 5))
+    assert note and "MUDDATI TUGAGAN" in note
+
+
+def test_ogohlantirish_umumiy_tokendan_xabar_beradi():
+    """Umumiy token - VAQTINCHALIK yechim, va uni unutib qo'yish oson."""
+    import time
+    note = token_warning(_jwt(int(time.time()) + 3600))
+    assert note and "TOKEN EGASI" in note
+
+
+def test_token_yoq_bolsa_ogohlantirish_yoq():
+    assert token_warning("") is None
+
+
+def test_token_ogohlantirishida_tokenning_ozi_yoq():
+    """Xabar `/api/health` javobiga tushadi - monitoring o'qiydi, log'ga
+    yoziladi. Token MAZMUNI u yerga hech qachon tushmasligi kerak."""
+    import time
+    token = _jwt(int(time.time()) + 60)
+    note = token_warning(token) or ""
+    assert token not in note
+    assert token.split(".")[1] not in note
+
+
+# --- `.env` dan issiq o'qish ----------------------------------------------
+
+
+def test_env_dan_yangi_token_restartsiz_olinadi(tmp_path, monkeypatch):
+    """HRM sessiyasi bir necha daqiqada tugaydi. Sozlama obyekti faylni
+    faqat import paytida o'qigan bo'lardi, ya'ni har almashtirishda
+    restart kerak bo'lardi - va restart oqib turgan javoblarni kesardi."""
+    from app.core import config
+
+    env = tmp_path / ".env"
+    env.write_text("SECRET_KEY=x\nhrm_token=birinchi\n")
+    monkeypatch.setattr(config, "_ENV_FILE", env)
+    monkeypatch.setattr(config, "_token_cache", (None, ""))
+    assert config.hrm_token_now() == "birinchi"
+
+    # Yangi qiymat - IMPORTGA TEGILMASDAN ko'rinishi kerak.
+    env.write_text("SECRET_KEY=x\nhrm_token=ikkinchi\n")
+    import os
+    os.utime(env, (0, 0))          # `mtime` albatta boshqa bo'lsin
+    assert config.hrm_token_now() == "ikkinchi"
+
+
+def test_env_ozgarmasa_diskka_borilmaydi(tmp_path, monkeypatch):
+    from app.core import config
+
+    env = tmp_path / ".env"
+    env.write_text("hrm_token=qiymat\n")
+    monkeypatch.setattr(config, "_ENV_FILE", env)
+    monkeypatch.setattr(config, "_token_cache", (None, ""))
+    assert config.hrm_token_now() == "qiymat"
+
+    reads = []
+    original = config._read_env_value
+    monkeypatch.setattr(config, "_read_env_value",
+                        lambda *a, **kw: (reads.append(1), original(*a, **kw))[1])
+    for _ in range(5):
+        config.hrm_token_now()
+    assert reads == [], "fayl o'zgarmagan, lekin qayta o'qilgan"
+
+
+def test_fayl_oqilmasa_eski_qiymat_qoladi(tmp_path, monkeypatch):
+    """Tahrirlash o'rtasida qolgan yoki o'chib ketgan fayl tufayli ishlab
+    turgan chat to'xtab qolmasligi kerak."""
+    from app.core import config
+
+    env = tmp_path / ".env"
+    env.write_text("hrm_token=ishlaydi\n")
+    monkeypatch.setattr(config, "_ENV_FILE", env)
+    monkeypatch.setattr(config, "_token_cache", (None, ""))
+    assert config.hrm_token_now() == "ishlaydi"
+
+    env.unlink()
+    assert config.hrm_token_now() == "ishlaydi"
+
+
+def test_kalit_olib_tashlansa_bosh_qaytadi(tmp_path, monkeypatch):
+    """Fayl O'QILDI, lekin kalit yo'q - bu "token olib tashlandi" degani."""
+    from app.core import config
+
+    env = tmp_path / ".env"
+    env.write_text("hrm_token=bor\n")
+    monkeypatch.setattr(config, "_ENV_FILE", env)
+    monkeypatch.setattr(config, "_token_cache", (None, ""))
+    assert config.hrm_token_now() == "bor"
+
+    env.write_text("SECRET_KEY=x\n")
+    import os
+    os.utime(env, (0, 0))
+    assert config.hrm_token_now() == ""
+
+
+@pytest.mark.parametrize("line,expected", [
+    ("hrm_token=oddiy", "oddiy"),
+    ("HRM_TOKEN=katta_harf", "katta_harf"),
+    ('hrm_token="qo`shtirnoqda"', "qo`shtirnoqda"),
+    ("hrm_token='bir tirnoqda'", "bir tirnoqda"),
+    ("  hrm_token = bosh joylar  ", "bosh joylar"),
+    ("# hrm_token=izohda\nhrm_token=haqiqiy", "haqiqiy"),
+    ("hrm_token=birinchi\nhrm_token=oxirgi", "oxirgi"),
+])
+def test_env_qatori_turli_shaklda(tmp_path, line, expected):
+    """`.env` ni odam qo'lda tahrirlaydi, ya'ni shakl har xil bo'ladi.
+    Registr va qo'shtirnoq `pydantic-settings` da ham shunday ishlanadi."""
+    from app.core.config import _read_env_value
+
+    env = tmp_path / ".env"
+    env.write_text(line + "\n")
+    assert _read_env_value(env, "hrm_token") == expected
+
+
 # --- yig'ib olish ---------------------------------------------------------
 
 
@@ -559,20 +713,26 @@ def test_endpoint_kimlikni_tokendan_oladi(api, auth, server):
     assert "boshqa-odam" not in json.dumps(body)
 
 
-def test_endpoint_sozlamadagi_hrm_tokenini_uzatadi(api, auth, server, monkeypatch):
-    """VAQTINCHALIK yechim: `.env` dagi umumiy token. Uzatilmasa jonli HRM
-    savollari `auth_missing` bilan qaytardi."""
+def test_endpoint_hrm_tokenini_har_sorovda_oqiydi(api, auth, server, monkeypatch):
+    """Token `.env` dan HAR SO'ROVDA olinadi, `settings` dan emas: HRM
+    sessiyasi bir necha daqiqada tugaydi va yangi qiymat uchun restart
+    kerak bo'lsa, restart oqib turgan javoblarni kesib yuborardi."""
     module, app_client = api
-    monkeypatch.setattr(module.settings, "hrm_token", "jwt-from-env")
+    tokens = iter(["birinchi-jwt", "ikkinchi-jwt"])
+    monkeypatch.setattr(module, "hrm_token_now", lambda: next(tokens))
+
     app_client.post("/api/v1/chat/stream", headers=auth, json={"question": "salom"})
-    assert server.calls[0]["body"]["hrm_token"] == "jwt-from-env"
+    app_client.post("/api/v1/chat/stream", headers=auth, json={"question": "salom"})
+
+    assert server.calls[0]["body"]["hrm_token"] == "birinchi-jwt"
+    assert server.calls[1]["body"]["hrm_token"] == "ikkinchi-jwt"
 
 
 def test_endpoint_token_bosh_bolsa_yubormaydi(api, auth, server, monkeypatch):
     """Bo'sh satr YUBORILMAYDI: xizmat uni yaroqsiz sessiya deb qabul qilib,
     hujjatlar bo'yicha savolni ham buzishi mumkin edi."""
     module, app_client = api
-    monkeypatch.setattr(module.settings, "hrm_token", "")
+    monkeypatch.setattr(module, "hrm_token_now", lambda: "")
     app_client.post("/api/v1/chat/stream", headers=auth, json={"question": "salom"})
     assert "hrm_token" not in server.calls[0]["body"]
 

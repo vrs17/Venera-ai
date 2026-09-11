@@ -10,6 +10,8 @@ Default'lar LOKAL ISHLAB CHIQISH uchun xavfsiz bo'lishi kerak, prod uchun emas.
 
 from __future__ import annotations
 
+import threading
+
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -145,6 +147,11 @@ class Settings(BaseSettings):
     #: Muddati tugagach xizmat yana `auth_missing` qaytaradi - token'ni
     #: `.env` da yangilash kerak. Doimiy yechim: foydalanuvchi o'z HRM
     #: hisobi bilan kirsin va token sessiyadan olinsin.
+    #:
+    #: BU QIYMAT ISHGA TUSHGANDAGISI. Kod uni TO'G'RIDAN-TO'G'RI
+    #: ISHLATMAYDI - `hrm_token_now()` ga qara: token bir necha daqiqada
+    #: muddati tugaydi, ya'ni har almashtirishda xizmatni qayta ishga
+    #: tushirish ayni vaqtdagi javob oqimlarini kesib yuborardi.
     hrm_token: str = ""
 
     # --- CORS ---
@@ -159,3 +166,78 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+#: `.env` fayli - `hrm_token_now()` shundan o'qiydi.
+_ENV_FILE = BASE_DIR / ".env"
+
+#: Oxirgi o'qish: (fayl belgisi, qiymat). Belgi - `mtime_ns` va hajm.
+_token_cache: tuple[object, str] = (None, settings.hrm_token)
+_token_lock = threading.Lock()
+
+
+def hrm_token_now() -> str:
+    """HRM token'i - `.env` dan, HAR SAFAR yangi qiymat bilan.
+
+    NEGA SOZLAMA OBYEKTIDAN EMAS. HRM sessiyasi bir necha daqiqada muddati
+    tugaydi, ya'ni token tez-tez almashtiriladi. `Settings` esa faylni
+    FAQAT import paytida o'qiydi - yangi qiymatni ko'rish uchun xizmatni
+    qayta ishga tushirish kerak bo'lardi, va har necha daqiqada restart
+    ayni vaqtda oqib turgan javoblarni kesib yuborardi.
+
+    Diskka odatda BORILMAYDI: fayl o'zgargani `stat` bilan aniqlanadi
+    (`mtime_ns` + hajm), o'zgarmagan bo'lsa keshdagi qiymat qaytadi.
+
+    Fayl o'qilmasa yoki kalit yo'q bo'lsa - eng oxirgi MA'LUM qiymat
+    qaytadi, bo'sh satr emas: tahrirlash o'rtasida qolgan fayl tufayli
+    ishlab turgan chat to'xtab qolmasligi kerak.
+    """
+    global _token_cache
+    try:
+        info = _ENV_FILE.stat()
+        mark: object = (info.st_mtime_ns, info.st_size)
+    except OSError:
+        return _token_cache[1]
+    if mark == _token_cache[0]:
+        return _token_cache[1]
+    with _token_lock:
+        # Ikkinchi tekshiruv: qulf kutilayotganda boshqa ip allaqachon
+        # o'qib bo'lgan bo'lishi mumkin.
+        if mark == _token_cache[0]:
+            return _token_cache[1]
+        value = _read_env_value(_ENV_FILE, "hrm_token")
+        # `None` - kalit topilmadi. Bu "token olib tashlandi" degani ham
+        # bo'lishi mumkin, shuning uchun bo'sh satrga tushiriladi; faqat
+        # O'QISH xatosi eski qiymatni saqlab qoladi (yuqorida).
+        _token_cache = (mark, value if value is not None else "")
+        return _token_cache[1]
+
+
+def _read_env_value(path: Path, key: str) -> str | None:
+    """`.env` dan bitta kalitni o'qiydi. Butun faylni qayta tahlil
+    QILMAYDI: bizga faqat shu kalit kerak, qolganini o'zgartirish esa
+    ishlab turgan sozlamani kutilmaganda almashtirib qo'yardi.
+
+    `pydantic-settings` kabi harf registriga qaramaydi, va qiymat
+    atrofidagi qo'shtirnoqni oladi.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    wanted = key.lower()
+    found: str | None = None
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        if name.strip().lower() != wanted:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        # Oxirgi mos qator ustun - `.env` da takroriy kalit bo'lsa muhit
+        # o'zgaruvchilari ham shunday ishlaydi.
+        found = value
+    return found
