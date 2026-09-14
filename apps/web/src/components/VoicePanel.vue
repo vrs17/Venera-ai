@@ -316,9 +316,11 @@ async function handleRecorded() {
     }
     heard.value = text
     note.value = noteFor(result)
-    // Aks-sado suhbatga yuborishdan MUSTAQIL ishlaydi: sintez sekin bo'lsa
-    // ham savol darhol ketadi, sintez yiqilsa ham javob keladi.
-    void echo(text, turn)
+    // AKS-SADO OLIB TASHLANDI. Avval shu yerda tanilgan matnning O'ZI o'qib
+    // berilardi - STT va TTS zanjirini bitta gap bilan tekshirish uchun.
+    // Endi o'qiladigan matn SUHBAT JAVOBI (`speakAnswer`), va ikkisini birga
+    // qoldirish odamga o'z savolini eshittirib, keyin javobni yana ~15 s
+    // kutishga majbur qilardi.
     // Router docs: a low-confidence transcript has ~60-70% word error rate.
     // Do not act on it — show it and let the user decide.
     if (result.lowConfidence) {
@@ -355,13 +357,13 @@ function voiceErrorText(err: unknown): string {
 }
 
 /**
- * Tanilgan matnni ovoz bilan qaytaradi (birinchi bosqich: aks-sado).
+ * Matnni ovoz bilan o'qib beradi: suhbat javobi, yoki tayyor yozuv
+ * bo'lmaganda salomlashuv matni.
  *
- * Bu turnning ASOSIY ishi EMAS. Sintez yiqilsa transkript ekranda qoladi va
- * savol suhbatga baribir ketadi - aks holda ishlaydigan STT natijasi
- * ishlamayotgan TTS tufayli yo'qolardi.
+ * Bu turnning ASOSIY ishi EMAS. Sintez yiqilsa javob EKRANDA qoladi - ya'ni
+ * kelgan javob ishlamayotgan TTS tufayli yo'qolmaydi.
  */
-async function echo(text: string, turn: number) {
+async function speak(text: string, turn: number) {
   if (!canSpeak(String(locale.value))) return
   speechAborter?.abort()
   speechAborter = new AbortController()
@@ -403,6 +405,132 @@ async function echo(text: string, turn: number) {
     // yiqilganidan ko'ra muhimroq.
     if (!note.value) note.value = t('voiceSpeakFailed')
   }
+}
+
+//: O'qiladigan belgilar chegarasi. Backend ham shu qiymatda kesadi
+//: (`tts_max_chars`), lekin u SO'Z chegarasida kesadi, ya'ni gap yarmida
+//: to'xtaydi. Shuning uchun qisqartirishni o'zimiz, GAP chegarasida
+//: qilamiz - backenddagisi zaxira bo'lib qoladi.
+//:
+//: 600 EDI va bu javobni yarmida kesardi: mehnat ta'tili bo'yicha 6 bandli
+//: javob 1016 belgi bo'lib, ovoz 3-band oxirida to'xtab qolardi.
+//:
+//: 3000 jonli o'lchovga asoslangan: TTS serveri 5000 belgini ham qabul
+//: qiladi va birinchi bayt UZUNLIKDAN QAT'I NAZAR ~1.37 s da keladi, ya'ni
+//: uzun matn kechikish qo'shmaydi. Ovoz esa real vaqtdan ~4.7x tez
+//: yetkaziladi (3000 belgi = ~198 s ovoz, ~41 s oqim), shuning uchun ijro
+//: hech qachon oqimdan o'zib ketmaydi.
+const SPEAK_LIMIT = 3000
+
+/**
+ * Javobning O'QILADIGAN qismi: audit izidan oldingi hammasi.
+ *
+ * Javob IKKI qismdan iborat bo'lib keladi - avval javobning O'ZI, keyin
+ * "Tekshirilgan HRM ma'lumotlari:" va `[T1] hrm_search_employees - ... ->`
+ * ko'rinishidagi iz. Iz EKRAN uchun kerak: bank muhitida xodim javob qaysi
+ * so'rovdan chiqqanini ko'rishi shart. Lekin O'QILGANDA u javobdan bir
+ * necha barobar uzun: jonli o'lchangan savolda javobning o'zi 87 belgi,
+ * iz bilan birga 614 belgi. Ya'ni ovoz javobni aytib bo'lgach, yana yarim
+ * daqiqa "employeeId=22, month=9, year=2026" o'qib turardi.
+ *
+ * Ajratish NAQSH bo'yicha, matn bo'yicha EMAS: iz qatorlari `[T1]` kabi
+ * marker bilan BOSHLANADI, javob ichidagi iqtibos esa gap OXIRIDA turadi
+ * (`... kech qolmagan [T3].`). Izni tanishtirgan qator (`:` bilan tugaydi)
+ * ham tashlanadi - uning MATNI yuqoridagi modelning tilidan kelib chiqadi
+ * va o'zgarishi mumkin, shakli esa yo'q.
+ */
+function answerBody(markdown: string): string {
+  const lines = markdown.split(/\r?\n/)
+  let at = lines.findIndex((line) => /^\s*\[[A-Za-z]{1,4}[_-]?\d{1,6}\]\s/.test(line))
+  if (at < 0) return markdown
+  while (at > 0 && (!lines[at - 1].trim() || lines[at - 1].trim().endsWith(':'))) at--
+  const body = lines.slice(0, at).join('\n').trim()
+  // Hammasi iz bo'lib chiqdi (javobning o'zi yo'q): boricha o'qiymiz -
+  // jim qolgandan ko'ra afzal.
+  return body || markdown
+}
+
+/**
+ * Javob matnini O'QISHGA tayyorlaydi.
+ *
+ * Javob markdown bo'lib keladi: `**bo'lim:**`, `* ro'yxat`, `[T1]` iqtibos
+ * markerlari, ba'zan jadval. O'qigichga shundayligicha berilsa, u
+ * yulduzchani ham, `T1` ni ham gap deb o'qiydi - ya'ni javob eshitilmaydi,
+ * "yulduzcha yulduzcha dasturlash bo'limi" eshitiladi.
+ *
+ * Ro'yxat va jadval qatorlari NUQTAGA aylanadi: aks holda hamma qator bitta
+ * uzun gap bo'lib qolib, ovoz nafas olmay o'qiydi.
+ */
+function forSpeech(markdown: string): { text: string; shortened: boolean } {
+  const text = answerBody(markdown)
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]*)`/g, '$1')
+    // Havola va rasm: ko'rinadigan matn qoladi, URL ketadi. Iqtibos
+    // qoidalaridan OLDIN bo'lishi shart - aks holda `[matn](url)` ning
+    // birinchi qismi marker deb o'chirilardi.
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    // Iqtibos markerlari: `[T1]`, `[HR_045]`, `[1]`, `[1, 2]`. Ular EKRAN
+    // uchun - hujjatga havola, va o'qilganda faqat shovqin. Naqsh ATAYLAB
+    // tor: `[eslatma]` kabi oddiy qavsli so'z matnning o'zi bo'lishi mumkin.
+    .replace(/\[[A-Za-z]{1,4}[_-]?\d{1,6}\]/g, ' ')
+    .replace(/\[\d{1,3}(?:\s*,\s*\d{1,3})*\]/g, ' ')
+    // Qavs ichidagi dalil markerlari: `(e4)`, `(e1, e2)`. Ular hujjat
+    // ichidagi parchaga ishora qiladi va `sources` kadrida UMUMAN yo'q,
+    // ya'ni ekranda ham tushuntirilmaydi - o'qilganda esa "e to'rt" bo'lib
+    // chiqadi. Naqsh harf+raqam TALAB qiladi: "(lavozimi)" va "(sentyabr)"
+    // javobning o'z matni, "(21)" esa band raqami bo'lishi mumkin.
+    .replace(/\((?:[A-Za-z]{1,2}\d{1,3})(?:\s*,\s*[A-Za-z]{1,2}\d{1,3})*\)/g, ' ')
+    .replace(/^#{1,6}\s*/gm, '')
+    // Jadval ajratgich qatori (`|---|---|`) - butunlay ketadi.
+    .replace(/^[ \t]*\|?[\s:|-]{3,}\|?[ \t]*$/gm, ' ')
+    // Ro'yxat belgisi -> gap chegarasi. `*` ni olib tashlashdan OLDIN.
+    .replace(/^[ \t]*[-*+\u2022][ \t]+/gm, '. ')
+    .replace(/\|/g, ', ')
+    .replace(/\*\*|__|~~/g, '')
+    .replace(/\*/g, '')
+    .replace(/\r?\n+/g, '. ')
+    .replace(/\s+/g, ' ')
+    // Yuqoridagi almashtirishlardan qolgan bo'shliq va takror tinish
+    // belgilari: "kechikdi [T1]:" -> "kechikdi :" -> "kechikdi:".
+    .replace(/\s+([,.;:!?])/g, '$1')
+    // Ro'yxat va jadval qatorlaridan qolgan qo'shaloq tinish belgilari.
+    // TARTIB MUHIM: avval takroriy nuqta bittaga tushadi, keyingina
+    // ":." / ",." juftliklari tuzatiladi. Teskari tartibda ":.." ning
+    // faqat yarmi tuzalib, ":." qolib ketardi.
+    .replace(/(?:\.\s*){2,}/g, '. ')
+    .replace(/,\s*\./g, '.')           // "3," + qator oxiri -> "3."
+    .replace(/([;:])\s*\./g, '$1')     // "kechikdi:" + ro'yxat -> "kechikdi:"
+    .replace(/([.:;])\s*,\s*/g, '$1 ') // gap boshidagi ortiqcha vergul
+    .replace(/^[\s.,;:]+/, '')
+    .replace(/[\s,;:|-]+$/, '')
+    .trim()
+
+  if (text.length <= SPEAK_LIMIT) return { text, shortened: false }
+  const cut = text.slice(0, SPEAK_LIMIT)
+  const stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '))
+  // Gap chegarasi juda boshida bo'lsa ishlatilmaydi: javobning uchdan biri
+  // o'qilib to'xtagandan ko'ra so'z chegarasida kesish tushunarliroq.
+  if (stop > SPEAK_LIMIT / 2) return { text: cut.slice(0, stop + 1), shortened: true }
+  const space = cut.lastIndexOf(' ')
+  return { text: (space > 0 ? cut.slice(0, space) : cut).replace(/[\s,;:-]+$/, ''), shortened: true }
+}
+
+/**
+ * Suhbat javobini o'qib beradi - ovozli turnning OXIRGI qadami.
+ *
+ * NEGA BUTUN JAVOB BIRGA, gap-gapga bo'lib emas: yuqoridagi xizmat
+ * tokenlarni ~15 s jimlikdan keyin 0.02 s ichida BIRDAN yuboradi (jonli
+ * o'lchangan, `docs/deploy-api.md`). Ya'ni "kelgan gapni darhol o'qish"
+ * hech narsa tejamaydi - o'qish boshlanadigan payt baribir javob to'liq
+ * kelgan payt bo'ladi, kod esa ikki barobar murakkab bo'lardi.
+ */
+async function speakAnswer(turn: number) {
+  const { text, shortened } = forSpeech(props.answer || '')
+  // Javob kelmadi (xato yoki bo'sh): JIM qolamiz. Xato matni suhbatda
+  // ko'rinadi, va uni ovoz bilan takrorlash hech kimga yordam bermaydi.
+  if (!text) return
+  if (shortened && !note.value) note.value = t('voiceAnswerShortened')
+  await speak(text, turn)
 }
 
 /** Ijro. Rad etilishi XATO EMAS: brauzer avtomatik ijroga ruxsat bermasligi
@@ -462,8 +590,23 @@ function onOrbClick() {
   else if (state.value === 'idle' || state.value === 'error' || state.value === 'confirm') void startListening()
 }
 
-// The pipeline finishing is what ends the "thinking" state.
-watch(() => props.busy, (busy) => { if (!busy && state.value === 'thinking') state.value = 'idle' })
+// Quvurning tugashi = javob KELDI: "thinking" holati shunda tugaydi va
+// javob AYNAN shu paytda o'qiladi.
+//
+// NEGA `answer` KUZATILMAYDI: ChatView javobni token-token yig'adi va har
+// tokenda `answer` ni yangilaydi, ya'ni uni kuzatish har token uchun yangi
+// sintez so'rovi bo'lardi. `busy` esa turn oxirida BIR MARTA o'zgaradi.
+//
+// `state === 'thinking'` sharti: savol SHU PANELdan ketgani. Pastdagi
+// maydonga qo'lda yozilgan savol ovoz bilan o'qilmaydi - odam o'zi o'qiyapti.
+//
+// `flush: 'post'`: `answer` hisoblanadigan qiymat va `busy` bilan bir tikda
+// yangilanadi, post bosqichida u ANIQ oxirgi holatda bo'ladi.
+watch(() => props.busy, (busy) => {
+  if (busy || state.value !== 'thinking') return
+  state.value = 'idle'
+  void speakAnswer(turnId)
+}, { flush: 'post' })
 /** Greets, then listens. The order matters: the greeting comes out of the
  *  speakers, and `startListening()` stops any playback before opening the
  *  microphone, so the assistant never records itself saying hello. */
@@ -481,7 +624,7 @@ async function greetThenListen(text: string) {
     speech.value = prepared
     await playBlob(prepared)
   } else {
-    await echo(text, turn)
+    await speak(text, turn)
   }
   // The panel may have been closed, or the person may have tapped the orb
   // themselves while the greeting played — either way this turn is stale.

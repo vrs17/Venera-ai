@@ -21,7 +21,7 @@ import logging
 from fastapi import APIRouter, Depends, Path
 from fastapi.responses import StreamingResponse
 
-from ...core.config import hrm_token_now, settings
+from ...core.config import platform_tokens, settings
 from ...core.errors import error_status
 from ...schemas.auth import AuthUser
 from ...schemas.chat import AskRequest, PipelineResponse, StreamRequest
@@ -96,24 +96,29 @@ def stream(body: StreamRequest, user: AuthUser = Depends(current_user)) -> Strea
             # ketmasligi kerak - suhbat xotirasi shu kalit bo'yicha.
             user_id=f"venera:{user.actorId}",
             chat_id=body.chatId,
-            # HRM TOKENI SOZLAMADAN, sessiyadan emas - VAQTINCHALIK.
+            # PLATFORMA TOKENLARI SOZLAMADAN, sessiyadan emas - VAQTINCHALIK.
             #
-            # Venera kimligi (users.yaml) HRM kimligidan alohida, ya'ni
-            # foydalanuvchining o'z HRM sessiyasi bizda yo'q. Shu bosqichda
+            # Venera kimligi (users.yaml) HRM/CRM kimligidan alohida, ya'ni
+            # foydalanuvchining o'z sessiyasi bizda yo'q. Shu bosqichda
             # `.env` dagi bitta umumiy token ishlatiladi, va uning ochiq
             # oqibati bor: xizmat hujjatiga ko'ra token bilan "men" degani
             # TOKEN EGASI, ya'ni har kim so'rasa javob o'sha odam haqida
             # bo'ladi. `core/config.py` va `/api/health` shuni aytadi.
             #
-            # `hrm_token_now()`, `settings.hrm_token` EMAS: HRM sessiyasi
-            # bir necha daqiqada tugaydi, ya'ni token tez-tez almashadi.
-            # Sozlama obyekti faylni faqat import paytida o'qigan bo'lardi
-            # va yangi qiymat uchun restart kerak bo'lardi - har necha
+            # HAMMA token yuboriladi, tanlab emas: hujjat talabi - "send
+            # every token the user has, the assistant decides per question
+            # which platform it needs". Savol HRM haqidami yoki CRM
+            # haqidami, buni yuqoridagi xizmat o'zi hal qiladi (`route`).
+            #
+            # `platform_tokens()`, `settings` EMAS: sessiyalar bir necha
+            # daqiqada tugaydi, ya'ni tokenlar tez-tez almashadi. Sozlama
+            # obyekti faylni faqat import paytida o'qigan bo'lardi va
+            # yangi qiymat uchun restart kerak bo'lardi - har necha
             # daqiqada restart esa oqib turgan javoblarni kesardi.
             #
-            # Bo'sh bo'lsa `None` ketadi va jonli savol `auth_missing`
-            # bilan qaytadi - hujjatlar bo'yicha savollar esa ishlaydi.
-            hrm_token=hrm_token_now() or None,
+            # Token yo'q platforma haqidagi savol `auth_missing` bilan
+            # qaytadi ("CRM tizimiga kiring"), qolgani esa ishlaydi.
+            tokens=platform_tokens(),
             hrm_employee=body.hrmEmployee,
             max_chars=settings.hrm_assistant_max_question_chars,
         )

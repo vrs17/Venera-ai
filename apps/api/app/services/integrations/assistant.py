@@ -52,6 +52,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from socket import timeout as socket_timeout
 from typing import Any, Iterator
@@ -175,7 +176,7 @@ class AssistantClient:
         *,
         user_id: str,
         chat_id: str | None = None,
-        hrm_token: str | None = None,
+        tokens: Mapping[str, str] | None = None,
         hrm_employee: str | None = None,
         max_chars: int = 2000,
     ) -> AnswerStream:
@@ -201,19 +202,24 @@ class AssistantClient:
         # suhbat" bo'lib qolardi.
         if chat_id:
             payload["chat_id"] = chat_id
-        if hrm_token:
-            # `tokens` XARITASI, `hrm_token` qisqa shakli EMAS - O'LCHANGAN.
-            #
-            # Hujjatda "hrm_token is the shorthand for tokens['hrm']" deb
-            # yozilgan, lekin jonli xizmatda (2026-09-11) qisqa shakl
-            # ISHLAMAYDI: aynan bir xil token bilan `hrm_token` yuborilsa
-            # `auth_missing` qaytadi, `tokens: {"hrm": ...}` yuborilsa esa
-            # to'liq javob keladi. Token o'zi joyida edi - HRM ning
-            # `/api/account` i o'sha token bilan 200 qaytardi.
-            #
-            # Ikkalasini birga yuborish YO'Q: buzuq yo'l ustun kelib
-            # qolsa, muammo yana qaytardi.
-            payload["tokens"] = {"hrm": hrm_token}
+        # `tokens` XARITASI, `hrm_token` qisqa shakli EMAS - O'LCHANGAN.
+        #
+        # Hujjatda "hrm_token is the shorthand for tokens['hrm']" deb
+        # yozilgan, lekin jonli xizmatda (2026-09-11) qisqa shakl
+        # ISHLAMAYDI: aynan bir xil token bilan `hrm_token` yuborilsa
+        # `auth_missing` qaytadi, `tokens: {"hrm": ...}` yuborilsa esa
+        # to'liq javob keladi. Token o'zi joyida edi - HRM ning
+        # `/api/account` i o'sha token bilan 200 qaytardi.
+        #
+        # Qisqa shaklni birga yuborish YO'Q: buzuq yo'l ustun kelib
+        # qolsa, muammo yana qaytardi.
+        #
+        # BO'SH qiymatlar tashlanadi: bo'sh satr "sessiya bor, lekin
+        # yaroqsiz" bo'lib tushunilishi mumkin, yo'qligi esa aniq
+        # `auth_missing` beradi va foydalanuvchi tushunarli xabar oladi.
+        live = {name: value for name, value in (tokens or {}).items() if value}
+        if live:
+            payload["tokens"] = live
         if hrm_employee:
             payload["hrm_employee"] = hrm_employee
 
@@ -528,8 +534,12 @@ def token_seconds_left(token: str) -> int | None:
     return int(exp - time.time())
 
 
-def token_warning(token: str) -> str | None:
+def token_warning(token: str, *, key: str = "hrm_token") -> str | None:
     """`/api/health` uchun bir qatorli holat. `None` - aytishga hojat yo'q.
+
+    `key` - `.env` dagi kalit nomi (`hrm_token` yoki `crm_token`). Xabarda
+    AYNAN shu nom ko'rsatiladi, chunki uni tuzatadigan odam faylda o'sha
+    qatorni izlaydi.
 
     `exp` HAQIQIY umr emas, faqat TOKEN AYTGAN muddat: HRM sessiyani
     o'zidan oldin ham bekor qilishi mumkin (jonli o'lchov: `exp` 10 soat
@@ -539,15 +549,16 @@ def token_warning(token: str) -> str | None:
     """
     if not token:
         return None
-    shared = ("umumiy token: jonli HRM javoblari har kim uchun TOKEN EGASI "
+    platform = key.removesuffix("_token").upper() or key
+    shared = (f"umumiy token: jonli {platform} javoblari har kim uchun TOKEN EGASI "
               "haqida bo'ladi")
     left = token_seconds_left(token)
     if left is None:
-        return f"hrm_token o'qib bo'lmadi (JWT emas?) - jonli HRM ishlamaydi; {shared}"
+        return f"{key} o'qib bo'lmadi (JWT emas?) - jonli {platform} ishlamaydi; {shared}"
     if left <= 0:
-        return (f"hrm_token MUDDATI TUGAGAN ({-left} s oldin) - jonli HRM savollari "
+        return (f"{key} MUDDATI TUGAGAN ({-left} s oldin) - jonli {platform} savollari "
                 "ishlamaydi, .env dagi qiymatni yangilang")
-    return (f"hrm_token o'rnatilgan (exp bo'yicha {left // 60} daq qoldi, lekin HRM "
+    return (f"{key} o'rnatilgan (exp bo'yicha {left // 60} daq qoldi, lekin {platform} "
             f"sessiyani oldin ham bekor qilishi mumkin) - vaqtincha, {shared}")
 
 

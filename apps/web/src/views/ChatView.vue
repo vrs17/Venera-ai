@@ -163,14 +163,25 @@ function streamedResponse(answer: string): PipelineResponse {
   }
 }
 
-// `auth_missing` is the one code worth translating: it means the question
-// needed live HRM data and this person has no HRM session here, which is a
-// setup fact the assistant cannot phrase for us. For every other code the
-// assistant's own text is user-safe and more specific than anything we could
-// invent, so it is shown as-is.
+// The assistant's OWN text wins, for every code including auth_missing.
+//
+// It used to be overridden for `auth_missing` with our own HRM-specific
+// sentence. That became WRONG when CRM was added on 2026-09-14: a CRM
+// question with no CRM token returned "CRM tizimiga kiring" from the
+// service, and we replaced it with "your HRM account is not connected" —
+// pointing the person at the wrong system. The service knows which
+// platform the question needed; we do not.
+//
+// The service's text is documented as user-safe and written in the
+// language of the QUESTION. Our own string stays as the fallback for when
+// no text arrives at all.
 function errorText(frame: ChatFrame): string {
-  if (frame.code === 'auth_missing') return t('chatHrmNotConnected')
-  return frame.text?.trim() || t('chatFailed')
+  const own = frame.text?.trim()
+  if (own) return own
+  if (frame.code === 'auth_missing' || frame.code === 'auth_expired') {
+    return t('chatNotConnected')
+  }
+  return t('chatFailed')
 }
 
 // Run (or re-run) the question for an existing exchange. Shared by send and

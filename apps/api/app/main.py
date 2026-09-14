@@ -32,9 +32,20 @@ from fastapi import Depends
 from .api.deps import docs_viewer, get_user_store
 from .api.v1 import router as v1_router
 from .core import errors
-from .core.config import hrm_token_now, settings
+from .core.config import crm_token_now, hrm_token_now, settings
 from .services.integrations.assistant import token_warning
 from .services.upstream import UpstreamHealth, warnings_for
+
+
+def tts_client():
+    """Ovoz endpointi ishlatayotgan AYNI klient.
+
+    Import shu yerda, funksiya ichida: modul darajasida qilinsa
+    `api.v1.tts` -> `main` -> `api.v1.tts` aylanma importi chiqardi.
+    """
+    from .api.v1.tts import _client
+
+    return _client
 from .services.users import example_password_hashes
 
 logging.basicConfig(
@@ -204,14 +215,30 @@ def health() -> dict:
     # muddati bir necha daqiqada tugaydi. Ikkalasi ham shu bir qatorda
     # aytiladi: aks holda "nega jonli savol ishlamayapti" degan savolga
     # javob faqat log'da bo'lardi.
-    token_note = token_warning(hrm_token_now())
-    if token_note:
-        warnings.append(token_note)
+    # HAR platforma uchun alohida: HRM tokeni joyida bo'lib, CRM tokeni
+    # tugagan bo'lishi mumkin - o'shanda CRM savollari jimgina ishlamay
+    # qo'yadi va buni faqat aytib bersa bilish mumkin.
+    for _key, _token in (("hrm_token", hrm_token_now()), ("crm_token", crm_token_now())):
+        token_note = token_warning(_token, key=_key)
+        if token_note:
+            warnings.append(token_note)
+
+    # TTS navbatidagi band joylar. KO'RSATILADI, chunki bu bir marta
+    # jimgina to'lib qolgan: ikki joy oqib ketgan va har bir ovoz so'rovi
+    # 503 olgan, holbuki xizmatning o'zi mutlaqo sog'lom edi. Buni
+    # aniqlash uchun jurnalni qazish kerak bo'lgan - endi shu yerda turadi.
+    tts_busy = tts_client().busy()
+    if tts_busy >= settings.tts_max_concurrent:
+        warnings.append(
+            f"TTS navbati to'la ({tts_busy}/{settings.tts_max_concurrent}) - "
+            "ovoz javoblari 503 olyapti"
+        )
 
     return {
         "status": "degraded" if warnings else "ok",
         "upstream": upstream,
         "version": settings.version,
         "users": len(store),
+        "tts_slots": {"busy": tts_busy, "limit": settings.tts_max_concurrent},
         "warnings": warnings,
     }

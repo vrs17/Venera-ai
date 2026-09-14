@@ -12,9 +12,16 @@ almashadi. Shu sababli:
 
 Ishlatish (apps/api ichidan):
 
-    venv/bin/python tools/set_hrm_token.py 'eyJhbGciOi...'
-    pbpaste | venv/bin/python tools/set_hrm_token.py -      # nusxadan
-    venv/bin/python tools/set_hrm_token.py --show           # holatni ko'rish
+    venv/bin/python tools/set_hrm_token.py 'eyJhbGciOi...'         # HRM
+    venv/bin/python tools/set_hrm_token.py --crm 'eyJhbGciOi...'   # CRM
+    pbpaste | venv/bin/python tools/set_hrm_token.py --crm -       # nusxadan
+    venv/bin/python tools/set_hrm_token.py --show                  # ikkisi ham
+
+DIQQAT - CRM TOKENI 5 DAQIQA YASHAYDI (o'lchangan: `exp - iat` = 300 s),
+HRM tokeni esa 600 daqiqa. Ya'ni CRM tokenini qo'lda qo'yish faqat
+sinov uchun yaroqli: yopishtirib bo'lguncha muddati tugaydi. Doimiy
+yechim - `refresh_token` bilan avtomatik yangilash yoki foydalanuvchining
+o'z CRM sessiyasi.
 
 Token EKRANGA CHIQMAYDI: faqat uzunligi, egasi va muddati ko'rsatiladi.
 `.env` ning huquqlari (600) saqlanadi va yozish ATOMIK - yarim yozilgan
@@ -33,10 +40,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.core.config import _ENV_FILE, hrm_token_now  # noqa: E402
+from app.core.config import _ENV_FILE, _env_token  # noqa: E402
 from app.services.integrations.assistant import token_seconds_left  # noqa: E402
 
-KEY = "hrm_token"
+#: `--crm` / `--hrm` bayroqlari shu nomlarga o'giriladi.
+KEYS = {"hrm": "hrm_token", "crm": "crm_token"}
 
 
 def clean(raw: str) -> str:
@@ -68,8 +76,8 @@ def describe(token: str) -> str:
     return ", ".join(parts)
 
 
-def write(path: Path, token: str) -> None:
-    """`.env` dagi `hrm_token` qatorini almashtiradi (yoki qo'shadi).
+def write(path: Path, token: str, key: str) -> None:
+    """`.env` dagi `<key>` qatorini almashtiradi (yoki qo'shadi).
 
     ATOMIK: yangi mazmun yonidagi vaqtinchalik faylga yozilib, keyin
     `os.replace` bilan o'rniga qo'yiladi. To'g'ridan-to'g'ri yozishda
@@ -86,9 +94,9 @@ def write(path: Path, token: str) -> None:
     replaced = False
     for line in lines:
         name = line.split("=", 1)[0].strip().lower()
-        if "=" in line and not line.lstrip().startswith("#") and name == KEY:
+        if "=" in line and not line.lstrip().startswith("#") and name == key:
             if not replaced:
-                out.append(f"{KEY}={token}")
+                out.append(f"{key}={token}")
                 replaced = True
             # Takroriy qatorlar TASHLANADI: `.env` da ikki xil qiymat
             # qolsa, oxirgisi ustun bo'lib, tuzatgan odam boshqasini
@@ -98,8 +106,9 @@ def write(path: Path, token: str) -> None:
     if not replaced:
         if out and out[-1].strip():
             out.append("")
-        out.append("# HRM sessiya token'i - `tools/set_hrm_token.py` yozadi.")
-        out.append(f"{KEY}={token}")
+        out.append(f"# {key.removesuffix('_token').upper()} sessiya token'i - "
+                   "`tools/set_hrm_token.py` yozadi.")
+        out.append(f"{key}={token}")
 
     directory = path.parent
     handle = tempfile.NamedTemporaryFile(
@@ -123,16 +132,23 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("token", nargs="?",
-                        help="HRM JWT. `-` bo'lsa stdin'dan o'qiladi.")
+                        help="JWT. `-` bo'lsa stdin'dan o'qiladi.")
+    parser.add_argument("--crm", dest="platform", action="store_const", const="crm",
+                        help="CRM token'ini yozadi (default: HRM).")
+    parser.add_argument("--hrm", dest="platform", action="store_const", const="hrm",
+                        help="HRM token'ini yozadi (default).")
     parser.add_argument("--show", action="store_true",
-                        help="Faqat hozirgi holatni ko'rsatadi, yozmaydi.")
+                        help="Ikkala token holatini ko'rsatadi, yozmaydi.")
     args = parser.parse_args()
+    key = KEYS[args.platform or "hrm"]
 
     if args.show or not args.token:
-        current = hrm_token_now()
-        print(f"{_ENV_FILE}\n  hozir: {describe(current)}")
+        print(_ENV_FILE)
+        for name, env_key in KEYS.items():
+            print(f"  {env_key}: {describe(_env_token(env_key))}")
         if not args.show:
-            print("\nYozish uchun: venv/bin/python tools/set_hrm_token.py '<JWT>'",
+            print("\nYozish uchun: venv/bin/python tools/set_hrm_token.py '<JWT>'"
+                  "\n         CRM: venv/bin/python tools/set_hrm_token.py --crm '<JWT>'",
                   file=sys.stderr)
             return 2
         return 0
@@ -147,11 +163,11 @@ def main() -> int:
         # vosita ishlashdan to'xtab qolmasligi kerak.
         print("OGOHLANTIRISH: bu JWT ga o'xshamaydi (uch qism yo'q)", file=sys.stderr)
 
-    write(_ENV_FILE, token)
-    print(f"yozildi: {_ENV_FILE}\n  {describe(token)}")
-    # `hrm_token_now()` faylni qaytadan o'qiydi - ya'ni bu qator API
-    # AYNI SHU qiymatni ko'rayotganini tasdiqlaydi.
-    seen = hrm_token_now()
+    write(_ENV_FILE, token, key)
+    print(f"yozildi: {_ENV_FILE} ({key})\n  {describe(token)}")
+    # Fayl QAYTADAN o'qiladi - ya'ni bu qator API AYNI SHU qiymatni
+    # ko'rayotganini tasdiqlaydi.
+    seen = _env_token(key)
     print("  API ko'rayotgani:", "AYNI SHU token" if seen == token else "BOSHQA (!)")
     print("\nQayta ishga tushirish kerak emas - API .env ni har so'rovda o'qiydi.")
     if token.count(".") == 2 and (token_seconds_left(token) or 0) > 0:

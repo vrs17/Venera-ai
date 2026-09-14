@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Proof under an answer: cited documents and HRM lookups.
+ * Proof under an answer: cited documents and platform lookups (HRM, CRM).
  *
  * WHY THIS EXISTS AT ALL. In a bank an answer without a source is an opinion.
  * The assistant marks documents as [1], [2] and HRM lookups as [T1], [T2] in
@@ -10,7 +10,7 @@
  *
  * The two kinds are shown differently on purpose. A document can be OPENED —
  * its PDF comes down through our own proxy, since it lives on a host the
- * browser cannot reach. An HRM lookup has nothing to open: it is a call that
+ * browser cannot reach. A lookup has nothing to open: it is a call that
  * happened at a moment in time, so it is named, not linked, and the digest
  * says what it returned.
  */
@@ -26,8 +26,14 @@ const props = defineProps<{
 }>()
 const { t } = useI18n({ useScope: 'global' })
 
-const docs = computed(() => (props.sources ?? []).filter((s) => s.kind !== 'hrm'))
-const calls = computed(() => (props.sources ?? []).filter((s) => s.kind === 'hrm'))
+/** Kinds that are a LIVE LOOKUP rather than a document. `crm` joined `hrm`
+ *  on 2026-09-14; before that a CRM source fell into the document list and
+ *  was rendered as an openable file that does not exist. A new platform
+ *  needs one entry here. */
+const LOOKUP_KINDS = new Set(['hrm', 'crm'])
+
+const docs = computed(() => (props.sources ?? []).filter((s) => !LOOKUP_KINDS.has(String(s.kind))))
+const calls = computed(() => (props.sources ?? []).filter((s) => LOOKUP_KINDS.has(String(s.kind))))
 
 /** Files the artifact actually has. A missing one is `null` — our backend
  *  removes links it could not rewrite rather than showing a dead one. */
@@ -117,7 +123,7 @@ function docName(source: AnswerSource): string {
     </div>
 
     <div v-if="calls.length" class="proof__group">
-      <span class="proof__title">{{ t('sourcesHrm') }}</span>
+      <span class="proof__title">{{ t('sourcesLookups') }}</span>
       <ul class="proof__list">
         <li v-for="(call, i) in calls" :key="(call.marker || '') + i">
           <span class="proof__marker">{{ marker(call, i) }}</span>

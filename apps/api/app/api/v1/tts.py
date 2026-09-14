@@ -109,6 +109,12 @@ def speak(body: SpeakRequest, user: AuthUser = Depends(current_user)) -> Streami
             # - brauzer buni tugallanmagan oqim deb ko'radi, xuddi
             # yuqoridagi server bizga ko'rsatgani kabi. Sabab log'da.
             log.warning("TTS oqimi (%s): %s", user.email, exc)
+        finally:
+            # MAJBURIY: brauzer ijro o'rtasida uzilsa (odam sferani bosdi,
+            # panelni yopdi) Starlette generatorni tashlab ketadi. Bu
+            # `finally` TTS navbatidagi joyni darhol qaytaradi - aks holda
+            # u faqat soat bo'yicha, 180 s dan keyin qaytardi.
+            speech.close()
 
     return StreamingResponse(
         body_iter(),

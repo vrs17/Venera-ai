@@ -173,17 +173,44 @@ def test_bosh_maydonlar_yuborilmaydi(assistant, server):
     assert set(server.calls[0]["body"]) == {"question", "user_id"}
 
 
-def test_hrm_tokeni_tokens_xaritasida_ketadi(assistant, server):
-    """`tokens: {"hrm": ...}`, `hrm_token` EMAS - jonli o'lchov: qisqa
-    shakl bilan xizmat `auth_missing` qaytaradi, xarita bilan esa to'liq
-    javob beradi (bir xil token, 2026-09-11)."""
+def test_tokenlar_xaritada_ketadi(assistant, server):
+    """`tokens: {...}`, `hrm_token` qisqa shakli EMAS - jonli o'lchov:
+    qisqa shakl bilan xizmat `auth_missing` qaytaradi, xarita bilan esa
+    to'liq javob beradi (bir xil token, 2026-09-11)."""
     collect(assistant.stream("Men bugun kechikdimmi?", user_id="venera:1",
-                             hrm_token="hrm-jwt", hrm_employee="Mamajonov"))
+                             tokens={"hrm": "hrm-jwt"}, hrm_employee="Mamajonov"))
     body = server.calls[0]["body"]
     assert body["tokens"] == {"hrm": "hrm-jwt"}
     assert body["hrm_employee"] == "Mamajonov"
     # Buzuq yo'l ustun kelib qolmasligi uchun qisqa shakl YUBORILMAYDI.
     assert "hrm_token" not in body
+
+
+def test_hamma_platforma_tokeni_yuboriladi(assistant, server):
+    """HRM ham, CRM ham - TANLAB emas.
+
+    Hujjat talabi: "send every token the user has, the assistant decides
+    per question which platform it needs". Savolga qarab tokenni o'zimiz
+    tanlaganimizda, "mening tasklarim" kabi CRM savoli HRM tokeni bilan
+    ketib, `auth_missing` olardi.
+    """
+    collect(assistant.stream("mening ochiq tasklarim?", user_id="venera:1",
+                             tokens={"hrm": "h-jwt", "crm": "c-jwt"}))
+    assert server.calls[0]["body"]["tokens"] == {"hrm": "h-jwt", "crm": "c-jwt"}
+
+
+def test_bosh_token_yuborilmaydi(assistant, server):
+    """Bo'sh satr "sessiya bor, lekin yaroqsiz" bo'lib tushunilishi
+    mumkin; yo'qligi esa aniq `auth_missing` beradi va foydalanuvchi
+    "CRM tizimiga kiring" degan tushunarli xabar oladi."""
+    collect(assistant.stream("savol", user_id="venera:1",
+                             tokens={"hrm": "h-jwt", "crm": ""}))
+    assert server.calls[0]["body"]["tokens"] == {"hrm": "h-jwt"}
+
+
+def test_tokensiz_tokens_maydoni_yoq(assistant, server):
+    collect(assistant.stream("savol", user_id="venera:1", tokens={}))
+    assert "tokens" not in server.calls[0]["body"]
 
 
 def test_audit_kaliti_yuboriladi_va_xizmatnikisi_ustun(assistant, server):
@@ -600,7 +627,7 @@ def test_env_dan_yangi_token_restartsiz_olinadi(tmp_path, monkeypatch):
     env = tmp_path / ".env"
     env.write_text("SECRET_KEY=x\nhrm_token=birinchi\n")
     monkeypatch.setattr(config, "_ENV_FILE", env)
-    monkeypatch.setattr(config, "_token_cache", (None, ""))
+    monkeypatch.setattr(config, "_token_cache", {})
     assert config.hrm_token_now() == "birinchi"
 
     # Yangi qiymat - IMPORTGA TEGILMASDAN ko'rinishi kerak.
@@ -610,13 +637,64 @@ def test_env_dan_yangi_token_restartsiz_olinadi(tmp_path, monkeypatch):
     assert config.hrm_token_now() == "ikkinchi"
 
 
+def test_crm_tokeni_ham_env_dan_oqiladi(tmp_path, monkeypatch):
+    """CRM tokeni HRM bilan AYNI mantiqda: restartsiz, har so'rovda."""
+    from app.core import config
+
+    env = tmp_path / ".env"
+    env.write_text("hrm_token=h1\ncrm_token=c1\n")
+    monkeypatch.setattr(config, "_ENV_FILE", env)
+    monkeypatch.setattr(config, "_token_cache", {})
+    assert config.crm_token_now() == "c1"
+
+    env.write_text("hrm_token=h1\ncrm_token=c2\n")
+    import os
+    os.utime(env, (0, 0))
+    assert config.crm_token_now() == "c2"
+    # HRM keshidan CRM qiymati chiqib qolmasligi kerak - kesh KALIT bo'yicha.
+    assert config.hrm_token_now() == "h1"
+
+
+def test_platform_tokens_faqat_borini_beradi(tmp_path, monkeypatch):
+    """Bo'sh yoki yo'q token xaritaga TUSHMAYDI."""
+    from app.core import config
+
+    env = tmp_path / ".env"
+    monkeypatch.setattr(config, "_ENV_FILE", env)
+
+    env.write_text("hrm_token=h1\ncrm_token=c1\n")
+    monkeypatch.setattr(config, "_token_cache", {})
+    assert config.platform_tokens() == {"hrm": "h1", "crm": "c1"}
+
+    # CRM olib tashlandi: HRM savollari ishlashda davom etishi kerak.
+    env.write_text("hrm_token=h1\n")
+    import os
+    os.utime(env, (1, 1))
+    assert config.platform_tokens() == {"hrm": "h1"}
+
+    env.write_text("crm_token=c1\n")
+    os.utime(env, (2, 2))
+    assert config.platform_tokens() == {"crm": "c1"}
+
+
+def test_ogohlantirish_kalit_nomini_aytadi():
+    """Xabarda AYNAN `.env` dagi kalit nomi turishi kerak - tuzatadigan
+    odam faylda o'sha qatorni izlaydi."""
+    import time
+
+    token = _jwt(int(time.time()) + 3600)
+    assert "crm_token" in (token_warning(token, key="crm_token") or "")
+    assert "CRM" in (token_warning(token, key="crm_token") or "")
+    assert "hrm_token" in (token_warning(token) or "")
+
+
 def test_env_ozgarmasa_diskka_borilmaydi(tmp_path, monkeypatch):
     from app.core import config
 
     env = tmp_path / ".env"
     env.write_text("hrm_token=qiymat\n")
     monkeypatch.setattr(config, "_ENV_FILE", env)
-    monkeypatch.setattr(config, "_token_cache", (None, ""))
+    monkeypatch.setattr(config, "_token_cache", {})
     assert config.hrm_token_now() == "qiymat"
 
     reads = []
@@ -636,7 +714,7 @@ def test_fayl_oqilmasa_eski_qiymat_qoladi(tmp_path, monkeypatch):
     env = tmp_path / ".env"
     env.write_text("hrm_token=ishlaydi\n")
     monkeypatch.setattr(config, "_ENV_FILE", env)
-    monkeypatch.setattr(config, "_token_cache", (None, ""))
+    monkeypatch.setattr(config, "_token_cache", {})
     assert config.hrm_token_now() == "ishlaydi"
 
     env.unlink()
@@ -650,7 +728,7 @@ def test_kalit_olib_tashlansa_bosh_qaytadi(tmp_path, monkeypatch):
     env = tmp_path / ".env"
     env.write_text("hrm_token=bor\n")
     monkeypatch.setattr(config, "_ENV_FILE", env)
-    monkeypatch.setattr(config, "_token_cache", (None, ""))
+    monkeypatch.setattr(config, "_token_cache", {})
     assert config.hrm_token_now() == "bor"
 
     env.write_text("SECRET_KEY=x\n")
@@ -719,29 +797,40 @@ def test_endpoint_kimlikni_tokendan_oladi(api, auth, server):
     assert "boshqa-odam" not in json.dumps(body)
 
 
-def test_endpoint_hrm_tokenini_har_sorovda_oqiydi(api, auth, server, monkeypatch):
-    """Token `.env` dan HAR SO'ROVDA olinadi, `settings` dan emas: HRM
-    sessiyasi bir necha daqiqada tugaydi va yangi qiymat uchun restart
+def test_endpoint_tokenlarni_har_sorovda_oqiydi(api, auth, server, monkeypatch):
+    """Tokenlar `.env` dan HAR SO'ROVDA olinadi, `settings` dan emas:
+    sessiyalar bir necha daqiqada tugaydi va yangi qiymat uchun restart
     kerak bo'lsa, restart oqib turgan javoblarni kesib yuborardi."""
     module, app_client = api
-    tokens = iter(["birinchi-jwt", "ikkinchi-jwt"])
-    monkeypatch.setattr(module, "hrm_token_now", lambda: next(tokens))
+    sets = iter([{"hrm": "birinchi-jwt"}, {"hrm": "ikkinchi-jwt", "crm": "c-jwt"}])
+    monkeypatch.setattr(module, "platform_tokens", lambda: next(sets))
 
     app_client.post("/api/v1/chat/stream", headers=auth, json={"question": "salom"})
     app_client.post("/api/v1/chat/stream", headers=auth, json={"question": "salom"})
 
     assert server.calls[0]["body"]["tokens"] == {"hrm": "birinchi-jwt"}
-    assert server.calls[1]["body"]["tokens"] == {"hrm": "ikkinchi-jwt"}
+    assert server.calls[1]["body"]["tokens"] == {"hrm": "ikkinchi-jwt", "crm": "c-jwt"}
 
 
 def test_endpoint_token_bosh_bolsa_yubormaydi(api, auth, server, monkeypatch):
     """Bo'sh satr YUBORILMAYDI: xizmat uni yaroqsiz sessiya deb qabul qilib,
     hujjatlar bo'yicha savolni ham buzishi mumkin edi."""
     module, app_client = api
-    monkeypatch.setattr(module, "hrm_token_now", lambda: "")
+    monkeypatch.setattr(module, "platform_tokens", dict)
     app_client.post("/api/v1/chat/stream", headers=auth, json={"question": "salom"})
     assert "tokens" not in server.calls[0]["body"]
     assert "hrm_token" not in server.calls[0]["body"]
+
+
+def test_endpoint_crm_tokenini_ham_uzatadi(api, auth, server, monkeypatch):
+    """CRM savoli uchun CRM tokeni KERAK. Bu yo'l uzilganda "mening
+    tasklarim" kabi savol `auth_missing` olib, foydalanuvchiga "CRM
+    tizimiga kiring" deb qaytardi - token esa `.env` da turgan edi."""
+    module, app_client = api
+    monkeypatch.setattr(module, "platform_tokens", lambda: {"hrm": "h", "crm": "c"})
+    app_client.post("/api/v1/chat/stream", headers=auth,
+                    json={"question": "mening ochiq tasklarim?"})
+    assert server.calls[0]["body"]["tokens"]["crm"] == "c"
 
 
 def test_endpoint_kadrlarni_ozgartirmasdan_uzatadi(api, auth):

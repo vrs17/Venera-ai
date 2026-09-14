@@ -89,9 +89,21 @@ class Settings(BaseSettings):
     #: jumlani qamrab, TTFB ~5x sekinlashadi; 10.0 da streaming umuman
     #: yo'qoladi. Server 0.5-10 dan tashqarisiga 422 beradi.
     tts_chunk_sec: float = 1.5
-    #: Matn chegarasi. Uzun matn butun navbatni ushlab turadi, shuning uchun
-    #: qisqartiriladi (xato qaytarilmaydi - matn foydalanuvchi aytgan gapi).
-    tts_max_chars: int = 600
+    #: Matn chegarasi - ZAXIRA to'siq. Asosiy qisqartirish frontendda, GAP
+    #: chegarasida bo'ladi (`VoicePanel.vue`, `SPEAK_LIMIT`); bu yerda esa
+    #: so'z chegarasida kesiladi va xato qaytarilmaydi.
+    #:
+    #: 600 EDI va bu O'QILADIGAN JAVOBNI YARMIDA KESARDI: o'sha qiymat matn
+    #: foydalanuvchining bitta AYTGAN GAPI bo'lgan davrdan qolgan edi, javob
+    #: esa tabiatan uzunroq (jonli misol: mehnat ta'tili bo'yicha 6 bandli
+    #: javob 1016 belgi).
+    #:
+    #: 3000 jonli o'lchovga asoslangan: server 5000 belgini ham qabul qiladi,
+    #: va birinchi bayt UZUNLIKDAN QAT'I NAZAR ~1.37 s da keladi, ya'ni uzun
+    #: matn kechikish qo'shmaydi. Narxi boshqa joyda: 3000 belgi ~198 s ovoz
+    #: bo'lib, oqim ~41 s davom etadi va shu vaqt ichida `tts_max_concurrent`
+    #: slotlaridan bittasini ushlab turadi.
+    tts_max_chars: int = 3000
 
     # --- Uyg'otish so'zi jurnali ---
     #: "Salom Venera" urinishlari yozib boriladi: audio + transkript + qaror.
@@ -153,6 +165,14 @@ class Settings(BaseSettings):
     #: muddati tugaydi, ya'ni har almashtirishda xizmatni qayta ishga
     #: tushirish ayni vaqtdagi javob oqimlarini kesib yuborardi.
     hrm_token: str = ""
+    #: CRM sessiya token'i - HRM tokeni bilan AYNI MANTIQDA.
+    #:
+    #: Yuqoridagi yordamchi 2026-09-14 dan boshlab CRM ni ham biladi va
+    #: `tokens` xaritasida qaysi platforma kerak bo'lsa o'shanisini
+    #: ishlatadi. Ikkisi MUSTAQIL: CRM tokenisiz CRM savollari
+    #: `auth_missing` qaytaradi ("CRM tizimiga kiring"), HRM savollari
+    #: esa ishlab turadi - va teskarisi.
+    crm_token: str = ""
 
     # --- CORS ---
     #: Bo'sh bo'lsa CORS o'chirilgan: frontend nginx orqali BIR XIL originda
@@ -171,13 +191,14 @@ settings = Settings()
 #: `.env` fayli - `hrm_token_now()` shundan o'qiydi.
 _ENV_FILE = BASE_DIR / ".env"
 
-#: Oxirgi o'qish: (fayl belgisi, qiymat). Belgi - `mtime_ns` va hajm.
-_token_cache: tuple[object, str] = (None, settings.hrm_token)
+#: Oxirgi o'qish, kalit bo'yicha: {kalit: (fayl belgisi, qiymat)}.
+#: Belgi - `mtime_ns` va hajm.
+_token_cache: dict[str, tuple[object, str]] = {}
 _token_lock = threading.Lock()
 
 
-def hrm_token_now() -> str:
-    """HRM token'i - `.env` dan, HAR SAFAR yangi qiymat bilan.
+def _env_token(key: str, fallback: str = "") -> str:
+    """`.env` dan bitta token - HAR SAFAR yangi qiymat bilan.
 
     NEGA SOZLAMA OBYEKTIDAN EMAS. HRM sessiyasi bir necha daqiqada muddati
     tugaydi, ya'ni token tez-tez almashtiriladi. `Settings` esa faylni
@@ -188,29 +209,61 @@ def hrm_token_now() -> str:
     Diskka odatda BORILMAYDI: fayl o'zgargani `stat` bilan aniqlanadi
     (`mtime_ns` + hajm), o'zgarmagan bo'lsa keshdagi qiymat qaytadi.
 
-    Fayl o'qilmasa yoki kalit yo'q bo'lsa - eng oxirgi MA'LUM qiymat
-    qaytadi, bo'sh satr emas: tahrirlash o'rtasida qolgan fayl tufayli
-    ishlab turgan chat to'xtab qolmasligi kerak.
+    Fayl o'qilmasa - eng oxirgi MA'LUM qiymat qaytadi, bo'sh satr emas:
+    tahrirlash o'rtasida qolgan fayl tufayli ishlab turgan chat to'xtab
+    qolmasligi kerak. Kalitning O'ZI yo'q bo'lsa esa bo'sh satr qaytadi,
+    chunki bu "token olib tashlandi" degani bo'lishi mumkin.
     """
-    global _token_cache
+    cached = _token_cache.get(key)
     try:
         info = _ENV_FILE.stat()
         mark: object = (info.st_mtime_ns, info.st_size)
     except OSError:
-        return _token_cache[1]
-    if mark == _token_cache[0]:
-        return _token_cache[1]
+        return cached[1] if cached else fallback
+    if cached is not None and mark == cached[0]:
+        return cached[1]
     with _token_lock:
         # Ikkinchi tekshiruv: qulf kutilayotganda boshqa ip allaqachon
         # o'qib bo'lgan bo'lishi mumkin.
-        if mark == _token_cache[0]:
-            return _token_cache[1]
-        value = _read_env_value(_ENV_FILE, "hrm_token")
-        # `None` - kalit topilmadi. Bu "token olib tashlandi" degani ham
-        # bo'lishi mumkin, shuning uchun bo'sh satrga tushiriladi; faqat
-        # O'QISH xatosi eski qiymatni saqlab qoladi (yuqorida).
-        _token_cache = (mark, value if value is not None else "")
-        return _token_cache[1]
+        cached = _token_cache.get(key)
+        if cached is not None and mark == cached[0]:
+            return cached[1]
+        value = _read_env_value(_ENV_FILE, key)
+        resolved = value if value is not None else ""
+        _token_cache[key] = (mark, resolved)
+        return resolved
+
+
+def hrm_token_now() -> str:
+    """HRM sessiya token'i."""
+    return _env_token("hrm_token", settings.hrm_token)
+
+
+def crm_token_now() -> str:
+    """CRM sessiya token'i."""
+    return _env_token("crm_token", settings.crm_token)
+
+
+#: `tokens` xaritasidagi nomlar -> `.env` kalitlari. Yuqoridagi xizmat
+#: tanimagan nomni E'TIBORSIZ qoldiradi, ya'ni yangi platforma qo'shilsa
+#: shu yerga bitta qator yetadi.
+_PLATFORMS = (("hrm", "hrm_token"), ("crm", "crm_token"))
+
+
+def platform_tokens() -> dict[str, str]:
+    """Odamning BARCHA platforma token'lari - `tokens` xaritasi uchun.
+
+    Hujjat talabi: "Send every token the user has. The assistant decides
+    per question which platform it needs." Ya'ni tanlashga urinmaymiz -
+    savol HRM haqidami yoki CRM haqidami, buni yuqoridagi xizmat o'zi
+    hal qiladi.
+
+    BO'SH token YUBORILMAYDI. Bo'sh satr yuborilsa xizmat uni "sessiya
+    bor, lekin yaroqsiz" deb qabul qilishi mumkin edi; yo'qligi esa
+    aniq `auth_missing` beradi va foydalanuvchi tushunarli xabar oladi
+    ("CRM tizimiga kiring").
+    """
+    return {name: token for name, key in _PLATFORMS if (token := _env_token(key))}
 
 
 def _read_env_value(path: Path, key: str) -> str | None:

@@ -114,18 +114,20 @@ export type Phase = 'idle' | 'sending'
  * added by our backend, so they are ours to name.
  */
 
-/** One proof item under an answer: a cited document or one HRM tool call. */
+/** One proof item under an answer: a cited document, or one platform lookup
+ *  (HRM or CRM — `crm` arrived 2026-09-14 and behaves exactly like `hrm`). */
 export interface AnswerSource {
-  kind?: 'doc' | 'hrm' | (string & {})
+  kind?: 'doc' | 'hrm' | 'crm' | (string & {})
   /** The [n] marker in the answer text (documents). */
   citation_index?: number
   doc_id?: string
   title?: string
   section?: string
   page?: number
-  /** The [Tn] marker in the answer text (HRM calls). */
+  /** The [Tn] marker in the answer text (platform lookups). */
   marker?: string
-  /** HRM tool that was called, e.g. hrm_today_late. */
+  /** Platform tool that was called, e.g. hrm_today_late, crm_my_issues.
+   *  The prefix says which platform, so the row needs no separate field. */
   tool?: string
   status?: string
   /** Short code-built summary of what the call returned. */
@@ -186,11 +188,11 @@ export interface UIExchange {
   /** Live status from the assistant while the answer is still coming
    *  ("searching documents"). Cleared once the first token arrives. */
   stage?: string | null
-  /** Citations and HRM tool calls behind the answer. */
+  /** Citations and platform lookups behind the answer. */
   sources?: AnswerSource[]
   /** The generated application file, when there is one. */
   artifact?: AnswerArtifact | null
-  /** rules | hrm | both | clarify — shown in developer mode. */
+  /** rules | hrm | crm | live | both | clarify — shown in developer mode. */
   route?: string | null
   /** Audit key: the same value is in the assistant's own log. */
   requestId?: string | null

@@ -12,6 +12,7 @@ import io
 import http.client
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -428,6 +429,92 @@ def test_uzilgan_oqim_ham_slotni_bosaydi(server):
         list(client.stream("salom").chunks)
     server.cut_after = None
     assert b"".join(client.stream("salom").chunks), "uzilishdan keyin slot sizdi"
+
+
+def test_tashlab_ketilgan_oqim_slotni_qaytaradi(server):
+    """Oqim ochilib, generator HECH QACHON boshlanmasa ham slot qaytadi.
+
+    BU AYNAN JONLI TIZIMDA BO'LGAN NOSOZLIK. Brauzer sarlavhalar
+    kelgandan keyin, lekin javob tanasi boshlanishidan oldin uzilsa,
+    Starlette generatorni umuman harakatga keltirmaydi. Generatorning
+    `try/finally` si esa faqat u birinchi marta ishga tushganda
+    qurollanadi - ya'ni eski kodda `finally` o'tmasdi va slot MANGU band
+    qolardi. Jurnalda o'lchandi: 68 oqim ochilgan, 66 javob qaytgan,
+    ikki slot oqib ketgan va `max_concurrent=2` bo'lgani uchun ovoz
+    xizmati butunlay o'lgan.
+
+    Chegaradan IKKI BAROBAR ko'p tashlab ketamiz: eski kod ikkinchisida
+    o'lardi.
+    """
+    import gc
+
+    client = TtsClient("http://tts", "frontend", "s3cret", max_concurrent=2, queue_wait=0.05)
+    for _ in range(4):                  # chegaradan IKKI BAROBAR ko'p
+        speech = client.stream("salom")
+        del speech                      # generator BOSHLANMADI
+        gc.collect()
+
+    # ATAYLAB `busy()` ISHLATILMAYDI. Tekshiruv shu satr bo'lishi kerak:
+    # eski kodda to'rtta tashlab ketilgandan keyin ikki slot band qolib,
+    # bu chaqiruv `TtsError(503)` bilan yiqilardi. `busy()` bilan yozilsa
+    # test eski kodda "bunday atribut yo'q" deb yiqilardi - ya'ni oqishning
+    # O'ZINI isbotlamasdan.
+    assert b"".join(client.stream("salom").chunks), "slot sizib ketdi"
+
+
+def test_close_slotni_qaytaradi(server):
+    """`close()` - birinchi to'r: endpoint uni `finally` da chaqiradi."""
+    client = TtsClient("http://tts", "frontend", "s3cret", max_concurrent=1, queue_wait=0.05)
+    speech = client.stream("salom")
+    assert client.busy() == 1
+    speech.close()                      # tana o'qilmadi
+    assert client.busy() == 0, "close() slotni qaytarmadi"
+    assert b"".join(client.stream("salom").chunks), "close() dan keyin slot sizdi"
+
+
+def test_takroriy_qaytarish_xavfsiz(server):
+    """Uchta to'r ham bitta slotni qaytarishga urinadi.
+
+    Qaytarish idempotent bo'lmasa `BoundedSemaphore` ortiqcha
+    `release()` da `ValueError` tashlar edi - yoki undan battari,
+    chegara o'sib ketib, GPU navbatiga bir vaqtda bir nechta so'rov
+    tushardi.
+    """
+    client = TtsClient("http://tts", "frontend", "s3cret", max_concurrent=1, queue_wait=0.05)
+    speech = client.stream("salom")
+    speech.close()
+    speech.close()
+    list(speech.chunks)                 # generatorni ham tugatib ko'ramiz
+    assert speech.slot is not None
+    assert speech.slot.release() is False, "ikkinchi qaytarish True dedi"
+    assert client.busy() == 0, f"chegara buzildi: band={client.busy()}"
+    # Chegara O'SMAGANINI tekshiramiz: bitta oqim ochilgach ikkinchisi 503.
+    held = client.stream("birinchi")
+    with pytest.raises(TtsError) as caught:
+        client.stream("ikkinchi")
+    assert caught.value.status == 503, "ortiqcha release chegarani oshirib yubordi"
+    held.close()
+
+
+def test_soat_qotib_qolgan_slotni_qaytaradi(server, monkeypatch):
+    """Uchinchi to'r: yuqoridagi ikkisi ham ishlamasa, soat qaytaradi.
+
+    Bu NOSOZLIK yo'li, oddiy yo'l emas - shu sababli jonli kodda chegara
+    180 s va WARNING bilan yoziladi. Testda uni qisqartiramiz.
+    """
+    import app.services.tts as mod
+
+    monkeypatch.setattr(mod, "_SLOT_CEILING", 0.15)
+    client = TtsClient("http://tts", "frontend", "s3cret", max_concurrent=1, queue_wait=0.05)
+    speech = client.stream("salom")
+    assert client.busy() == 1
+    # Ikkinchi to'rni ATAYLAB o'chiramiz: havola saqlanadi, ya'ni obyekt
+    # yig'ilmaydi va `close()` ham chaqirilmaydi. Faqat soat qoladi.
+    deadline = time.monotonic() + 3.0
+    while client.busy() == 1 and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert client.busy() == 0, "soat qotib qolgan slotni qaytarmadi"
+    assert speech is not None            # havola hali ham tirik
 
 
 def test_synthesize_wav_haqiqiy_sarlavha_yozadi():

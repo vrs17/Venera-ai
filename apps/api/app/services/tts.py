@@ -38,6 +38,7 @@ import time
 import urllib.error
 import urllib.request
 import wave
+import weakref
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -100,6 +101,71 @@ class TtsError(Exception):
         self.retryable = retryable
 
 
+#: Bitta oqim egallashi mumkin bo'lgan ENG UZUN vaqt (soniya). Shundan
+#: keyin joy MAJBURAN qaytariladi.
+#:
+#: O'lchovga asoslangan: 3000 belgi (`tts_max_chars`) ~198 s ovoz bo'lib,
+#: oqim ~41 s davom etadi; 5000 belgi ~71 s. GPU navbatida uch barobar
+#: sekinlashsa ham 180 s ichida tugaydi. Ya'ni bu chegara HAQIQIY oqimni
+#: kesmaydi - u faqat qotib qolgan joyni qaytaradi.
+_SLOT_CEILING = 180.0
+
+
+class _Slot:
+    """Band qilingan bitta joy. Qaytarilishi KAFOLATLANGAN.
+
+    NEGA BU KLASS KERAK. Ilgari joy `pump()` generatorining `finally`
+    blokida qaytarilardi, va bu JONLI TIZIMDA OQIB KETDI: generatorning
+    `try/finally` si faqat u BIRINCHI MARTA harakatga kelganda qurollanadi.
+    Brauzer sarlavhalar kelgandan keyin, lekin javob boshlanishidan oldin
+    uzilsa, Starlette tanani hech qachon boshlamaydi - generator boshlanmay
+    turib tashlanadi, `finally` ishlamaydi, joy esa MANGU band qoladi.
+    Jurnalda o'lchandi: 68 oqim ochilgan, 66 tasi javob bergan, ya'ni ikki
+    joy oqib ketgan - va `max_concurrent=2` bo'lgani uchun TTS butunlay
+    o'lgan.
+
+    Endi uchta mustaqil to'r bor, har biri boshqasidan qat'i nazar ishlaydi:
+      1) `SpeechStream.close()` - oddiy yo'l va oqim o'rtasida uzilish;
+      2) `weakref.finalize` - obyekt yig'ilganda (aynan yuqoridagi holat);
+      3) soat (`threading.Timer`) - oxirgi chora, WARNING bilan.
+    """
+
+    def __init__(self, semaphore: threading.BoundedSemaphore, stream_id: str = "?") -> None:
+        self._semaphore = semaphore
+        self._lock = threading.Lock()
+        self._released = False
+        self.stream_id = stream_id
+        self._timer = threading.Timer(_SLOT_CEILING, self._expire)
+        # `daemon`: bu soat jarayonning o'chishini USHLAB TURMASLIGI kerak.
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _expire(self) -> None:
+        if self.release():
+            # Bu NOSOZLIK belgisi, oddiy holat emas: yuqoridagi ikki to'r
+            # ishlamagan. Jurnalda ko'rinib turishi shart.
+            log.warning(
+                "TTS: joy %.0f s dan keyin majburan qaytarildi (oqim %s) - "
+                "bu oqish belgisi, yuqoridagi to'rlar ishlamagan",
+                _SLOT_CEILING, self.stream_id,
+            )
+
+    def release(self) -> bool:
+        """Joyni qaytaradi. Takroriy chaqiruv XAVFSIZ (`False` qaytaradi).
+
+        Idempotentlik SHART: uchta to'r ham bir xil joyni qaytarishga
+        harakat qiladi, va `BoundedSemaphore` ortiqcha `release()` da
+        `ValueError` tashlab, chegarani buzib yuborardi.
+        """
+        with self._lock:
+            if self._released:
+                return False
+            self._released = True
+        self._timer.cancel()
+        self._semaphore.release()
+        return True
+
+
 @dataclass
 class SpeechStream:
     """Boshlanib bo'lgan oqim.
@@ -120,6 +186,22 @@ class SpeechStream:
     chunks: Iterator[bytes] = field(repr=False, default_factory=lambda: iter(()))
     #: Matn chegaradan uzun bo'lib qisqartirilgan.
     truncated: bool = False
+    #: Egallangan joy. Chaqiruvchi `close()` ni `finally` da ishlatadi.
+    slot: _Slot | None = field(repr=False, default=None)
+
+    def close(self) -> None:
+        """Oqimni yopadi va JOYNI QAYTARADI. Takroriy chaqiruv xavfsiz.
+
+        Generatorni yopish yetarli EMAS: `close()` boshlanmagan generatorning
+        tanasini ishlatmaydi, ya'ni `finally` bloki o'tmaydi. Shu sababli joy
+        bu yerda TO'G'RIDAN-TO'G'RI ham qaytariladi.
+        """
+        with contextlib.suppress(Exception):
+            close = getattr(self.chunks, "close", None)
+            if close is not None:
+                close()
+        if self.slot is not None:
+            self.slot.release()
 
 
 def risky_for_normalizer(text: str) -> bool:
@@ -261,11 +343,11 @@ class TtsClient:
                 status=503, retryable=True,
             )
 
-        released = False
+        slot = _Slot(self._slots)
         try:
             response = self._open_stream(clean, voice, speed, normalize_numbers, chunk_sec)
         except BaseException:
-            self._slots.release()
+            slot.release()
             raise
 
         def headers_of(name: str, default: str = "") -> str:
@@ -279,8 +361,9 @@ class TtsClient:
         log.info("TTS oqim %s: %d bo'lak, %d Hz, ovoz=%s, normalize=%s",
                  stream_id, chunk_count, sample_rate, voice, normalize_numbers)
 
+        slot.stream_id = stream_id
+
         def pump() -> Iterator[bytes]:
-            nonlocal released
             try:
                 while True:
                     # Kichik bo'lak: bufer katta bo'lsa TTFB afzalligi
@@ -299,17 +382,34 @@ class TtsClient:
             finally:
                 with contextlib.suppress(Exception):
                     response.close()
-                if not released:
-                    released = True
-                    self._slots.release()
+                slot.release()
 
-        return SpeechStream(
+        speech = SpeechStream(
             sample_rate=sample_rate,
             chunk_count=chunk_count,
             stream_id=stream_id,
             chunks=pump(),
             truncated=truncated,
+            slot=slot,
         )
+        # IKKINCHI TO'R. Obyekt yig'ilganda joy qaytadi - aynan o'sha
+        # holat uchun: javob boshlanmay so'rov tashlab ketilgan, ya'ni
+        # `close()` ni chaqiradigan hech kim yo'q. `slot.release` obyektga
+        # havola SAQLAMAYDI, shuning uchun bu yig'ilishga to'sqinlik qilmaydi.
+        weakref.finalize(speech, slot.release)
+        return speech
+
+    def busy(self) -> int:
+        """Ayni vaqtda band joylar soni - `/api/health` uchun.
+
+        `_value` xususiy, lekin muqobili yo'q: `BoundedSemaphore` sanoqni
+        ochiq bermaydi. Xatoga uchrasa `-1` qaytadi, chunki sog'lik
+        tekshiruvi buning ustida yiqilmasligi kerak.
+        """
+        try:
+            return self.max_concurrent - self._slots._value  # type: ignore[attr-defined]
+        except Exception:
+            return -1
 
     def synthesize_wav(self, text: str, **kwargs) -> bytes:
         """Oqimni to'liq yig'ib, HAQIQIY WAV qaytaradi.
@@ -320,7 +420,12 @@ class TtsClient:
         bilmagani uchun `0xFFFFFFFF` yozadi.
         """
         speech = self.stream(text, **kwargs)
-        pcm = b"".join(speech.chunks)
+        try:
+            pcm = b"".join(speech.chunks)
+        finally:
+            # Generator to'liq o'qilsa joy o'zi qaytadi, lekin o'rtada xato
+            # bo'lsa ham qaytishi SHART.
+            speech.close()
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as out:
             out.setnchannels(1)
