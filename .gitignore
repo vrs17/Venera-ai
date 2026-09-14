@@ -77,3 +77,8 @@ apps/web/src/assets/voice.gif
 
 # Ovoz paneli uchun mos yozuvlar rasmlari - repoda kerak emas
 apps/web/src/assets/[0-9].png
+
+# --- Tahrirlashdan oldingi nusxalar ---
+# `nginx.container.conf.bak-2026-09-10` kabi fayllar - qo'lda olingan
+# zaxira, manba emas. Ular diskda qoladi, lekin repoga tushmaydi.
+*.bak-*
