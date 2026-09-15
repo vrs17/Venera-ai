@@ -286,3 +286,40 @@ export interface Transcript {
   /** `uzbek_stt` or `multilang` — which service answered. Debug only. */
   backend: string
 }
+
+/* ── Connectors (HRM / CRM - the user's own account) ───────────────────── */
+
+export type ConnectorId = 'hrm' | 'crm'
+/** disconnected: hech qachon ulanmagan yoki uzilgan; expired: qayta kirish kerak. */
+export type ConnectorState = 'disconnected' | 'connected' | 'expired'
+
+/** schemas/connectors.py: ConnectorStatus. TOKEN BU YERDA YO'Q - faqat holat. */
+export interface ConnectorStatus {
+  id: ConnectorId
+  label: string
+  /** Serverda sozlanganmi (`.env`). Sozlanmagan bo'lsa "+" bosilmaydi. */
+  configured: boolean
+  state: ConnectorState
+  /** Ulangan hisobning logini. */
+  login: string | null
+  /** Ulangan tizim chatda ishlatiladi (kalit). */
+  enabled: boolean
+  /** HRM tokenining muddati (ISO-8601). CRM da null - u o'zi yangilanadi. */
+  expiresAt: string | null
+}
+
+/** schemas/connectors.py: ConnectorsResponse */
+export interface ConnectorsResponse {
+  connectors: ConnectorStatus[]
+}
+
+/** schemas/connectors.py: ConnectRequest - platformaning O'Z logini va paroli. */
+export interface ConnectRequest {
+  username: string
+  password: string
+}
+
+/** schemas/connectors.py: ConnectorUpdate */
+export interface ConnectorUpdate {
+  enabled: boolean
+}

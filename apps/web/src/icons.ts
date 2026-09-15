@@ -509,3 +509,76 @@ export const MicOffIcon: FunctionalComponent<{ size?: number }> = (props) =>
     }),
     h('path', { d: 'M2.6 2.6l12.8 12.8', stroke: 'currentColor', 'stroke-width': '1.4', 'stroke-linecap': 'round' }),
   ])
+
+/* ---- "+" menyusi belgilari (kirish maydoni) ---- */
+
+/** Rasm: ramka, quyosh va tog' chizig'i. */
+export const ImageIcon: FunctionalComponent<{ size?: number }> = (props) =>
+  h('svg', { width: props.size ?? 16, height: props.size ?? 16, viewBox: '0 0 18 18', fill: 'none' }, [
+    h('rect', { x: '2.5', y: '3.5', width: '13', height: '11', rx: '2', stroke: 'currentColor', 'stroke-width': '1.5' }),
+    h('circle', { cx: '6.5', cy: '7.2', r: '1.3', stroke: 'currentColor', 'stroke-width': '1.3' }),
+    h('path', {
+      d: 'M3 13.2l3.6-3.6 2.6 2.6 2.3-2.3 3.5 3.5',
+      stroke: 'currentColor',
+      'stroke-width': '1.5',
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+    }),
+  ])
+ImageIcon.props = ['size']
+
+/** Ulanishlar: vilka. Tashqi tizim (HRM, CRM) rozetkaga "ulanadi" - shuning
+ *  uchun vilka, zanjir halqasi emas (u havola/URL ma'nosini beradi). */
+export const PlugIcon: FunctionalComponent<{ size?: number }> = (props) =>
+  h('svg', { width: props.size ?? 16, height: props.size ?? 16, viewBox: '0 0 18 18', fill: 'none' }, [
+    h('path', { d: 'M6.5 2.5V6M11.5 2.5V6', stroke: 'currentColor', 'stroke-width': '1.5', 'stroke-linecap': 'round' }),
+    h('path', {
+      d: 'M4.5 6h9v2.5a4.5 4.5 0 0 1-9 0V6z',
+      stroke: 'currentColor',
+      'stroke-width': '1.5',
+      'stroke-linejoin': 'round',
+    }),
+    h('path', { d: 'M9 13v2.5', stroke: 'currentColor', 'stroke-width': '1.5', 'stroke-linecap': 'round' }),
+  ])
+PlugIcon.props = ['size']
+
+/** Ichki menyu bor qator uchun o'ng strelka. Rangi ota elementdan
+ *  (ChevronDownIcon'dan farqli - unda sukut rang qotirilgan). */
+export const ChevronRightIcon: FunctionalComponent<{ size?: number }> = (props) =>
+  h('svg', { width: props.size ?? 10, height: props.size ?? 10, viewBox: '0 0 10 10', fill: 'none' }, [
+    h('path', {
+      d: 'M3.5 2l3 3-3 3',
+      stroke: 'currentColor',
+      'stroke-width': '1.6',
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+    }),
+  ])
+ChevronRightIcon.props = ['size']
+
+/** HRM belgisi: ikki kishi (xodimlar, davomat). */
+export const UsersIcon: FunctionalComponent<{ size?: number }> = (props) =>
+  h('svg', { width: props.size ?? 16, height: props.size ?? 16, viewBox: '0 0 18 18', fill: 'none' }, [
+    h('circle', { cx: '7', cy: '6', r: '2.6', stroke: 'currentColor', 'stroke-width': '1.5' }),
+    h('path', { d: 'M2.5 15a4.5 4.5 0 0 1 9 0', stroke: 'currentColor', 'stroke-width': '1.5', 'stroke-linecap': 'round' }),
+    h('path', {
+      d: 'M11.5 3.6a2.6 2.6 0 0 1 0 4.8M13.2 11a4.5 4.5 0 0 1 2.8 4',
+      stroke: 'currentColor',
+      'stroke-width': '1.5',
+      'stroke-linecap': 'round',
+    }),
+  ])
+UsersIcon.props = ['size']
+
+/** CRM belgisi: kanban doskasi (vazifalar, loyihalar, sprintlar). */
+export const BoardIcon: FunctionalComponent<{ size?: number }> = (props) =>
+  h('svg', { width: props.size ?? 16, height: props.size ?? 16, viewBox: '0 0 18 18', fill: 'none' }, [
+    h('rect', { x: '2.5', y: '3', width: '13', height: '12', rx: '2', stroke: 'currentColor', 'stroke-width': '1.5' }),
+    h('path', {
+      d: 'M6.5 6v5.5M9 6v3M11.5 6v4.5',
+      stroke: 'currentColor',
+      'stroke-width': '1.5',
+      'stroke-linecap': 'round',
+    }),
+  ])
+BoardIcon.props = ['size']
