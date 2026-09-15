@@ -93,7 +93,11 @@ class FakeNet:
 
         if url == f"{HRM}/api/authenticate":
             if body.get("password") != PASSWORD:
-                raise _http_error(url, 401, {"title": "Unauthorized", "detail": "Bad credentials"})
+                # JONLI HRM shunday qaytaradi: 500, ichida 401 (2026-09-15).
+                raise _http_error(url, 500, {
+                    "type": "https://www.brbtech.uz/problem/problem-with-message",
+                    "title": "Internal Server Error", "status": 500,
+                    "detail": "401 Unauthorized: [no body]", "message": "error.http.500"})
             jwt = make_jwt(self.hrm_exp)
             if self.hrm_shape == "camel_nested":
                 return _Response(json.dumps({"success": True, "data": {
@@ -213,11 +217,28 @@ def test_hrm_muddati_yaqin_bolsa_yuborilmaydi(hub, net):
 
 
 def test_hrm_notogri_parol(hub, net):
+    """HRM 500 ichida 401 beradi - bu PAROL xatosi, "javob bermadi" emas."""
     with pytest.raises(ConnectorError) as exc:
         hub.connect("1", "hrm", "y.m", "xato")
     assert exc.value.status == 400
     assert "parol" in str(exc.value).lower()
     assert hub.status("1")[0]["state"] == "disconnected"
+
+
+def test_hrm_haqiqiy_500_javob_bermadi(hub, net, monkeypatch):
+    """401 siz 500 - HRM ning o'z xatosi, parol emas."""
+    real = net.__call__
+
+    def broken(request, timeout=None):
+        if request.full_url == f"{HRM}/api/authenticate":
+            raise _http_error(request.full_url, 500, {"title": "Internal Server Error",
+                                                      "detail": "NullPointerException"})
+        return real(request, timeout)
+
+    monkeypatch.setattr(urllib.request, "urlopen", broken)
+    with pytest.raises(ConnectorError) as exc:
+        hub.connect("1", "hrm", "y.m", PASSWORD)
+    assert exc.value.status == 502
 
 
 def test_qayta_ishga_tushganda_saqlangan_qoladi(tmp_path, net):

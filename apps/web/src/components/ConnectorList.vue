@@ -3,7 +3,7 @@ import { useI18n } from 'vue-i18n'
 import type { FunctionalComponent } from 'vue'
 import { useConnectors } from '../composables/useConnectors'
 import type { ConnectorId, ConnectorStatus } from '../composables/useConnectors'
-import { BoardIcon, PlusIcon, UsersIcon } from '../icons'
+import { BoardIcon, GearIcon, PlusIcon, UsersIcon } from '../icons'
 
 // HRM / CRM qatorlari. Ulanmagan yoki muddati tugagan qatorda "+" (ulanish
 // oynasini ochadi), ulanganida kalit (chatda ishlatish / ishlatmaslik).
@@ -48,6 +48,19 @@ function title(c: ConnectorStatus): string {
             {{ hint(c) }}
           </span>
         </span>
+      </button>
+
+      <!-- Tishli g'ildirak: hisob oynasi (uzish, qayta kirish). Ulanmagan
+           qatorda yo'q - u yerda "+" ning o'zi oynani ochadi. -->
+      <button
+        v-if="c.configured && c.state !== 'disconnected'"
+        type="button"
+        class="clist__gear"
+        :title="t('connectorSettings')"
+        :aria-label="`${c.label}: ${t('connectorSettings')}`"
+        @click="emit('open', c.id)"
+      >
+        <GearIcon :size="15" />
       </button>
 
       <!-- Ulangan: kalit. Aks holda "+" - ulanish yoki qayta ulanish. -->
@@ -157,6 +170,27 @@ function title(c: ConnectorStatus): string {
 }
 .clist__dot.is-expired {
   background: var(--warn-fg);
+}
+/* Tishli g'ildirak - kalitning chap tomonida, kichik va jim: qatorning
+   asosiy amali kalit, sozlama esa ikkinchi darajali. */
+.clist__gear {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.clist__gear:hover {
+  background: var(--surface);
+  color: var(--text);
 }
 /* "+" - ulanish. Kalit bilan bir xil balandlikda, qator sakramasin. */
 .clist__connect {

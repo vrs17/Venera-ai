@@ -44,6 +44,10 @@ const password = ref('')
 const submitted = ref(false)
 const busy = ref(false)
 const formError = ref('')
+// Uzish ikki bosqichli: "Uzish" -> "Haqiqatan ham?" (ha / yo'q). Uzilgan
+// hisobni qaytarish uchun yana login va parol kerak - tasodifiy bosish
+// qimmat, shuning uchun tasdiq.
+const confirming = ref(false)
 
 const loginError = computed(() => (submitted.value && !login.value.trim() ? t('required') : ''))
 const passwordError = computed(() => (submitted.value && !password.value ? t('required') : ''))
@@ -76,9 +80,19 @@ async function onSubmit() {
   }
 }
 
-function onDisconnect() {
-  disconnect(props.connectorId)
-  emit('close')
+async function onDisconnect() {
+  if (busy.value) return
+  busy.value = true
+  formError.value = ''
+  try {
+    await disconnect(props.connectorId)
+    emit('close')
+  } catch (err) {
+    formError.value = err instanceof ApiError ? localizeApiError(err, t) : t('connectFailed')
+    confirming.value = false
+  } finally {
+    busy.value = false
+  }
 }
 </script>
 
@@ -104,10 +118,12 @@ function onDisconnect() {
           <span class="cdlg__badge" aria-hidden="true"><component :is="ICONS[connector.id]" :size="18" /></span>
           <div class="cdlg__head-text">
             <h2 :id="titleId" class="cdlg__title">
-              {{ connected ? connector.label : t('connectTo', { name: connector.label }) }}
+              <template v-if="confirming">{{ t('disconnectConfirm', { name: connector.label }) }}</template>
+              <template v-else>{{ connected ? connector.label : t('connectTo', { name: connector.label }) }}</template>
             </h2>
             <p class="cdlg__sub">
-              <template v-if="connected">{{ t('connectedAs', { login: connector.login ?? '' }) }}</template>
+              <template v-if="confirming">{{ t('disconnectConfirmHint', { name: connector.label }) }}</template>
+              <template v-else-if="connected">{{ t('connectedAs', { login: connector.login ?? '' }) }}</template>
               <template v-else-if="expired">{{ t('connectorExpiredHint', { name: connector.label }) }}</template>
               <template v-else>{{ t('connectHint', { name: connector.label }) }}</template>
             </p>
@@ -139,10 +155,20 @@ function onDisconnect() {
           </div>
         </template>
 
-        <div v-else class="cdlg__actions">
-          <button type="button" class="cdlg__secondary" @click="emit('close')">{{ t('close') }}</button>
-          <button type="button" class="cdlg__danger" @click="onDisconnect">{{ t('disconnect') }}</button>
-        </div>
+        <!-- Ulangan: yopish / uzish; uzishda ikkinchi qadam - tasdiq. -->
+        <template v-else>
+          <div v-if="formError" class="cdlg__error"><AuthError :message="formError" /></div>
+          <div v-if="confirming" class="cdlg__actions">
+            <button type="button" class="cdlg__secondary" :disabled="busy" @click="confirming = false">{{ t('no') }}</button>
+            <button type="button" class="cdlg__danger is-filled" :disabled="busy" :aria-busy="busy" @click="onDisconnect">
+              {{ busy ? t('disconnecting') : t('yesDisconnect') }}
+            </button>
+          </div>
+          <div v-else class="cdlg__actions">
+            <button type="button" class="cdlg__secondary" @click="emit('close')">{{ t('close') }}</button>
+            <button type="button" class="cdlg__danger" @click="confirming = true">{{ t('disconnect') }}</button>
+          </div>
+        </template>
       </form>
     </div>
   </Teleport>
@@ -273,6 +299,21 @@ function onDisconnect() {
 .cdlg__danger:hover {
   background: var(--bad-bg);
   border-color: var(--bad-bd);
+}
+/* Tasdiq qadamida "Ha, uzish" to'ldirilgan: bu yerda qizil endi "ehtiyot
+   bo'l" emas, "shuni qilyapsan" degan aniq tugma. */
+.cdlg__danger.is-filled {
+  background: var(--bad-fg);
+  border-color: transparent;
+  color: #fff;
+}
+.cdlg__danger.is-filled:hover {
+  filter: brightness(1.08);
+}
+.cdlg__secondary:disabled,
+.cdlg__danger:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 @keyframes cdlgFade {
   from {

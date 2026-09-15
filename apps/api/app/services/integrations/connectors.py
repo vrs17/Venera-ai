@@ -270,11 +270,20 @@ class HrmAuth:
 
     @staticmethod
     def _error(exc: _HttpFailure) -> ConnectorError:
-        if exc.status in (400, 401, 403):
+        detail = _safe(" ".join(str(exc.payload.get(k) or "")
+                                for k in ("detail", "title", "message")))
+        # HRM NOTO'G'RI LOGIN/PAROLGA 401 EMAS, 500 QAYTARADI - tanasida
+        # `"detail": "401 Unauthorized: [no body]"` (o'lchangan, 2026-09-15:
+        # mavjud bo'lmagan hisob ham, bo'sh parol ham shu javobni oladi).
+        # Uni "HRM javob bermadi" deb ko'rsatish odamni noto'g'ri yo'lga
+        # yuborardi - u parolini emas, tarmoqni tekshirardi.
+        wrapped_401 = exc.status == 500 and ("401" in detail or "unauthorized" in detail.lower())
+        if exc.status in (400, 401, 403) or wrapped_401:
             return ConnectorError(MSG_BAD_CREDENTIALS, status=400, code="BAD_CREDENTIALS")
         if exc.status == 429:
             return ConnectorError("HRM band, biroz kutib qayta urinib ko'ring",
                                   status=503, code="RATE_LIMIT")
+        log.warning("HRM %s: %s", exc.status, detail[:200] or "(tanasiz)")
         return ConnectorError(f"HRM javob bermadi ({exc.status})", status=502,
                               code=f"HTTP_{exc.status}")
 
