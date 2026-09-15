@@ -12,6 +12,7 @@ import ThinkingLoader from './ThinkingLoader.vue'
 import MessageActions from './MessageActions.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
 import AnswerSources from './AnswerSources.vue'
+import ActionCard from './ActionCard.vue'
 
 const props = defineProps<{
   exchange: UIExchange
@@ -121,7 +122,9 @@ const headline = computed<string | null>(() => {
   if (!r) return null
   if (r.finalStatus === 'STOP_UNSAFE') return r.guard?.reason || t('headlineUnsafe')
   if (r.finalStatus === 'STOP_ACCESS_DENIED') return r.access?.reason || t('headlineAccessDenied')
-  if (r.answer) return null
+  // A proposal card with no text is a complete answer too - the "pending"
+  // placeholder would call a finished turn unfinished.
+  if (r.answer || props.exchange.proposal) return null
   if (r.finalStatus === 'RAG_DOMAIN_NOT_READY') return t('headlineModuleNotReady')
   return t('headlinePending')
 })
@@ -190,6 +193,10 @@ const answerCopyText = computed(() => {
       <!-- Something failed AFTER part of the answer arrived. The answer stays;
            this says what is missing from it. -->
       <div v-if="exchange.warning" class="result__warning" role="status">{{ exchange.warning }}</div>
+
+      <!-- The assistant proposed a write action: nothing has changed until
+           the person presses Confirm here. -->
+      <ActionCard v-if="exchange.proposal" :key="exchange.proposal.token" :proposal="exchange.proposal" />
 
       <AnswerSources :sources="exchange.sources" :artifact="exchange.artifact" />
 

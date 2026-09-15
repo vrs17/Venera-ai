@@ -26,6 +26,8 @@ KADRLAR (frames), hujjat bo'yicha shu tartibda:
     stage     -> o'tkinchi holat ("hujjatlar qidirilmoqda"), bir nechta
     sources   -> iqtiboslar va HRM chaqiruvlari, bitta
     artifact  -> yaratilgan ariza fayli (bo'lishi shart emas)
+    proposal  -> TAKLIF qilingan yozuv amali (bo'lishi shart emas): hech
+                 narsa o'zgarmagan, odam tasdiqlasa `confirm_action` bajaradi
     token     -> javob matni bo'laklari, ko'p
     done      -> yakun: `route`, `request_id`
     error     -> tokenlar O'RNIGA keladi, keyin `done`
@@ -62,7 +64,10 @@ log = logging.getLogger(__name__)
 #: Kadr turlari. Notanish turlar O'TKAZILADI (yuqoridagi xizmat yangi kadr
 #: qo'shsa, Venera'ni qayta yozmasdan ishlashi kerak) - lekin faqat shakli
 #: to'g'ri bo'lsa: `type` maydoni bor JSON obyekti.
-FRAME_TYPES = frozenset({"stage", "sources", "artifact", "token", "done", "error"})
+FRAME_TYPES = frozenset({"stage", "sources", "artifact", "proposal", "token", "done", "error"})
+
+#: Yuqoridagi xizmatning yozuv amallari (`/api/actions/{token}/...`).
+ACTION_VERBS = ("confirm", "cancel")
 
 #: Ariza fayli turlari. Yuqoridagi xizmatda `/api/hr/artifacts/{token}/<kind>`.
 ARTIFACT_KINDS = ("preview", "docx", "pdf")
@@ -334,6 +339,59 @@ class AssistantClient:
             "error": error,
         }
 
+    # --- yozuv amallari ------------------------------------------------------
+
+    def confirm_action(self, token: str, *, user_id: str,
+                       tokens: Mapping[str, str] | None = None) -> dict[str, Any]:
+        """Taklif qilingan yozuv amalini BAJARADI - faqat odam bosgandan keyin.
+
+        Bajariladigan reja taklif paytida xizmatda saqlangan - ya'ni nima
+        bo'lsa, odam ko'rgan narsa bo'ladi; biz faqat kalitni, o'sha odamning
+        `user_id` sini (taklif kim uchun bo'lsa, o'sha tasdiqlaydi) va uning
+        platforma tokenini yuboramiz (taklif tokenni saqlamagan).
+        """
+        return self._action(token, "confirm", user_id=user_id, tokens=tokens)
+
+    def cancel_action(self, token: str, *, user_id: str,
+                      tokens: Mapping[str, str] | None = None) -> dict[str, Any]:
+        """Taklifni bekor qiladi - endi tasdiqlab bo'lmaydi. Hech narsa
+        o'zgarmagan edi, bu faqat tartib."""
+        return self._action(token, "cancel", user_id=user_id, tokens=tokens)
+
+    def get_action(self, token: str) -> dict[str, Any]:
+        """Taklifning holati: pending | executed | failed | cancelled | expired."""
+        return self._action(token, None)
+
+    def _action(self, token: str, verb: str | None, *, user_id: str = "",
+                tokens: Mapping[str, str] | None = None) -> dict[str, Any]:
+        if not self.configured:
+            raise AssistantError("HR Assistant sozlanmagan", status=501)
+        if not _SAFE_KEY.fullmatch(token or ""):
+            raise AssistantError("amal kaliti yaroqsiz", status=400)
+        path = f"/api/actions/{token}" + (f"/{verb}" if verb else "")
+        body: bytes | None = None
+        if verb:
+            payload: dict[str, Any] = {"user_id": user_id}
+            live = {name: value for name, value in (tokens or {}).items() if value}
+            if live:
+                payload["tokens"] = live
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request_id = uuid.uuid4().hex
+        with _mapped_errors(self.client_secret):
+            response = self._open(path, body, accept="application/json", request_id=request_id)
+            with contextlib.closing(response):
+                raw = response.read(_MAX_LINE_BYTES)
+                served = (response.headers.get("X-Request-Id") or "").strip()
+        try:
+            result = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise AssistantError("Assistant amal javobi o'qilmadi", status=502) from exc
+        if not isinstance(result, dict):
+            raise AssistantError("Assistant amal javobi obyekt emas", status=502)
+        # Audit kaliti: xizmatniki ustun, bo'lmasa biznikini yozamiz.
+        result.setdefault("request_id", served or request_id)
+        return result
+
     # --- fayllar -------------------------------------------------------------
 
     def fetch_artifact(self, token: str, kind: str) -> tuple[str, str, Iterator[bytes]]:
@@ -438,7 +496,24 @@ def _clean_frame(line: bytes, base_url: str) -> dict[str, Any] | None:
         _rewrite_artifact(frame, base_url)
     elif kind == "sources":
         _rewrite_sources(frame)
+    elif kind == "proposal":
+        _strip_proposal_urls(frame)
     return frame
+
+
+def _strip_proposal_urls(frame: dict[str, Any]) -> None:
+    """`confirm_url` / `cancel_url` OLIB TASHLANADI.
+
+    Ular yuqoridagi xizmatning ICHKI manzilini ko'rsatadi va ilova sirini
+    talab qiladi - brauzer ularni baribir chaqira olmaydi. Tasdiqlash
+    Venera'ning o'z yo'li orqali: `POST /api/v1/actions/{token}/confirm`.
+    Maydonlar `proposal` ostida ham, yassi ham kelishi mumkin (ariza kadri
+    kabi) - ikkalasi tozalanadi.
+    """
+    for holder in (frame, frame.get("proposal")):
+        if isinstance(holder, dict):
+            holder.pop("confirm_url", None)
+            holder.pop("cancel_url", None)
 
 
 def _rewrite_artifact(frame: dict[str, Any], base_url: str) -> None:
