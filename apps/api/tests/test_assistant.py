@@ -773,12 +773,24 @@ def test_ask_javobni_yigadi(assistant):
 
 
 @pytest.fixture
-def api(monkeypatch, assistant, client):
+def api(monkeypatch, assistant, client, tmp_path):
     """Endpoint soxta transport ustida: `/chat/stream` ning O'ZI tekshiriladi.
     `client` - conftest'dagi HTTP klienti, `assistant` - shu fayldagi
-    integratsiya klienti."""
+    integratsiya klienti.
+
+    CRM sessiyasi ATAYLAB SOZLANMAGAN holatga almashtiriladi. Modul
+    darajasidagi `_crm` haqiqiy `settings` dan quriladi, ya'ni `.env` da
+    `CRM_BASE_URL` to'ldirilgan mashinada testlar JONLI CRM ga login
+    qilishga urinardi - bir marta shunday bo'ldi va 6 test "SSL support
+    not available" bilan yiqildi. Test hech qachon tashqi tarmoqqa
+    chiqmasligi kerak, va bu holat mashinaning sozlamasiga bog'liq
+    bo'lmasligi kerak.
+    """
     import app.api.v1.chat as module
+    from app.services.integrations.crm_auth import CrmAuth
+
     monkeypatch.setattr(module, "_assistant", assistant)
+    monkeypatch.setattr(module, "_crm", CrmAuth("", "", "", tmp_path / "crm"))
     return module, client
 
 
@@ -831,6 +843,80 @@ def test_endpoint_crm_tokenini_ham_uzatadi(api, auth, server, monkeypatch):
     app_client.post("/api/v1/chat/stream", headers=auth,
                     json={"question": "mening ochiq tasklarim?"})
     assert server.calls[0]["body"]["tokens"]["crm"] == "c"
+
+
+def test_avtomatik_crm_sessiyasi_env_dan_ustun(api, auth, server, monkeypatch, tmp_path):
+    """`CrmAuth` sozlangan bo'lsa `.env` dagi `crm_token` BOSILADI.
+
+    Teskari tartib jimgina buzardi: `.env` da eskirgan token qolib
+    ketsa (va u albatta eskiradi - 5 daqiqa yashaydi), u avtomatik
+    sessiyani bosib turib, har CRM savoli `auth_expired` olardi.
+    """
+    from app.services.integrations.crm_auth import CrmAuth
+
+    module, app_client = api
+    monkeypatch.setattr(module, "platform_tokens",
+                        lambda: {"hrm": "h", "crm": "ENV-ESKI"})
+    live = CrmAuth("https://crm.test", "agent", "parol", tmp_path / "crm")
+    monkeypatch.setattr(live, "token", lambda: "AVTO-YANGI")
+    monkeypatch.setattr(module, "_crm", live)
+    app_client.post("/api/v1/chat/stream", headers=auth, json={"question": "salom"})
+    assert server.calls[0]["body"]["tokens"] == {"hrm": "h", "crm": "AVTO-YANGI"}
+
+
+def test_crm_sessiyasi_yiqilsa_env_ga_tushmaydi(api, auth, server, monkeypatch, tmp_path):
+    """Sozlangan `CrmAuth` yiqilsa, eskirgan `.env` tokeni ISHLATILMAYDI.
+
+    Jonli tekshiruvda aynan shu aldab qo'ydi: CRM login xatosi
+    ("Account is not fully set up") o'rniga foydalanuvchi eskirgan
+    `.env` tokeni tufayli `auth_expired` oldi - ya'ni "sessiyangiz
+    tugagan" degan butunlay boshqa sabab. Token yubormaslik halol
+    `auth_missing` beradi va haqiqiy sabab `/api/health` da qoladi.
+    """
+    from app.services.integrations.crm_auth import CrmAuth
+
+    module, app_client = api
+    monkeypatch.setattr(module, "platform_tokens",
+                        lambda: {"hrm": "h", "crm": "ENV-ESKIRGAN"})
+    # HAQIQATAN sozlangan obyekt (sinf xususiyatini patch qilish emas),
+    # lekin token bermaydi - login yiqilgan holat.
+    broken = CrmAuth("https://crm.test", "agent", "parol", tmp_path / "crm")
+    monkeypatch.setattr(broken, "token", lambda: "")
+    monkeypatch.setattr(module, "_crm", broken)
+    assert broken.configured is True
+    app_client.post("/api/v1/chat/stream", headers=auth, json={"question": "salom"})
+    assert server.calls[0]["body"]["tokens"] == {"hrm": "h"}
+
+
+def test_crm_sessiyasi_sozlanmasa_env_ishlatiladi(api, auth, server, monkeypatch):
+    """Sozlama to'lmaguncha qo'lda yozilgan token bilan ishlashda davom
+    etadi - butunlay ishsiz qolishdan ko'ra yaxshiroq."""
+    module, app_client = api
+    monkeypatch.setattr(module, "platform_tokens",
+                        lambda: {"hrm": "h", "crm": "ENV-QOLDA"})
+    monkeypatch.setattr(module._crm, "token", lambda: "")
+    app_client.post("/api/v1/chat/stream", headers=auth, json={"question": "salom"})
+    assert server.calls[0]["body"]["tokens"]["crm"] == "ENV-QOLDA"
+
+
+def test_klient_kimlikni_almashtirolmaydi(api, auth, server):
+    """`hrmEmployee` KLIENTDAN QABUL QILINMAYDI.
+
+    Yuqoridagi xizmat bu maydon bilan savoldagi "men" kim ekanini
+    almashtirishga ruxsat beradi. Maydon so'rov tanasida turganda esa u
+    klient qo'lida bo'lardi: tizimga kirgan HAR QANDAY foydalanuvchi
+    `{"hrmEmployee": "BOSHQA XODIM"}` yuborib, o'sha odam haqidagi
+    javobni olardi. Frontend uni hech qachon yubormagan, ya'ni bu faqat
+    ochiq qolgan hujum yuzasi edi.
+    """
+    _, app_client = api
+    response = app_client.post(
+        "/api/v1/chat/stream", headers=auth,
+        json={"question": "men bugun kechikdimmi?", "hrmEmployee": "KARIMOV ALI"})
+    assert response.status_code == 200
+    body = server.calls[0]["body"]
+    assert "hrm_employee" not in body
+    assert "KARIMOV ALI" not in json.dumps(body, ensure_ascii=False)
 
 
 def test_endpoint_kadrlarni_ozgartirmasdan_uzatadi(api, auth):

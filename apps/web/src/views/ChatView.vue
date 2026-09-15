@@ -7,7 +7,7 @@ import { localizeApiError } from '../api/errors'
 import { useAuth } from '../composables/useAuth'
 import { useWakeWord, WAKE_LOCALES, WAKE_STORAGE_KEY } from '../composables/useWakeWord'
 import { warmGreeting } from '../api/greeting'
-import type { ActorType, ChatFrame, Phase, PipelineResponse, UIExchange } from '../types'
+import type { ActionProposal, ActorType, ChatFrame, Phase, PipelineResponse, UIExchange } from '../types'
 import { applyTheme, getInitialTheme } from '../theme'
 import type { Theme } from '../theme'
 import AmbientBackground from '../components/AmbientBackground.vue'
@@ -211,6 +211,15 @@ function runPipeline(id: string, question: string) {
         patch(id, { artifact: frame.artifact ?? inline })
         break
       }
+      case 'proposal': {
+        // A write action the assistant wants to make. NOTHING has changed:
+        // the card under the answer asks the person to confirm or reject.
+        // Nested under `proposal` or inline, like the artifact frame.
+        const { type: _type, ...inline } = frame
+        const proposal = (frame.proposal ?? inline) as ActionProposal
+        if (proposal.token) patch(id, { proposal })
+        break
+      }
       case 'token':
         answer += frame.text ?? ''
         // The response object appears with the FIRST token, which is what
@@ -279,7 +288,7 @@ function regenerate(id: string) {
   if (!ex) return
   patch(id, {
     response: null, error: null, cancelled: false, durationMs: null,
-    stage: null, sources: [], artifact: null, warning: null, route: null,
+    stage: null, sources: [], artifact: null, proposal: null, warning: null, route: null,
   })
   runPipeline(id, ex.question)
 }

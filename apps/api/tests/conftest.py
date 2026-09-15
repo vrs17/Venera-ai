@@ -77,6 +77,28 @@ def auth(token) -> dict:
 
 
 @pytest.fixture(autouse=True)
+def _isolated_connectors(tmp_path, monkeypatch):
+    """Ulanishlar ombori HAR TESTDA vaqtinchalik va bo'sh.
+
+    Modul darajasidagi `hub` haqiqiy `settings.connectors_file` ni o'qiydi -
+    ishlab chiqish mashinasida u yerda ODAMNING JONLI TOKENLARI turadi
+    (ulangan CRM). Bir marta shunday bo'ldi: `_live_tokens` testlari
+    "umumiy token ketadi" deb kutgan joyda faylda turgan odam tokeni
+    ustun kelib, 4 test yiqildi - va bu mashinaga bog'liq edi. Testlar
+    hech qachon haqiqiy ma'lumotga tegmasligi kerak.
+    """
+    from app.api.v1 import connectors as connectors_api
+    from app.services.integrations.connectors import (
+        ConnectorHub, ConnectorStore, CrmUserAuth, HrmAuth,
+    )
+
+    monkeypatch.setattr(connectors_api, "hub", ConnectorHub(
+        ConnectorStore(tmp_path / "connectors" / "tokens.json"),
+        HrmAuth(""), CrmUserAuth("", "", "", ""),
+    ))
+
+
+@pytest.fixture(autouse=True)
 def _default_secret():
     """Testlar default kalit bilan ishlaydi - natija takrorlanadigan bo'lsin."""
     original = settings.secret_key

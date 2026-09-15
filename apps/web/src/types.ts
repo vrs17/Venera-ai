@@ -151,7 +151,7 @@ export interface AnswerArtifact {
 /** One NDJSON line. `type` is open: the assistant may add frames, and an
  *  unknown one must be ignored rather than crash the reader. */
 export interface ChatFrame {
-  type: 'stage' | 'sources' | 'artifact' | 'token' | 'done' | 'error' | (string & {})
+  type: 'stage' | 'sources' | 'artifact' | 'proposal' | 'token' | 'done' | 'error' | (string & {})
   /** stage: human status text. token: the piece of answer to append. error: user-safe message. */
   text?: string
   stage?: string
@@ -168,6 +168,8 @@ export interface ChatFrame {
   preview_url?: string | null
   title?: string
   doc_id?: string
+  /** proposal: the proposed write action, nested or inline like artifact. */
+  proposal?: ActionProposal
   /** done: which side answered. */
   route?: string | null
   /** error: machine-readable cause, e.g. auth_missing. */
@@ -192,6 +194,8 @@ export interface UIExchange {
   sources?: AnswerSource[]
   /** The generated application file, when there is one. */
   artifact?: AnswerArtifact | null
+  /** A write action the assistant proposed; shown with Confirm / Reject. */
+  proposal?: ActionProposal | null
   /** rules | hrm | crm | live | both | clarify — shown in developer mode. */
   route?: string | null
   /** Audit key: the same value is in the assistant's own log. */
@@ -285,4 +289,78 @@ export interface Transcript {
   truncated: boolean
   /** `uzbek_stt` or `multilang` — which service answered. Debug only. */
   backend: string
+}
+
+/* ── Connectors (HRM / CRM - the user's own account) ───────────────────── */
+
+export type ConnectorId = 'hrm' | 'crm'
+/** disconnected: hech qachon ulanmagan yoki uzilgan; expired: qayta kirish kerak. */
+export type ConnectorState = 'disconnected' | 'connected' | 'expired'
+
+/** schemas/connectors.py: ConnectorStatus. TOKEN BU YERDA YO'Q - faqat holat. */
+export interface ConnectorStatus {
+  id: ConnectorId
+  label: string
+  /** Serverda sozlanganmi (`.env`). Sozlanmagan bo'lsa "+" bosilmaydi. */
+  configured: boolean
+  state: ConnectorState
+  /** Ulangan hisobning logini. */
+  login: string | null
+  /** Ulangan tizim chatda ishlatiladi (kalit). */
+  enabled: boolean
+  /** HRM tokenining muddati (ISO-8601). CRM da null - u o'zi yangilanadi. */
+  expiresAt: string | null
+}
+
+/** schemas/connectors.py: ConnectorsResponse */
+export interface ConnectorsResponse {
+  connectors: ConnectorStatus[]
+}
+
+/** schemas/connectors.py: ConnectRequest - platformaning O'Z logini va paroli. */
+export interface ConnectRequest {
+  username: string
+  password: string
+}
+
+/** schemas/connectors.py: ConnectorUpdate */
+export interface ConnectorUpdate {
+  enabled: boolean
+}
+
+/* ── Write actions: the assistant proposes, the person confirms ─────────── */
+
+/** One field the proposed action would change. */
+export interface ActionChange {
+  field?: string
+  from?: unknown
+  to?: unknown
+}
+
+/** A write action the assistant PROPOSED in a `proposal` frame. NOTHING has
+ *  changed yet: it runs only after POST /api/v1/actions/{token}/confirm.
+ *  The fields are the assistant's own and open — only `token` is required. */
+export interface ActionProposal {
+  token: string
+  summary?: string
+  operation?: string | null
+  connector?: string | null
+  target?: string | Record<string, unknown> | null
+  changes?: ActionChange[]
+  warnings?: string[]
+  expires_at?: string
+}
+
+/** schemas/actions.py: ActionResult. `status`: pending | executed | failed |
+ *  cancelled | expired. */
+export interface ActionResult {
+  token: string
+  status: 'pending' | 'executed' | 'failed' | 'cancelled' | 'expired' | (string & {})
+  summary?: string
+  operation?: string | null
+  connector?: string | null
+  ok?: boolean | null
+  error?: string | null
+  request_id?: string | null
+  result?: Record<string, unknown> | null
 }

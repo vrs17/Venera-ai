@@ -5,6 +5,7 @@ import type { CSSProperties } from 'vue'
 import type { Phase } from '../types'
 import { AttachIcon, ConversationIcon, MicIcon, SendIcon, StopIcon } from '../icons'
 import BottomCurrent from './BottomCurrent.vue'
+import ComposerMenu from './ComposerMenu.vue'
 
 // Grow the textarea up to ~7 lines, then scroll internally.
 const MAX_HEIGHT = 168
@@ -27,6 +28,12 @@ const focused = ref(false)
 const hovering = ref(false)
 const convHover = ref(false)
 const taRef = ref<HTMLTextAreaElement | null>(null)
+// "+" menyusi (rasm, ulanishlar). Tugma dockning ichida, menyu esa tashqarida
+// (qarang ComposerMenu) - shuning uchun tugmaga ref kerak: menyu uni "o'zimniki"
+// deb biladi va unga bosilganda yopilmaydi.
+const menuOpen = ref(false)
+const plusRef = ref<HTMLButtonElement | null>(null)
+const plusHover = ref(false)
 
 const hasText = computed(() => value.value.trim().length > 0)
 const busy = computed(() => props.phase !== 'idle')
@@ -61,20 +68,33 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
-const disabledRoundButton: CSSProperties = {
+const roundButton: CSSProperties = {
   width: '34px',
   height: '34px',
   border: 'none',
   background: 'transparent',
   borderRadius: '50%',
-  cursor: 'not-allowed',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
   flexShrink: 0,
   color: 'var(--icon-muted)',
 }
-const attachButtonStyle: CSSProperties = { ...disabledRoundButton, position: 'relative' }
+const disabledRoundButton: CSSProperties = { ...roundButton, cursor: 'not-allowed' }
+
+// "+" jonli: menyuni ochadi. Ochiq yoki sichqoncha ustida bo'lsa fon chiqadi,
+// tugma menyuga tegishli ekani ko'rinsin.
+const attachButtonStyle = computed<CSSProperties>(() => {
+  const lit = menuOpen.value || plusHover.value
+  return {
+    ...roundButton,
+    position: 'relative',
+    cursor: 'pointer',
+    background: lit ? 'var(--surface-hover)' : 'transparent',
+    color: lit ? 'var(--text)' : 'var(--icon-muted)',
+    transition: 'background 0.15s, color 0.15s',
+  }
+})
 
 // A filled square-ish button, not another outlined circle: the three buttons to
 // its left are all single actions on the current message, this one switches the
@@ -117,7 +137,6 @@ const textareaStyle: CSSProperties = {
 const dockStyle = computed<CSSProperties>(() => ({
   position: 'relative',
   width: '100%',
-  maxWidth: '740px',
   borderRadius: '26px',
   background: 'var(--glass-bg)',
   // No solid border line at all — the gradient light ring (.dock::before) is the
@@ -184,13 +203,37 @@ const sendBtnStyle = computed<CSSProperties>(() => {
       pointerEvents: 'none',
     }"
   >
+    <!-- O'ram: menyu dockning tashqarisida, lekin unga nisbatan joylashadi -
+         dock `.glass` (contain: paint) bo'lgani uchun ichida kesilib qolardi. -->
+    <div :style="{ position: 'relative', width: '100%', maxWidth: '740px', pointerEvents: 'auto' }">
+    <ComposerMenu v-if="menuOpen" :anchor="plusRef" @close="menuOpen = false" />
     <div class="glass" :style="dockStyle">
       <!-- A light wanders randomly along the bottom edge while answering. -->
       <BottomCurrent v-if="busy" />
 
-      <!-- Plus with a small brand spark, à la Gemini -->
-      <button :title="t('comingSoon')" aria-disabled="true" :style="attachButtonStyle">
-        <AttachIcon />
+      <!-- Plus with a small brand spark, à la Gemini. Ochiq holatda 45° buriladi:
+           × - ya'ni "yopish". -->
+      <button
+        ref="plusRef"
+        type="button"
+        :title="t('attach')"
+        :aria-label="t('attach')"
+        aria-haspopup="menu"
+        :aria-expanded="menuOpen"
+        :style="attachButtonStyle"
+        @click="menuOpen = !menuOpen"
+        @mouseenter="plusHover = true"
+        @mouseleave="plusHover = false"
+      >
+        <span
+          :style="{
+            display: 'inline-flex',
+            transform: menuOpen ? 'rotate(45deg)' : 'none',
+            transition: 'transform 0.2s',
+          }"
+        >
+          <AttachIcon />
+        </span>
         <span
           :style="{
             position: 'absolute',
@@ -239,6 +282,7 @@ const sendBtnStyle = computed<CSSProperties>(() => {
       >
         <ConversationIcon :size="18" />
       </button>
+    </div>
     </div>
     <div :style="{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }">{{ t('disclaimer') }}</div>
   </div>

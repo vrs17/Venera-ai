@@ -174,6 +174,63 @@ class Settings(BaseSettings):
     #: esa ishlab turadi - va teskarisi.
     crm_token: str = ""
 
+    # --- CRM sessiyasi (avtomatik) ---
+    #: CRM ning asosiy manzili. BO'SH bo'lsa avtomatik sessiya O'CHIQ va
+    #: yuqoridagi qo'lda yozilgan `crm_token` ishlatiladi.
+    crm_base_url: str = ""
+    #: AGENTNING O'Z CRM hisobi - odamning hisobi EMAS.
+    #:
+    #: Hujjat talabi, va sababi ikkita: hisobning roli agent nimani
+    #: o'qib-o'zgartira olishini belgilaydi (ya'ni zarar doirasi kichik
+    #: qoladi), va audit jurnali halol bo'ladi - aks holda agentning har
+    #: bir harakati kimning parolini olgan bo'lsa o'sha odamga yozilardi.
+    crm_username: str = ""
+    #: Parol FAQAT birinchi login uchun. Undan keyin `refresh_token`
+    #: ishlatiladi va parolga qaytilmaydi.
+    crm_password: str = ""
+    crm_timeout: float = 10.0
+    #: `refresh_token` shu faylda turadi. `data/` gitignore'da, fayl 600
+    #: huquq bilan atomik yoziladi.
+    #:
+    #: BU DOIMIY KREDENSIAL: `exp` i yo'q, 30 kun ishlatilmasa bekor
+    #: bo'ladi. Uni qo'lga kiritgan odam cheksiz muddat agent nomidan
+    #: token yasay oladi - paroldan farqi yo'q.
+    crm_refresh_file: Path = BASE_DIR / "data" / "crm" / "refresh_token"
+
+    # --- Ulanishlar: foydalanuvchining O'Z HRM / CRM hisobi ---
+    #: Yuqoridagi agent sessiyasidan FARQI: u yerda bitta umumiy hisob, bu
+    #: yerda har bir odam "+" menyusidan o'z logini va paroli bilan kiradi
+    #: va chatga uning O'Z tokeni beriladi. Mantiq:
+    #: `services/integrations/connectors.py`.
+    #:
+    #: HRM API manzili (`POST /api/authenticate`). BO'SH bo'lsa HRM ulanishi
+    #: o'chiq - menyuda "serverda sozlanmagan" ko'rinadi.
+    hrm_base_url: str = ""
+    hrm_timeout: float = 10.0
+    #: HRM tokeni 10 SOAT yashaydi va refresh'i yo'q. Muddati shundan KAM
+    #: qolganda u yuqoridagi xizmatga BERILMAYDI va odam qayta kiradi:
+    #: savol-javob bir necha daqiqa cho'zilishi mumkin, token esa javob
+    #: OXIRIGACHA yaroqli turishi kerak.
+    hrm_token_margin: float = 300.0
+    #: CRM uchun Keycloak token manzili - parol bilan kirish shu yerda
+    #: (`grant_type=password`, `offline_access`). BO'SH bo'lsa CRM
+    #: ulanishi o'chiq. `crm_base_url` (yuqorida) esa yangilash uchun
+    #: kerak: `POST /api/auth/refresh` CRM ning o'zida.
+    crm_idp_token_url: str = ""
+    crm_client_id: str = "crm-client"
+    #: Ilova siri - FAQAT `.env` da, brauzerga hech qachon bermaydi.
+    crm_client_secret: str = ""
+    #: CRM `access_token` 300 SEKUND yashaydi. Muddati shundan kam qolgan
+    #: bo'lsa savol oldidan `refresh_token` bilan yangilanadi - ya'ni token
+    #: olinganidan keyin ko'pi bilan 120 s qayta ishlatiladi, undan keyin
+    #: har savolga yangisi. Savol-javob 2-3 daqiqa cho'zilishi mumkin,
+    #: shuning uchun 90 s emas (agent sessiyasidagi kabi) - 180 s.
+    crm_token_margin: float = 180.0
+    #: Foydalanuvchilar tokenlari (HRM token, CRM refresh_token) shu faylda.
+    #: `data/` gitignore'da, fayl 600 huquq bilan atomik yoziladi. PAROL BU
+    #: YERDA YO'Q - u faqat login so'roviga ketadi.
+    connectors_file: Path = BASE_DIR / "data" / "connectors" / "tokens.json"
+
     # --- CORS ---
     #: Bo'sh bo'lsa CORS o'chirilgan: frontend nginx orqali BIR XIL originda
     #: turadi (`/api` proxy), ya'ni CORS umuman kerak emas. Faqat frontend

@@ -109,7 +109,7 @@ def test_namuna_fayl_yoq_bolsa_yiqilmaydi(tmp_path):
     assert example_password_hashes(tmp_path / "yoq.yaml") == set()
 
 
-def test_health_namuna_parolini_aytadi(client, monkeypatch, tmp_path):
+def test_health_namuna_parolini_aytadi(client, auth, monkeypatch, tmp_path):
     """`/api/health` degraded bo'lishi va qaysi hisob ekanini aytishi kerak.
 
     DIQQAT: `health()` `get_user_store()` ni `Depends` orqali EMAS, to'g'ridan
@@ -125,18 +125,18 @@ def test_health_namuna_parolini_aytadi(client, monkeypatch, tmp_path):
     store = UserStore.from_file(_write(tmp_path, entries))
 
     monkeypatch.setattr(main, "get_user_store", lambda: store)
-    body = client.get("/api/health").json()
+    body = client.get("/api/health/detail", headers=auth).json()
 
     assert body["status"] == "degraded"
     assert any("NAMUNA PAROLLARI" in w for w in body["warnings"])
     assert any("admin@venera.uz" in w for w in body["warnings"])
 
 
-def test_health_oz_paroli_bilan_toza(client, monkeypatch, tmp_path):
+def test_health_oz_paroli_bilan_toza(client, auth, monkeypatch, tmp_path):
     """Yolg'on ogohlantirish bo'lmasligi kerak - aks holda unga e'tibor berilmay qoladi."""
     import app.main as main
     store = UserStore.from_file(_write(tmp_path, [BASE]))
     monkeypatch.setattr(main, "get_user_store", lambda: store)
 
-    body = client.get("/api/health").json()
+    body = client.get("/api/health/detail", headers=auth).json()
     assert not any("NAMUNA PAROLLARI" in w for w in body["warnings"]), body["warnings"]

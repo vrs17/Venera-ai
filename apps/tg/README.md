@@ -37,8 +37,38 @@ ko'rsatilgan. Ayniqsa quyidagilar - ular tanlanmagan, **o'lchangan**:
  │                               │
  └───────────────────────────────┘
             Gapirish uchun bosing      <- bitta status qatori
-                 ( ◉ )                 <- 64px mikrofon tugmasi
+ ┌───────────────────────────────┐
+ │ Veneradan so'rang…   (➤) (◉) │      <- kiritish paneli
+ └───────────────────────────────┘
 ```
+
+### Kiritish paneli
+
+Savolni IKKI yo'l bilan berish mumkin: yozib yoki gapirib. Ikkalasi ham
+`ask()` ning AYNI O'ZIGA boradi - farq faqat boshida (ovozda STT qadami
+bor). Shuning uchun turn raqami, bekor qilgich va holat mashinasi bitta
+joyda qoladi.
+
+Veb ilovadagi `InputDock.vue` dan farqlar ATAYLAB:
+
+* `+` (biriktirish) va dok ichidagi mikrofon ikonkasi YO'Q. Veb'da ular
+  o'chirilgan holda turadi (`comingSoon`); tor ekranda ishlamaydigan tugma
+  joy egallab, chalg'itardi.
+* Ovoz uchun alohida "suhbat" tugmasi ham yo'q - doiraning O'ZI o'sha
+  tugma.
+
+Yuborish tugmasi band paytda TO'XTATISH bo'ladi. Alohida tugma qo'shilsa,
+ikkalasi ham deyarli doim o'chiq turardi.
+
+Matn maydoni 16px - kichikroq bo'lsa iOS Safari fokuslanganda sahifani
+kattalashtiradi va Mini App ichida uni qaytarib bo'lmaydi. Enter yuboradi,
+Shift+Enter yangi qator; IME so'z terayotganda (`isComposing`) Enter
+yuborMAYDI - u yerda Enter tanlash uchun bosiladi.
+
+KLAVIATURA BALANDLIGI qo'lda boshqariladi: `100dvh` Telegram WebView'da
+klaviatura chiqqanda yangilanmaydi va kiritish paneli klaviatura ostida
+qolardi. `viewportChanged` hodisasida `tg.viewportStableHeight` body ga
+yoziladi (`viewportHeight` EMAS - u animatsiya davomida tebranadi).
 
 Ovozli javob kaliti YUQORI O'NG burchakda, menyudan oldin. U har turnda
 emas, bir marta sozlanadigan narsa - pastda, mikrofonning yonida turgani
@@ -85,21 +115,45 @@ bormaydi - har qanday savolga bir xil "Venera hozircha sozlanmoqda..."
 matnini qaytaradi. Uni zaxira yo'l qilish foydalanuvchiga javob berilgandek
 ko'rsatib, aslida hech narsa aytmaslik bo'lardi.
 
-### Manbalar va jonli so'rovlar
+### Javob ekranga qanday chiqadi: `forScreen()`
 
-Javob ostidagi dalil IKKI turga bo'linadi va ular ATAYLAB har xil
-ko'rsatiladi:
+Xom javob EKRANGA SHUNDAYLIGICHA CHIQMAYDI. Ikki narsa olib tashlanadi:
 
-* **Manbalar** - iqtibos qilingan hujjatlar, `[1]`, `[2]` markerlari bilan.
-* **Tizim so'rovlari** - jonli chaqiruvlar (`hrm`, `crm`), `[T1]`, `[T2]`
-  markerlari bilan. Ularda ochiladigan narsa yo'q: bu ma'lum bir paytda
-  bo'lib o'tgan chaqiruv, shuning uchun nomi (`crm_my_issues`) va nima
-  qaytargani (digest) aytiladi.
+**1. Audit izi.** Javob oxirida shunday quyruq keladi:
 
-`LOOKUP_KINDS = ['hrm', 'crm']` - yangi platforma uchun shu yerga bitta
-qator qo'shiladi. `crm` `hrm` ga 2026-09-14 da qo'shildi; undan oldin CRM
-manbasi hujjatlar ro'yxatiga tushib, mavjud bo'lmagan fayl kabi
-ko'rsatilardi.
+```
+Tekshirilgan HRM ma'lumotlari (14.09.2026 07:48):
+[T1] hrm_today_late - date=2026-09-14 -> count=9, data=9 rows, status=200
+```
+
+Bu xodim uchun emas, tizim uchun yozilgan: `status=200` va `9 rows` savol
+bergan odamga hech narsa aytmaydi, lekin javobdan uzunroq bo'lishi mumkin.
+Jonli misolda 463 belgilik javobning 141 tasi shu iz edi.
+
+Iz ketgach `[T1]` markerlari ham hech qayerga ishora qilmaydi - ular ham
+olib tashlanadi. `[1]`, `[2]` esa QOLADI: ular pastdagi "Manbalar"
+ro'yxatiga ishora qiladi va o'sha ro'yxat ko'rinib turadi.
+
+**2. Markdown belgilari.** Sahifa matnni oddiy matn sifatida ko'rsatadi
+(`white-space: pre-wrap`), ya'ni `**bo'lim:**` yulduzchalari bilan
+ko'rinardi. Ro'yxat belgisi `•` ga aylanadi, qatorlar saqlanadi.
+
+VEB ILOVADAN FARQ ATAYLAB: u izni ekranda QOLDIRADI - u yerda alohida
+yig'iladigan bo'lim bor va bank auditi uni talab qiladi. Telegram'da esa
+bitta tor ustun, va iz javobni ko'mib yuboradi.
+
+### Manbalar
+
+Javob ostida FAQAT hujjatlar ko'rsatiladi: "[1] ichki mehnat tartibi
+qoidalari, 22-bet". Bu texnik iz emas - javob qayerdan olingani, va bank
+muhitida xodim javobga ishonmasa aynan shu qatorga qaraydi.
+
+Jonli so'rovlar (`LOOKUP_KINDS = ['hrm', 'crm']`) ekranga CHIQMAYDI: ular
+yuqoridagi audit izining ayni o'zi, boshqa shaklda. Izni matndan olib
+tashlab, o'sha ma'lumotni pastda qayta ko'rsatish ma'nosiz bo'lardi.
+
+`crm` `hrm` ga 2026-09-14 da qo'shildi; undan oldin CRM manbasi hujjatlar
+ro'yxatiga tushib, mavjud bo'lmagan fayl kabi ko'rsatilardi.
 
 ### Xato kadri: xizmatning O'Z matni yutadi
 
