@@ -40,6 +40,24 @@
     try { if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred(kind); } catch (e) {}
   };
 
+  // KLAVIATURA OCHILGANDA BALANDLIK. Matn maydoni qo'shilgach bu majburiy
+  // bo'ldi: `100dvh` Telegram WebView'da klaviatura chiqqanda YANGILANMAYDI
+  // (u brauzer oynasiniki, WebView'niki emas), natijada sahifaning pastki
+  // qismi - ya'ni aynan kiritish paneli - klaviatura ostida qolardi.
+  //
+  // `viewportStableHeight`, `viewportHeight` EMAS: ikkinchisi ochilish
+  // animatsiyasi davomida har kadrda o'zgarib, tebranish hosil qiladi.
+  if (tg && typeof tg.onEvent === 'function') {
+    const applyViewport = () => {
+      const h = tg.viewportStableHeight || tg.viewportHeight;
+      if (!h) return;
+      document.body.style.height = h + 'px';
+      document.body.style.minHeight = h + 'px';   // `min-height: 100dvh` ni bosib o'tadi
+    };
+    try { tg.onEvent('viewportChanged', applyViewport); } catch (e) {}
+    applyViewport();
+  }
+
   // =========================================================================
   // 1. HTTP qatlami - `apps/web/src/api/http.ts` ning nusxasi
   // =========================================================================
@@ -514,6 +532,52 @@
   }
 
   /**
+   * Javob matnini EKRANGA tayyorlaydi.
+   *
+   * Ikki ish qiladi va ikkalasi ham o'qishni yengillashtirish uchun:
+   *
+   * 1. AUDIT IZI OLIB TASHLANADI. Javob oxirida "Tekshirilgan HRM
+   *    ma'lumotlari:" va `[T1] hrm_today_late - date=... -> count=9,
+   *    data=9 rows, status=200` turadi. Bu xodim uchun emas, tizim uchun
+   *    yozilgan matn: `status=200` va `9 rows` savol bergan odamga hech
+   *    narsa aytmaydi, lekin javobdan uzunroq bo'lishi mumkin.
+   *    (Veb ilova uni EKRANDA qoldiradi - u yerda alohida yig'iladigan
+   *    bo'lim bor va bank auditi uni talab qiladi. Telegram'da esa bitta
+   *    tor ustun, va iz javobni ko'mib yuboradi.)
+   *
+   * 2. MARKDOWN BELGILARI TOZALANADI. Sahifa matnni ODDIY matn sifatida
+   *    ko'rsatadi (`white-space: pre-wrap`), ya'ni `**bo'lim:**` shundayligicha
+   *    yulduzchalari bilan ko'rinardi. Ro'yxat belgisi `•` ga aylanadi -
+   *    qatorlar saqlanadi, faqat belgi almashadi.
+   *
+   * Hujjat iqtiboslari (`[1]`, `[2]`) SAQLANADI: ular javob ostidagi
+   * "Manbalar" ro'yxatiga ishora qiladi va o'sha ro'yxat ko'rinib turadi.
+   */
+  function forScreen(markdown) {
+    return answerBody(markdown)
+      // Iz olib tashlangach `[T1]` markerlari hech qayerga ishora qilmaydi.
+      // ATAYLAB faqat `T` prefiksi: `[1]` hujjat iqtibosi, u qoladi.
+      // Ortidagi probel ham yeyiladi: marker qator BOSHIDA turgan bo'lsa
+      // ("[T1] hrm_today_late"), usiz qator bo'shliq bilan boshlanardi.
+      .replace(/\[T\d{1,3}\][ \t]?/g, '')
+      .replace(/```[a-zA-Z]*\n?/g, '')
+      .replace(/`([^`]*)`/g, '$1')
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/^#{1,6}[ \t]*/gm, '')
+      // Ro'yxat belgisi -> nuqta. `*` ni olib tashlashdan OLDIN.
+      .replace(/^([ \t]*)[-*+][ \t]+/gm, '$1• ')
+      .replace(/\*\*|__|~~/g, '')
+      .replace(/\*/g, '')
+      // Marker olib tashlangach qolgan bo'shliq: "kech qoldi :" -> "kech qoldi:"
+      // FAQAT probel va tab: `\s` bo'lsa qator uzilishlarini ham yeb qo'yardi.
+      .replace(/[ \t]+([,.;:!?])/g, '$1')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/[ \t]+$/gm, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  /**
    * Javob matnini O'QISHGA tayyorlaydi.
    *
    * Javob markdown bo'lib keladi: `**bo'lim:**`, `* ro'yxat`, `[T1]` iqtibos
@@ -686,6 +750,7 @@
   const orbWrap = $('orbWrap'), ripple = $('ripple'), logEmpty = $('logEmpty'),
         statusEl = $('status'), statusText = $('statusText'), note = $('note'), log = $('log'),
         modePill = $('modePill'), voiceToggle = $('voiceToggle'),
+        input = $('input'), sendBtn = $('sendBtn'),
         confirmRow = $('confirmRow'), confirmYes = $('confirmYes'), confirmNo = $('confirmNo');
   const menuBtn = $('menuBtn'), menuSheet = $('menuSheet'), menuClose = $('menuClose'),
         whoName = $('whoName'), whoMeta = $('whoMeta'), logoutBtn = $('logoutBtn'),
@@ -774,6 +839,9 @@
   function setState(next) {
     state = next;
     orbWrap.className = 'orb-wrap ' + next;
+    // Yuborish tugmasi holatga BOG'LIQ (band bo'lsa "to'xtatish"), shuning
+    // uchun u shu yerdan yangilanadi - har chaqiruv joyida takrorlanmaydi.
+    syncSend();
     statusEl.classList.toggle('live', next === 'speaking' || next === 'listening');
     confirmRow.hidden = next !== 'confirm';
     // Matn BITTA qator: avval sarlavha + tavsif + status uch qator joy olib,
@@ -1095,7 +1163,9 @@
           break;
         case 'token':
           answer += frame.text || '';
-          body.textContent = answer;
+          // Xom matn `answer` da saqlanadi (ovoz uchun kerak), ekranga esa
+          // tozalangani chiqadi.
+          body.textContent = forScreen(answer);
           log.scrollTop = log.scrollHeight;
           break;
         case 'sources': {
@@ -1103,16 +1173,21 @@
           // yuboradi. Faqat bittasini o'qish = ro'yxat JIMGINA doim bo'sh.
           const list = frame.sources || frame.items || [];
           if (!list.length) break;
-          const docs = [], calls = [];
-          for (const item of list) {
-            (LOOKUP_KINDS.indexOf(String(item.kind)) >= 0 ? calls : docs).push(item);
-          }
+          // JONLI SO'ROVLAR (`hrm`, `crm`) EKRANGA CHIQMAYDI. Ular javob
+          // matnidagi audit izining AYNI O'ZI, boshqa shaklda:
+          // "T1 hrm_today_late - count=9, data=9 rows, status=200". Izni
+          // `forScreen` da olib tashlab, o'sha ma'lumotni pastda qayta
+          // ko'rsatish ma'nosiz bo'lardi.
+          //
+          // HUJJATLAR esa QOLADI va bu farq ataylab: "[1] ichki mehnat
+          // tartibi qoidalari, 22-bet" - bu texnik iz emas, javobning
+          // qayerdan olingani. Bank muhitida xodim javobga ishonmasa,
+          // aynan shu qatorga qaraydi.
+          const docs = list.filter((item) => LOOKUP_KINDS.indexOf(String(item.kind)) < 0);
+          if (!docs.length) break;
           const src = document.createElement('span');
           src.className = 'src';
-          const parts = [];
-          if (docs.length) parts.push('Manbalar: ' + docs.map(sourceLabel).join('  '));
-          if (calls.length) parts.push('Tizim so\'rovlari: ' + calls.map(sourceLabel).join('  '));
-          src.textContent = parts.join('\n');
+          src.textContent = 'Manbalar: ' + docs.map(sourceLabel).join('  ');
           el.appendChild(src);
           break;
         }
@@ -1216,6 +1291,7 @@
     stopSpeaking();
     log.textContent = '';
     logEmpty.hidden = false;
+    input.value = '';
     show(authView);
     showAuthError('Sessiya tugadi. Qaytadan kiring.');
   }
@@ -1232,6 +1308,8 @@
       .filter(Boolean).join(' · ') || u.email;
     show(appView);
     setNote('');
+    input.value = '';
+    resize();
     setState('idle');
     // Parol almashtirish talab qilinsa - menyuni o'zi ochib beramiz.
     if (u.passwordChangeRequired) {
@@ -1322,6 +1400,7 @@
     stopSpeaking();
     log.textContent = '';
     logEmpty.hidden = false;
+    input.value = '';
     closeMenu();
     show(authView);
     showAuthError('');
@@ -1330,16 +1409,86 @@
   // =========================================================================
   // 13. Kiritishlar
   // =========================================================================
+  /** Turn ketyaptimi - ya'ni yuborish tugmasi "to'xtatish" bo'lishi kerakmi. */
+  function busy() {
+    return state === 'listening' || state === 'transcribing' ||
+           state === 'thinking' || state === 'speaking';
+  }
+
+  /** Ketayotgan turnni bekor qiladi. `turnId++` MUHIM: oqim javobi keyin
+   *  kelsa ham, u eski turn deb tashlanadi. */
+  function cancelTurn() {
+    if (aborter) aborter.abort();
+    stopSpeaking();
+    turnId++;
+    teardown();
+    setState('idle');
+  }
+
+  /** Qo'lda yozilgan savolni yuboradi.
+   *
+   *  Ovozli yo'ldan farqi faqat boshida: STT yo'q, ya'ni matn tayyor.
+   *  Qolgani AYNI O'SHA yo'l (`ask`), shuning uchun turn raqami, bekor
+   *  qilgich va holat mashinasi bitta joyda qoladi. */
+  function sendText(raw) {
+    const text = (raw || '').trim();
+    if (!text) return false;
+    // Band bo'lsa yubormaymiz: xizmat bir vaqtda 4 ta so'rov ko'taradi va
+    // navbatni o'zimiz uzaytirishning ma'nosi yo'q. Tugma bunday paytda
+    // allaqachon "to'xtatish" bo'lib turadi.
+    if (busy()) return false;
+    setNote('');
+    pendingQuestion = '';
+    if (aborter) aborter.abort();
+    aborter = new AbortController();
+    const turn = ++turnId;
+    addMsg('you', text);
+    ask(text, turn);
+    return true;
+  }
+
+  /** Matn maydoni mazmuniga qarab o'sadi, `max-height` gacha. */
+  function resize() {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 110) + 'px';
+  }
+
+  /** Tugmaning ko'rinishi UCH holatdan kelib chiqadi: band / matn bor /
+   *  bo'sh. Bitta joyda hisoblanadi - aks holda holatlar ajralib ketardi. */
+  function syncSend() {
+    const on = busy();
+    sendBtn.classList.toggle('busy', on);
+    sendBtn.classList.toggle('ready', !on && input.value.trim().length > 0);
+    sendBtn.setAttribute('aria-label', on ? 'To\'xtatish' : 'Yuborish');
+    sendBtn.title = on ? 'To\'xtatish' : 'Yuborish';
+  }
+
+  input.addEventListener('input', () => { resize(); syncSend(); });
+  // Klaviatura sahifani qisqartiradi - oxirgi xabar ko'rinmay qolmasin.
+  // Kechikish ATAYLAB: o'lcham fokus paytida emas, klaviatura ochilib
+  // bo'lgandan keyin o'zgaradi.
+  input.addEventListener('focus', () => {
+    setTimeout(() => { log.scrollTop = log.scrollHeight; }, 300);
+  });
+  input.addEventListener('keydown', (e) => {
+    // Enter yuboradi, Shift+Enter yangi qator. `isComposing` - IME
+    // (masalan kirill yoki emoji tanlagich) so'z terayotganda Enter
+    // TANLASH uchun bosiladi, yuborish uchun emas.
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      if (sendText(input.value)) { input.value = ''; resize(); syncSend(); }
+    }
+  });
+
+  sendBtn.addEventListener('click', () => {
+    if (busy()) { cancelTurn(); syncSend(); return; }
+    if (sendText(input.value)) { input.value = ''; resize(); syncSend(); }
+  });
+
   orbWrap.addEventListener('click', () => {
     if (state === 'idle' || state === 'confirm') startListening();
     else if (state === 'listening') stopListening();
-    else if (state === 'speaking') { stopSpeaking(); setState('idle'); }
-    else if (state === 'thinking' || state === 'transcribing') {
-      if (aborter) aborter.abort();
-      turnId++;
-      teardown();
-      setState('idle');
-    }
+    else cancelTurn();
   });
 
   confirmYes.addEventListener('click', () => {

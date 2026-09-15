@@ -29,10 +29,11 @@ from fastapi.staticfiles import StaticFiles
 
 from fastapi import Depends
 
-from .api.deps import docs_viewer, get_user_store
+from .api.deps import current_user, docs_viewer, get_user_store
 from .api.v1 import router as v1_router
 from .core import errors
 from .core.config import crm_token_now, hrm_token_now, settings
+from .schemas.auth import AuthUser
 from .services.integrations.assistant import token_warning
 from .services.upstream import UpstreamHealth, warnings_for
 
@@ -46,6 +47,18 @@ def tts_client():
     from .api.v1.tts import _client
 
     return _client
+
+
+def crm_auth():
+    """Chat endpointi ishlatayotgan AYNI CRM sessiyasi.
+
+    Alohida nusxa yasalsa u alohida login qilib, `refresh_token` ni
+    rotatsiya bilan bekor qilar edi - ya'ni sog'lik tekshiruvining o'zi
+    chat sessiyasini buzardi.
+    """
+    from .api.v1.chat import _crm
+
+    return _crm
 from .services.users import example_password_hashes
 
 logging.basicConfig(
@@ -164,10 +177,8 @@ app.include_router(v1_router)
 _upstream = UpstreamHealth(settings.stt_base_url, settings.tts_base_url)
 
 
-@app.get("/api/health", tags=["service"])
-@app.get("/health", tags=["service"], include_in_schema=False)
-def health() -> dict:
-    """Holat. Monitoring va IT xodimi uchun.
+def _diagnostics() -> dict:
+    """To'liq tashxis. FAQAT sessiya bilan ko'rsatiladi (pastga qara).
 
     `warnings` - ishga tushdi, lekin e'tibor talab qiladigan holatlar.
     Bular server KO'TARILISHINI to'smaydi: buzuq config tufayli xizmat
@@ -218,10 +229,25 @@ def health() -> dict:
     # HAR platforma uchun alohida: HRM tokeni joyida bo'lib, CRM tokeni
     # tugagan bo'lishi mumkin - o'shanda CRM savollari jimgina ishlamay
     # qo'yadi va buni faqat aytib bersa bilish mumkin.
-    for _key, _token in (("hrm_token", hrm_token_now()), ("crm_token", crm_token_now())):
+    manual = [("hrm_token", hrm_token_now())]
+    # `crm_token` AYTILMAYDI, agar avtomatik sessiya sozlangan bo'lsa:
+    # u holda qo'lda yozilgan qiymat umuman ishlatilmaydi, va "muddati
+    # tugagan" ogohlantirishi odamni mavjud bo'lmagan muammoga
+    # yuborardi. Avtomatik sessiyaning o'z holati pastda.
+    if not crm_auth().configured:
+        manual.append(("crm_token", crm_token_now()))
+    for _key, _token in manual:
         token_note = token_warning(_token, key=_key)
         if token_note:
             warnings.append(token_note)
+
+    # CRM sessiyasi: sozlangan bo'lsa o'zini yangilab turadi, lekin hisob
+    # rad etilsa (`USER_NOT_PROVISIONED`) qayta urinish BEFOYDA va buni
+    # faqat aytib bersa bilish mumkin.
+    crm = crm_auth().status()
+    crm_note = crm_auth().warning()
+    if crm_note:
+        warnings.append(crm_note)
 
     # TTS navbatidagi band joylar. KO'RSATILADI, chunki bu bir marta
     # jimgina to'lib qolgan: ikki joy oqib ketgan va har bir ovoz so'rovi
@@ -240,5 +266,45 @@ def health() -> dict:
         "version": settings.version,
         "users": len(store),
         "tts_slots": {"busy": tts_busy, "limit": settings.tts_max_concurrent},
+        # TOKEN QIYMATI YO'Q - faqat holat va muddat.
+        "crm_session": crm,
         "warnings": warnings,
     }
+
+
+@app.get("/api/health", tags=["service"])
+@app.get("/health", tags=["service"], include_in_schema=False)
+def health() -> dict:
+    """OCHIQ holat: faqat tirikligi va versiyasi.
+
+    ATAYLAB MINIMAL. Bu yo'l autentifikatsiyasiz va nginx orqali
+    TASHQARIGA ochiq (`llm.brb-tech.uz/api/health`). Ilgari u butun
+    tashxisni qaytarardi, ya'ni ismini aytmagan har qanday odam
+    quyidagilarni ko'rar edi:
+
+      * `crm_session` - CRM agent hisobi sozlanganmi, necha marta login
+        qilgan, va `last_error` da Keycloak ning xom javobi (jonli
+        misol: "Account is not fully set up", ya'ni hisob mavjud va
+        noto'g'ri sozlangan);
+      * `warnings` - qaysi token muddati tugagani, chat sozlanmagani,
+        va namuna parollari ishlatilayotgan bo'lsa QAYSI HISOBLAR
+        ekani (`main.py` dagi `demo` tekshiruvi emaillarni nomlaydi);
+      * `users` - hisoblar soni, `upstream` - ichki xizmatlar holati.
+
+    Bularning hammasi hujum uchun razvedka. `status` esa ochiq qoladi:
+    u "e'tibor kerak" deyishga yetadi, nimasi kerakligini aytmaydi -
+    monitoring uchun shu kifoya.
+    """
+    diagnostics = _diagnostics()
+    return {"status": diagnostics["status"], "version": diagnostics["version"]}
+
+
+@app.get("/api/health/detail", tags=["service"])
+def health_detail(user: AuthUser = Depends(current_user)) -> dict:
+    """To'liq tashxis - SESSIYA TALAB QILADI.
+
+    IT xodimi uchun mo'ljallangan ma'lumot shu yerda qoladi. Kirish
+    huquqi tekshiriladi, chunki ro'yxatdagi har bir satr tizim haqida
+    biror narsani oshkor qiladi.
+    """
+    return _diagnostics()

@@ -174,6 +174,29 @@ class Settings(BaseSettings):
     #: esa ishlab turadi - va teskarisi.
     crm_token: str = ""
 
+    # --- CRM sessiyasi (avtomatik) ---
+    #: CRM ning asosiy manzili. BO'SH bo'lsa avtomatik sessiya O'CHIQ va
+    #: yuqoridagi qo'lda yozilgan `crm_token` ishlatiladi.
+    crm_base_url: str = ""
+    #: AGENTNING O'Z CRM hisobi - odamning hisobi EMAS.
+    #:
+    #: Hujjat talabi, va sababi ikkita: hisobning roli agent nimani
+    #: o'qib-o'zgartira olishini belgilaydi (ya'ni zarar doirasi kichik
+    #: qoladi), va audit jurnali halol bo'ladi - aks holda agentning har
+    #: bir harakati kimning parolini olgan bo'lsa o'sha odamga yozilardi.
+    crm_username: str = ""
+    #: Parol FAQAT birinchi login uchun. Undan keyin `refresh_token`
+    #: ishlatiladi va parolga qaytilmaydi.
+    crm_password: str = ""
+    crm_timeout: float = 10.0
+    #: `refresh_token` shu faylda turadi. `data/` gitignore'da, fayl 600
+    #: huquq bilan atomik yoziladi.
+    #:
+    #: BU DOIMIY KREDENSIAL: `exp` i yo'q, 30 kun ishlatilmasa bekor
+    #: bo'ladi. Uni qo'lga kiritgan odam cheksiz muddat agent nomidan
+    #: token yasay oladi - paroldan farqi yo'q.
+    crm_refresh_file: Path = BASE_DIR / "data" / "crm" / "refresh_token"
+
     # --- CORS ---
     #: Bo'sh bo'lsa CORS o'chirilgan: frontend nginx orqali BIR XIL originda
     #: turadi (`/api` proxy), ya'ni CORS umuman kerak emas. Faqat frontend

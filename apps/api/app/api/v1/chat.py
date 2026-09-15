@@ -30,11 +30,26 @@ from ...services.integrations.assistant import (
     AssistantClient,
     AssistantError,
 )
+from ...services.integrations.crm_auth import CrmAuth
 from ...services.pipeline import pipeline
 from ..deps import current_user
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+#: CRM sessiyasi - o'zini o'zi yangilab turadi (`crm_auth.py`).
+#:
+#: Bitta obyekt: refresh_token ROTATSIYA qiladi, ya'ni ikki nusxa
+#: bo'lsa ular bir-birining tokenini bekor qilib, har savolda paroldan
+#: login qilishga tushib qolardi. Hujjat ham shuni aytadi: "one login
+#: per agent process".
+_crm = CrmAuth(
+    settings.crm_base_url,
+    settings.crm_username,
+    settings.crm_password,
+    settings.crm_refresh_file,
+    timeout=settings.crm_timeout,
+)
 
 _assistant = AssistantClient(
     settings.hrm_assistant_base_url,
@@ -61,6 +76,38 @@ _MESSAGES = {
     504: "Javob juda uzoq cho'zildi",
     502: "Savol-javob xizmati javob bermadi",
 }
+
+
+def _live_tokens() -> dict[str, str]:
+    """Yuboriladigan platforma token'lari.
+
+    CRM tokeni ikki manbadan kelishi mumkin, va sozlangan bo'lsa
+    `CrmAuth` UNI TO'LIQ EGALLAYDI:
+
+      1. `CrmAuth` sozlangan (`CRM_BASE_URL` + login/parol) - CRM tokeni
+         FAQAT undan olinadi. U 300 sekundlik tokenni o'zi yangilaydi,
+         ya'ni qo'l tegmaydi.
+      2. Sozlanmagan - `.env` dagi qo'lda yozilgan `crm_token` ishlatiladi.
+         U amalda ishlamaydi (yopishtirib bo'lguncha 5 daqiqasi tugaydi),
+         lekin sozlama to'lmaguncha butunlay ishsiz qolishdan yaxshiroq.
+
+    NEGA ZAHIRAGA TUSHMAYMIZ. Avval "CrmAuth token bermasa `.env`
+    dagisini ishlatamiz" deb yozilgan edi, va jonli tekshiruvda bu ALDAB
+    QO'YDI: CRM login xatosi ("Account is not fully set up") o'rniga
+    foydalanuvchi eskirgan `.env` tokeni tufayli `auth_expired` oldi -
+    ya'ni "sessiyangiz tugagan" degan butunlay boshqa sabab ko'rsatildi.
+    Token YUBORMASLIK esa halol `auth_missing` beradi ("CRM tizimiga
+    kiring"), va haqiqiy sabab `/api/health` da turadi.
+    """
+    tokens = platform_tokens()
+    if _crm.configured:
+        crm = _crm.token()
+        # Egalik TO'LIQ: sessiya yiqilgan bo'lsa ham `.env` dagi eskirgan
+        # qiymat ishlatilmaydi.
+        tokens.pop("crm", None)
+        if crm:
+            tokens["crm"] = crm
+    return tokens
 
 
 def _fail(exc: AssistantError, user: AuthUser, what: str):
@@ -118,8 +165,7 @@ def stream(body: StreamRequest, user: AuthUser = Depends(current_user)) -> Strea
             #
             # Token yo'q platforma haqidagi savol `auth_missing` bilan
             # qaytadi ("CRM tizimiga kiring"), qolgani esa ishlaydi.
-            tokens=platform_tokens(),
-            hrm_employee=body.hrmEmployee,
+            tokens=_live_tokens(),
             max_chars=settings.hrm_assistant_max_question_chars,
         )
     except AssistantError as exc:
