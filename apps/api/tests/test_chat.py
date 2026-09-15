@@ -65,18 +65,52 @@ def test_savol_maydoni_yoq_bolsa_422(client, auth):
 
 
 def test_health(client):
+    """OCHIQ holat ATAYLAB minimal: faqat tiriklik va versiya."""
     body = client.get("/health").json()
     assert body["status"] in ("ok", "degraded")
+    assert set(body) == {"status", "version"}, f"ochiq holatda ortiqcha maydon: {set(body)}"
+
+
+def test_ochiq_holat_tashxis_bermaydi(client):
+    """Bu yo'l nginx orqali TASHQARIGA ochiq.
+
+    Ilgari u butun tashxisni qaytarardi: `crm_session` (CRM hisobi
+    sozlanganmi va Keycloak ning xom xatosi), `warnings` (qaysi token
+    tugagani, namuna parollari qaysi hisoblarda), `users`, `upstream`.
+    Ismini aytmagan odam uchun bu razvedka edi.
+    """
+    body = client.get("/api/health").json()
+    for leak in ("warnings", "users", "upstream", "crm_session", "tts_slots"):
+        assert leak not in body, f"ochiq holat {leak} ni oshkor qildi"
+
+
+def test_batafsil_holat_sessiya_talab_qiladi(client):
+    assert client.get("/api/health/detail").status_code == 401
+
+
+def test_batafsil_holat_sessiya_bilan_ishlaydi(client, auth):
+    body = client.get("/api/health/detail", headers=auth).json()
     assert body["users"] == 2
+    assert "warnings" in body and "crm_session" in body
 
 
 def test_health_default_kalit_haqida_ogohlantiradi(client):
     """Prod'da kalitni o'zgartirishni unutish - eng ko'p uchraydigan xato."""
     from app.core.config import settings
+    from app.core.security import create_token
 
     original, settings.secret_key = settings.secret_key, "dev-only-insecure-change-me"
-    body = client.get("/health").json()
-    settings.secret_key = original
+    try:
+        # Token ALMASHTIRILGAN kalit ostida yasaladi: `auth` fiksturasi
+        # asl kalit bilan imzolangan va bu blokda yaroqsiz bo'lardi.
+        token, _ = create_token("admin@venera.uz")
+        headers = {"Authorization": f"Bearer {token}"}
+        public = client.get("/health").json()
+        body = client.get("/api/health/detail", headers=headers).json()
+    finally:
+        settings.secret_key = original
 
+    # Ochiq yo'l "e'tibor kerak" deydi, SABABINI aytmaydi.
+    assert public["status"] == "degraded"
     assert body["status"] == "degraded"
     assert any("secret_key" in w for w in body["warnings"])

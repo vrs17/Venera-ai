@@ -132,9 +132,21 @@ class StreamRequest(BaseModel):
     #: o'zi yaratadi (brauzerdagi suhbat oynasi), va u `user_id` bilan
     #: birga ishlatilgani uchun boshqa odamning suhbatiga tushib qolmaydi.
     chatId: str | None = Field(default=None, max_length=64)
-    #: Savoldagi "men" kim ekanini aniqlashtiradi (ism yoki id). Odatda
-    #: kerak emas - HRM token'ining o'z egasi hisoblanadi.
-    hrmEmployee: str | None = Field(default=None, max_length=120)
+
+    # `hrmEmployee` ATAYLAB YO'Q.
+    #
+    # Yuqoridagi xizmat shu maydon bilan savoldagi "men" kim ekanini
+    # almashtirishga ruxsat beradi. Maydon bu yerda turganda esa u
+    # KLIENT QO'LIDA bo'lardi: har qanday tizimga kirgan foydalanuvchi
+    # `{"question": "...", "hrmEmployee": "BOSHQA XODIM"}` yuborib,
+    # o'sha odam haqidagi javobni olardi - token egasining ko'rish
+    # huquqi doirasida. Frontend bu maydonni hech qachon yubormagan,
+    # ya'ni bu faqat ochiq qolgan hujum yuzasi edi.
+    #
+    # Klient tanlagan kimlik SERVER tomonidan qo'yilishi kerak (yuqoridagi
+    # `user_id` kabi). Kelajakda kerak bo'lsa - masalan rahbar o'z
+    # bo'ysunuvchisi haqida so'rasa - u huquq tekshiruvi bilan birga
+    # qaytariladi, so'rov tanasidan emas.
 
 
 class PipelineResponse(BaseModel):

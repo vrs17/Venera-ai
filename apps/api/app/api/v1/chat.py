@@ -30,11 +30,27 @@ from ...services.integrations.assistant import (
     AssistantClient,
     AssistantError,
 )
+from ...services.integrations.crm_auth import CrmAuth
 from ...services.pipeline import pipeline
+from . import connectors as _connectors
 from ..deps import current_user
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+#: CRM sessiyasi - o'zini o'zi yangilab turadi (`crm_auth.py`).
+#:
+#: Bitta obyekt: refresh_token ROTATSIYA qiladi, ya'ni ikki nusxa
+#: bo'lsa ular bir-birining tokenini bekor qilib, har savolda paroldan
+#: login qilishga tushib qolardi. Hujjat ham shuni aytadi: "one login
+#: per agent process".
+_crm = CrmAuth(
+    settings.crm_base_url,
+    settings.crm_username,
+    settings.crm_password,
+    settings.crm_refresh_file,
+    timeout=settings.crm_timeout,
+)
 
 _assistant = AssistantClient(
     settings.hrm_assistant_base_url,
@@ -61,6 +77,48 @@ _MESSAGES = {
     504: "Javob juda uzoq cho'zildi",
     502: "Savol-javob xizmati javob bermadi",
 }
+
+
+def _live_tokens(user: AuthUser) -> dict[str, str]:
+    """Yuboriladigan platforma token'lari.
+
+    USTUNLIK: foydalanuvchining O'Z ulanishi (`/api/v1/connectors`, "+"
+    menyusi) HAMMASIDAN USTUN. U HRM yoki CRM ga o'z logini bilan kirgan
+    va kalit yoqiq bo'lsa, o'sha platforma uchun FAQAT uning tokeni ketadi
+    - shunda "men" degani haqiqatan o'sha odam. Kalit o'chiq, ulanmagan
+    yoki muddati tugagan bo'lsa platforma xaritada bo'lmaydi va pastdagi
+    UMUMIY manbalar ishlaydi (ular VAQTINCHALIK, `core/config.py`).
+
+    Umumiy CRM tokeni ikki manbadan kelishi mumkin, va sozlangan bo'lsa
+    `CrmAuth` UNI TO'LIQ EGALLAYDI:
+
+      1. `CrmAuth` sozlangan (`CRM_BASE_URL` + login/parol) - CRM tokeni
+         FAQAT undan olinadi. U 300 sekundlik tokenni o'zi yangilaydi,
+         ya'ni qo'l tegmaydi.
+      2. Sozlanmagan - `.env` dagi qo'lda yozilgan `crm_token` ishlatiladi.
+         U amalda ishlamaydi (yopishtirib bo'lguncha 5 daqiqasi tugaydi),
+         lekin sozlama to'lmaguncha butunlay ishsiz qolishdan yaxshiroq.
+
+    NEGA ZAHIRAGA TUSHMAYMIZ. Avval "CrmAuth token bermasa `.env`
+    dagisini ishlatamiz" deb yozilgan edi, va jonli tekshiruvda bu ALDAB
+    QO'YDI: CRM login xatosi ("Account is not fully set up") o'rniga
+    foydalanuvchi eskirgan `.env` tokeni tufayli `auth_expired` oldi -
+    ya'ni "sessiyangiz tugagan" degan butunlay boshqa sabab ko'rsatildi.
+    Token YUBORMASLIK esa halol `auth_missing` beradi ("CRM tizimiga
+    kiring"), va haqiqiy sabab `/api/health` da turadi.
+    """
+    tokens = platform_tokens()
+    if _crm.configured:
+        crm = _crm.token()
+        # Egalik TO'LIQ: sessiya yiqilgan bo'lsa ham `.env` dagi eskirgan
+        # qiymat ishlatilmaydi.
+        tokens.pop("crm", None)
+        if crm:
+            tokens["crm"] = crm
+    # Odamning o'z tokenlari - CRM niki shu yerda, so'rov oldidan
+    # yangilanadi (300 s yashaydi), HRM niki muddati yetarli bo'lsagina.
+    tokens.update(_connectors.hub.tokens(str(user.actorId)))
+    return tokens
 
 
 def _fail(exc: AssistantError, user: AuthUser, what: str):
@@ -96,14 +154,12 @@ def stream(body: StreamRequest, user: AuthUser = Depends(current_user)) -> Strea
             # ketmasligi kerak - suhbat xotirasi shu kalit bo'yicha.
             user_id=f"venera:{user.actorId}",
             chat_id=body.chatId,
-            # PLATFORMA TOKENLARI SOZLAMADAN, sessiyadan emas - VAQTINCHALIK.
-            #
-            # Venera kimligi (users.yaml) HRM/CRM kimligidan alohida, ya'ni
-            # foydalanuvchining o'z sessiyasi bizda yo'q. Shu bosqichda
-            # `.env` dagi bitta umumiy token ishlatiladi, va uning ochiq
-            # oqibati bor: xizmat hujjatiga ko'ra token bilan "men" degani
-            # TOKEN EGASI, ya'ni har kim so'rasa javob o'sha odam haqida
-            # bo'ladi. `core/config.py` va `/api/health` shuni aytadi.
+            # PLATFORMA TOKENLARI: avval odamning O'Z ulanishi ("+"
+            # menyusi, `/api/v1/connectors`), u yo'q bo'lsa `.env` dagi
+            # umumiy token / agent sessiyasi - `_live_tokens` ga qara.
+            # Umumiy token VAQTINCHALIK va oqibati bor: xizmat hujjatiga
+            # ko'ra token bilan "men" degani TOKEN EGASI. O'z hisobi bilan
+            # kirgan odam uchun bu muammo yo'q.
             #
             # HAMMA token yuboriladi, tanlab emas: hujjat talabi - "send
             # every token the user has, the assistant decides per question
@@ -118,8 +174,7 @@ def stream(body: StreamRequest, user: AuthUser = Depends(current_user)) -> Strea
             #
             # Token yo'q platforma haqidagi savol `auth_missing` bilan
             # qaytadi ("CRM tizimiga kiring"), qolgani esa ishlaydi.
-            tokens=platform_tokens(),
-            hrm_employee=body.hrmEmployee,
+            tokens=_live_tokens(user),
             max_chars=settings.hrm_assistant_max_question_chars,
         )
     except AssistantError as exc:
