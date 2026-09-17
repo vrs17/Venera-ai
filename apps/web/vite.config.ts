@@ -50,6 +50,56 @@ function releaseDownloads(): Plugin {
   }
 }
 
+// Telegram Mini App (`apps/tg/`) - ikkita fayl, build yo'q. Production'da
+// uni nginx host'dan mount qilib `/tg/` ostida beradi
+// (deploy/nginx.container.conf); dev serverda esa hech kim bermasdi, ya'ni
+// Mini App'ni lokalda umuman ochib bo'lmasdi. Bu plugin o'sha ishni
+// takrorlaydi: http://<host>:5174/tg/ - va `/api` o'sha proxy orqali ketadi.
+//
+// Production bundle'ga TA'SIR QILMAYDI (`apply: 'serve'`): fayllar dist/ ga
+// tushmaydi - ular obrazga ham kirmaydi, host'dan mount qilinadi.
+const TG_DIR = resolve(__dirname, '../tg')
+
+function tgMiniApp(): Plugin {
+  const handler: Connect.NextHandleFunction = (req, res, next) => {
+    // nginx kabi: `/tg` -> `/tg/`, aks holda `app.js` ildizdan qidirilardi.
+    if ((req.originalUrl || '').split('?')[0] === '/tg') {
+      res.statusCode = 301
+      res.setHeader('Location', '/tg/')
+      res.end()
+      return
+    }
+    // connect '/tg' prefiksini olib tashlaydi, req.url = '/' yoki '/app.js'.
+    const requested = decodeURIComponent((req.url || '/').split('?')[0])
+    const name = basename(requested) || 'index.html'
+    const file = resolve(TG_DIR, name)
+
+    if (!file.startsWith(TG_DIR) || !existsSync(file)) return next()
+    const stat = statSync(file)
+    if (!stat.isFile()) return next()
+
+    const type = name.endsWith('.js') ? 'text/javascript; charset=utf-8'
+      : name.endsWith('.html') ? 'text/html; charset=utf-8'
+      : 'application/octet-stream'
+    res.setHeader('Content-Type', type)
+    res.setHeader('Content-Length', String(stat.size))
+    // Production'dagi `/tg/` javobi bilan bir xil: har so'rovda diskdan.
+    res.setHeader('Cache-Control', 'no-cache')
+    createReadStream(file).pipe(res)
+  }
+
+  return {
+    name: 'venera-tg-mini-app',
+    apply: 'serve',
+    configureServer(server: ViteDevServer) {
+      server.middlewares.use('/tg', handler)
+    },
+    configurePreviewServer(server: PreviewServer) {
+      server.middlewares.use('/tg', handler)
+    },
+  }
+}
+
 // CORS-free dev fallback: when VITE_API_BASE is left empty in .env, the fetch
 // call uses a relative URL and Vite forwards `/api` to the Spring Boot backend.
 // When VITE_API_BASE is set to an absolute URL, the proxy is unused and the
@@ -59,7 +109,7 @@ export default defineConfig(({ mode }) => {
   const target = env.VITE_API_TARGET || env.VITE_API_BASE || 'http://10.10.50.9:8080'
   const proxy = { '/api': target }
   return {
-    plugins: [vue(), releaseDownloads()],
+    plugins: [vue(), releaseDownloads(), tgMiniApp()],
     // host: true binds 0.0.0.0 so the dev server is reachable on the LAN
     // (http://<your-ip>:5173). Pinned port keeps the URL + firewall rule stable.
     server: { host: true, port: 5173, proxy },

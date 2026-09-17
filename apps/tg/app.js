@@ -9,6 +9,9 @@
 // izohlarida qimmat o'lchovlar yozilgan (qaysi ostona, nega aynan shu
 // millisekund). Bu yerda o'sha yechimlar vanilla JS ga ko'chirilgan; bironta
 // sonni "chiroyliroq" qilib o'zgartirmang - ular tanlanmagan, O'LCHANGAN.
+// Ulanishlar ("+" menyusi, HRM/CRM) va taklif kartasi ham shunday:
+// `useConnectors.ts`, `ConnectorList.vue`, `ConnectorDialog.vue`,
+// `ActionCard.vue` ning nusxasi - bir xil so'rovlar, bir xil matnlar.
 //
 // UYG'OTISH SO'ZI ("Salom Venera") BU YERDA ATAYLAB YO'Q. Veb ilovada u bor,
 // lekin Mini App'da savol har doim doirani bosishdan boshlanadi - ya'ni
@@ -215,6 +218,30 @@
         method: 'POST',
         body: JSON.stringify({ currentPassword, newPassword }),
       }),
+
+    // Ulanishlar (HRM / CRM) - `apps/web/src/api/connectors.api.ts` nusxasi.
+    // Parol shu yerdan serverga ketadi va HECH QAYERDA saqlanmaydi (serverda
+    // ham: u platformaga login uchun ishlatiladi va unutiladi). Javobda
+    // token yo'q - faqat holat: sahifa HRM/CRM tokenini hech qachon ko'rmaydi.
+    connectors: () => apiFetch('/api/v1/connectors'),
+    connect: (id, username, password) =>
+      apiFetch('/api/v1/connectors/' + id + '/connect', {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+      }),
+    setConnector: (id, enabled) =>
+      apiFetch('/api/v1/connectors/' + id, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+    disconnect: (id) => apiFetch('/api/v1/connectors/' + id, { method: 'DELETE' }),
+
+    // Yozuv amallari - `apps/web/src/api/actions.api.ts` nusxasi. Sahifa
+    // FAQAT taklif kalitini yuboradi: kim tasdiqlayotgani (Venera
+    // foydalanuvchisi) va amal uchun platforma tokenini server qo'shadi -
+    // taklif qilingan paytdagi kimlik bilan, ya'ni birovning taklifini
+    // tasdiqlab bo'lmaydi.
+    confirmAction: (token) =>
+      apiFetch('/api/v1/actions/' + encodeURIComponent(token) + '/confirm', { method: 'POST' }),
+    cancelAction: (token) =>
+      apiFetch('/api/v1/actions/' + encodeURIComponent(token) + '/cancel', { method: 'POST' }),
   };
 
   // =========================================================================
@@ -1201,6 +1228,15 @@
           addMsg('system', 'Hujjat tayyorlandi: ' + (art.filename || art.title || 'fayl') + '. Uni veb ilovadan yuklab oling.');
           break;
         }
+        case 'proposal': {
+          // Yordamchi yozuv amalini TAKLIF qildi (masalan CRM da vaqt
+          // yozish). HECH NARSA O'ZGARMAGAN: javob ostidagi karta odamdan
+          // tasdiq yoki rad so'raydi. Maydonlar YA `proposal` ichida, YA
+          // kadrning o'zida - artifact kabi.
+          const proposal = frame.proposal || frame;
+          if (proposal && proposal.token) renderProposal(el, proposal);
+          break;
+        }
         case 'error':
           // Javobni BOSIB O'TMAYMIZ: xato kadri tokenlardan KEYIN ham
           // kelishi mumkin, va kelgan qism baribir o'qishga arziydi.
@@ -1289,6 +1325,7 @@
     teardown();
     releaseMic();
     stopSpeaking();
+    resetConnectors();
     log.textContent = '';
     logEmpty.hidden = false;
     input.value = '';
@@ -1398,6 +1435,7 @@
     teardown();
     releaseMic();
     stopSpeaking();
+    resetConnectors();
     log.textContent = '';
     logEmpty.hidden = false;
     input.value = '';
@@ -1529,6 +1567,544 @@
     // (`getMic`), lekin sahifa ko'rinmay qolishi - bu boshqa gap.
     releaseMic();
   });
+
+  // =========================================================================
+  // 15. Ulanishlar (HRM, CRM) - `composables/useConnectors.ts`,
+  //     `ComposerMenu.vue`, `ConnectorList.vue`, `ConnectorDialog.vue` nusxasi
+  // =========================================================================
+  // MANBA - SERVER (`/api/v1/connectors`): tokenlar u yerda turadi, sahifa
+  // faqat holatni ko'radi (ulanmagan / ulangan / muddati tugagan) va uchta
+  // amalni so'raydi: ulanish (login + parol), kalit, uzish.
+  //
+  // Veb ilovadan farqi FAQAT shaklda: u yerda Vue komponentlari va reaktiv
+  // holat, bu yerda oddiy massiv va `render*()` funksiyalari - holat
+  // o'zgarganda ro'yxat va oyna qaytadan chiziladi. Matnlar veb ilovaning
+  // `i18n.ts` dagi o'zbekcha (lotin) satrlari.
+  const plusBtn = $('plusBtn'), cmenu = $('cmenu'), cmenuConnectors = $('cmenuConnectors'), clist = $('clist');
+  const cdlg = $('cdlg'), cdlgForm = $('cdlgForm'), cdlgClose = $('cdlgClose'), cdlgBadge = $('cdlgBadge'),
+        cdlgTitle = $('cdlgTitle'), cdlgSub = $('cdlgSub'), cdlgError = $('cdlgError'),
+        cdlgFields = $('cdlgFields'), cLogin = $('cLogin'), cPassword = $('cPassword'),
+        cdlgActions = $('cdlgActions');
+
+  // Ikonkalar `apps/web/src/icons.ts` dan, aynan o'sha chizmalar - ikkala
+  // ilova bir xil ko'rinsin. STATIK satrlar, foydalanuvchi matni yo'q,
+  // shuning uchun innerHTML xavfsiz (CSP ham ruxsat beradi: bu skript emas).
+  const ICONS = {
+    users: '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="6" r="2.6"/><path d="M2.5 15a4.5 4.5 0 0 1 9 0"/><path d="M11.5 3.6a2.6 2.6 0 0 1 0 4.8M13.2 11a4.5 4.5 0 0 1 2.8 4"/></svg>',
+    board: '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3" width="13" height="12" rx="2"/><path d="M6.5 6v5.5M9 6v3M11.5 6v4.5"/></svg>',
+    plug: '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 2.5V6M11.5 2.5V6"/><path d="M4.5 6h9v2.5a4.5 4.5 0 0 1-9 0V6z"/><path d="M9 13v2.5"/></svg>',
+    gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+    plus: '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M9 3.5v11M3.5 9h11"/></svg>',
+    check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3L13 5"/></svg>',
+    pencil: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M11.5 2.5l2 2L5.8 12.2l-2.5 0.5 0.5-2.5 7.7-7.7z"/></svg>',
+  };
+  function icon(name) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = ICONS[name] || ICONS.plug;
+    return tpl.content.firstElementChild;
+  }
+  function make(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  const CONNECTOR_ICONS = { hrm: 'users', crm: 'board' };
+  const CONNECTOR_HINTS = { hrm: 'Davomat, xodimlar', crm: 'Vazifalar, loyihalar, sprintlar' };
+
+  // Server javobi kelguncha ko'rinadigan qatorlar: nomlar ma'lum, holat esa
+  // "ulanmagan" - menyu bo'sh ochilmasin.
+  function placeholder(id, label) {
+    return { id, label, configured: true, state: 'disconnected', login: null, enabled: false, expiresAt: null };
+  }
+  let connectors = [placeholder('hrm', 'HRM'), placeholder('crm', 'CRM')];
+  let connectorsFailed = false;
+  let connectorsInflight = null;
+
+  function applyStatus(status) {
+    const i = connectors.findIndex((c) => c.id === status.id);
+    if (i >= 0) connectors[i] = status; else connectors.push(status);
+  }
+  const findConnector = (id) => connectors.find((c) => c.id === id) || null;
+
+  /** Holatni serverdan oladi. Bir vaqtda ikki chaqiruv bitta so'rovni
+   *  bo'lishadi. Xato bo'lsa ro'yxat baribir ko'rinadi (eski/placeholder
+   *  holat bilan), qatorlar ostida "holat yuklanmadi" chiqadi. */
+  function loadConnectors() {
+    if (connectorsInflight) return connectorsInflight;
+    connectorsInflight = (async () => {
+      try {
+        const result = await api.connectors();
+        (result && result.connectors || []).forEach(applyStatus);
+        connectorsFailed = false;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) { sessionExpired(); return; }
+        connectorsFailed = true;
+      } finally {
+        connectorsInflight = null;
+        renderConnectors();
+        if (dialogId) renderDialog();
+      }
+    })();
+    return connectorsInflight;
+  }
+
+  /** Chiqishda: holat unutiladi, menyu va oyna yopiladi - keyingi odam
+   *  oldingisining hisoblarini ko'rmasin. */
+  function resetConnectors() {
+    connectors = [placeholder('hrm', 'HRM'), placeholder('crm', 'CRM')];
+    connectorsFailed = false;
+    closeDialog();
+    closeComposer();
+  }
+
+  function connectorHint(c) {
+    if (!c.configured) return 'Serverda sozlanmagan';
+    if (c.state === 'connected') return c.login || 'Ulangan';
+    if (c.state === 'expired') return 'Muddati tugagan';
+    return CONNECTOR_HINTS[c.id] || '';
+  }
+  function connectorTitle(c) {
+    if (c.state === 'connected') return (c.login || '') + ' sifatida ulangan';
+    if (c.state === 'expired') return 'Qayta ulanish';
+    return c.label + ' ga ulanish';
+  }
+
+  /** HRM / CRM qatorlari. Ulanmagan yoki muddati tugagan qatorda "+"
+   *  (ulanish oynasini ochadi), ulanganida kalit (chatda ishlatish /
+   *  ishlatmaslik) va tishli g'ildirak (hisob oynasi: uzish). */
+  function renderConnectors() {
+    clist.textContent = '';
+    for (const c of connectors) {
+      const row = make('div', 'crow' +
+        (c.state === 'connected' && c.enabled ? ' is-on' : '') +
+        (c.configured ? '' : ' is-unavailable'));
+
+      // Nom + izoh: bosilsa ulanish (ulangan bo'lsa - hisob) oynasi ochiladi.
+      const main = make('button', 'crow-main');
+      main.type = 'button';
+      main.title = connectorTitle(c);
+      main.disabled = !c.configured;
+      main.appendChild(icon(CONNECTOR_ICONS[c.id]));
+      const text = make('span', 'crow-text');
+      text.appendChild(make('span', 'crow-name', c.label));
+      const hint = make('span', 'crow-hint');
+      if (c.configured && c.state !== 'disconnected') {
+        const dot = make('span', 'crow-dot' + (c.state === 'expired' ? ' is-expired' : ''));
+        dot.setAttribute('aria-hidden', 'true');
+        hint.appendChild(dot);
+      }
+      hint.appendChild(document.createTextNode(connectorHint(c)));
+      text.appendChild(hint);
+      main.appendChild(text);
+      main.addEventListener('click', () => openDialog(c.id));
+      row.appendChild(main);
+
+      // Tishli g'ildirak: hisob oynasi (uzish, qayta kirish). Ulanmagan
+      // qatorda yo'q - u yerda "+" ning o'zi oynani ochadi.
+      if (c.configured && c.state !== 'disconnected') {
+        const gear = make('button', 'crow-gear');
+        gear.type = 'button';
+        gear.title = 'Sozlamalar';
+        gear.setAttribute('aria-label', c.label + ': Sozlamalar');
+        gear.appendChild(icon('gear'));
+        gear.addEventListener('click', () => openDialog(c.id));
+        row.appendChild(gear);
+      }
+
+      // Ulangan: kalit. Aks holda "+" - ulanish yoki qayta ulanish.
+      if (c.state === 'connected') {
+        const sw = make('button', 'switch');
+        sw.type = 'button';
+        sw.setAttribute('role', 'switch');
+        sw.setAttribute('aria-checked', c.enabled ? 'true' : 'false');
+        sw.setAttribute('aria-label', c.label);
+        const knob = make('span', 'switch-knob');
+        knob.setAttribute('aria-hidden', 'true');
+        sw.appendChild(knob);
+        sw.addEventListener('click', () => toggleConnector(c.id));
+        row.appendChild(sw);
+      } else {
+        const add = make('button', 'crow-connect');
+        add.type = 'button';
+        add.title = c.state === 'expired' ? 'Qayta ulanish' : 'Ulanish';
+        add.setAttribute('aria-label', connectorTitle(c));
+        add.disabled = !c.configured;
+        add.appendChild(icon('plus'));
+        add.addEventListener('click', () => openDialog(c.id));
+        row.appendChild(add);
+      }
+      clist.appendChild(row);
+    }
+    if (connectorsFailed) {
+      const p = make('p', 'clist-note', 'Ulanishlar holati yuklanmadi');
+      p.setAttribute('role', 'status');
+      clist.appendChild(p);
+    }
+  }
+
+  /** Kalit: darhol ko'rinadi (optimistik), server rad etsa qaytariladi. */
+  async function toggleConnector(id) {
+    const c = findConnector(id);
+    if (!c || c.state !== 'connected') return;
+    const wanted = !c.enabled;
+    c.enabled = wanted;
+    renderConnectors();
+    haptic('light');
+    try {
+      applyStatus(await api.setConnector(id, wanted));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) { sessionExpired(); return; }
+      c.enabled = !wanted;
+    }
+    renderConnectors();
+  }
+
+  // --- "+" menyusi -------------------------------------------------------
+  let composerOpen = false, connectorsOpen = false;
+
+  function openComposer() {
+    if (composerOpen) return;
+    composerOpen = true;
+    cmenu.hidden = false;
+    plusBtn.setAttribute('aria-expanded', 'true');
+    // Har ochilishda holat serverdan yangilanadi: HRM sessiyasi 10 soatda
+    // tugaydi, CRM refresh rad etilishi mumkin - ro'yxat buni ko'rsatishi kerak.
+    renderConnectors();
+    loadConnectors();
+  }
+  function closeComposer() {
+    if (!composerOpen) return;
+    composerOpen = false;
+    setConnectorsOpen(false);
+    cmenu.hidden = true;
+    plusBtn.setAttribute('aria-expanded', 'false');
+  }
+  /** "Ulanishlar" qatori ostidagi ro'yxat - veb ilovadagi mobil ko'rinish. */
+  function setConnectorsOpen(on) {
+    connectorsOpen = on;
+    clist.hidden = !on;
+    cmenuConnectors.classList.toggle('is-active', on);
+    cmenuConnectors.setAttribute('aria-expanded', on ? 'true' : 'false');
+  }
+
+  plusBtn.addEventListener('click', () => {
+    haptic('light');
+    if (composerOpen) closeComposer(); else openComposer();
+  });
+  cmenuConnectors.addEventListener('click', () => setConnectorsOpen(!connectorsOpen));
+
+  // Tashqariga bosilsa yopiladi. "+" tugmasi menyuning bir qismi deb
+  // hisoblanadi - aks holda u menyuni yopib, keyin darhol qayta ochardi.
+  // Oyna ochiqligida tekshiruv o'chiq: oyna menyuning ustida, DOM'da esa
+  // tashqarida.
+  document.addEventListener('pointerdown', (e) => {
+    if (!composerOpen || dialogId) return;
+    if (cmenu.contains(e.target) || plusBtn.contains(e.target)) return;
+    closeComposer();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || e.isComposing) return;
+    if (dialogId) closeDialog();
+    else if (composerOpen) closeComposer();
+  });
+
+  // --- ulanish oynasi ----------------------------------------------------
+  // Login + parol, saytning o'zida (tashqi sahifaga yubormaydi). Ulangan
+  // tizim uchun hisob ko'rsatiladi va "Uzish" bor; muddati tugagan bo'lsa
+  // yana kirish shakli, login to'ldirilgan holda. Uzish IKKI bosqichli:
+  // "Uzish" -> "Haqiqatan ham?" - uzilgan hisobni qaytarish uchun yana
+  // login va parol kerak, tasodifiy bosish qimmat.
+  let dialogId = null, dialogBusy = false, dialogConfirming = false, dialogOpener = null;
+
+  function openDialog(id) {
+    const c = findConnector(id);
+    if (!c || !c.configured) return;
+    dialogId = id;
+    dialogBusy = false;
+    dialogConfirming = false;
+    dialogOpener = document.activeElement;
+    // Qayta kirishda login oldindan to'ldirilgan - odam faqat parol yozadi.
+    cLogin.value = c.login || '';
+    cPassword.value = '';
+    showDialogError('');
+    renderDialog();
+    cdlg.hidden = false;
+    haptic('light');
+    if (c.state !== 'connected') (cLogin.value ? cPassword : cLogin).focus();
+  }
+  function closeDialog() {
+    if (!dialogId) return;
+    dialogId = null;
+    dialogConfirming = false;
+    cdlg.hidden = true;
+    cPassword.value = '';
+    // Fokus oynani ochgan tugmaga qaytadi.
+    if (dialogOpener && dialogOpener.isConnected && typeof dialogOpener.focus === 'function') dialogOpener.focus();
+    dialogOpener = null;
+  }
+  function showDialogError(text) {
+    cdlgError.textContent = text || '';
+    cdlgError.hidden = !text;
+  }
+  function dialogButton(label, cls, onClick) {
+    const b = make('button', 'btn sm' + (cls ? ' ' + cls : ''), label);
+    b.type = 'button';
+    b.disabled = dialogBusy;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  function renderDialog() {
+    const c = findConnector(dialogId);
+    if (!c) { closeDialog(); return; }
+    const connected = c.state === 'connected';
+    const expired = c.state === 'expired';
+
+    cdlgBadge.textContent = '';
+    cdlgBadge.appendChild(icon(CONNECTOR_ICONS[c.id]));
+    if (dialogConfirming) {
+      cdlgTitle.textContent = c.label + ' dan uzilasizmi?';
+      cdlgSub.textContent = 'Venera ' + c.label + ' dan javob bermay qo\'yadi. Qayta ulash uchun login va parol kerak bo\'ladi.';
+    } else if (connected) {
+      cdlgTitle.textContent = c.label;
+      cdlgSub.textContent = (c.login || '') + ' sifatida ulangan';
+    } else {
+      cdlgTitle.textContent = c.label + ' ga ulanish';
+      cdlgSub.textContent = expired
+        ? c.label + ' sessiyasining muddati tugagan. Qayta kiring.'
+        : c.label + ' hisobingiz bilan kiring.';
+    }
+
+    cdlgFields.hidden = connected;
+    cLogin.disabled = cPassword.disabled = dialogBusy;
+    cdlgActions.textContent = '';
+    if (!connected) {
+      cdlgActions.appendChild(dialogButton('Bekor qilish', 'ghost', closeDialog));
+      const submit = make('button', 'btn sm', dialogBusy ? 'Ulanmoqda…' : expired ? 'Qayta ulanish' : 'Ulanish');
+      submit.type = 'submit';
+      submit.disabled = dialogBusy;
+      cdlgActions.appendChild(submit);
+    } else if (dialogConfirming) {
+      cdlgActions.appendChild(dialogButton('Yo\'q', 'ghost', () => { dialogConfirming = false; renderDialog(); }));
+      cdlgActions.appendChild(dialogButton(dialogBusy ? 'Uzilmoqda…' : 'Ha, uzish', 'danger filled', onDisconnect));
+    } else {
+      cdlgActions.appendChild(dialogButton('Yopish', 'ghost', closeDialog));
+      cdlgActions.appendChild(dialogButton('Uzish', 'danger', () => {
+        dialogConfirming = true;
+        showDialogError('');
+        renderDialog();
+      }));
+    }
+  }
+
+  /** Xato matni: server xabari bo'lsa - o'sha; tarmoq/noma'lum xato bo'lsa
+   *  umumiy "ulanib bo'lmadi". 401 bu yerda VENERA sessiyasi (platforma
+   *  paroli xato bo'lsa server 400 qaytaradi), ya'ni qayta kirish kerak. */
+  function dialogFail(err) {
+    if (err instanceof ApiError && err.status === 401) { sessionExpired(); return; }
+    showDialogError(err instanceof ApiError ? errorText(err) : 'Ulanib bo\'lmadi. Login va parolni tekshiring.');
+  }
+
+  cdlgForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const c = findConnector(dialogId);
+    if (!c || c.state === 'connected' || dialogBusy) return;
+    const login = cLogin.value.trim();
+    const password = cPassword.value;
+    if (!login || !password) { showDialogError('Login va parolni kiriting'); return; }
+    dialogBusy = true;
+    showDialogError('');
+    renderDialog();
+    try {
+      applyStatus(await api.connect(c.id, login, password));
+      cPassword.value = '';
+      haptic('medium');
+      closeDialog();
+    } catch (err) {
+      dialogFail(err);
+    } finally {
+      dialogBusy = false;
+      if (dialogId) renderDialog();
+      renderConnectors();
+    }
+  });
+
+  async function onDisconnect() {
+    const c = findConnector(dialogId);
+    if (!c || dialogBusy) return;
+    dialogBusy = true;
+    showDialogError('');
+    renderDialog();
+    try {
+      applyStatus(await api.disconnect(c.id));
+      haptic('medium');
+      closeDialog();
+    } catch (err) {
+      dialogConfirming = false;
+      dialogFail(err);
+    } finally {
+      dialogBusy = false;
+      if (dialogId) renderDialog();
+      renderConnectors();
+    }
+  }
+
+  cdlgClose.addEventListener('click', closeDialog);
+  // Fon: faqat o'ziga bosilganda yopadi (kartada boshlangan sudrash
+  // tashqarida tugasa - yopilmaydi, shuning uchun pointerdown, click emas).
+  cdlg.addEventListener('pointerdown', (e) => { if (e.target === cdlg) closeDialog(); });
+
+  // =========================================================================
+  // 16. Taklif kartasi (yozuv amali) - `components/ActionCard.vue` nusxasi
+  // =========================================================================
+  // Yordamchi TAKLIF qilgan yozuv amali (masalan CRM da vaqt yozish).
+  // HECH NARSA O'ZGARMAGAN: chat turi faqat taklif qiladi, o'zgarish faqat
+  // shu yerda "Tasdiqlash" bosilganda bo'ladi. Karta nima o'zgarishini
+  // ko'rsatadi (xulosa, obyekt, maydonlar: eski -> yangi, ogohlantirishlar)
+  // va ikki tugma beradi. Rad etish tasdiqsiz: u xavfsiz, hech narsa qilmaydi.
+  // Holat kartaning o'zida (yopilma ichida) - har taklif o'z natijasini saqlaydi.
+
+  /** Qiymatning ko'rinadigan matni: obyekt bo'lsa nomi/kaliti. */
+  function actionText(value) {
+    if (value == null || value === '') return '—';
+    if (typeof value === 'object') {
+      const name = value.title != null ? value.title
+        : value.name != null ? value.name
+        : value.key != null ? value.key
+        : value.id;
+      return name != null ? String(name) : JSON.stringify(value);
+    }
+    return String(value);
+  }
+
+  /** Yakuniy holat: tugmalar yo'qoladi, natija qoladi. */
+  function actionOutcome(r) {
+    if (r.status === 'executed' && r.ok !== false) return { tone: 'ok', label: 'Bajarildi' };
+    if (r.status === 'cancelled') return { tone: 'muted', label: 'Rad etildi' };
+    if (r.status === 'expired') return { tone: 'warn', label: 'Muddati tugagan' };
+    if (r.status === 'pending') return null;
+    return { tone: 'bad', label: 'Bajarilmadi' };
+  }
+
+  function renderProposal(host, proposal) {
+    const card = make('section', 'act');
+    card.setAttribute('aria-label', 'Taklif qilingan o\'zgarish');
+    const platform = String(proposal.connector || '').toLowerCase();
+
+    const head = make('header', 'act-head');
+    head.appendChild(icon(CONNECTOR_ICONS[platform] || 'pencil'));
+    head.appendChild(make('span', 'act-title', 'Taklif qilingan o\'zgarish'));
+    if (platform) head.appendChild(make('span', 'act-platform', platform.toUpperCase()));
+    const status = make('span', 'act-status');
+    status.hidden = true;
+    head.appendChild(status);
+    card.appendChild(head);
+
+    if (proposal.summary) card.appendChild(make('p', 'act-summary', String(proposal.summary)));
+
+    const target = proposal.target ? actionText(proposal.target) : '';
+    const changes = (proposal.changes || []).filter((c) => c && (c.field || c.to !== undefined));
+    if (target || changes.length) {
+      const dl = make('dl', 'act-details');
+      const row = (label, fill) => {
+        dl.appendChild(make('dt', null, label));
+        const dd = make('dd');
+        fill(dd);
+        dl.appendChild(dd);
+      };
+      if (target) row('Obyekt', (dd) => { dd.textContent = target; });
+      for (const c of changes) {
+        row(c.field || 'O\'zgarish', (dd) => {
+          if (c.from !== undefined && c.from !== null && c.from !== '') {
+            dd.appendChild(make('s', 'act-from', actionText(c.from)));
+            const arrow = make('span', 'act-arrow', '→');
+            arrow.setAttribute('aria-hidden', 'true');
+            dd.appendChild(arrow);
+          }
+          dd.appendChild(make('span', 'act-to', actionText(c.to)));
+        });
+      }
+      card.appendChild(dl);
+    }
+
+    if (proposal.warnings && proposal.warnings.length) {
+      const ul = make('ul', 'act-warnings');
+      for (const w of proposal.warnings) ul.appendChild(make('li', null, String(w)));
+      card.appendChild(ul);
+    }
+
+    // Natija: bajarilgan bo'lsa platforma nima qaytargani, yiqilgan bo'lsa sababi.
+    const bad = make('p', 'act-bad');
+    bad.setAttribute('role', 'alert');
+    bad.hidden = true;
+    card.appendChild(bad);
+    const resultEl = make('p', 'act-result');
+    resultEl.hidden = true;
+    card.appendChild(resultEl);
+
+    const foot = make('footer', 'act-foot');
+    foot.appendChild(make('span', 'act-hint', 'Tasdiqlamaguningizcha hech narsa o\'zgarmaydi. Taklif 15 daqiqada kuchini yo\'qotadi.'));
+    const buttons = make('div', 'act-buttons');
+    const reject = make('button', 'btn sm ghost', 'Rad etish');
+    reject.type = 'button';
+    // Tasdiqlash - to'ldirilgan: bu javobning yagona haqiqiy "qil" tugmasi.
+    const confirm = make('button', 'btn sm', 'Tasdiqlash');
+    confirm.type = 'button';
+    buttons.appendChild(reject);
+    buttons.appendChild(confirm);
+    foot.appendChild(buttons);
+    card.appendChild(foot);
+
+    let busy = null, settled = false;
+    async function run(kind) {
+      if (busy || settled) return;
+      busy = kind;
+      bad.hidden = true;
+      reject.disabled = confirm.disabled = true;
+      if (kind === 'confirm') confirm.textContent = 'Bajarilmoqda…'; else reject.textContent = 'Rad etilmoqda…';
+      try {
+        const r = await (kind === 'confirm' ? api.confirmAction : api.cancelAction)(proposal.token);
+        const o = actionOutcome(r);
+        settled = r.status === 'executed' || r.status === 'cancelled' || r.status === 'expired' || r.status === 'failed';
+        if (o) {
+          status.hidden = false;
+          status.className = 'act-status is-' + o.tone;
+          status.textContent = '';
+          if (o.tone === 'ok') status.appendChild(icon('check'));
+          status.appendChild(document.createTextNode(o.label));
+          card.classList.add('is-' + o.tone);
+          if (o.tone === 'ok' && r.result) {
+            // Platforma qaytargan ko'rsatkich, masalan yaratilgan vazifa kaliti.
+            const key = r.result.key != null ? r.result.key : r.result.id != null ? r.result.id : r.result.number;
+            if (key != null) { resultEl.textContent = String(key); resultEl.hidden = false; }
+          }
+          if (o.tone === 'bad') { bad.textContent = r.error || 'Amalni bajarib bo\'lmadi.'; bad.hidden = false; }
+        }
+        if (settled) foot.remove();
+        haptic(o && o.tone === 'ok' ? 'medium' : 'light');
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) { sessionExpired(); return; }
+        bad.textContent = errorText(err);
+        bad.hidden = false;
+      } finally {
+        busy = null;
+        if (!settled) {
+          reject.disabled = confirm.disabled = false;
+          reject.textContent = 'Rad etish';
+          confirm.textContent = 'Tasdiqlash';
+        }
+        log.scrollTop = log.scrollHeight;
+      }
+    }
+    reject.addEventListener('click', () => run('cancel'));
+    confirm.addEventListener('click', () => run('confirm'));
+
+    host.appendChild(card);
+    log.scrollTop = log.scrollHeight;
+    return card;
+  }
 
   // =========================================================================
   // 14. Ishga tushish

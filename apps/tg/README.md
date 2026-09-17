@@ -51,11 +51,15 @@ joyda qoladi.
 
 Veb ilovadagi `InputDock.vue` dan farqlar ATAYLAB:
 
-* `+` (biriktirish) va dok ichidagi mikrofon ikonkasi YO'Q. Veb'da ular
-  o'chirilgan holda turadi (`comingSoon`); tor ekranda ishlamaydigan tugma
-  joy egallab, chalg'itardi.
-* Ovoz uchun alohida "suhbat" tugmasi ham yo'q - doiraning O'ZI o'sha
-  tugma.
+* Dok ichidagi alohida mikrofon ikonkasi YO'Q - doiraning O'ZI mikrofon.
+  Ovoz uchun alohida "suhbat" tugmasi ham yo'q.
+* `+` menyusi BOR (2026-09-16 dan) - veb'dagi bilan bir xil: "Rasm
+  qo'shish" (tez orada, bosilmaydi) va "Ulanishlar" (HRM, CRM). Avval u
+  ataylab yo'q edi: veb'da ikkala qator ham o'chiq turardi va tor ekranda
+  ishlamaydigan tugma chalg'itardi. Endi unda ishlaydigan narsa bor.
+  Menyu panel USTIDA ochiladi (sheet emas - u ikki qator xolos), ro'yxat
+  esa "Ulanishlar" qatori OSTIDA - veb ilovaning mobil ko'rinishi kabi
+  (yon panel tor ekranga sig'maydi). Qarang: "Ulanishlar" bo'limi.
 
 Yuborish tugmasi band paytda TO'XTATISH bo'ladi. Alohida tugma qo'shilsa,
 ikkalasi ham deyarli doim o'chiq turardi.
@@ -108,6 +112,12 @@ yetarli. Kimlik HAR DOIM `Authorization: Bearer <token>` da.
 | `POST /api/v1/stt/transcribe` | yozilgan savolni matnga o'girish |
 | `POST /api/v1/tts/speak` | javobni ovoz bilan o'qish |
 | `POST /api/v1/chat/stream` | savol -> javob (NDJSON oqimi) |
+| `GET /api/v1/connectors` | "+" menyusi ochilganda - HRM/CRM holati |
+| `POST /api/v1/connectors/{hrm,crm}/connect` | ulanish oynasi (login + parol) |
+| `PATCH /api/v1/connectors/{hrm,crm}` | qatordagi kalit (chatda ishlatish) |
+| `DELETE /api/v1/connectors/{hrm,crm}` | hisob oynasidagi "Uzish" (tasdiq bilan) |
+| `POST /api/v1/actions/{token}/confirm` | taklif kartasidagi "Tasdiqlash" |
+| `POST /api/v1/actions/{token}/cancel` | taklif kartasidagi "Rad etish" |
 
 `/api/v1/chat/ask` ATAYLAB **ishlatilmaydi**: u quvur skeleti
 (`services/pipeline.py`, `_ROUTES` bo'sh) va HR Assistant'ga umuman
@@ -191,6 +201,51 @@ ekranda" izohini ko'radi.
 yerda o'zgartirish kerak bo'lmaydi, hozir esa foydalanuvchi serverning o'z
 xabarini ko'radi ("Ro'yxatdan o'tish hozircha yopiq...") - jim tugmadan
 aniqroq.
+
+## Ulanishlar (HRM, CRM)
+
+`apps/web` dagi `useConnectors.ts` + `ComposerMenu.vue` + `ConnectorList.vue`
++ `ConnectorDialog.vue` ning nusxasi (`app.js`, 15-bo'lim). Bir xil
+so'rovlar, bir xil matnlar (`i18n.ts` dagi o'zbekcha lotin satrlari).
+
+MANBA - SERVER. Tokenlar `apps/api` da turadi (`data/connectors/`), sahifa
+faqat holatni ko'radi: ulanmagan / ulangan (login bilan) / muddati tugagan.
+Parol `POST .../connect` bilan serverga ketadi va hech qayerda saqlanmaydi.
+Ro'yxat har ochilishda qaytadan so'raladi - HRM sessiyasi 10 soatda
+tugaydi, CRM refresh rad etilishi mumkin.
+
+Qator: nom + izoh (bosilsa oyna), ulanganida tishli g'ildirak (hisob
+oynasi: uzish) va kalit (chatda ishlatish, optimistik - server rad etsa
+qaytadi); ulanmaganida "+" (ulanish oynasi). Oyna: login + parol; xato
+bo'lsa serverning O'Z xabari ("Login yoki parol noto'g'ri"). 401 bu yerda
+VENERA sessiyasi - platforma paroli xato bo'lsa server 400 qaytaradi.
+Uzish ikki bosqichli: "Uzish" -> "HRM dan uzilasizmi?" (Yo'q / Ha, uzish).
+
+Chiqishda holat unutiladi, menyu va oyna yopiladi.
+
+## Taklif kartasi (yozuv amallari)
+
+`ActionCard.vue` ning nusxasi (`app.js`, 16-bo'lim). Oqimda `proposal`
+kadri kelsa (maydonlar `proposal` ichida yoki kadrning o'zida - `artifact`
+kabi) javob pufakchasi ichida karta chiziladi: xulosa, obyekt, maydonlar
+(eski -> yangi), ogohlantirishlar, "Rad etish" / "Tasdiqlash". HECH NARSA
+O'ZGARMAGAN: faqat "Tasdiqlash" bosilganda `POST /actions/{token}/confirm`
+ketadi. Natija kartada qoladi: Bajarildi (platforma qaytargan kalit bilan)
+/ Rad etildi / Muddati tugagan / Bajarilmadi (sabab bilan); tugmalar
+yo'qoladi. Ovoz taklifni O'QIMAYDI - faqat javob matnini.
+
+## Dev serverda ko'rish
+
+Vite (`apps/web/vite.config.ts`, `tgMiniApp` plugini, faqat `serve`)
+`apps/tg/` ni `/tg/` ostida beradi - production'dagi nginx kabi:
+
+```
+http://10.10.50.8:5174/tg/
+```
+
+`/api` o'sha proxy orqali dev API ga ketadi. Mikrofon LAN manzilida
+ishlamaydi (HTTPS kerak), lekin kirish, chat, "+" menyusi va ulanishlar
+sinaladi. Production bundle'ga ta'sir yo'q - fayllar dist/ ga tushmaydi.
 
 ## Joylashtirish
 
