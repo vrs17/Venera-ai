@@ -37,6 +37,10 @@ serverning ICHKI manzilini ko'rsatadi - brauzer uni ocholmaydi. Shuning
 uchun ular Venera'ning o'z yo'llariga o'giriladi (`_rewrite_artifact`), va
 faylni Venera o'zi olib beradi (`fetch_artifact`). Xuddi shu narsa
 iqtibos qilingan hujjat PDF'i uchun ham (`fetch_doc`).
+
+SUHBATLAR TARIXI ham shu xizmatda (`/api/chats`, 3.3 dan boshlab): har
+`chat_id` bo'yicha xabarlar, nom va yumshoq o'chirish. Venera'da suhbat
+saqlanmaydi - `list_chats` va `get_chat` o'sha yerdan o'qiydi.
 """
 
 from __future__ import annotations
@@ -99,6 +103,11 @@ _DOWNLOAD_CHUNK = 64 * 1024
 
 #: Yuklab olinadigan fayl uchun chegara (ariza DOCX/PDF va hujjat PDF'i).
 _MAX_FILE_BYTES = 25 * 1024 * 1024
+
+#: Bitta JSON javob uchun chegara (suhbat ro'yxati, ochilgan suhbat).
+#: Ochilgan suhbat 1000 tagacha xabar bo'lishi mumkin - kadr chegarasi
+#: (512 KB) unga torlik qiladi; oqim chegarasi bilan bir xil.
+_MAX_JSON_BYTES = _MAX_STREAM_BYTES
 
 
 class AssistantError(Exception):
@@ -369,25 +378,104 @@ class AssistantClient:
         if not _SAFE_KEY.fullmatch(token or ""):
             raise AssistantError("amal kaliti yaroqsiz", status=400)
         path = f"/api/actions/{token}" + (f"/{verb}" if verb else "")
-        body: bytes | None = None
+        body: dict[str, Any] | None = None
         if verb:
-            payload: dict[str, Any] = {"user_id": user_id}
+            body = {"user_id": user_id}
             live = {name: value for name, value in (tokens or {}).items() if value}
             if live:
-                payload["tokens"] = live
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                body["tokens"] = live
+        return self._json(path, method="POST" if verb else "GET", body=body,
+                          limit=_MAX_LINE_BYTES, what="amal")
+
+    # --- suhbatlar tarixi ----------------------------------------------------
+    #
+    # Suhbatlar yuqoridagi xizmatda `(ilova, user_id)` bo'yicha saqlanadi:
+    # boshqa odamning yoki boshqa ilovaning suhbati ro'yxatga TUSHMAYDI va
+    # kaliti ma'lum bo'lsa ham 404 beradi. Ya'ni ajratish shu yerda emas,
+    # xizmatda - bizning ishimiz to'g'ri `user_id` yuborish (`chat.py`
+    # dagi `assistant_user_id`), boshqa hech narsa.
+
+    def list_chats(self, *, user_id: str, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        """Odamning suhbatlari: oxirgi faollik bo'yicha, yangisi birinchi.
+        O'chirilganlar ro'yxatga kirmaydi."""
+        return self._json("/api/chats",
+                          query={"user_id": user_id, "limit": limit, "offset": offset},
+                          what="suhbatlar ro'yxati")
+
+    def get_chat(self, chat_id: str, *, user_id: str, limit: int = 200) -> dict[str, Any]:
+        """Bitta suhbat xabarlari bilan - eskisi birinchi, oxirgi `limit` tasi."""
+        return self._json(self._chat_path(chat_id), query={"user_id": user_id, "limit": limit},
+                          what="suhbat")
+
+    def rename_chat(self, chat_id: str, *, user_id: str, title: str) -> dict[str, Any]:
+        """Nomini o'zgartiradi. Shundan keyin model nomga BOSHQA TEGMAYDI
+        (`title_source` = `user`)."""
+        return self._json(self._chat_path(chat_id), method="PATCH",
+                          query={"user_id": user_id}, body={"title": title}, what="suhbat nomi")
+
+    def delete_chat(self, chat_id: str, *, user_id: str) -> dict[str, Any]:
+        """YUMSHOQ o'chirish: suhbat ro'yxatdan chiqadi va ochilmaydi, lekin
+        hech narsa o'chmaydi - `restore_chat` yoki o'sha `chat_id` bilan
+        yangi savol uni qaytaradi. Takroriy chaqiruv xato emas."""
+        return self._json(self._chat_path(chat_id), method="DELETE",
+                          query={"user_id": user_id}, what="suhbatni o'chirish")
+
+    def restore_chat(self, chat_id: str, *, user_id: str) -> dict[str, Any]:
+        """O'chirishni bekor qiladi - nomi va xabarlari bilan qaytadi."""
+        return self._json(self._chat_path(chat_id) + "/restore", method="POST",
+                          query={"user_id": user_id}, what="suhbatni tiklash")
+
+    @staticmethod
+    def _chat_path(chat_id: str) -> str:
+        """`/api/chats/{chat_id}` - kalit tekshirilgan va yo'lga mos qilingan.
+
+        Kalitni brauzer yaratadi (UUID), lekin unga ishonilmaydi: yo'l
+        ajratgichi yoki nuqtali ketma-ketlik bo'lsa so'rov xizmatga umuman
+        bormaydi.
+        """
+        if not _SAFE_KEY.fullmatch(chat_id or ""):
+            raise AssistantError("suhbat kaliti yaroqsiz", status=400)
+        return f"/api/chats/{urllib.parse.quote(chat_id, safe='')}"
+
+    def _json(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        query: Mapping[str, Any] | None = None,
+        body: Mapping[str, Any] | None = None,
+        limit: int = _MAX_JSON_BYTES,
+        what: str = "javob",
+    ) -> dict[str, Any]:
+        """JSON so'rov -> JSON obyekt. Yozuv amallari va suhbatlar tarixi
+        uchun umumiy qatlam; oqim (`stream`) va fayllar (`_download`) bundan
+        o'tmaydi - ular javobni bo'lak-bo'lak beradi.
+
+        `what` - xato matnida "qaysi javob" ekani (`amal`, `suhbat`); jurnal
+        o'qiydigan odam uchun.
+        """
+        if not self.configured:
+            raise AssistantError("HR Assistant sozlanmagan", status=501)
+        if query:
+            path = f"{path}?{urllib.parse.urlencode(query)}"
+        raw_body = (json.dumps(body, ensure_ascii=False).encode("utf-8")
+                    if body is not None else None)
         request_id = uuid.uuid4().hex
         with _mapped_errors(self.client_secret):
-            response = self._open(path, body, accept="application/json", request_id=request_id)
+            response = self._open(path, raw_body, accept="application/json",
+                                  request_id=request_id, method=method)
             with contextlib.closing(response):
-                raw = response.read(_MAX_LINE_BYTES)
+                raw = response.read(limit + 1)
                 served = (response.headers.get("X-Request-Id") or "").strip()
+        if len(raw) > limit:
+            # Qisqartirib tahlil qilish buzuq JSON berardi; sabab aniq aytiladi.
+            raise AssistantError(f"Assistant {what} javobi chegaradan katta", status=502)
         try:
             result = json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError) as exc:
-            raise AssistantError("Assistant amal javobi o'qilmadi", status=502) from exc
+            raise AssistantError(f"Assistant {what} javobi o'qilmadi", status=502) from exc
         if not isinstance(result, dict):
-            raise AssistantError("Assistant amal javobi obyekt emas", status=502)
+            raise AssistantError(f"Assistant {what} javobi obyekt emas", status=502)
         # Audit kaliti: xizmatniki ustun, bo'lmasa biznikini yozamiz.
         result.setdefault("request_id", served or request_id)
         return result
@@ -442,7 +530,10 @@ class AssistantClient:
 
     # --- past qatlam ---------------------------------------------------------
 
-    def _open(self, path: str, body: bytes | None, *, accept: str, request_id: str):
+    def _open(self, path: str, body: bytes | None, *, accept: str, request_id: str,
+              method: str | None = None):
+        """So'rovni ochadi. `method` berilmasa tanasi borligiga qarab POST/GET:
+        suhbatlar tarixi PATCH, DELETE va tanasiz POST ham ishlatadi."""
         headers = {
             # Ilovaning kredensiallari. HUJJAT BO'YICHA: usiz 401.
             "X-Client-Id": self.client_id,
@@ -459,7 +550,7 @@ class AssistantClient:
             headers["Content-Type"] = "application/json; charset=utf-8"
         request = urllib.request.Request(
             f"{self.base_url}{path}", data=body, headers=headers,
-            method="POST" if body is not None else "GET",
+            method=method or ("POST" if body is not None else "GET"),
         )
         # Muhit proksisi CHETLAB o'tiladi: manzil ichki, va tashqi proksi
         # orqali yuborish so'rovni sirtga chiqarib qo'yardi.

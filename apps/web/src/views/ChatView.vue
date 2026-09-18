@@ -3,11 +3,14 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { streamAsk } from '../api/chat.api'
+import { openChat as fetchChat } from '../api/chats.api'
 import { localizeApiError } from '../api/errors'
+import { ApiError } from '../api/http'
 import { useAuth } from '../composables/useAuth'
+import { useChats } from '../composables/useChats'
 import { useWakeWord, WAKE_LOCALES, WAKE_STORAGE_KEY } from '../composables/useWakeWord'
 import { warmGreeting } from '../api/greeting'
-import type { ActionProposal, ActorType, ChatFrame, Phase, PipelineResponse, UIExchange } from '../types'
+import type { ActionProposal, ActorType, ChatFrame, ChatMessage, Phase, PipelineResponse, UIExchange } from '../types'
 import { applyTheme, getInitialTheme } from '../theme'
 import type { Theme } from '../theme'
 import AmbientBackground from '../components/AmbientBackground.vue'
@@ -24,8 +27,17 @@ const router = useRouter()
 // Identity now comes from the authenticated session (derived from the token by
 // the backend); the chat request carries only the question.
 const { user, logout } = useAuth()
+// Suhbatlar tarixi (yon panel). Ro'yxat serverdan; bu ekran faqat qaysi
+// suhbat ochiq ekanini aytadi va yangi javob kelganda xabar beradi.
+const chats = useChats()
 const exchanges = ref<UIExchange[]>([])
 const phase = ref<Phase>('idle')
+// Eski suhbat ochilmoqda / ochilmadi. `historyRequest` - ketma-ket
+// ochishlar: odam ikkita qatorni tez bossa, birinchisining javobi
+// keyin kelib ikkinchisini bosib qo'ymasin.
+const historyLoading = ref(false)
+const historyError = ref<string | null>(null)
+let historyRequest = 0
 const theme = ref<Theme>(getInitialTheme())
 const sidebarOpen = ref(false)
 const voiceOpen = ref(false)
@@ -68,16 +80,22 @@ watch(devMode, (value) => localStorage.setItem('venera_dev_mode', value ? '1' : 
 // Imperative, non-reactive (the React useRef equivalent) — a plain let, not a ref.
 let abortController: AbortController | null = null
 
+// crypto.randomUUID() exists only in secure contexts (HTTPS / localhost);
+// over plain HTTP on the LAN it's undefined, so fall back to a non-crypto id.
+// Both shapes are path-safe: the history routes put the chat id in a URL.
+function randomId(prefix: string): string {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 // One conversation, one key. The assistant keeps its memory per
 // (user_id, chat_id), so follow-up questions ("va o'tgan oyda?") only work
 // while this stays the same — and "New chat" MUST change it, or the previous
-// conversation would bleed into the new one.
-function freshChatId(): string {
-  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
-}
-let chatId = freshChatId()
+// conversation would bleed into the new one. The same key names the chat in
+// the history list once its first answer has been stored.
+let chatId = randomId('c')
+chats.select(chatId)
 
 watch(theme, (value) => applyTheme(value), { immediate: true })
 onBeforeUnmount(() => abortController?.abort())
@@ -89,9 +107,80 @@ function toggleTheme() {
 function newChat() {
   abortController?.abort()
   abortController = null
+  historyRequest++
+  historyLoading.value = false
+  historyError.value = null
   exchanges.value = []
   phase.value = 'idle'
-  chatId = freshChatId()
+  chatId = randomId('c')
+  chats.select(chatId)
+}
+
+// Open a chat from the sidebar. The messages come from the server; the next
+// question goes out with the same chatId, so the assistant's memory of the
+// thread continues where it left off.
+async function openHistory(id: string) {
+  if (id === chatId && !historyLoading.value && !historyError.value) return
+  abortController?.abort()
+  abortController = null
+  phase.value = 'idle'
+  chatId = id
+  chats.select(id)
+  const request = ++historyRequest
+  historyLoading.value = true
+  historyError.value = null
+  exchanges.value = []
+  try {
+    const detail = await fetchChat(id)
+    if (request !== historyRequest) return
+    exchanges.value = exchangesFrom(detail.messages)
+  } catch (err) {
+    if (request !== historyRequest) return
+    if (err instanceof ApiError && err.status === 404) {
+      // Deleted from another device, or not this person's chat: it has no
+      // place in the sidebar, and there is nothing to show — start fresh.
+      chats.forget(id)
+      newChat()
+      return
+    }
+    historyError.value = localizeApiError(err, t)
+  } finally {
+    if (request === historyRequest) historyLoading.value = false
+  }
+}
+
+function retryOpenHistory() {
+  const id = chatId
+  historyError.value = null
+  void openHistory(id)
+}
+
+// Stored messages -> the exchange shape the conversation view renders. A
+// user message opens an exchange, the assistant message that follows fills
+// it. A user message with no reply (the answer failed back then) is shown
+// as stopped, with Regenerate; a reply with no question (legacy rows) is
+// shown on its own.
+function exchangesFrom(messages: ChatMessage[]): UIExchange[] {
+  const out: UIExchange[] = []
+  let current: UIExchange | null = null
+  for (const message of messages) {
+    const content = message.content ?? ''
+    if (message.role === 'assistant') {
+      if (current && !current.response) {
+        current.response = streamedResponse(content)
+        current.cancelled = false
+      } else if (current?.response) {
+        current.response = streamedResponse(`${current.response.answer ?? ''}\n\n${content}`)
+      } else {
+        current = { id: randomId('ex'), question: '', response: streamedResponse(content), error: null, durationMs: null, stage: null }
+        out.push(current)
+      }
+      continue
+    }
+    current = { id: randomId('ex'), question: content, response: null, error: null, durationMs: null, stage: null, cancelled: true }
+    out.push(current)
+  }
+  return out
 }
 
 // User-initiated cancel. Mark the in-flight exchange so PipelineResult can
@@ -129,6 +218,12 @@ function onKeydown(e: KeyboardEvent) {
 // Fetch the greeting now, while nobody is waiting: the first wake word should
 // play instantly, not after a round trip.
 onMounted(() => warmGreeting(String(locale.value)))
+// The sidebar list, keyed by the signed-in person so another account in the
+// same tab never sees a stale list (the route guard guarantees `user`).
+onMounted(() => {
+  const owner = user.value ? String(user.value.actorId) : null
+  if (owner) void chats.load(owner)
+})
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
@@ -138,6 +233,8 @@ function toggleDevMode() {
 
 async function onLogout() {
   abortController?.abort()
+  // The list belongs to this person; the next login must not see it.
+  chats.reset()
   await logout()
   router.push({ name: 'welcome' })
 }
@@ -191,8 +288,13 @@ function runPipeline(id: string, question: string) {
   const t0 = performance.now()
   const controller = new AbortController()
   abortController = controller
+  // The chat this turn belongs to. Opening another chat or "New chat" aborts
+  // the stream, so `chatId` cannot have moved by the time the answer lands —
+  // but the list update below must not depend on that.
+  const turnChat = chatId
   let answer = ''
   let failure: string | null = null
+  let proposed = false
 
   const onFrame = (frame: ChatFrame) => {
     // A frame that arrives after Stop must not resurrect the exchange the
@@ -217,7 +319,10 @@ function runPipeline(id: string, question: string) {
         // Nested under `proposal` or inline, like the artifact frame.
         const { type: _type, ...inline } = frame
         const proposal = (frame.proposal ?? inline) as ActionProposal
-        if (proposal.token) patch(id, { proposal })
+        if (proposal.token) {
+          patch(id, { proposal })
+          proposed = true
+        }
         break
       }
       case 'token':
@@ -254,6 +359,10 @@ function runPipeline(id: string, question: string) {
           stage: null,
           durationMs,
         })
+        // An answer was stored, so the chat now exists on the server: it
+        // enters the sidebar (first turn) or moves to the top (later turns).
+        // Not before — the service creates the chat with its first answer.
+        if (answer || proposed) chats.noteTurn(turnChat, question)
       }
       phase.value = 'idle'
     })
@@ -267,12 +376,7 @@ function runPipeline(id: string, question: string) {
 function send(text: string): boolean {
   const trimmed = text.trim()
   if (!trimmed || phase.value !== 'idle') return false
-  // crypto.randomUUID() exists only in secure contexts (HTTPS / localhost);
-  // over plain HTTP on the LAN it's undefined, so fall back to a non-crypto id.
-  const id =
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `ex-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  const id = randomId('ex')
   exchanges.value = [
     ...exchanges.value,
     { id, question: trimmed, response: null, error: null, durationMs: null, stage: null },
@@ -336,6 +440,7 @@ const actorType = computed<ActorType>(() => (user.value?.actorType as ActorType)
         @toggle-dev-mode="toggleDevMode"
         @toggle-wake="toggleWake"
         @new-chat="newChat"
+        @open-chat="openHistory"
         @close="sidebarOpen = false"
         @toggle-collapse="toggleCollapse"
         @logout="onLogout"
@@ -348,7 +453,14 @@ const actorType = computed<ActorType>(() => (user.value?.actorType as ActorType)
           <MenuIcon :size="18" />
         </button>
 
-        <Welcome v-if="exchanges.length === 0" :name="displayName" :actor-type="actorType" @chip="send" />
+        <!-- An old chat is being fetched, or could not be. Both replace the
+             conversation area: the welcome screen would say "new chat". -->
+        <div v-if="historyLoading" class="chat-history-state" role="status">{{ t('historyLoading') }}</div>
+        <div v-else-if="historyError" class="chat-history-state" role="alert">
+          <span>{{ historyError }}</span>
+          <button class="chat-history-retry" type="button" @click="retryOpenHistory">{{ t('retry') }}</button>
+        </div>
+        <Welcome v-else-if="exchanges.length === 0" :name="displayName" :actor-type="actorType" @chip="send" />
         <Conversation v-else :exchanges="exchanges" :dev-mode="devMode" :busy="phase !== 'idle'" @regenerate="regenerate" />
         <InputDock :phase="phase" :send="send" :stop="stop" @conversation="openVoice" />
         <AnswerGlow :phase="phase" />
@@ -392,6 +504,32 @@ const actorType = computed<ActorType>(() => (user.value?.actorType as ActorType)
 }
 .chat-backdrop {
   display: none;
+}
+.chat-history-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 24px 120px;
+  font-size: 14px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.chat-history-retry {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: 'Figtree', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.chat-history-retry:hover {
+  background: var(--surface-hover);
 }
 @media (max-width: 768px) {
   .chat-menu-btn {

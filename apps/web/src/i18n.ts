@@ -288,6 +288,20 @@ const en = {
   voiceFormat: 'This recording format is not supported.',
   voiceBlockedPolicy: 'The site\u2019s security policy blocks the microphone.',
   voiceBlockedPolicyHow: 'This is a server setting (Permissions-Policy), not a browser permission \u2014 the padlock menu cannot change it. Tell IT.',
+  // Chat history (sidebar)
+  historyHeading: 'Chats',
+  historyEmpty: 'No chats yet',
+  historyLoadFailed: 'Could not load chats.',
+  historyLoading: 'Loading chat…',
+  historyOpenFailed: 'Could not open this chat.',
+  historyToday: 'Today',
+  historyYesterday: 'Yesterday',
+  historyWeek: 'Previous 7 days',
+  historyOlder: 'Older',
+  renameChat: 'Rename',
+  deleteChat: 'Delete',
+  chatDeleted: 'Chat deleted',
+  undo: 'Undo',
 }
 
 export type MsgKey = keyof typeof en
@@ -513,6 +527,20 @@ const uz: Dict = {
   voiceFormat: 'Bu yozuv formati qo\u02bbllab-quvvatlanmaydi.',
   voiceBlockedPolicy: 'Saytning xavfsizlik siyosati mikrofonni taqiqlaydi.',
   voiceBlockedPolicyHow: 'Bu server sozlamasi (Permissions-Policy), brauzer ruxsati emas \u2014 qulf menyusi uni o\u02bbzgartira olmaydi. IT ga ayting.',
+  // Chat history (sidebar)
+  historyHeading: 'Suhbatlar',
+  historyEmpty: 'Hali suhbatlar yoʻq',
+  historyLoadFailed: 'Suhbatlar yuklanmadi.',
+  historyLoading: 'Suhbat yuklanmoqda…',
+  historyOpenFailed: 'Suhbatni ochib boʻlmadi.',
+  historyToday: 'Bugun',
+  historyYesterday: 'Kecha',
+  historyWeek: 'Oxirgi 7 kun',
+  historyOlder: 'Oldingilar',
+  renameChat: 'Nomini oʻzgartirish',
+  deleteChat: 'Oʻchirish',
+  chatDeleted: 'Suhbat oʻchirildi',
+  undo: 'Bekor qilish',
 }
 
 const uzCyrl: Dict = {
@@ -735,6 +763,20 @@ const uzCyrl: Dict = {
   voiceFormat: 'Бу ёзув формати қўллаб-қувватланмайди.',
   voiceBlockedPolicy: 'Сайтнинг хавфсизлик сиёсати микрофонни тақиқлайди.',
   voiceBlockedPolicyHow: 'Бу сервер созламаси (Permissions-Policy), браузер рухсати эмас \u2014 қулф менюси уни ўзгартира олмайди. IT га айтинг.',
+  // Chat history (sidebar)
+  historyHeading: 'Суҳбатлар',
+  historyEmpty: 'Ҳали суҳбатлар йўқ',
+  historyLoadFailed: 'Суҳбатлар юкланмади.',
+  historyLoading: 'Суҳбат юкланмоқда…',
+  historyOpenFailed: 'Суҳбатни очиб бўлмади.',
+  historyToday: 'Бугун',
+  historyYesterday: 'Кеча',
+  historyWeek: 'Охирги 7 кун',
+  historyOlder: 'Олдингилар',
+  renameChat: 'Номини ўзгартириш',
+  deleteChat: 'Ўчириш',
+  chatDeleted: 'Суҳбат ўчирилди',
+  undo: 'Бекор қилиш',
 }
 
 const ru: Dict = {
@@ -957,6 +999,20 @@ const ru: Dict = {
   voiceFormat: 'Этот формат записи не поддерживается.',
   voiceBlockedPolicy: 'Политика безопасности сайта блокирует микрофон.',
   voiceBlockedPolicyHow: 'Это настройка сервера (Permissions-Policy), а не разрешение браузера \u2014 меню замка её не изменит. Сообщите ИТ.',
+  // Chat history (sidebar)
+  historyHeading: 'Чаты',
+  historyEmpty: 'Чатов пока нет',
+  historyLoadFailed: 'Не удалось загрузить чаты.',
+  historyLoading: 'Загрузка чата…',
+  historyOpenFailed: 'Не удалось открыть чат.',
+  historyToday: 'Сегодня',
+  historyYesterday: 'Вчера',
+  historyWeek: 'Последние 7 дней',
+  historyOlder: 'Ранее',
+  renameChat: 'Переименовать',
+  deleteChat: 'Удалить',
+  chatDeleted: 'Чат удалён',
+  undo: 'Отменить',
 }
 
 export const i18n = createI18n({

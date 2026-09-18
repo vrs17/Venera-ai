@@ -597,3 +597,29 @@ export const GearIcon: FunctionalComponent<{ size?: number }> = (props) =>
     }),
   ])
 GearIcon.props = ['size']
+
+/** Trash can - delete a chat from the history list. */
+export const TrashIcon: FunctionalComponent<{ size?: number }> = (props) =>
+  h('svg', { width: props.size ?? 14, height: props.size ?? 14, viewBox: '0 0 16 16', fill: 'none' }, [
+    h('path', {
+      d: 'M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 8.3a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9l.7-8.3M6.5 7.2v4M9.5 7.2v4',
+      stroke: 'currentColor',
+      'stroke-width': '1.4',
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+    }),
+  ])
+TrashIcon.props = ['size']
+
+/** Clock with a counter-clockwise arrow - chat history (the collapsed rail). */
+export const HistoryIcon: FunctionalComponent<{ size?: number }> = (props) =>
+  h('svg', { width: props.size ?? 16, height: props.size ?? 16, viewBox: '0 0 16 16', fill: 'none' }, [
+    h('path', {
+      d: 'M2.6 8a5.4 5.4 0 1 0 1.6-3.85M2.6 2.6v2.5h2.5M8 5.2v3l2.1 1.3',
+      stroke: 'currentColor',
+      'stroke-width': '1.4',
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+    }),
+  ])
+HistoryIcon.props = ['size']

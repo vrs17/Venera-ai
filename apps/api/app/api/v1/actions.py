@@ -59,7 +59,7 @@ def _run(call, user: AuthUser, token: str, what: str) -> ActionResult:
 def _user_id(user: AuthUser) -> str:
     # `chat.py` dagi bilan AYNAN bir xil: taklif shu id uchun qilingan va
     # xizmat faqat o'sha id dan tasdiq qabul qiladi.
-    return f"venera:{user.actorId}"
+    return _chat.assistant_user_id(user)
 
 
 @router.post("/{token}/confirm", response_model=ActionResult)

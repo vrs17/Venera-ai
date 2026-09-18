@@ -364,3 +364,57 @@ export interface ActionResult {
   request_id?: string | null
   result?: Record<string, unknown> | null
 }
+
+/* ── Chat history (GET/PATCH/DELETE /api/v1/chats) ──────────────────────── */
+/*
+ * Conversations live on the assistant, keyed by the `chatId` the browser
+ * sends with every turn; our backend proxies the history routes and adds the
+ * identity itself. Field names are the assistant's own (snake_case), passed
+ * through unchanged like ActionResult. `schemas/chats.py` mirrors these and
+ * `tests/test_contract.py` guards the pair.
+ */
+
+/** "auto": named by the service (the first words, then the model's short
+ *  title); "user": renamed by the person — the model never overwrites it. */
+export type TitleSource = 'auto' | 'user' | (string & {})
+
+/** schemas/chats.py: ChatSummary — one sidebar row. */
+export interface ChatSummary {
+  chat_id: string
+  /** Plain text, in the user's own script. Never Markdown. */
+  title: string
+  title_source: TitleSource
+  /** ISO-8601 UTC. Null for legacy chats the service cannot date. */
+  created_at: string | null
+  /** Last activity — the sort key of the list. */
+  updated_at: string | null
+  /** Stored messages, user + assistant (divide by two for turns). */
+  messages?: number | null
+}
+
+/** schemas/chats.py: ChatMessage */
+export interface ChatMessage {
+  role: 'user' | 'assistant' | (string & {})
+  /** The text as shown; may contain [1] / [T1] citation markers. */
+  content: string
+  created_at: string | null
+}
+
+/** schemas/chats.py: ChatDetail — an opened chat with its messages. */
+export interface ChatDetail extends Omit<ChatSummary, 'messages'> {
+  /** Oldest first; the last `limit` messages. */
+  messages: ChatMessage[]
+}
+
+/** schemas/chats.py: ChatList */
+export interface ChatList {
+  items: ChatSummary[]
+  limit: number
+  offset: number
+}
+
+/** schemas/chats.py: ChatDeleted — DELETE is soft; restore brings it back. */
+export interface ChatDeleted {
+  chat_id: string
+  status: 'deleted' | (string & {})
+}

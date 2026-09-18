@@ -5,7 +5,8 @@ import type { AuthUser } from '../types'
 import type { Theme } from '../theme'
 import { LOCALES, setLocale } from '../i18n'
 import type { Locale } from '../i18n'
-import { ChevronDownIcon, CodeIcon, EarIcon, GlobeIcon, MoonIcon, PanelLeftIcon, PlusIcon, SunIcon } from '../icons'
+import { ChevronDownIcon, CodeIcon, EarIcon, GlobeIcon, HistoryIcon, MoonIcon, PanelLeftIcon, PlusIcon, SunIcon } from '../icons'
+import ChatHistory from './ChatHistory.vue'
 import IdentityBar from './IdentityBar.vue'
 
 const props = defineProps<{
@@ -29,6 +30,8 @@ const emit = defineEmits<{
   toggleDevMode: []
   toggleWake: []
   newChat: []
+  /** Yon paneldagi suhbat tanlandi - ChatView uni ochadi. */
+  openChat: [id: string]
   close: []
   toggleCollapse: []
   logout: []
@@ -74,6 +77,10 @@ function onNewChat() {
   emit('newChat')
   emit('close')
 }
+function onOpenChat(id: string) {
+  emit('openChat', id)
+  emit('close')
+}
 // Collapsed: expand the rail, then reveal the language menu.
 function expandToLang() {
   emit('toggleCollapse')
@@ -98,7 +105,15 @@ function expandToLang() {
       <span v-if="!compact">{{ t('newChat') }}</span>
     </button>
 
-    <div class="sidebar__spacer" />
+    <!-- Suhbatlar tarixi. Yig'ilgan panelda ro'yxatga joy yo'q - belgi
+         panelni ochadi. -->
+    <ChatHistory v-if="!compact" @open="onOpenChat" @removed-active="emit('newChat')" />
+    <template v-else>
+      <button class="sidebar__row sidebar__row--history" :title="t('historyHeading')" @click="emit('toggleCollapse')">
+        <HistoryIcon :size="16" />
+      </button>
+      <div class="sidebar__spacer" />
+    </template>
 
     <div class="sidebar__config">
       <!-- Developer mode -->
@@ -267,6 +282,9 @@ function expandToLang() {
 }
 .sidebar__spacer {
   flex: 1;
+}
+.sidebar__row--history {
+  margin-top: 10px;
 }
 .sidebar__config {
   display: flex;

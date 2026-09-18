@@ -79,6 +79,18 @@ _MESSAGES = {
 }
 
 
+def assistant_user_id(user: AuthUser) -> str:
+    """Yuqoridagi xizmat uchun kimlik: `venera:{actorId}`.
+
+    BITTA JOYDA, ataylab: suhbat xotirasi (`/chat/stream`), taklifni
+    tasdiqlash (`/actions`) va suhbatlar tarixi (`/chats`) hammasi shu
+    kalit bilan ishlaydi. Biri farq qilsa, odam o'z suhbatini ko'rmay
+    qolardi yoki taklifini tasdiqlay olmasdi. Prefiks bilan: xizmat bir
+    nechta ilovaga xizmat qiladi va `user_id` lar aralashib ketmasligi kerak.
+    """
+    return f"venera:{user.actorId}"
+
+
 def _live_tokens(user: AuthUser) -> dict[str, str]:
     """Yuboriladigan platforma token'lari.
 
@@ -149,10 +161,9 @@ def stream(body: StreamRequest, user: AuthUser = Depends(current_user)) -> Strea
         # "uzilgan oqim" bo'lib ko'rinardi.
         answer = _assistant.stream(
             body.question,
-            # KIMLIK TOKEN'DAN. Prefiks bilan: yuqoridagi xizmat bir
-            # nechta ilovaga xizmat qiladi va `user_id` lar aralashib
-            # ketmasligi kerak - suhbat xotirasi shu kalit bo'yicha.
-            user_id=f"venera:{user.actorId}",
+            # KIMLIK TOKEN'DAN (`assistant_user_id`) - suhbat xotirasi va
+            # tarixi shu kalit bo'yicha.
+            user_id=assistant_user_id(user),
             chat_id=body.chatId,
             # PLATFORMA TOKENLARI: avval odamning O'Z ulanishi ("+"
             # menyusi, `/api/v1/connectors`), u yo'q bo'lsa `.env` dagi

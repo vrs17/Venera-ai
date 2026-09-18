@@ -28,7 +28,9 @@ watch(
   <div ref="scrollerRef" :style="{ position: 'absolute', inset: 0, overflowY: 'auto', padding: '8px 24px 200px' }">
     <div :style="{ maxWidth: '760px', margin: '0 auto' }">
       <div v-for="ex in exchanges" :key="ex.id">
-        <div class="ex__user">
+        <!-- Tarixdan kelgan javob savolsiz bo'lishi mumkin (eski yozuv) -
+             bo'sh pufakcha ko'rsatilmaydi. -->
+        <div v-if="ex.question" class="ex__user">
           <div
             class="glass reveal-up"
             :style="{

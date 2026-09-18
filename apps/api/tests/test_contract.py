@@ -39,6 +39,12 @@ BASE_STAGE_FIELDS = {"rawAnswer", "model", "adapter", "seconds"}
 # types.ts: Transcript
 TRANSCRIPT_FIELDS = {"text", "language", "durationSec", "lowConfidence", "truncated", "backend"}
 
+# types.ts: ChatSummary / ChatDetail / ChatMessage / ChatList / ChatDeleted
+CHAT_SUMMARY_FIELDS = {"chat_id", "title", "title_source", "created_at", "updated_at", "messages"}
+CHAT_MESSAGE_FIELDS = {"role", "content", "created_at"}
+CHAT_LIST_FIELDS = {"items", "limit", "offset"}
+CHAT_DELETED_FIELDS = {"chat_id", "status"}
+
 
 def test_login_javobi_types_ts_ga_mos(client):
     body = client.post("/api/v1/auth/login", json=ADMIN).json()
@@ -104,3 +110,19 @@ def test_transcript_javobi_types_ts_ga_mos():
     """
     from app.schemas.stt import TranscriptResponse
     assert set(TranscriptResponse.model_fields) == TRANSCRIPT_FIELDS
+
+
+def test_suhbatlar_tarixi_types_ts_ga_mos():
+    """`schemas/chats.py` <-> `types.ts` dagi `ChatSummary`, `ChatDetail`,
+    `ChatMessage`, `ChatList`, `ChatDeleted`.
+
+    Sxemadan o'qiladi: suhbatlar yuqoridagi xizmatda turadi va testda
+    chaqirilmaydi (HTTP yo'li `tests/test_chats.py` da soxta xizmat bilan).
+    """
+    from app.schemas.chats import ChatDeleted, ChatDetail, ChatList, ChatMessage, ChatSummary
+    assert set(ChatSummary.model_fields) == CHAT_SUMMARY_FIELDS
+    # ChatDetail = ChatSummary, faqat `messages` son emas, ro'yxat.
+    assert set(ChatDetail.model_fields) == CHAT_SUMMARY_FIELDS
+    assert set(ChatMessage.model_fields) == CHAT_MESSAGE_FIELDS
+    assert set(ChatList.model_fields) == CHAT_LIST_FIELDS
+    assert set(ChatDeleted.model_fields) == CHAT_DELETED_FIELDS
