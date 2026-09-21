@@ -1,14 +1,24 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { UIExchange } from '../types'
+import { LOCALES } from '../i18n'
+import type { Locale } from '../i18n'
+import { formatFull, formatWhen } from '../time'
 import PipelineResult from './PipelineResult.vue'
 import CopyButton from './CopyButton.vue'
 
 const props = defineProps<{ exchanges: UIExchange[]; devMode: boolean; busy?: boolean }>()
 defineEmits<{ regenerate: [id: string] }>()
-const { t } = useI18n({ useScope: 'global' })
+const { t, locale } = useI18n({ useScope: 'global' })
 const scrollerRef = ref<HTMLDivElement | null>(null)
+
+// Vaqt yozuvi UI tilida: `Intl` ga BCP-47 kodi kerak (`uz-Latn`), i18n
+// kodi emas (`uz`).
+const lang = computed(() => LOCALES.find((l) => l.code === (locale.value as Locale))?.htmlLang ?? 'uz-Latn')
+function iso(ms: number): string {
+  return new Date(ms).toISOString()
+}
 
 // Auto-scroll to the latest message whenever a new exchange is added or the
 // pending response resolves. deep:true catches the in-place pending->resolved
@@ -49,10 +59,27 @@ watch(
             {{ ex.question }}
           </div>
           <div class="ex__user-tools">
+            <!-- Yuborilgan vaqt - nusxa tugmasi bilan bir qatorda, faqat
+                 sichqoncha ustida (pastdagi qoida). -->
+            <time v-if="ex.askedAt" class="ex__time" :datetime="iso(ex.askedAt)" :title="formatFull(ex.askedAt, lang)">
+              {{ formatWhen(ex.askedAt, lang) }}
+            </time>
             <CopyButton :text="ex.question" :aria-label="t('copyPrompt')" :size="14" />
           </div>
         </div>
-        <PipelineResult :exchange="ex" :dev-mode="devMode" :busy="busy" @regenerate="$emit('regenerate', ex.id)" />
+        <div class="ex__answer">
+          <PipelineResult :exchange="ex" :dev-mode="devMode" :busy="busy" @regenerate="$emit('regenerate', ex.id)" />
+          <!-- Javob tugagan vaqt - blokning yuqori o'ng burchagida, joy
+               egallamaydi; belgi (badge) chap tomonda, to'qnashmaydi. -->
+          <time
+            v-if="ex.answeredAt"
+            class="ex__time ex__time--answer"
+            :datetime="iso(ex.answeredAt)"
+            :title="formatFull(ex.answeredAt, lang)"
+          >
+            {{ formatWhen(ex.answeredAt, lang) }}
+          </time>
+        </div>
       </div>
     </div>
   </div>
@@ -66,19 +93,40 @@ watch(
   margin: 20px 0 4px;
 }
 .ex__user-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 2px;
   margin-right: -9px; /* align the icon button's optical edge with the bubble */
+}
+.ex__time {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+}
+.ex__answer {
+  position: relative;
+}
+.ex__time--answer {
+  position: absolute;
+  top: 16px;
+  right: 0;
 }
 /* On hover-capable devices, keep the prompt copy hidden until hover/focus.
    On touch devices (no hover) it stays visible so it's reachable. */
 @media (hover: hover) {
-  .ex__user-tools {
+  .ex__user-tools,
+  .ex__time--answer {
     opacity: 0;
     transform: translateY(-2px);
     transition: opacity 0.15s, transform 0.15s;
   }
   .ex__user:hover .ex__user-tools,
-  .ex__user:focus-within .ex__user-tools {
+  .ex__user:focus-within .ex__user-tools,
+  .ex__answer:hover .ex__time--answer,
+  .ex__answer:focus-within .ex__time--answer {
     opacity: 1;
     transform: translateY(0);
   }

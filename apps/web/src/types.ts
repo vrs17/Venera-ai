@@ -196,6 +196,10 @@ export interface UIExchange {
   artifact?: AnswerArtifact | null
   /** A write action the assistant proposed; shown with Confirm / Reject. */
   proposal?: ActionProposal | null
+  /** When the question was sent and when the answer finished (epoch ms).
+   *  Shown on hover, like a chat app; reopened chats take the stored time. */
+  askedAt?: number | null
+  answeredAt?: number | null
   /** rules | hrm | crm | live | both | clarify — shown in developer mode. */
   route?: string | null
   /** Audit key: the same value is in the assistant's own log. */

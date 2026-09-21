@@ -12,6 +12,7 @@ import { useWakeWord, WAKE_LOCALES, WAKE_STORAGE_KEY } from '../composables/useW
 import { warmGreeting } from '../api/greeting'
 import type { ActionProposal, ActorType, ChatFrame, ChatMessage, Phase, PipelineResponse, UIExchange } from '../types'
 import { applyTheme, getInitialTheme } from '../theme'
+import { isoToMs } from '../time'
 import type { Theme } from '../theme'
 import AmbientBackground from '../components/AmbientBackground.vue'
 import ChatSidebar from '../components/ChatSidebar.vue'
@@ -174,15 +175,22 @@ function exchangesFrom(messages: ChatMessage[]): UIExchange[] {
       if (current && !current.response) {
         current.response = streamedResponse(content)
         current.cancelled = false
+        current.answeredAt = isoToMs(message.created_at)
       } else if (current?.response) {
         current.response = streamedResponse(`${current.response.answer ?? ''}\n\n${content}`)
       } else {
-        current = { id: randomId('ex'), question: '', response: streamedResponse(content), error: null, durationMs: null, stage: null }
+        current = {
+          id: randomId('ex'), question: '', response: streamedResponse(content), error: null,
+          durationMs: null, stage: null, answeredAt: isoToMs(message.created_at),
+        }
         out.push(current)
       }
       continue
     }
-    current = { id: randomId('ex'), question: content, response: null, error: null, durationMs: null, stage: null, cancelled: true }
+    current = {
+      id: randomId('ex'), question: content, response: null, error: null, durationMs: null,
+      stage: null, cancelled: true, askedAt: isoToMs(message.created_at),
+    }
     out.push(current)
   }
   return out
@@ -353,7 +361,7 @@ function runPipeline(id: string, question: string) {
       if (failure && !answer) {
         // Nothing useful arrived: the error shell with Regenerate is the
         // honest view.
-        patch(id, { error: failure, stage: null, durationMs })
+        patch(id, { error: failure, stage: null, durationMs, answeredAt: Date.now() })
       } else {
         patch(id, {
           response: streamedResponse(answer),
@@ -363,6 +371,7 @@ function runPipeline(id: string, question: string) {
           error: null,
           stage: null,
           durationMs,
+          answeredAt: Date.now(),
         })
         // An answer was stored, so the chat now exists on the server: it
         // enters the sidebar (first turn) or moves to the top (later turns).
@@ -373,7 +382,7 @@ function runPipeline(id: string, question: string) {
     })
     .catch((err: unknown) => {
       if (err instanceof DOMException && err.name === 'AbortError') return
-      patch(id, { error: localizeApiError(err, t), stage: null, durationMs: performance.now() - t0 })
+      patch(id, { error: localizeApiError(err, t), stage: null, durationMs: performance.now() - t0, answeredAt: Date.now() })
       phase.value = 'idle'
     })
 }
@@ -384,7 +393,7 @@ function send(text: string): boolean {
   const id = randomId('ex')
   exchanges.value = [
     ...exchanges.value,
-    { id, question: trimmed, response: null, error: null, durationMs: null, stage: null },
+    { id, question: trimmed, response: null, error: null, durationMs: null, stage: null, askedAt: Date.now() },
   ]
   runPipeline(id, trimmed)
   return true
@@ -397,7 +406,7 @@ function regenerate(id: string) {
   if (!ex) return
   patch(id, {
     response: null, error: null, cancelled: false, durationMs: null,
-    stage: null, sources: [], artifact: null, proposal: null, warning: null, route: null,
+    stage: null, sources: [], artifact: null, proposal: null, warning: null, route: null, answeredAt: null,
   })
   runPipeline(id, ex.question)
 }
