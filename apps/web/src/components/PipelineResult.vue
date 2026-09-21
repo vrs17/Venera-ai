@@ -188,7 +188,12 @@ const answerCopyText = computed(() => {
         {{ headline }}
       </div>
 
-      <MarkdownMessage v-if="exchange.response.answer" :source="exchange.response.answer" :style="{ marginBottom: '4px' }" />
+      <MarkdownMessage
+        v-if="exchange.response.answer"
+        :source="exchange.response.answer"
+        :sources="exchange.sources"
+        :style="{ marginBottom: '4px' }"
+      />
 
       <!-- Something failed AFTER part of the answer arrived. The answer stays;
            this says what is missing from it. -->

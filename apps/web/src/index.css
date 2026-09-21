@@ -633,3 +633,66 @@ textarea::placeholder {
     display: flex !important;
   }
 }
+
+/* ---- Iqtibos chiplari (MarkdownMessage.vue) ----
+   v-html ichida yaratiladi, shuning uchun global. `[1]` o'rnida kichik
+   pill; sichqoncha ustida hujjat nomi va sahifa (`data-tip`), bosilsa
+   hujjat ochiladi. `[T1]` - jonli so'rov, bosilmaydi. */
+.md .cite {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin: 0 1px;
+  border-radius: 999px;
+  border: 1px solid var(--border-hover);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  vertical-align: 0.15em;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.md .cite--tool {
+  cursor: default;
+}
+.md .cite[data-cite]:hover,
+.md .cite[data-cite]:focus-visible {
+  background: var(--ink);
+  border-color: transparent;
+  color: var(--ink-contrast);
+  outline: none;
+}
+.md .cite::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%) translateY(3px);
+  width: max-content;
+  max-width: 320px;
+  padding: 6px 9px;
+  border-radius: 9px;
+  background: var(--ink);
+  color: var(--ink-contrast);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: normal;
+  text-align: left;
+  box-shadow: var(--menu-shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s, transform 0.12s;
+  z-index: 5;
+}
+.md .cite:hover::after,
+.md .cite:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
