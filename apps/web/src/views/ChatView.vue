@@ -20,6 +20,8 @@ import Conversation from '../components/Conversation.vue'
 import InputDock from '../components/InputDock.vue'
 import VoicePanel from '../components/VoicePanel.vue'
 import AnswerGlow from '../components/AnswerGlow.vue'
+import DocViewer from '../components/DocViewer.vue'
+import { useDocViewer } from '../composables/useDocViewer'
 import { MenuIcon } from '../icons'
 
 const { t, locale } = useI18n({ useScope: 'global' })
@@ -27,6 +29,8 @@ const router = useRouter()
 // Identity now comes from the authenticated session (derived from the token by
 // the backend); the chat request carries only the question.
 const { user, logout } = useAuth()
+// Iqtibos qilingan hujjat - chat yonidagi panel. Manba ro'yxati ochadi.
+const { doc: viewerDoc, close: closeViewer } = useDocViewer()
 // Suhbatlar tarixi (yon panel). Ro'yxat serverdan; bu ekran faqat qaysi
 // suhbat ochiq ekanini aytadi va yangi javob kelganda xabar beradi.
 const chats = useChats()
@@ -105,6 +109,7 @@ function toggleTheme() {
 }
 
 function newChat() {
+  closeViewer()
   abortController?.abort()
   abortController = null
   historyRequest++
@@ -474,6 +479,10 @@ const actorType = computed<ActorType>(() => (user.value?.actorType as ActorType)
           @close="closeVoice"
         />
       </div>
+
+      <!-- Iqtibos qilingan hujjat: chatning YONIDA, ustida emas - odam
+           javobni va manbani birga ko'rsin (mobilda butun ekran). -->
+      <DocViewer v-if="viewerDoc" :doc="viewerDoc" @close="closeViewer" />
     </div>
   </div>
 </template>

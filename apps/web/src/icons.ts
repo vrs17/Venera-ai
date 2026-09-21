@@ -623,3 +623,23 @@ export const HistoryIcon: FunctionalComponent<{ size?: number }> = (props) =>
     }),
   ])
 HistoryIcon.props = ['size']
+
+/* ---- Hujjat ko'rish paneli ---- */
+
+export const MinusIcon: FunctionalComponent<{ size?: number }> = (props) =>
+  h('svg', { width: props.size ?? 16, height: props.size ?? 16, viewBox: '0 0 18 18', fill: 'none' }, [
+    h('path', { d: 'M3.5 9h11', stroke: 'currentColor', 'stroke-width': '1.6', 'stroke-linecap': 'round' }),
+  ])
+MinusIcon.props = ['size']
+
+export const ChevronLeftIcon: FunctionalComponent<{ size?: number }> = (props) =>
+  h('svg', { width: props.size ?? 10, height: props.size ?? 10, viewBox: '0 0 10 10', fill: 'none' }, [
+    h('path', {
+      d: 'M6.5 2l-3 3 3 3',
+      stroke: 'currentColor',
+      'stroke-width': '1.6',
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+    }),
+  ])
+ChevronLeftIcon.props = ['size']
