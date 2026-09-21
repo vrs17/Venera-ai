@@ -9,22 +9,25 @@
  * arguing with it.
  *
  * The two kinds are shown differently on purpose. A document can be OPENED —
- * its PDF comes down through our own proxy, since it lives on a host the
- * browser cannot reach. A lookup has nothing to open: it is a call that
- * happened at a moment in time, so it is named, not linked, and the digest
- * says what it returned.
+ * it renders in the viewer panel beside the chat (`DocViewer.vue`), at the
+ * cited page, exactly as the PDF is; its bytes come through our own proxy,
+ * since it lives on a host the browser cannot reach. A lookup has nothing to
+ * open: it is a call that happened at a moment in time, so it is named, not
+ * linked, and the digest says what it returned.
  */
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { localizeApiError } from '../api/errors'
 import type { AnswerArtifact, AnswerSource } from '../types'
 import { downloadFile } from '../api/chat.api'
+import { useDocViewer } from '../composables/useDocViewer'
 
 const props = defineProps<{
   sources?: AnswerSource[]
   artifact?: AnswerArtifact | null
 }>()
 const { t } = useI18n({ useScope: 'global' })
+const { open: openDoc } = useDocViewer()
 
 /** Kinds that are a LIVE LOOKUP rather than a document. `crm` joined `hrm`
  *  on 2026-09-14; before that a CRM source fell into the document list and
@@ -77,11 +80,6 @@ function marker(call: AnswerSource, index: number): string {
   return raw.startsWith('[') ? raw : `[${raw}]`
 }
 
-/** File name for a cited document: its title, or the id as a fallback. */
-function docName(source: AnswerSource): string {
-  const base = (source.title?.trim() || source.doc_id || 'hujjat').replace(/[^\w.\- ]+/g, '_')
-  return base.toLowerCase().endsWith('.pdf') ? base : `${base}.pdf`
-}
 </script>
 
 <template>
@@ -108,11 +106,14 @@ function docName(source: AnswerSource): string {
       <span class="proof__title">{{ t('sourcesDocuments') }}</span>
       <ul class="proof__list">
         <li v-for="(source, i) in docs" :key="source.doc_id || i">
+          <!-- Opens the viewer at the cited page; the download lives in the
+               viewer's toolbar. -->
           <button
             v-if="source.docUrl"
             type="button"
             class="proof__link"
-            @click="take(source.docUrl, docName(source))"
+            :title="t('sourceOpen')"
+            @click="openDoc(source)"
           >
             {{ label(source) }}
           </button>

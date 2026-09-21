@@ -142,12 +142,12 @@ const answerCopyText = computed(() => {
   <div class="reveal-down">
     <ResultShell v-if="exchange.error" :badge="errorBadge">
       <div :style="{ fontSize: '14px', color: 'var(--text)' }">{{ exchange.error }}</div>
-      <MessageActions :busy="busy" @regenerate="emit('regenerate')" />
+      <MessageActions :busy="busy" :at="exchange.answeredAt" @regenerate="emit('regenerate')" />
     </ResultShell>
 
     <ResultShell v-else-if="exchange.cancelled" :badge="null">
       <div :style="{ fontSize: '14px', color: 'var(--text-muted)', fontStyle: 'italic' }">{{ t('generationStopped') }}</div>
-      <MessageActions :busy="busy" @regenerate="emit('regenerate')" />
+      <MessageActions :busy="busy" :at="exchange.answeredAt" @regenerate="emit('regenerate')" />
     </ResultShell>
 
     <template v-else-if="!exchange.response">
@@ -188,7 +188,12 @@ const answerCopyText = computed(() => {
         {{ headline }}
       </div>
 
-      <MarkdownMessage v-if="exchange.response.answer" :source="exchange.response.answer" :style="{ marginBottom: '4px' }" />
+      <MarkdownMessage
+        v-if="exchange.response.answer"
+        :source="exchange.response.answer"
+        :sources="exchange.sources"
+        :style="{ marginBottom: '4px' }"
+      />
 
       <!-- Something failed AFTER part of the answer arrived. The answer stays;
            this says what is missing from it. -->
@@ -200,7 +205,7 @@ const answerCopyText = computed(() => {
 
       <AnswerSources :sources="exchange.sources" :artifact="exchange.artifact" />
 
-      <MessageActions :copy-text="answerCopyText" :busy="busy" @regenerate="emit('regenerate')" />
+      <MessageActions :copy-text="answerCopyText" :busy="busy" :at="exchange.answeredAt" @regenerate="emit('regenerate')" />
 
       <!-- Developer-only: the full pipeline trace and the round-trip timing.
            The streamed route has no stage trace to show (the assistant does

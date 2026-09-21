@@ -12,6 +12,8 @@ import { useWakeWord, WAKE_LOCALES, WAKE_STORAGE_KEY } from '../composables/useW
 import { warmGreeting } from '../api/greeting'
 import type { ActionProposal, ActorType, ChatFrame, ChatMessage, Phase, PipelineResponse, UIExchange } from '../types'
 import { applyTheme, getInitialTheme } from '../theme'
+import { isoToMs } from '../time'
+import { recallSources, rememberSources } from '../sourcesCache'
 import type { Theme } from '../theme'
 import AmbientBackground from '../components/AmbientBackground.vue'
 import ChatSidebar from '../components/ChatSidebar.vue'
@@ -20,6 +22,8 @@ import Conversation from '../components/Conversation.vue'
 import InputDock from '../components/InputDock.vue'
 import VoicePanel from '../components/VoicePanel.vue'
 import AnswerGlow from '../components/AnswerGlow.vue'
+import DocViewer from '../components/DocViewer.vue'
+import { useDocViewer } from '../composables/useDocViewer'
 import { MenuIcon } from '../icons'
 
 const { t, locale } = useI18n({ useScope: 'global' })
@@ -27,6 +31,8 @@ const router = useRouter()
 // Identity now comes from the authenticated session (derived from the token by
 // the backend); the chat request carries only the question.
 const { user, logout } = useAuth()
+// Iqtibos qilingan hujjat - chat yonidagi panel. Manba ro'yxati ochadi.
+const { doc: viewerDoc, close: closeViewer } = useDocViewer()
 // Suhbatlar tarixi (yon panel). Ro'yxat serverdan; bu ekran faqat qaysi
 // suhbat ochiq ekanini aytadi va yangi javob kelganda xabar beradi.
 const chats = useChats()
@@ -105,6 +111,7 @@ function toggleTheme() {
 }
 
 function newChat() {
+  closeViewer()
   abortController?.abort()
   abortController = null
   historyRequest++
@@ -133,7 +140,7 @@ async function openHistory(id: string) {
   try {
     const detail = await fetchChat(id)
     if (request !== historyRequest) return
-    exchanges.value = exchangesFrom(detail.messages)
+    exchanges.value = exchangesFrom(detail.messages, id)
   } catch (err) {
     if (request !== historyRequest) return
     if (err instanceof ApiError && err.status === 404) {
@@ -160,24 +167,37 @@ function retryOpenHistory() {
 // it. A user message with no reply (the answer failed back then) is shown
 // as stopped, with Regenerate; a reply with no question (legacy rows) is
 // shown on its own.
-function exchangesFrom(messages: ChatMessage[]): UIExchange[] {
+function exchangesFrom(messages: ChatMessage[], chat: string): UIExchange[] {
   const out: UIExchange[] = []
   let current: UIExchange | null = null
   for (const message of messages) {
     const content = message.content ?? ''
     if (message.role === 'assistant') {
+      // The server keeps no citations per message; this browser may have
+      // them from when the answer was streamed (sourcesCache.ts).
+      const cached = recallSources(chat, content)
       if (current && !current.response) {
         current.response = streamedResponse(content)
         current.cancelled = false
+        current.answeredAt = isoToMs(message.created_at)
+        current.sources = cached?.sources ?? []
+        current.artifact = cached?.artifact ?? null
       } else if (current?.response) {
         current.response = streamedResponse(`${current.response.answer ?? ''}\n\n${content}`)
       } else {
-        current = { id: randomId('ex'), question: '', response: streamedResponse(content), error: null, durationMs: null, stage: null }
+        current = {
+          id: randomId('ex'), question: '', response: streamedResponse(content), error: null,
+          durationMs: null, stage: null, answeredAt: isoToMs(message.created_at),
+          sources: cached?.sources ?? [], artifact: cached?.artifact ?? null,
+        }
         out.push(current)
       }
       continue
     }
-    current = { id: randomId('ex'), question: content, response: null, error: null, durationMs: null, stage: null, cancelled: true }
+    current = {
+      id: randomId('ex'), question: content, response: null, error: null, durationMs: null,
+      stage: null, cancelled: true, askedAt: isoToMs(message.created_at),
+    }
     out.push(current)
   }
   return out
@@ -348,7 +368,7 @@ function runPipeline(id: string, question: string) {
       if (failure && !answer) {
         // Nothing useful arrived: the error shell with Regenerate is the
         // honest view.
-        patch(id, { error: failure, stage: null, durationMs })
+        patch(id, { error: failure, stage: null, durationMs, answeredAt: Date.now() })
       } else {
         patch(id, {
           response: streamedResponse(answer),
@@ -358,17 +378,22 @@ function runPipeline(id: string, question: string) {
           error: null,
           stage: null,
           durationMs,
+          answeredAt: Date.now(),
         })
         // An answer was stored, so the chat now exists on the server: it
         // enters the sidebar (first turn) or moves to the top (later turns).
         // Not before — the service creates the chat with its first answer.
         if (answer || proposed) chats.noteTurn(turnChat, question)
+        // The server will not hand the citations back with the history, so
+        // keep them here for when this chat is reopened in this browser.
+        const done = exchanges.value.find((e) => e.id === id)
+        if (answer && done) rememberSources(turnChat, answer, done.sources ?? [], done.artifact)
       }
       phase.value = 'idle'
     })
     .catch((err: unknown) => {
       if (err instanceof DOMException && err.name === 'AbortError') return
-      patch(id, { error: localizeApiError(err, t), stage: null, durationMs: performance.now() - t0 })
+      patch(id, { error: localizeApiError(err, t), stage: null, durationMs: performance.now() - t0, answeredAt: Date.now() })
       phase.value = 'idle'
     })
 }
@@ -379,7 +404,7 @@ function send(text: string): boolean {
   const id = randomId('ex')
   exchanges.value = [
     ...exchanges.value,
-    { id, question: trimmed, response: null, error: null, durationMs: null, stage: null },
+    { id, question: trimmed, response: null, error: null, durationMs: null, stage: null, askedAt: Date.now() },
   ]
   runPipeline(id, trimmed)
   return true
@@ -392,7 +417,7 @@ function regenerate(id: string) {
   if (!ex) return
   patch(id, {
     response: null, error: null, cancelled: false, durationMs: null,
-    stage: null, sources: [], artifact: null, proposal: null, warning: null, route: null,
+    stage: null, sources: [], artifact: null, proposal: null, warning: null, route: null, answeredAt: null,
   })
   runPipeline(id, ex.question)
 }
@@ -474,6 +499,10 @@ const actorType = computed<ActorType>(() => (user.value?.actorType as ActorType)
           @close="closeVoice"
         />
       </div>
+
+      <!-- Iqtibos qilingan hujjat: chatning YONIDA, ustida emas - odam
+           javobni va manbani birga ko'rsin (mobilda butun ekran). -->
+      <DocViewer v-if="viewerDoc" :doc="viewerDoc" @close="closeViewer" />
     </div>
   </div>
 </template>
