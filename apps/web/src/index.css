@@ -400,16 +400,21 @@ textarea::placeholder {
   animation: glintSweep 0.9s ease-out 0.15s;
 }
 
-/* Origin-aware reveal helpers. */
+/* Origin-aware reveal helpers.
+   `backwards`, `both` EMAS: `both` oxirgi kadrni (`clip-path: inset(0)`)
+   abadiy qoldirardi va blokdan tashqariga chiqqan hamma narsa - iqtibos
+   chipining yuqoridagi izohi, birinchi qatorda - qirqilib qolardi. Yakuniy
+   kadr baribir "qirqilmagan", ya'ni animatsiya tugagach clip olib tashlansa
+   hech narsa sakramaydi. */
 .reveal-down {
-  animation: revealDown 0.5s var(--spring) both;
+  animation: revealDown 0.5s var(--spring) backwards;
 }
 .reveal-up {
-  animation: revealUp 0.45s var(--spring) both;
+  animation: revealUp 0.45s var(--spring) backwards;
 }
-/* Clip-free entrance for forms. revealUp leaves a persistent clip-path (fill
-   mode both) that shears focus rings / box-shadows on inputs; fadeUp uses only
-   opacity + translate, so nothing is ever clipped at rest. */
+/* Clip-free entrance for forms: fadeUp uses only opacity + translate, so
+   nothing is clipped even DURING the animation (a focus ring on the first
+   input would be sheared by a clip-path reveal). */
 .rise {
   animation: fadeUp 0.45s var(--spring) both;
 }
@@ -675,7 +680,7 @@ textarea::placeholder {
   left: 50%;
   transform: translateX(-50%) translateY(3px);
   width: max-content;
-  max-width: 320px;
+  max-width: min(320px, 80vw);
   padding: 6px 9px;
   border-radius: 9px;
   background: var(--ink);

@@ -67,18 +67,10 @@ watch(
             <CopyButton :text="ex.question" :aria-label="t('copyPrompt')" :size="14" />
           </div>
         </div>
+        <!-- Javob vaqti amallar qatorida (`MessageActions`, o'ng chetda);
+             bu o'ram faqat sichqoncha ustida ko'rsatish uchun. -->
         <div class="ex__answer">
           <PipelineResult :exchange="ex" :dev-mode="devMode" :busy="busy" @regenerate="$emit('regenerate', ex.id)" />
-          <!-- Javob tugagan vaqt - blokning yuqori o'ng burchagida, joy
-               egallamaydi; belgi (badge) chap tomonda, to'qnashmaydi. -->
-          <time
-            v-if="ex.answeredAt"
-            class="ex__time ex__time--answer"
-            :datetime="iso(ex.answeredAt)"
-            :title="formatFull(ex.answeredAt, lang)"
-          >
-            {{ formatWhen(ex.answeredAt, lang) }}
-          </time>
         </div>
       </div>
     </div>
@@ -106,27 +98,19 @@ watch(
   white-space: nowrap;
   cursor: default;
 }
-.ex__answer {
-  position: relative;
-}
-.ex__time--answer {
-  position: absolute;
-  top: 16px;
-  right: 0;
-}
 /* On hover-capable devices, keep the prompt copy hidden until hover/focus.
    On touch devices (no hover) it stays visible so it's reachable. */
 @media (hover: hover) {
   .ex__user-tools,
-  .ex__time--answer {
+  .ex__answer :deep(.msg-time) {
     opacity: 0;
     transform: translateY(-2px);
     transition: opacity 0.15s, transform 0.15s;
   }
   .ex__user:hover .ex__user-tools,
   .ex__user:focus-within .ex__user-tools,
-  .ex__answer:hover .ex__time--answer,
-  .ex__answer:focus-within .ex__time--answer {
+  .ex__answer:hover :deep(.msg-time),
+  .ex__answer:focus-within :deep(.msg-time) {
     opacity: 1;
     transform: translateY(0);
   }
