@@ -33,6 +33,7 @@ _NAMES = {
     403: "Forbidden",
     404: "Not Found",
     409: "Conflict",
+    410: "Gone",
     422: "Unprocessable Entity",
     429: "Too Many Requests",
     500: "Internal Server Error",

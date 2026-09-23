@@ -32,11 +32,12 @@ from fastapi.responses import StreamingResponse
 from ...core.config import ollama_key_now, platform_tokens, settings
 from ...core.errors import bad_request, error_status
 from ...schemas.auth import AuthUser
-from ...schemas.chat import AskRequest, PipelineResponse, StreamRequest
+from ...schemas.chat import AskRequest, FileLink, FileLinkRequest, PipelineResponse, StreamRequest
 from ...services.integrations.assistant import (
     ARTIFACT_KINDS,
     AssistantClient,
     AssistantError,
+    artifact_ref_ok,
 )
 from ...services.hold import HoldVoices, keyword_topic, pick
 from ...services.integrations.crm_auth import CrmAuth
@@ -400,9 +401,11 @@ def _live_tokens(user: AuthUser) -> dict[str, str]:
     return tokens
 
 
-def _fail(exc: AssistantError, user: AuthUser, what: str):
-    """Xatoni log'ga yozadi va foydalanuvchiga xabarga o'giradi."""
-    log.warning("Assistant %s (%s): %s", what, user.email, exc)
+def _fail(exc: AssistantError, user: AuthUser | str, what: str):
+    """Xatoni log'ga yozadi va foydalanuvchiga xabarga o'giradi. `user` -
+    sessiya egasi yoki (tokensiz havolada) havola egasining `actorId` si."""
+    who = user if isinstance(user, str) else user.email
+    log.warning("Assistant %s (%s): %s", what, who, exc)
     status = exc.status if exc.status in _MESSAGES else 502
     return error_status(status, _MESSAGES[status])
 
@@ -537,8 +540,10 @@ def doc(
     return _file(lambda: _assistant.fetch_doc(doc_id), user, "doc")
 
 
-def _file(open_it, user: AuthUser, what: str) -> StreamingResponse:
-    """Fayl oqimi uchun umumiy qobiq - ikki endpoint uchun bir xil."""
+def _file(open_it, user: AuthUser | str, what: str, *,
+          disposition: str | None = None, headers: dict[str, str] | None = None) -> StreamingResponse:
+    """Fayl oqimi uchun umumiy qobiq - uchala endpoint uchun bir xil."""
+    who = user if isinstance(user, str) else user.email
     try:
         content_type, filename, chunks = open_it()
     except AssistantError as exc:
@@ -550,7 +555,7 @@ def _file(open_it, user: AuthUser, what: str) -> StreamingResponse:
         except AssistantError as exc:
             # 200 ketib bo'lgan - ulanishni tugatamiz, brauzer buni
             # tugallanmagan yuklab olish deb ko'radi. Sabab log'da.
-            log.warning("Assistant fayl oqimi (%s): %s", user.email, exc)
+            log.warning("Assistant fayl oqimi (%s): %s", who, exc)
 
     return StreamingResponse(
         body(),
@@ -560,8 +565,119 @@ def _file(open_it, user: AuthUser, what: str) -> StreamingResponse:
             # `inline` EMAS, `attachment`: fayl yuqoridagi xizmatdan
             # keladi va uni Venera originida sahifa sifatida ochish
             # ortiqcha xavf bo'lardi. Nomi `_filename` da tozalangan.
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": disposition or f'attachment; filename="{filename}"',
             "X-Content-Type-Options": "nosniff",
+            **(headers or {}),
+        },
+    )
+
+
+# --- Telegram: tokensiz yuklab olish havolasi --------------------------------
+#
+# NEGA KERAK. Telegram mini app'da faylni Telegram ilovasining O'ZI yuklaydi
+# (`WebApp.downloadFile`, Bot API 8.0) - va u bizning `Authorization`
+# sarlavhamizni yubora olmaydi. WebView ichida `blob:` + `<a download>` esa
+# ishonchsiz: iOS uni umuman bajarmaydi. Shuning uchun sessiya egasi avval
+# QISQA MUDDATLI imzolangan havola oladi, Telegram esa faylni shu havoladan
+# tokensiz yuklaydi.
+#
+# HAVOLA KIRISH TOKENI EMAS. U boshqa `aud` bilan imzolanadi: `verify_token`
+# `aud` li tokenni rad etadi (API'ga kira olmaydi), bu yerdagi tekshiruv esa
+# `aud` siz kirish tokenini rad etadi. Havola FAQAT bitta fayl, bitta tur va
+# `_FILE_LINK_TTL` soniya uchun.
+
+#: Odam "yuklab olish" ni bosadi, Telegram o'z oynasini ko'rsatadi, rozi
+#: bo'lgach faylni oladi - bu soniyalar ishi. 10 daqiqa chalg'igan odamga
+#: ham yetadi, havola esa jurnalda yoki ekran rasmida qolsa uzoq yashamaydi.
+_FILE_LINK_TTL = 600
+_FILE_AUDIENCE = "venera:file"
+#: Faqat haqiqiy fayllar: `preview` - sahifa ichidagi ko'rinish, yuklanmaydi.
+_LINK_KINDS = ("docx", "pdf")
+#: Telegram Web (`web.telegram.org/k`, `/a`) faylni brauzer ichida `fetch`
+#: bilan oladi, ya'ni CORS kerak - rasmiy hujjat talabi.
+_TELEGRAM_WEB = "https://web.telegram.org"
+
+
+def _download_name(requested: str | None, kind: str) -> str:
+    """Saqlanadigan nom: klient taklifi (sarlavhadan), TOZALANGAN; kengaytma
+    TUR bo'yicha - klientdan kelgani hisobga olinmaydi."""
+    base = re.sub(r"\.(docx|pdf)$", "", (requested or "").strip(), flags=re.IGNORECASE)
+    base = re.sub(r"[^\w.' -]+", " ", base)
+    base = re.sub(r"\s+", " ", base).strip(" .-_'")[:80]
+    return f"{base or 'hujjat'}.{kind}"
+
+
+def _attachment(filename: str) -> str:
+    """`Content-Disposition` - RFC 6266: ASCII nom + `filename*` (UTF-8).
+
+    Faqat `filename="..."` yetmaydi: sarlavhalar latin-1 da ketadi va
+    o'zbekcha `ʻ` yoki kirill harfli nom javobni 500 ga aylantirardi.
+    """
+    stem, _, ext = filename.rpartition(".")
+    ascii_stem = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode("ascii")
+    # Kirillcha nomdan ASCII da hech narsa qolmaydi - `.docx` (yashirin fayl
+    # ko'rinishi) o'rniga "hujjat.docx".
+    ascii_stem = re.sub(r"[^A-Za-z0-9.' _-]+", "_", ascii_stem).strip(" ._") or "hujjat"
+    ascii_name = f"{ascii_stem}.{ext}"
+    return (f'attachment; filename="{ascii_name}"; '
+            f"filename*=UTF-8''{urllib.parse.quote(filename, safe='')}")
+
+
+@router.post("/artifact/{token}/{kind}/link", response_model=FileLink)
+def artifact_link(
+    body: FileLinkRequest | None = None,
+    token: str = Path(max_length=256, description="Xizmat bergan kalit"),
+    kind: str = Path(description=" | ".join(_LINK_KINDS)),
+    user: AuthUser = Depends(current_user),
+) -> FileLink:
+    """Telegram uchun: tokensiz ochiladigan, 10 daqiqalik yuklab olish havolasi.
+
+    Fayl bu yerda OLINMAYDI - faqat havola imzolanadi. Kalit yaroqsiz yoki
+    muddati o'tgan bo'lsa, buni yuklab olishning o'zi aytadi (404).
+    """
+    if kind not in _LINK_KINDS or not artifact_ref_ok(token, kind):
+        raise bad_request("Bu faylni yuklab bo'lmaydi")
+    filename = _download_name(body.filename if body else None, kind)
+    now = int(time.time())
+    signed = jwt.encode(
+        {"aud": _FILE_AUDIENCE, "iat": now, "exp": now + _FILE_LINK_TTL,
+         "art": token, "kind": kind, "fn": filename, "uid": user.actorId},
+        settings.secret_key, algorithm="HS256",
+    )
+    log.info("Fayl havolasi (%s): %s, %d s", user.actorId, kind, _FILE_LINK_TTL)
+    return FileLink(url=f"/api/v1/chat/file/{signed}", filename=filename, expiresIn=_FILE_LINK_TTL)
+
+
+@router.api_route("/file/{signed}", methods=["GET", "HEAD"], response_class=StreamingResponse)
+def file_by_link(signed: str = Path(max_length=4096, description="`/link` bergan imzo")) -> StreamingResponse:
+    """Imzolangan havola bo'yicha fayl - SESSIYASIZ (Telegram yuklab olgichi uchun).
+
+    HEAD ham qabul qilinadi: ba'zi yuklab olgichlar avval hajmni so'raydi.
+    """
+    try:
+        claims = jwt.decode(signed, settings.secret_key, algorithms=["HS256"],
+                            audience=_FILE_AUDIENCE,
+                            options={"require": ["exp", "aud", "art", "kind"]})
+    except jwt.ExpiredSignatureError as exc:
+        raise error_status(410, "Havola muddati tugagan - chatdan qayta yuklab oling") from exc
+    except jwt.PyJWTError as exc:
+        # Buzilgan, boshqa kalit bilan imzolangan yoki kirish tokeni - farqi
+        # tashqariga aytilmaydi.
+        raise error_status(404, "Fayl topilmadi") from exc
+    kind, token = str(claims["kind"]), str(claims["art"])
+    if kind not in _LINK_KINDS:
+        raise error_status(404, "Fayl topilmadi")
+    filename = _download_name(str(claims.get("fn") or ""), kind)
+    who = f"havola:{claims.get('uid', '?')}"
+    log.info("Fayl havola orqali (%s): %s", who, kind)
+    return _file(
+        lambda: _assistant.fetch_artifact(token, kind), who, "artifact",
+        disposition=_attachment(filename),
+        headers={
+            "Access-Control-Allow-Origin": _TELEGRAM_WEB,
+            "Access-Control-Expose-Headers": "Content-Disposition",
+            # Havola manzilda turadi - u boshqa saytga Referer bilan chiqmasin.
+            "Referrer-Policy": "no-referrer",
         },
     )
 

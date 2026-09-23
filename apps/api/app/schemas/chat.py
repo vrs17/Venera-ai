@@ -163,6 +163,28 @@ class StreamRequest(BaseModel):
     # qaytariladi, so'rov tanasidan emas.
 
 
+class FileLinkRequest(BaseModel):
+    """Telegram uchun yuklab olish havolasi so'rovi.
+
+    `filename` - klient taklif qilgan nom (javobdagi hujjat sarlavhasidan,
+    veb ilovadagi kabi). Server uni TOZALAYDI va kengaytmani fayl turiga
+    qarab O'ZI qo'yadi: klient `ariza.exe` so'rasa ham `ariza.docx` bo'ladi.
+    """
+
+    filename: str | None = Field(default=None, max_length=160)
+
+
+class FileLink(BaseModel):
+    """Tokensiz ochiladigan, qisqa muddatli havola - `WebApp.downloadFile` uchun."""
+
+    #: Nisbiy yo'l; klient o'z originini qo'shadi (Telegram HTTPS manzil so'raydi).
+    url: str
+    #: Telegram oynasida ko'rinadigan va saqlanadigan nom.
+    filename: str
+    #: Havola necha soniya yashaydi.
+    expiresIn: int
+
+
 class PipelineResponse(BaseModel):
     """types.ts: PipelineResponse
 

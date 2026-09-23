@@ -365,6 +365,43 @@ class Settings(BaseSettings):
     #: YERDA YO'Q - u faqat login so'roviga ketadi.
     connectors_file: Path = BASE_DIR / "data" / "connectors" / "tokens.json"
 
+    # --- Telegram bot: savol-javob Telegram chatining O'ZIDA ---
+    #: Mini app'dan FARQI: u yerda sahifa ochiladi, bu yerda odam botga oddiy
+    #: xabar yoki ovozli xabar yozadi. Mantiq: `app/bot/`.
+    #:
+    #: Bot tokeni (@BotFather). BO'SH bo'lsa bot O'CHIQ - mini app va veb
+    #: ilova bunga bog'liq emas. SIR: faqat `.env` da, jurnal va xato
+    #: matnlariga tushmaydi (`services/integrations/telegram.py`).
+    #:
+    #: Token mini app `initData` imzosini tekshirish uchun ham kerak: hisobni
+    #: ulash aynan shu imzoga tayanadi (`api/v1/telegram.py`).
+    telegram_bot_token: str = ""
+    #: Tokenni o'chirmasdan botni to'xtatish uchun. Testlarda O'CHIQ
+    #: (`conftest.py`): aks holda har test yurishi jonli botga ulanib,
+    #: odamlarning xabarlarini "yutib" yuborardi.
+    telegram_bot_enabled: bool = True
+    #: Mini app manzili - "Venera ilovasini ochish" tugmasi shu yerga.
+    telegram_webapp_url: str = "https://llm.brb-tech.uz/tg/"
+    #: Telegram hisobi -> Venera hisobi. `data/` gitignore'da, 600, atomik.
+    telegram_links_file: Path = BASE_DIR / "data" / "telegram" / "links.json"
+    #: Ulanish shuncha kun yashaydi va faqat MINI APP ochilganda (tirik
+    #: sessiya bilan) yangilanadi - bot bilan yozishish uni uzaytirmaydi.
+    #: Ya'ni odam oyiga kamida bir marta o'z sessiyasi bilan kiradi: bot
+    #: muddatsiz sessiyaga aylanmaydi.
+    telegram_link_days: int = 30
+    #: Mini app `initData` si shundan eski bo'lsa ulash rad etiladi. Ilova
+    #: ochilgan zahoti ulanadi, ya'ni bir kun ochiq turgan varaqqa ham yetadi.
+    telegram_init_max_age: int = 86400
+    #: Ovozli xabar chegarasi (soniya). STT Router o'zbek tili uchun 300 s
+    #: dan keyingisini baribir KESADI.
+    telegram_voice_max_sec: int = 300
+    #: Shuncha soat jimlikdan keyin keyingi savol YANGI suhbat boshlaydi -
+    #: veb ilova tarixida alohida suhbat bo'lib ko'rinadi.
+    telegram_chat_idle_hours: float = 6.0
+    #: Bir vaqtda nechta xabar ishlanadi. Bitta odamning xabarlari esa
+    #: KETMA-KET, navbat bilan.
+    telegram_workers: int = 4
+
     # --- CORS ---
     #: Bo'sh bo'lsa CORS o'chirilgan: frontend nginx orqali BIR XIL originda
     #: turadi (`/api` proxy), ya'ni CORS umuman kerak emas. Faqat frontend

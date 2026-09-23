@@ -1,0 +1,134 @@
+"""Telegram bot - Venera'ning uchinchi klienti (veb ilova, mini app, bot).
+
+Odam botga oddiy xabar yoki ovozli xabar yozadi va javobni MATN bilan oladi
+(ovoz sintezi yo'q). Imkoniyatlari veb chat bilan bir xil: HRM/CRM savollari,
+yozuv amalini tasdiqlash, ariza fayli, manba hujjati, suhbatlar tarixi.
+
+NEGA API JARAYONI ICHIDA, alohida xizmat emas. Bot `api/v1/chat.py` dagi
+AYNI klientlarni ishlatadi: CRM sessiyasi va foydalanuvchi ulanishlari
+`refresh_token` ni rotatsiya qiladi (ikki nusxa bir-birini bekor qilardi),
+yuqoridagi xizmat va STT navbatlari esa umumiy bo'lishi kerak.
+
+NEGA LONG POLLING, webhook emas. Tashqaridan kiradigan yangi yo'l ochilmaydi
+(nginx ga tegilmaydi, maxfiy manzil kerak emas) - bot o'zi Telegram'ga
+boradi. Uvicorn BITTA jarayon; baribir ikkinchi nusxa (masalan qo'lda
+ishga tushirilgan sinov serveri) botni ikkinchi marta o'qimasligi uchun
+fayl qulfi bor - aks holda ikkalasi xabarlarni bir-biridan "o'g'irlardi".
+
+Kimning nomidan javob berish - `services/telegram_links.py` (ulanish faqat
+mini app orqali, `api/v1/telegram.py`).
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+
+from typing import Any
+
+from ..core.config import settings
+from ..schemas.auth import AuthUser
+from ..services.integrations.telegram import TelegramApi, TelegramError
+from ..services.telegram_links import LinkStore
+
+log = logging.getLogger(__name__)
+
+#: Bot API klienti va ulanishlar ombori - endpoint va bot BITTA nusxani
+#: ishlatadi. Testlar ularni almashtiradi (`conftest.py`).
+api = TelegramApi(settings.telegram_bot_token)
+links = LinkStore(settings.telegram_links_file, ttl_days=settings.telegram_link_days)
+
+_bot = None
+_lock_file = None
+_state = {"note": ""}
+
+
+def start() -> None:
+    """So'rov ipini ishga tushiradi - token bor, yoqilgan va qulf olinsa."""
+    global _bot, _lock_file
+    if _bot is not None:
+        return
+    if not (settings.telegram_bot_enabled and api.configured):
+        _state["note"] = "o'chiq" if api.configured else "token yo'q"
+        log.info("Telegram bot ishga tushirilmadi: %s", _state["note"])
+        return
+    _lock_file = _take_lock()
+    if _lock_file is None:
+        _state["note"] = "boshqa jarayon botni o'qiyapti (qulf band)"
+        log.warning("Telegram bot ishga tushirilmadi: %s", _state["note"])
+        return
+
+    from ..api.deps import get_user_store
+    from .runner import VeneraBot
+
+    _bot = VeneraBot(api, links, users=get_user_store, webapp_url=settings.telegram_webapp_url,
+                     workers=settings.telegram_workers)
+    _bot.start()
+    _state["note"] = ""
+
+
+def stop() -> None:
+    global _bot
+    if _bot is not None:
+        _bot.stop()
+        _bot = None
+
+
+def username() -> str:
+    return _bot.username if _bot is not None else ""
+
+
+def status() -> dict[str, Any]:
+    """`/api/health/detail` uchun: holat va SONLAR. Token, Telegram id va
+    ismlar YO'Q."""
+    out: dict[str, Any] = {
+        "configured": api.configured,
+        "enabled": settings.telegram_bot_enabled,
+        "linked": links.count(),
+    }
+    if _bot is not None:
+        out.update(_bot.status())
+    else:
+        out["running"] = False
+        out["note"] = _state["note"] or None
+    return out
+
+
+def welcome(tg_id: int, user: AuthUser) -> None:
+    """Yangi ulanish haqida botdan xabar - FONDA: HTTP javobi kutmasin.
+
+    Odam botni hech ochmagan bo'lsa Telegram 403 beradi - bu normal, mini
+    app baribir botdan ochilgan bo'ladi.
+    """
+    if not api.configured:
+        return
+    from .runner import welcome_text
+
+    def run() -> None:
+        try:
+            api.send_message(tg_id, welcome_text(user))
+        except TelegramError as exc:
+            log.info("Telegram: ulanish xabari yuborilmadi (%s): %s", user.actorId, exc)
+
+    threading.Thread(target=run, name="tg-welcome", daemon=True).start()
+
+
+def _take_lock():
+    """`data/telegram/poll.lock` - boshqa jarayon ushlab tursa `None`."""
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover - Windows: qulfsiz
+        return object()
+    path = settings.telegram_links_file.parent / "poll.lock"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(path, "a")  # noqa: SIM115 - jarayon umri davomida ochiq
+    except OSError as exc:
+        log.warning("Telegram bot qulfi ochilmadi (%s): %s", path, exc)
+        return None
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle

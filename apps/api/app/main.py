@@ -216,6 +216,33 @@ def _warm_hold_voices() -> None:
     threading.Thread(target=run, name="hold-warm", daemon=True).start()
 
 
+@app.on_event("startup")
+def _start_telegram_bot() -> None:
+    """Telegram bot - FONDA, ishga tushishni kutdirmaydi (`app/bot/`).
+
+    Token bo'lmasa yoki `TELEGRAM_BOT_ENABLED=false` bo'lsa hech narsa
+    qilmaydi - veb ilova va mini app botga bog'liq emas.
+    """
+    from . import bot
+
+    bot.start()
+
+
+@app.on_event("shutdown")
+def _stop_telegram_bot() -> None:
+    from . import bot
+
+    bot.stop()
+
+
+def telegram_state() -> dict:
+    """Telegram bot holati - `/api/health/detail` uchun. TOKEN, Telegram id
+    va ismlar YO'Q: faqat holat va ulanganlar SONI."""
+    from . import bot
+
+    return bot.status()
+
+
 def stt_variants() -> dict:
     """STT variantlarining holati - `/api/health/detail` uchun.
 
@@ -405,6 +432,17 @@ def _diagnostics() -> dict:
             f"GAPI: {spend['sent']} urinish yuborilgan, {spend['calls']} tasi javob bergan - "
             "javobsiz urinishlarning ham puli ketadi"
         )
+
+    # Telegram bot: token bor, lekin o'qiy olmayapti (boshqa nusxa, token
+    # bekor qilingan, tarmoq) - bot jim turadi va buni faqat shu yerda
+    # ko'rish mumkin.
+    telegram = telegram_state()
+    if telegram["configured"] and telegram["enabled"]:
+        if telegram.get("error"):
+            warnings.append(f"Telegram bot xabar ololmayapti: {telegram['error']}")
+        elif not telegram.get("running"):
+            warnings.append(f"Telegram bot ishlamayapti: {telegram.get('note') or 'sabab jurnalda'}")
+
     return {
         "status": "degraded" if warnings else "ok",
         "upstream": upstream,
@@ -423,6 +461,8 @@ def _diagnostics() -> dict:
             "crm": hub.crm.configured,
             "users": hub.store.user_count(),
         },
+        # Telegram bot: ishlayaptimi va nechta odam ulangan. TOKEN YO'Q.
+        "telegram": telegram,
         "warnings": warnings,
     }
 

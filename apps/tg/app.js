@@ -207,6 +207,13 @@
       apiFetch('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
     me: () => apiFetch('/api/v1/auth/me'),
     logout: () => apiFetch('/api/v1/auth/logout', { method: 'POST' }),
+    // Bot chati (Telegram'ning o'zi) shu hisobga ulanadi - `api/v1/telegram.py`.
+    linkTelegram: (initData) => apiFetch('/api/v1/telegram/link', {
+      method: 'POST', body: JSON.stringify({ initData }),
+    }),
+    unlinkTelegram: (initData) => apiFetch('/api/v1/telegram/unlink', {
+      method: 'POST', body: JSON.stringify({ initData }),
+    }),
     // Server hozircha 501 qaytaradi (`app/api/v1/auth.py`). Chaqiruv ATAYLAB
     // bor: serverda yoqilganda bu yerda o'zgartirish kerak bo'lmaydi, va
     // hozir foydalanuvchi serverning o'z xabarini ko'radi ("Ro'yxatdan o'tish
@@ -487,7 +494,7 @@
    * har qanday xato allaqachon yuzaga chiqqan nuqta: TTS xizmati birinchi
    * bo'lakni sarlavhalarni yuborishdan OLDIN sintez qiladi.
    */
-  async function speakStream(text, signal, onLevel) {
+  async function speakStream(text, signal, onLevel, after) {
     const response = await fetch('/api/v1/tts/speak', {
       method: 'POST',
       signal,
@@ -496,6 +503,11 @@
     });
     if (!response.ok) throw await apiError(response);
     const rate = rateOf(response);
+    // IJRO DARVOZASI. So'rov KUTMAYDI - u javob tayyor bo'lishi bilan ketadi
+    // va tanasi shu yerda buferlanadi; faqat ijro `after` tugashini kutadi.
+    // Shunda kutish ovozi kesilmaydi, javob esa u tugagan ZAHOTI boshlanadi
+    // (o'lchangan TTS birinchi ovozgacha ~1.1 s - bu vaqt tejaladi).
+    if (after) { try { await after; } catch (e) {} }
     // ZAXIRA YO'L, iOS UCHUN. Eski WKWebView (Telegram iOS shu yerdan
     // yuradi) `fetch` da `response.body` ni bermaydi - oqim o'qish umuman
     // yo'q. Unda butun PCM ni bir marta olib, bir bo'lak qilib ijro etamiz:
@@ -677,15 +689,22 @@
   // jurnallariga va brauzer tarixiga. fetch() + ReadableStream o'sha oqimni
   // POST bilan o'qiydi va token o'z joyida - sarlavhada - qoladi.
 
+  /** Yangi suhbat kaliti. `crypto.randomUUID` faqat xavfsiz kontekstda
+   *  (HTTPS) bor - boshqa joyda oddiy tasodifiy kalit. Ikkalasi ham
+   *  manzilga xavfsiz: tarix yo'llari kalitni URL ga qo'yadi. */
+  function freshChatId() {
+    return (window.crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : 'tg-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  }
+
   /** Suhbat kaliti. Bir xil kalitli savollar bir-birini ESLAYDI, ya'ni
    *  "va o'tgan oyda?" degan savol ishlaydi. `user_id` ni server token'dan
    *  qo'yadi, shuning uchun bu kalit boshqa odamning suhbatiga tushirmaydi. */
   function chatId() {
     let id = store(CHAT_KEY);
     if (!id) {
-      id = (window.crypto && crypto.randomUUID)
-        ? crypto.randomUUID()
-        : 'tg-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      id = freshChatId();
       keep(CHAT_KEY, id);
     }
     return id;
@@ -710,7 +729,10 @@
       method: 'POST',
       signal,
       headers: authHeaders({ 'Content-Type': 'application/json; charset=utf-8', Accept: 'application/x-ndjson' }),
-      body: JSON.stringify({ question: text, chatId: chatId() }),
+      // `voice` - OVOZLI rejimdami. Server buni o'zi bilmaydi, shuning
+      // uchun klient aytadi: faqat shunda kutish gaplari (`hold` kadrlari)
+      // yuboriladi. Matnli rejimda ular shovqin bo'lardi.
+      body: JSON.stringify({ question: text, chatId: chatId(), voice: voiceOn, locale: 'uz' }),
     });
     if (!response.ok) throw await apiError(response);
 
@@ -797,7 +819,12 @@
     modePill.className = 'pill' + (kind ? ' ' + kind : '');
   }
 
-  function addMsg(who, text) {
+  /** Ekranda saqlanadigan xabarlar soni. Tarixdan ochilgan suhbat ham shu
+   *  qadar ko'rsatiladi (`/chats/{id}?limit=`). Avval 20 edi - tarixsiz
+   *  ilovada eski xabarga qaytishning ma'nosi yo'q edi. */
+  const LOG_LIMIT = 200;
+
+  function msgEl(who, text) {
     const el = document.createElement('div');
     el.className = 'msg ' + who;
     if (who !== 'system') {
@@ -807,10 +834,19 @@
       el.appendChild(w);
     }
     el.appendChild(document.createTextNode(text));
+    return el;
+  }
+
+  function trimLog() {
+    while (log.children.length > LOG_LIMIT) log.removeChild(log.firstChild);
+  }
+
+  function addMsg(who, text) {
+    const el = msgEl(who, text);
     log.appendChild(el);
     logEmpty.hidden = true;
     log.scrollTop = log.scrollHeight;
-    while (log.children.length > 20) log.removeChild(log.firstChild);
+    trimLog();
     return el;
   }
 
@@ -1188,6 +1224,16 @@
         case 'stage':
           if (frame.text) statusText.textContent = frame.text;
           break;
+        case 'hold':
+          // KUTISH GAPI. Bu ekranga chiqmaydi va javobga qo'shilmaydi -
+          // faqat aytiladi.
+          //
+          // Mini app uchun bu ayniqsa muhim: yuqoridagi xizmat tokenlarni
+          // ~15 sekund jimlikdan keyin BIRDAN yuboradi (pastdagi `speak`
+          // izohiga qara), ya'ni bu 15 sekund davomida telefon butunlay
+          // jim turardi va odam ilovani tashlab ketardi.
+          if (frame.clip) void speakHold(frame.clip, turn);
+          break;
         case 'token':
           answer += frame.text || '';
           // Xom matn `answer` da saqlanadi (ovoz uchun kerak), ekranga esa
@@ -1222,10 +1268,9 @@
           // Maydonlar YA kadrning o'zida, YA `artifact` ichida keladi -
           // faqat bittasini qarash havolalarni jimgina yo'qotardi.
           const art = frame.artifact || frame;
-          // Faylni Telegram WebView ichida yuklab olish ishonchsiz (ayniqsa
-          // iOS da `<a download>` + blob:), shuning uchun bu yerda faqat
-          // nomi aytiladi - faylning o'zi veb ilovadan olinadi.
-          addMsg('system', 'Hujjat tayyorlandi: ' + (art.filename || art.title || 'fayl') + '. Uni veb ilovadan yuklab oling.');
+          // Yuklab olish tugmalari bilan (12c-bo'lim): Telegram'ning o'z
+          // yuklab olgichi, imzolangan havola orqali.
+          showArtifact(art);
           break;
         }
         case 'proposal': {
@@ -1288,11 +1333,16 @@
     // ko'rinadi, va uni ovoz bilan takrorlash hech kimga yordam bermaydi.
     if (!prepared.text) { setState('idle'); return; }
     if (prepared.shortened) setNote('Javobning boshi oʻqildi — toʻligʻi ekranda.', 'warn');
-    stopSpeaking();
+    // Joriy kutish ovozi KESILMAYDI. O'lchangan: HRM javobi 3-4 sekundda
+    // kelardi, ovozning o'zi 2.5-3.3 sekund - ya'ni u yarmida uzilardi, yarim
+    // gap esa jimlikdan yomonroq. Javob so'rovi DARHOL ketadi (ovozi
+    // buferlanadi), ijro esa kutish ovozi tugashi bilan boshlanadi.
+    const gate = holdPlaying;
+    stopAnswerAudio();
     speechAborter = new AbortController();
     setState('speaking');
     try {
-      const playback = await speakStream(prepared.text, speechAborter.signal, (lvl) => { target = lvl; });
+      const playback = await speakStream(prepared.text, speechAborter.signal, (lvl) => { target = lvl; }, gate);
       if (turn !== turnId) { playback.stop(); return; }
       stopSpeech = playback.stop;
       await playback.done;
@@ -1309,9 +1359,74 @@
     }
   }
 
-  function stopSpeaking() {
+  let holdPlaying = null;
+  let stopHold = null;
+
+  /** `decodeAudioData` ning ikki shakli: eski WebKit (Telegram iOS) faqat
+   *  callback bilan ishlaydi, yangilari esa va'da qaytaradi. */
+  function decodeClip(ctx, bytes) {
+    return new Promise((resolve, reject) => {
+      const p = ctx.decodeAudioData(bytes, resolve, reject);
+      if (p && typeof p.then === 'function') p.then(resolve, reject);
+    });
+  }
+
+  /**
+   * TAYYOR kutish ovozini o'ynatadi - HRM/CRM javobi kelgunicha.
+   *
+   * Ovoz serverda OLDINDAN sintez qilingan va savolning mavzusi hamda ohangi
+   * bo'yicha tanlangan (`hold` kadridagi `clip`). Ya'ni TTS kutilmaydi.
+   *
+   * NEGA `<audio>` EMAS, umumiy AudioContext. `<audio src>` Authorization
+   * sarlavhasini yubora olmaydi, ustiga Telegram WebView jestdan tashqarida
+   * boshlangan ijroni jimgina bloklaydi (yuqoridagi `audioContext` izohi).
+   * Umumiy kontekst esa mikrofon bosilganda ochilgan - TTS aynan shu yerda
+   * ishlaydi.
+   *
+   * QO'RIQCHILAR: faqat `thinking` holatida va o'z turni uchun (javobdan
+   * keyin chiqqan ovoz uning ustiga chiqadi); bir vaqtda bittadan (kelgan
+   * keyingisi tashlanadi, ustma-ust qo'yilmaydi); xato JIM.
+   */
+  async function speakHold(clip, turn) {
+    if (!voiceOn || !clip || turn !== turnId || state !== 'thinking') return;
+    if (holdPlaying) return;
+    let playing = null;
+    try {
+      const response = await fetch('/api/v1/tts/hold/' + encodeURIComponent(clip) + '.wav',
+                                   { headers: authHeaders({}) });
+      if (!response.ok) return;
+      const bytes = await response.arrayBuffer();
+      if (turn !== turnId || state !== 'thinking') return;
+      const ctx = audioContext();
+      const buffer = await decodeClip(ctx, bytes);
+      if (turn !== turnId || state !== 'thinking' || holdPlaying) return;
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      playing = new Promise((resolve) => {
+        source.onended = () => resolve();
+        stopHold = () => { try { source.stop(); } catch (e) {} resolve(); };
+      });
+      holdPlaying = playing;
+      source.start();
+      await playing;
+    } catch (e) {
+      // Jim: kutish ovozi qulaylik, xato ko'rsatiladigan narsa emas.
+    } finally {
+      if (playing && holdPlaying === playing) { holdPlaying = null; stopHold = null; }
+    }
+  }
+
+  /** Faqat JAVOB ovozini to'xtatadi - kutish ovoziga tegmaydi. */
+  function stopAnswerAudio() {
     if (speechAborter) { speechAborter.abort(); speechAborter = null; }
     if (stopSpeech) { try { stopSpeech(); } catch (e) {} stopSpeech = null; }
+  }
+
+  function stopSpeaking() {
+    stopAnswerAudio();
+    // Panel yopilsa yoki yangi savol boshlansa - kutish ovozi ham to'xtaydi.
+    if (stopHold) { try { stopHold(); } catch (e) {} stopHold = null; }
     target = 0;
   }
 
@@ -1320,6 +1435,7 @@
   // =========================================================================
 
   function sessionExpired() {
+    resetHistory();
     clearToken();
     user = null;
     teardown();
@@ -1348,6 +1464,8 @@
     input.value = '';
     resize();
     setState('idle');
+    loadCurrentChat();
+    linkBot();
     // Parol almashtirish talab qilinsa - menyuni o'zi ochib beramiz.
     if (u.passwordChangeRequired) {
       openMenu();
@@ -1425,12 +1543,30 @@
     }
   });
 
+  /** Bot chatini shu hisobga ulaydi: odam botga oddiy xabar yoki ovozli
+   *  xabar yozsa, javob SHU hisob nomidan keladi. Har ochilganda chaqiriladi
+   *  - ulanish muddati (30 kun) shu bilan yangilanadi.
+   *
+   *  Isbot - Telegram imzolagan `initData` (kim ochgani) va sessiya (kim
+   *  kirgani); `user.id` ni o'zimiz yubormaymiz. Xato jim: bot o'chiq
+   *  bo'lsa ham ilova to'liq ishlaydi. */
+  function linkBot() {
+    if (!tg || !tg.initData) return;
+    api.linkTelegram(tg.initData).catch(() => { /* bot o'chiq yoki initData eskirgan */ });
+  }
+
   logoutBtn.addEventListener('click', async () => {
     // Server tomonda bekor qilinadigan sessiya YO'Q (JWT holatsiz) - shuning
     // uchun tokenni FRONTEND o'chiradi va endpoint natijasi ahamiyatsiz.
+    // Chiqish - bot chatidan ham: aks holda bot shu Telegram'da eski
+    // hisob nomidan javob berishda davom etardi.
+    if (tg && tg.initData) {
+      try { await api.unlinkTelegram(tg.initData); } catch (e) { /* baribir chiqamiz */ }
+    }
     try { await api.logout(); } catch (e) { /* baribir chiqamiz */ }
     clearToken();
     drop(CHAT_KEY);
+    resetHistory();
     user = null;
     teardown();
     releaseMic();
@@ -1443,6 +1579,481 @@
     show(authView);
     showAuthError('');
   });
+
+  // =========================================================================
+  // 12b. Suhbatlar tarixi - `composables/useChats.ts` + `ChatHistory.vue`
+  //      ning nusxasi
+  // =========================================================================
+  // SUHBATLAR BU YERDA SAQLANMAYDI. Ular yuqoridagi xizmatda turadi - har
+  // savol bilan ketadigan `chatId` bo'yicha; Venera backend'i proksi qiladi
+  // (`/api/v1/chats`) va kimlikni TOKEN'DAN o'zi qo'yadi. Ya'ni:
+  //   * veb ilova bilan BIR HISOB = BIR RO'YXAT: vebda boshlangan suhbat shu
+  //     yerda ko'rinadi va davom ettiriladi, teskarisi ham;
+  //   * boshqa odamning suhbatiga kalitini bilgan holda ham kirib bo'lmaydi
+  //     (404).
+  // Suhbat yaratadigan chaqiruv yo'q: yangi `chatId` bilan birinchi savol uni
+  // yaratadi, ro'yxatga esa u birinchi javob saqlangach tushadi.
+
+  function chatPath(id) { return '/api/v1/chats/' + encodeURIComponent(id); }
+
+  const chatsApi = {
+    list: () => apiFetch('/api/v1/chats?limit=50'),
+    open: (id) => apiFetch(chatPath(id) + '?limit=' + LOG_LIMIT),
+    rename: (id, title) => apiFetch(chatPath(id), { method: 'PATCH', body: JSON.stringify({ title: title }) }),
+    remove: (id) => apiFetch(chatPath(id), { method: 'DELETE' }),
+    restore: (id) => apiFetch(chatPath(id) + '/restore', { method: 'POST' }),
+  };
+
+  const historyBtn = $('historyBtn'), historySheet = $('historySheet'),
+        historyClose = $('historyClose'), newChatBtn = $('newChatBtn'),
+        histList = $('histList'), histUndo = $('histUndo'), histUndoBtn = $('histUndoBtn'),
+        histNote = $('histNote');
+
+  // Statik belgilar - foydalanuvchi matni EMAS, shuning uchun innerHTML xavfsiz.
+  const PENCIL_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+  const TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>';
+
+  /** "Bekor qilish" qancha turadi - vebdagi bilan bir xil. */
+  const UNDO_MS = 8000;
+
+  let chats = [];               // ro'yxat - serverdan, oxirgi faollik bo'yicha
+  let chatsState = 'idle';      // idle | loading | ready | failed
+  let listRequest = 0;          // eski ro'yxat javobi yangisini bosib ketmasin
+  let openRequest = 0;          // eski suhbat javobi yangisini bosib ketmasin
+  let editingId = null;         // nomi tahrirlanayotgan suhbat
+  let lastDeleted = null, undoTimer = 0, noteTimer = 0;
+
+  /** Ekrandagi suhbat kaliti. `chatId()` dan farqi - YANGISINI YARATMAYDI:
+   *  ro'yxatda "qaysi biri ochiq" deb so'rash kalit yaratishga sabab emas. */
+  function currentChatId() { return store(CHAT_KEY); }
+
+  function stamp(iso) {
+    const t = iso ? Date.parse(iso) : NaN;
+    return isFinite(t) ? t : 0;
+  }
+  function byActivity(a, b) { return stamp(b.updated_at) - stamp(a.updated_at); }
+
+  /** Kunlar bo'yicha guruh - vebdagi kabi. Ro'yxat allaqachon oxirgi faollik
+   *  bo'yicha tartiblangan, guruh esa faqat ko'z uchun. */
+  function groupOf(iso, startOfToday) {
+    const at = stamp(iso), day = 86400000;
+    if (!at) return 'Oldinroq';
+    if (at >= startOfToday) return 'Bugun';
+    if (at >= startOfToday - day) return 'Kecha';
+    if (at >= startOfToday - 6 * day) return 'Oxirgi 7 kun';
+    return 'Oldinroq';
+  }
+
+  function histMessage(text) {
+    const p = document.createElement('p');
+    p.className = 'hist-empty';
+    p.textContent = text;
+    return p;
+  }
+
+  function iconButton(label, svg, onClick) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'iconbtn';
+    b.setAttribute('aria-label', label);
+    b.title = label;
+    b.innerHTML = svg;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  function renderHistory() {
+    histList.textContent = '';
+    if (chatsState === 'loading' && !chats.length) {
+      histList.appendChild(histMessage('Yuklanmoqda…'));
+      return;
+    }
+    if (chatsState === 'failed' && !chats.length) {
+      const p = histMessage('Ro\'yxat yuklanmadi. ');
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'link';
+      retry.textContent = 'Qayta urinish';
+      retry.addEventListener('click', () => { void loadChats(); });
+      p.appendChild(retry);
+      histList.appendChild(p);
+      return;
+    }
+    if (!chats.length) {
+      histList.appendChild(histMessage('Hali suhbatlar yo\'q. Savol bering — suhbat shu yerda saqlanadi.'));
+      return;
+    }
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const active = currentChatId();
+    let group = null;
+    for (const chat of chats) {
+      const label = groupOf(chat.updated_at, startOfToday);
+      if (label !== group) {
+        group = label;
+        const h = document.createElement('div');
+        h.className = 'hist-label';
+        h.textContent = label;
+        histList.appendChild(h);
+      }
+      histList.appendChild(historyRow(chat, chat.chat_id === active));
+    }
+  }
+
+  function historyRow(chat, active) {
+    const row = document.createElement('div');
+    row.className = 'hist-row' + (active ? ' active' : '');
+    if (editingId === chat.chat_id) {
+      // Nomini o'zgartirish - qatorning o'zida. Enter va fokus ketishi
+      // saqlaydi, Esc bekor qiladi. Enter'dan keyin blur ham keladi -
+      // `done` ikkinchisini o'tkazib yuboradi.
+      const field = document.createElement('input');
+      field.className = 'hist-input';
+      field.type = 'text';
+      field.maxLength = 80;
+      field.value = chat.title || '';
+      field.setAttribute('aria-label', 'Suhbat nomi');
+      let done = false;
+      const finish = (save) => {
+        if (done) return;
+        done = true;
+        editingId = null;
+        if (save) void renameChat(chat.chat_id, field.value);
+        else renderHistory();
+      };
+      field.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+      });
+      field.addEventListener('blur', () => finish(true));
+      row.appendChild(field);
+      setTimeout(() => { field.focus(); field.select(); }, 0);
+      return row;
+    }
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'hist-open';
+    open.textContent = chat.title || 'Nomsiz suhbat';
+    open.addEventListener('click', () => { void openChat(chat.chat_id); });
+    row.appendChild(open);
+    row.appendChild(iconButton('Nomini o\'zgartirish', PENCIL_SVG, () => {
+      editingId = chat.chat_id;
+      renderHistory();
+    }));
+    row.appendChild(iconButton('O\'chirish', TRASH_SVG, () => { void removeChat(chat.chat_id); }));
+    return row;
+  }
+
+  function flashNote(text) {
+    histNote.textContent = text;
+    histNote.hidden = false;
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(() => { histNote.hidden = true; }, 5000);
+  }
+
+  /** Ro'yxat HAR OCHILISHDA serverdan olinadi: arzon so'rov, va boshqa
+   *  qurilmadagi (vebdagi) o'zgarish ham, model keyinroq bergan nom ham
+   *  shunda ko'rinadi. Eski ro'yxat esa yuklanish paytida turadi. */
+  async function loadChats() {
+    const request = ++listRequest;
+    chatsState = 'loading';
+    renderHistory();
+    try {
+      const result = await chatsApi.list();
+      if (request !== listRequest) return;
+      chats = ((result && result.items) || []).slice().sort(byActivity);
+      chatsState = 'ready';
+    } catch (err) {
+      if (request !== listRequest) return;
+      if (err instanceof ApiError && err.status === 401) { sessionExpired(); return; }
+      chatsState = 'failed';
+      if (chats.length) flashNote(errorText(err));
+    }
+    renderHistory();
+  }
+
+  function openHistory() {
+    closeMenu();
+    historySheet.hidden = false;
+    renderHistory();
+    void loadChats();
+  }
+
+  function closeHistory() {
+    historySheet.hidden = true;
+    editingId = null;
+  }
+
+  function clearLog() {
+    log.textContent = '';
+    logEmpty.hidden = false;
+    setNote('');
+  }
+
+  /** Yangi suhbat - yangi kalit. Kalit ALMASHMASA oldingi suhbat xotirasi
+   *  yangisiga oqib o'tardi ("va o'tgan oyda?" eski mavzuni davom ettirardi). */
+  function startNewChat() {
+    cancelTurn();
+    openRequest++;              // yuklanayotgan eski suhbat endi kerak emas
+    keep(CHAT_KEY, freshChatId());
+    clearLog();
+    closeHistory();
+  }
+
+  /** Ro'yxatdan suhbatni ochish. Keyingi savol O'SHA kalit bilan ketadi,
+   *  ya'ni xizmat suhbatni to'xtagan joyidan davom ettiradi. */
+  async function openChat(id) {
+    closeHistory();
+    if (id === currentChatId() && log.children.length) return;   // allaqachon ochiq
+    cancelTurn();
+    keep(CHAT_KEY, id);
+    clearLog();
+    await showChat(id, true);
+  }
+
+  /**
+   * Suhbat xabarlarini serverdan olib, ekranga chiqaradi.
+   *
+   * Xabarlar "yuklanmoqda" qatorining O'RNIGA qo'yiladi, oxiriga emas: odam
+   * yuklanish paytida savol berib ulgurgan bo'lsa, uning savoli pastda qoladi
+   * va tarix undan yuqoriga tushadi.
+   *
+   * `loud` - xato ekranda aytilsinmi. Ro'yxatdan ochilganda - ha; ilova
+   * ochilganda esa jim: odam hech narsa so'ramagan.
+   */
+  async function showChat(id, loud) {
+    const request = ++openRequest;
+    const marker = addMsg('system', 'Suhbat yuklanmoqda…');
+    try {
+      const detail = await chatsApi.open(id);
+      if (request !== openRequest) return;
+      const frag = document.createDocumentFragment();
+      for (const m of (detail && detail.messages) || []) {
+        const content = String((m && m.content) || '');
+        if (!content.trim()) continue;
+        // Saqlangan javobda iz yo'q, lekin `[T1]` va markdown belgilari bor -
+        // jonli javobdagi bilan AYNI tozalash.
+        frag.appendChild(m.role === 'user' ? msgEl('you', content) : msgEl('venera', forScreen(content)));
+      }
+      log.insertBefore(frag, marker);
+      marker.remove();
+      trimLog();
+      logEmpty.hidden = log.children.length > 0;
+      log.scrollTop = log.scrollHeight;
+    } catch (err) {
+      if (request !== openRequest) return;
+      marker.remove();
+      logEmpty.hidden = log.children.length > 0;
+      if (err instanceof ApiError && err.status === 401) { sessionExpired(); return; }
+      if (err instanceof ApiError && err.status === 404) {
+        // Hali saqlanmagan (javobsiz), boshqa qurilmada o'chirilgan yoki
+        // boshqa odamniki. O'chirilgan suhbat kaliti bilan savol uni QAYTA
+        // TIRILTIRARDI - shuning uchun yangi kalit.
+        chats = chats.filter((c) => c.chat_id !== id);
+        if (currentChatId() === id) keep(CHAT_KEY, freshChatId());
+        if (loud) setNote('Suhbat topilmadi — yangi suhbat boshlandi', 'warn');
+        return;
+      }
+      if (loud) setNote('Suhbat ochilmadi: ' + errorText(err), 'warn');
+    }
+  }
+
+  /** Ilova ochilganda oxirgi suhbat ekranga QAYTADI. Kalit ilgari ham
+   *  saqlanardi va xizmat suhbatni eslab turardi, lekin ekran bo'sh edi -
+   *  odam davom etayotgan suhbatni ko'rmasdi. */
+  function loadCurrentChat() {
+    const id = currentChatId();
+    if (id) void showChat(id, false);
+  }
+
+  /** O'chirish - darhol ro'yxatdan chiqadi, serverda YUMSHOQ o'chiriladi va
+   *  "Bekor qilish" ochiladi. Server rad etsa qator qaytariladi. */
+  async function removeChat(id) {
+    const row = chats.find((c) => c.chat_id === id);
+    if (!row) return;
+    chats = chats.filter((c) => c.chat_id !== id);
+    renderHistory();
+    try {
+      await chatsApi.remove(id);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) { sessionExpired(); return; }
+      chats = chats.concat([row]).sort(byActivity);
+      renderHistory();
+      flashNote(errorText(err));
+      return;
+    }
+    // Ochiq suhbat o'chirildi - ekran yangi suhbatga o'tadi (vebdagi kabi).
+    // Eski kalit bilan savol berish o'chirilganni qayta tiriltirardi.
+    if (currentChatId() === id) {
+      cancelTurn();
+      openRequest++;
+      keep(CHAT_KEY, freshChatId());
+      clearLog();
+    }
+    lastDeleted = row;
+    histUndo.hidden = false;
+    clearTimeout(undoTimer);
+    undoTimer = setTimeout(hideUndo, UNDO_MS);
+  }
+
+  function hideUndo() {
+    clearTimeout(undoTimer);
+    undoTimer = 0;
+    lastDeleted = null;
+    histUndo.hidden = true;
+  }
+
+  /** "Bekor qilish": suhbat nomi va xabarlari bilan qaytadi. */
+  async function undoDelete() {
+    const row = lastDeleted;
+    if (!row) return;
+    hideUndo();
+    try {
+      const restored = await chatsApi.restore(row.chat_id);
+      chats = chats.filter((c) => c.chat_id !== row.chat_id).concat([restored || row]).sort(byActivity);
+      renderHistory();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) { sessionExpired(); return; }
+      // 404: hech qachon bo'lmagan - qaytaradigan narsa yo'q, jim.
+      if (err instanceof ApiError && err.status === 404) return;
+      flashNote(errorText(err));
+    }
+  }
+
+  /** Nomini o'zgartirish - darhol ko'rinadi, server rad etsa qaytariladi.
+   *  Shundan keyin model nomni qayta yozmaydi (`title_source: user`). */
+  async function renameChat(id, raw) {
+    const row = chats.find((c) => c.chat_id === id);
+    const title = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (!row || !title || title === row.title) { renderHistory(); return; }
+    const before = { title: row.title, title_source: row.title_source };
+    row.title = title;
+    row.title_source = 'user';
+    renderHistory();
+    try {
+      const saved = await chatsApi.rename(id, title);
+      if (saved && saved.title) Object.assign(row, saved);
+      renderHistory();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) { sessionExpired(); return; }
+      Object.assign(row, before);
+      renderHistory();
+      flashNote(errorText(err));
+    }
+  }
+
+  /** Chiqishda va sessiya tugaganda: keyingi odam eski ro'yxatni bir lahza
+   *  ham ko'rmasin. */
+  function resetHistory() {
+    listRequest++;
+    openRequest++;
+    chats = [];
+    chatsState = 'idle';
+    editingId = null;
+    hideUndo();
+    histNote.hidden = true;
+    historySheet.hidden = true;
+  }
+
+  historyBtn.addEventListener('click', openHistory);
+  historyClose.addEventListener('click', closeHistory);
+  historySheet.addEventListener('click', (e) => { if (e.target === historySheet) closeHistory(); });
+  newChatBtn.addEventListener('click', startNewChat);
+  histUndoBtn.addEventListener('click', () => { void undoDelete(); });
+
+  // =========================================================================
+  // 12c. Hujjatni yuklab olish - Telegram'ning o'z yuklab olgichi bilan
+  // =========================================================================
+  // NEGA `<a download>` EMAS (veb ilovadagi kabi). Telegram WebView ichida
+  // `blob:` havola bilan yuklab olish ishonchsiz: iOS uni umuman bajarmaydi,
+  // Android esa Telegram versiyasiga bog'liq. `WebApp.downloadFile` (Bot API
+  // 8.0) faylni Telegram ilovasining O'ZI yuklaydi va saqlashni taklif
+  // qiladi - lekin u bizning `Authorization` sarlavhamizni yubora olmaydi.
+  // Shuning uchun server avval 10 daqiqalik imzolangan havola beradi
+  // (`POST .../link`, sessiya bilan), Telegram esa faylni shu havoladan
+  // tokensiz oladi. Havola faqat shu bitta fayl uchun va API'ga kira olmaydi.
+
+  const FILE_KINDS = [['docx', 'DOCX'], ['pdf', 'PDF']];
+
+  /** Hujjat nomi - veb ilovadagi kabi sarlavhadan. Server uni yana
+   *  tozalaydi va kengaytmani fayl turiga qarab o'zi qo'yadi. */
+  function artifactName(art) {
+    return String(art.title || art.filename || 'ariza').trim() || 'ariza';
+  }
+
+  /** "Hujjat tayyorlandi" qatori va har fayl turi uchun tugma. Havolasi
+   *  yo'q tur ko'rsatilmaydi: backend o'gira olmagan havolani olib
+   *  tashlaydi, o'lik tugmadan esa yo'q tugma yaxshi. */
+  function showArtifact(art) {
+    const name = artifactName(art);
+    const files = FILE_KINDS.filter((k) => typeof art[k[0] + '_url'] === 'string' && art[k[0] + '_url']);
+    const el = addMsg('system', 'Hujjat tayyorlandi: ' + name);
+    if (!files.length) {
+      el.appendChild(document.createTextNode('. Uni veb ilovadan yuklab oling.'));
+      return;
+    }
+    const row = document.createElement('span');
+    row.className = 'files';
+    for (const [kind, label] of files) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn sm ghost';
+      b.textContent = label + ' yuklab olish';
+      b.addEventListener('click', () => { void saveArtifact(art[kind + '_url'], name, b, label); });
+      row.appendChild(b);
+    }
+    el.appendChild(row);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  /** Faylni saqlash: imzolangan havola -> Telegram yuklab olgichi.
+   *  Eski Telegram'da (`downloadFile` yo'q) havola tashqi brauzerda ochiladi
+   *  va u faylni `Content-Disposition: attachment` bo'yicha o'zi saqlaydi. */
+  async function saveArtifact(path, name, button, label) {
+    if (button.disabled) return;
+    button.disabled = true;
+    button.textContent = 'Tayyorlanmoqda…';
+    try {
+      const link = await apiFetch(path + '/link', { method: 'POST', body: JSON.stringify({ filename: name }) });
+      const url = location.origin + link.url;
+      if (!openDownload(url, link.filename)) {
+        setNote('Faylni saqlab bo\'lmadi - uni veb ilovadan yuklab oling', 'warn');
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) { sessionExpired(); return; }
+      setNote('Fayl tayyorlanmadi: ' + errorText(err), 'warn');
+    } finally {
+      button.disabled = false;
+      button.textContent = label + ' yuklab olish';
+    }
+  }
+
+  /** `true` - yuklab olish boshlandi (yoki Telegram oynasi ochildi). */
+  function openDownload(url, filename) {
+    if (tg && typeof tg.downloadFile === 'function' &&
+        typeof tg.isVersionAtLeast === 'function' && tg.isVersionAtLeast('8.0')) {
+      try {
+        tg.downloadFile({ url: url, file_name: filename });
+        return true;
+      } catch (e) { /* pastdagi zaxiraga */ }
+    }
+    if (tg && typeof tg.openLink === 'function') {
+      try {
+        tg.openLink(url);
+        return true;
+      } catch (e) { /* pastdagi zaxiraga */ }
+    }
+    if (tg) return false;
+    // Telegram'dan tashqarida (oddiy brauzerda sinash) - oddiy havola.
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    return true;
+  }
 
   // =========================================================================
   // 13. Kiritishlar

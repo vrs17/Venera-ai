@@ -178,6 +178,19 @@ class UserStore:
     def by_email(self, email: str) -> StoredUser | None:
         return self._users.get(str(email).strip().lower())
 
+    def by_actor_id(self, actor_id: int) -> StoredUser | None:
+        """`actor_id` bo'yicha - Telegram bot uchun (ulanish emailni saqlamaydi).
+
+        Bir xil `actor_id` li IKKI yozuv bo'lsa `None`: qaysi biri ekanini
+        taxmin qilish boshqa odamning hisobini berib yuborishi mumkin edi.
+        Bu sozlama xatosi va u jurnalda aytiladi.
+        """
+        found = [u for u in self._users.values() if u.actor_id == actor_id]
+        if len(found) > 1:
+            log.error("actor_id %s bir nechta hisobda takrorlanyapti - bot uni rad etdi", actor_id)
+            return None
+        return found[0] if found else None
+
     def emails_using(self, hashes: set[str]) -> list[str]:
         """Berilgan xeshlardan birini ishlatayotgan hisoblar."""
         if not hashes:

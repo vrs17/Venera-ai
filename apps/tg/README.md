@@ -112,6 +112,13 @@ yetarli. Kimlik HAR DOIM `Authorization: Bearer <token>` da.
 | `POST /api/v1/stt/transcribe` | yozilgan savolni matnga o'girish |
 | `POST /api/v1/tts/speak` | javobni ovoz bilan o'qish |
 | `POST /api/v1/chat/stream` | savol -> javob (NDJSON oqimi) |
+| `POST /api/v1/chat/artifact/{token}/{docx,pdf}/link` | "DOCX/PDF yuklab olish" - 10 daqiqalik imzolangan havola |
+| `GET /api/v1/chat/file/{imzo}` | faylni Telegram'ning O'ZI oladi (sessiyasiz) |
+| `GET /api/v1/chats` | "Suhbatlar" varag'i - har ochilishda |
+| `GET /api/v1/chats/{id}` | suhbatni ochish, ilova ochilganda oxirgi suhbat |
+| `PATCH /api/v1/chats/{id}` | qatordagi "Nomini o'zgartirish" |
+| `DELETE /api/v1/chats/{id}` | qatordagi "O'chirish" (yumshoq) |
+| `POST /api/v1/chats/{id}/restore` | "Bekor qilish" |
 | `GET /api/v1/connectors` | "+" menyusi ochilganda - HRM/CRM holati |
 | `POST /api/v1/connectors/{hrm,crm}/connect` | ulanish oynasi (login + parol) |
 | `PATCH /api/v1/connectors/{hrm,crm}` | qatordagi kalit (chatda ishlatish) |
@@ -202,6 +209,53 @@ yerda o'zgartirish kerak bo'lmaydi, hozir esa foydalanuvchi serverning o'z
 xabarini ko'radi ("Ro'yxatdan o'tish hozircha yopiq...") - jim tugmadan
 aniqroq.
 
+## Suhbatlar tarixi
+
+Yuqori qatordagi soat belgisi "Suhbatlar" varag'ini ochadi: kunlar bo'yicha
+guruhlangan ro'yxat (Bugun, Kecha, Oxirgi 7 kun, Oldinroq), "+ Yangi suhbat",
+qatorda nomini o'zgartirish va o'chirish ("Bekor qilish" 8 soniya turadi).
+`app.js` 12b-bo'lim - veb ilovadagi `useChats.ts` + `ChatHistory.vue` ning
+nusxasi.
+
+* **Veb bilan bitta ro'yxat.** Suhbatlar yuqoridagi xizmatda `chatId` bo'yicha
+  saqlanadi, kimlikni esa backend TOKEN'DAN qo'yadi (`venera:{actorId}`).
+  Bir hisob = bir ro'yxat: vebda boshlangan suhbat shu yerda ochiladi va
+  davom ettiriladi, teskarisi ham.
+* **Ilova ochilganda oxirgi suhbat ekranga qaytadi.** Kalit (`venera_tg_chat`)
+  avval ham saqlanardi va xizmat suhbatni eslab turardi, lekin ekran bo'sh
+  edi.
+* **O'chirilgan suhbat kaliti ishlatilmaydi.** Ochishda 404 (boshqa qurilmada
+  o'chirilgan) bo'lsa, yangi kalit olinadi: eski kalit bilan savol berish
+  o'chirilgan suhbatni qayta tiriltirardi.
+* Ekranda oxirgi **200** xabar turadi (avval 20 edi).
+* Manbalar (`[1]` hujjatlar) tarixdan ochilgan javoblarda ko'rinmaydi: server
+  ularni xabar bilan saqlamaydi.
+
+## Hujjatni yuklab olish
+
+Javob ariza yaratsa (`artifact` kadri), "Hujjat tayyorlandi" qatori ostida
+"DOCX yuklab olish" va "PDF yuklab olish" tugmalari chiqadi (`app.js`,
+12c-bo'lim).
+
+**Nega `<a download>` emas (vebdagi kabi).** Telegram WebView ichida `blob:`
+havola bilan yuklab olish ishonchsiz - iOS uni umuman bajarmaydi.
+`WebApp.downloadFile` (Bot API 8.0) faylni Telegram ilovasining O'ZI yuklaydi
+va saqlashni taklif qiladi, lekin u bizning `Authorization` sarlavhamizni
+yubora olmaydi. Shuning uchun:
+
+1. tugma `POST .../artifact/{token}/{kind}/link` ni SESSIYA bilan chaqiradi;
+2. server 10 daqiqalik imzolangan havola beradi (`/api/v1/chat/file/{imzo}`);
+3. `tg.downloadFile({url, file_name})` - Telegram faylni shu havoladan oladi.
+
+Eski Telegram'da (8.0 dan past) havola `tg.openLink` bilan tashqi brauzerda
+ochiladi va u faylni `Content-Disposition: attachment` bo'yicha o'zi saqlaydi.
+
+**Havola - kirish tokeni emas.** U boshqa `aud` (`venera:file`) bilan
+imzolanadi: API'ga kira olmaydi, sessiya tokeni esa havola o'rnida
+ishlamaydi. Faqat bitta fayl, bitta tur, 10 daqiqa. Javobda Telegram hujjati
+talab qilgan `Access-Control-Allow-Origin: https://web.telegram.org` bor
+(Telegram Web faylni brauzer ichida `fetch` bilan oladi).
+
 ## Ulanishlar (HRM, CRM)
 
 `apps/web` dagi `useConnectors.ts` + `ComposerMenu.vue` + `ConnectorList.vue`
@@ -264,6 +318,14 @@ Shuning uchun yangilash = nusxalash:
 cp apps/tg/index.html apps/tg/app.js ~/.local/share/venera-tg/
 ```
 
+> **DIQQAT - repodagi fayl jonlidan OLDINDA.** Ulanishlar ("+" menyusi,
+> HRM/CRM hisobini ulash, `app.js` 15-bo'lim) hali CHIQARILMAGAN. Yuqoridagi
+> to'liq nusxalash ularni ham jonliga olib chiqadi. Hozircha jonli faylga
+> o'zgarishlar ALOHIDA, faqat o'zi kiritiladi. 2026-09-23 da shunday
+> kiritilganlar: suhbatlar tarixi (12b), hujjatni yuklab olish (12c), taklif
+> kartasi (16 + karta uchun 16a yordamchilar). Har biridan oldin zahira:
+> `~/.local/share/venera-tg/*.bak-<sana>-<nom>`.
+
 Xizmatni qayta ishga tushirish **shart emas** - nginx faylni har so'rovda
 diskdan o'qiydi, va `/tg/` javobida `Cache-Control: no-cache` turadi.
 
@@ -320,6 +382,14 @@ Kerak bo'lsa manba `apps/web/src/composables/useWakeWord.ts` da turibdi.
 * **`initData` tekshirilmaydi.** Telegram foydalanuvchisi va Venera hisobi
   bog'lanmagan, shuning uchun kirish oddiy email + parol bilan. Bog'lash
   uchun serverda `initData` ning HMAC imzosini tekshiradigan endpoint kerak.
-* **Hujjat yuklab olish** (`/chat/artifact/...`, `/chat/doc/...`) ulanmagan:
-  Telegram WebView ichida yuklab olish ishonchsiz. Oqimda `artifact` kadri
-  kelsa, sahifa faqat nomini aytadi.
+* **Iqtibos qilingan hujjatlar** (`/chat/doc/...`, "Manbalar: [1] ...")
+  hali ochilmaydi - faqat nomi ko'rinadi. Yaratilgan ariza esa yuklab
+  olinadi (pastda, "Hujjatni yuklab olish").
+
+## Bot chati (Telegram'ning o'zi)
+
+Mini app ochilganda (`enterApp`) Telegram `initData` si bilan
+`POST /api/v1/telegram/link` chaqiriladi - shundan keyin odam botga oddiy
+xabar yoki ovozli xabar yozsa, javob shu hisob nomidan keladi. Chiqishda
+(`logout`) avval `/unlink`. Xato jim: bot o'chiq bo'lsa ham ilova to'liq
+ishlaydi. Tafsilot: `docs/deploy-api.md`, "Telegram bot".

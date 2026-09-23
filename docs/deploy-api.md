@@ -535,6 +535,15 @@ faylni o'zi olib beradi. Iqtibos qilingan hujjat uchun
 shu sababli frontend ularni `<a href>` bilan emas, token bilan `fetch`
 qilib yuklab oladi.
 
+**Telegram mini app uchun istisno - imzolangan havola.** U yerda faylni
+Telegram ilovasining o'zi yuklaydi (`WebApp.downloadFile`) va sessiya
+tokenini yubora olmaydi. Shuning uchun `POST /api/v1/chat/artifact/{token}/
+{docx,pdf}/link` (sessiya bilan) 10 daqiqalik havola beradi, fayl esa
+`GET /api/v1/chat/file/{imzo}` dan SESSIYASIZ olinadi. Imzo `SECRET_KEY`
+bilan, lekin boshqa `aud` (`venera:file`) bilan: havola API'ga kira olmaydi,
+sessiya tokeni esa havola o'rnida ishlamaydi. `SECRET_KEY` almashtirilsa,
+berilgan havolalar ham bekor bo'ladi.
+
 ### Jonli HRM ma'lumoti va `HRM_TOKEN`
 
 "Men bugun kechikdimmi?" kabi savol uchun xizmat foydalanuvchining HRM
@@ -822,3 +831,42 @@ ss -ltnp | grep 8000
 
 **`/api/docs` 503 qaytardi.** `app/static/` da fayllar yo'q — 3-qadamni
 bajaring. Javobda qaysi fayl yetishmayotgani yozilgan.
+
+## Telegram bot (chatning o'zida savol-javob)
+
+Odam `@venera_ai_brb_bot` ga oddiy xabar yoki **ovozli xabar** yozadi va javobni
+**matn** bilan oladi (ovoz sintezi yo'q). Imkoniyatlari veb chat bilan bir xil:
+HRM/CRM savollari, yozuv amalini tasdiqlash (tugmalar), ariza fayli (DOCX
+chatga keladi, PDF tugma bilan), manba hujjati (`📄 [1]` tugmasi - PDF chatga
+keladi). Suhbatlar veb ilova va mini app tarixida ham ko'rinadi.
+
+**Qayerda ishlaydi.** API jarayoni ichida (`app/bot/`), long polling bilan -
+nginx ga tegilmaydi, tashqaridan yangi yo'l ochilmaydi. Alohida xizmat EMAS:
+bot `api/v1/chat.py` dagi AYNI klientlarni ishlatadi (CRM sessiyasi
+`refresh_token` ni rotatsiya qiladi - ikkinchi nusxa uni bekor qilardi).
+Ikkinchi API nusxasi (masalan qo'lda ishga tushirilgan sinov serveri) botni
+o'qimaydi: `data/telegram/poll.lock` fayl qulfi.
+
+**Hisobni ulash - faqat mini app orqali.** Odam botdagi "Venera" tugmasi bilan
+mini app'ni ochib kiradi; ilova `POST /api/v1/telegram/link` ga Telegram
+imzolagan `initData` ni yuboradi. Isbot ikkita: sessiya (kim kirgan) va
+imzo (kim ochgan) - `user.id` klientdan olinmaydi. Botda parol so'ralmaydi.
+Ulanish 30 kun yashaydi va faqat mini app ochilganda yangilanadi; mini
+app'dan chiqish (`/unlink`) va botdagi `/logout` uni uzadi. Hisob
+`users.yaml` dan o'chirilsa - keyingi xabarda ulanish uziladi.
+
+Saqlanadigan narsa: `data/telegram/links.json` (600, atomik) - faqat
+Telegram `id`, `actor_id`, vaqtlar va joriy suhbat kaliti.
+
+**Kirish - faqat matn va ovoz (mikrofon).** Video (kamera: dumaloq video,
+video yoki video fayl) qabul qilinmaydi: yuklab olinmaydi va chatdan darhol
+o'chiriladi. Kamera tugmasini Telegram ilovasi boshqaradi - bot uni yashira
+olmaydi (shaxsiy chatda media cheklovi yo'q). Rasm, fayl, stiker - faqat izoh.
+
+**Buyruqlar** (bot ishga tushganda menyu o'zi yangilanadi): `/new` yangi
+suhbat, `/app` mini app, `/help`, `/logout`. Faqat SHAXSIY chat - guruhda
+bot jim (javoblarda shaxsiy HR ma'lumoti bor).
+
+**Holat:** `/api/health/detail` -> `telegram` (ishlayaptimi, oxirgi muvaffaqiyatli
+so'rov, xato, ulanganlar soni). 409 xatosi = boshqa nusxa shu botni
+o'qiyapti. O'chirish: `.env` da `TELEGRAM_BOT_ENABLED=false` + restart.

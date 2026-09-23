@@ -492,7 +492,7 @@ class AssistantClient:
         """
         if kind not in ARTIFACT_KINDS:
             raise AssistantError(f"noma'lum fayl turi: {kind}", status=400)
-        if not _ARTIFACT_URL.fullmatch(f"/api/hr/artifacts/{token}/{kind}"):
+        if not artifact_ref_ok(token, kind):
             raise AssistantError("fayl kaliti yaroqsiz", status=400)
         return self._download(f"/api/hr/artifacts/{urllib.parse.quote(token, safe='')}/{kind}")
 
@@ -605,6 +605,12 @@ def _strip_proposal_urls(frame: dict[str, Any]) -> None:
         if isinstance(holder, dict):
             holder.pop("confirm_url", None)
             holder.pop("cancel_url", None)
+
+
+def artifact_ref_ok(token: str, kind: str) -> bool:
+    """Kalit va tur yuklab olish yo'liga mosmi - `fetch_artifact` va
+    Telegram havolasi (`chat.py`) BIR XIL qoida bilan tekshiradi."""
+    return kind in ARTIFACT_KINDS and bool(_ARTIFACT_URL.fullmatch(f"/api/hr/artifacts/{token}/{kind}"))
 
 
 def _rewrite_artifact(frame: dict[str, Any], base_url: str) -> None:
