@@ -44,6 +44,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from socket import timeout as socket_timeout
 
+from .speech_text import for_speech
+
 log = logging.getLogger(__name__)
 
 #: Server bilgan ovozlar (`/health` -> `voice_profiles`).
@@ -70,6 +72,11 @@ _DIGIT_RUN = re.compile(r"\d[\d\s\u00a0.,-]{10,}\d")
 #:    raqamlarni (`2450000 som`, `15%`) normalizatsiyasiz qoldirardi.
 _DOTTED_GROUPS = re.compile(r"\d+(?:\.\d+){2,}")
 _LOOKS_LIKE_DATE = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{4}$")
+
+#: `dd.mm.yyyy` - `risky_for_normalizer()` sanalarni raqam qatoridan chiqaradi.
+#: Sanalarning O'ZI normalizatorga bormaydi: `speech_text.for_speech()` ularni
+#: oldinroq so'z bilan yozadi. Bu yerga faqat yaroqsizi (`31.02.2026`) yetadi.
+_DMY_ANY = re.compile(r"(?<![\d.])\d{1,2}\.\d{1,2}\.\d{4}(?!\d)")
 
 #: Bo'lakning maqsadli davomiyligi (soniya). Hujjat jonli qo'ng'iroq uchun
 #: 1.0-2.0 ni tavsiya qiladi: kattaroq qiymatda birinchi bo'lak uzayadi va
@@ -209,8 +216,14 @@ def risky_for_normalizer(text: str) -> bool:
 
     ATAYLAB TOR: har bir noto'g'ri "ha" butun gapdagi raqamlarni
     normalizatsiyasiz qoldiradi, ya'ni ishlaydigan holatlarni ham buzadi.
+
+    Sanalar raqam qatoridan CHIQARILADI: `01.09.2026, 03.09.2026` ikkita
+    sana, 16 xonali karta emas. Jonli (2026-09-23): shunday ro'yxat tufayli
+    butun javob normalizatsiyasiz ketdi va sanalar "mundoq suzish ikki ming
+    yigirma besh" bo'lib eshitildi - holbuki normalizator ularni to'g'ri
+    o'qiydi.
     """
-    for run in _DIGIT_RUN.finditer(text):
+    for run in _DIGIT_RUN.finditer(_DMY_ANY.sub(" ", text)):
         if len(re.sub(r"\D", "", run.group())) >= 16:
             return True
     return any(
@@ -325,6 +338,10 @@ class TtsClient:
         clean, truncated = clip(text, max_chars)
         if not clean:
             raise TtsError("matn bo'sh", status=400)
+        # Sana, vaqt va "MChJ" - so'z bilan (`speech_text.py`). Qisqartirishdan
+        # KEYIN: so'zlar matnni uzaytiradi, va oldin qilinsa, klient allaqachon
+        # 3000 belgiga sig'dirgan javobning oxiri shu uzayish hisobiga kesilardi.
+        clean = for_speech(clean)
 
         # Normalizator ba'zi raqamlarda yiqiladi - bunday matnni OLDINDAN
         # tanib, normalizatsiyasiz yuboramiz. `/stream` da bu 422 beradi
@@ -345,7 +362,21 @@ class TtsClient:
 
         slot = _Slot(self._slots)
         try:
-            response = self._open_stream(clean, voice, speed, normalize_numbers, chunk_sec)
+            try:
+                response = self._open_stream(clean, voice, speed, normalize_numbers, chunk_sec)
+            except TtsError as exc:
+                # ZAHIRA - biz hali bilmagan naqsh uchun. Normalizatsiyasiz
+                # raqamlar yomon o'qiladi, lekin javob ESHITILADI: 422 esa
+                # butun javobni ovozsiz qoldirardi. Faqat 422: 500 - GPU
+                # xatosi, qayta urinish uni tuzatmaydi, navbatni esa
+                # ikki barobar yuklaydi. WARNING - yangi naqsh
+                # `speech_text.for_speech` ga qo'shilishi kerak degan signal.
+                if exc.status != 422 or not normalize_numbers:
+                    raise
+                log.warning("TTS matnni normalizatsiya bilan qabul qilmadi (%s) - "
+                            "normalizatsiyasiz qayta yuborildi", exc)
+                normalize_numbers = False
+                response = self._open_stream(clean, voice, speed, False, chunk_sec)
         except BaseException:
             slot.release()
             raise

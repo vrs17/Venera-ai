@@ -151,9 +151,26 @@ export interface AnswerArtifact {
 /** One NDJSON line. `type` is open: the assistant may add frames, and an
  *  unknown one must be ignored rather than crash the reader. */
 export interface ChatFrame {
-  type: 'stage' | 'sources' | 'artifact' | 'proposal' | 'token' | 'done' | 'error' | (string & {})
+  type: 'stage' | 'sources' | 'artifact' | 'proposal' | 'token' | 'done' | 'error' | 'hold' | (string & {})
   /** stage: human status text. token: the piece of answer to append. error: user-safe message. */
   text?: string
+  /** ADDED BY OUR BACKEND (`hold` frames only): the name of a ready-made
+   *  audio clip for this phrase, served by `GET /api/v1/tts/hold/<clip>.wav`.
+   *
+   *  WHY A CLIP AND NOT JUST TEXT. The whole point of a holding phrase is
+   *  that it costs NO wait: synthesising it in the browser adds the measured
+   *  ~1.1 s of TTS, by which time a fast answer has already arrived. Absent
+   *  (ru/en, or a phrase the model wrote) means "speak the text yourself". */
+  clip?: string
+  /** `hold` frames only: 1 = the first holding clip, 2+ = while still waiting. */
+  at?: number
+  /** `hold` frames only: the topic the question was classified into
+   *  (`kechikish`, `tatil`, `hujjat`, ...). Informational — the clip already
+   *  encodes it. */
+  topic?: string
+  /** `hold` frames only: who picked the topic — `ollama` (the classifier) or
+   *  `jadval` (the keyword fallback, used when the model is slow or down). */
+  source?: 'ollama' | 'jadval' | (string & {})
   stage?: string
   /** The live service sends the citations under `items`; the documented
    *  one-shot response calls the same list `sources`. Both are read - the

@@ -132,6 +132,20 @@ class StreamRequest(BaseModel):
     #: o'zi yaratadi (brauzerdagi suhbat oynasi), va u `user_id` bilan
     #: birga ishlatilgani uchun boshqa odamning suhbatiga tushib qolmaydi.
     chatId: str | None = Field(default=None, max_length=64)
+    #: Klient OVOZLI rejimdami. Faqat shunda `hold` (kutish) kadrlari
+    #: yuboriladi.
+    #:
+    #: NEGA KLIENT AYTADI. Kutish gapi OVOZ uchun: jimlikni to'ldiradi.
+    #: Matnli chatda esa kutish ko'rinib turadi (nuqtalar, "yozmoqda"),
+    #: ya'ni "Bir soniya, tekshirayapman" degan qator faqat shovqin
+    #: bo'lardi. Server klientning rejimini bilmaydi - shuning uchun
+    #: buni klient aytadi, va default `false`: kadr QO'SHILGANI bilan
+    #: eski klientlarning xatti-harakati o'zgarmaydi.
+    voice: bool = False
+    #: Interfeys tili - kutish gapi shu tilda bo'ladi.
+    #: `uz-Cyrl` uchun gap lotin yozuvida keladi: u ESHITILADI, va TTS
+    #: lotin yozuvida ishlaydi.
+    locale: str = Field(default="uz", max_length=16)
 
     # `hrmEmployee` ATAYLAB YO'Q.
     #

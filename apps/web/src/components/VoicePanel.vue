@@ -29,7 +29,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { micAvailable, micBlockedByPolicy, secureUrl, transcribe } from '../api/stt.api'
-import { canSpeak, play, speakStream } from '../api/tts.api'
+import { canSpeak, holdClip, play, speakStream } from '../api/tts.api'
 import { preparedGreeting } from '../api/greeting'
 import { localizeApiError } from '../api/errors'
 import { ApiError } from '../api/http'
@@ -45,6 +45,18 @@ const props = defineProps<{
   busy: boolean
   /** The most recent answer text, shown under the orb once it arrives. */
   answer?: string | null
+  /** A holding phrase to say while the answer is still being worked out.
+   *
+   *  WHY THIS EXISTS. HRM/CRM lookups are not instant: measured, the rules
+   *  route answers in 15.7 s at the median and 38.7 s at p90. The panel used
+   *  to stand silent for all of it, and silence reads as "it did not hear
+   *  me" — people repeat the question or close the panel. The backend times
+   *  the wait and sends the phrase; this panel only has to say it.
+   *
+   *  `clip` is audio synthesised on the server ahead of time, picked by
+   *  classifying the question (topic + tone) - so it plays with no TTS wait
+   *  at all, and it can never contain anything the model made up. */
+  hold?: { text?: string; clip?: string; at?: number } | null
   /** Spoken once when the panel opens, before listening starts.
    *
    *  Both ways in get it — the wake word and the button. Opening a voice
@@ -363,7 +375,7 @@ function voiceErrorText(err: unknown): string {
  * Bu turnning ASOSIY ishi EMAS. Sintez yiqilsa javob EKRANDA qoladi - ya'ni
  * kelgan javob ishlamayotgan TTS tufayli yo'qolmaydi.
  */
-async function speak(text: string, turn: number) {
+async function speak(text: string, turn: number, after?: Promise<unknown>) {
   if (!canSpeak(String(locale.value))) return
   speechAborter?.abort()
   speechAborter = new AbortController()
@@ -373,7 +385,7 @@ async function speak(text: string, turn: number) {
     // resolves once the headers are in, which is also where every server-side
     // error has already surfaced — so a failure here is still a plain error,
     // not a silently truncated answer.
-    const playback = await speakStream(text, String(locale.value), speechAborter.signal)
+    const playback = await speakStream(text, String(locale.value), speechAborter.signal, after)
     if (turn !== turnId || !props.open) {
       playback.stop()
       return
@@ -524,13 +536,53 @@ function forSpeech(markdown: string): { text: string; shortened: boolean } {
  * hech narsa tejamaydi - o'qish boshlanadigan payt baribir javob to'liq
  * kelgan payt bo'ladi, kod esa ikki barobar murakkab bo'lardi.
  */
+/** The holding clip that is playing right now, if any.
+ *
+ *  The answer WAITS for it. That rule came from a measurement: HRM answered
+ *  in 3-4 s while the clip itself is 2.5-3.3 s long, and cutting the clip the
+ *  moment the answer arrived left people hearing half a sentence — which
+ *  reads as broken, worse than silence. */
+let holdPlaying: Promise<void> | null = null
+
+/** Plays a ready-made holding clip while HRM/CRM works on the answer.
+ *
+ *  Guards, each one earned:
+ *    * only while `thinking` and only for this turn — a clip that surfaces
+ *      after the answer (or during the next question) talks over it;
+ *    * one at a time — a follow-up that arrives while the previous clip still
+ *      plays is dropped, never stacked;
+ *    * clips only, never synthesised text — the point of a holding clip is
+ *      that it costs no wait, and synthesising adds ~1.1 s;
+ *    * failures are silent — it is a courtesy, not a feature to report.
+ */
+async function speakHold(cue: { clip?: string }, turn: number) {
+  if (state.value !== 'thinking' || turn !== turnId || !props.open) return
+  if (holdPlaying || !cue.clip || !canSpeak(String(locale.value))) return
+  const blob = await holdClip(cue.clip)
+  if (!blob || turn !== turnId || state.value !== 'thinking' || !props.open) return
+  const playing = playBlob(blob)
+  holdPlaying = playing
+  try {
+    await playing
+  } finally {
+    if (holdPlaying === playing) holdPlaying = null
+  }
+}
+
+watch(() => props.hold, (cue) => {
+  if (!cue?.clip) return
+  void speakHold(cue, turnId)
+})
+
 async function speakAnswer(turn: number) {
   const { text, shortened } = forSpeech(props.answer || '')
   // Javob kelmadi (xato yoki bo'sh): JIM qolamiz. Xato matni suhbatda
   // ko'rinadi, va uni ovoz bilan takrorlash hech kimga yordam bermaydi.
   if (!text) return
   if (shortened && !note.value) note.value = t('voiceAnswerShortened')
-  await speak(text, turn)
+  // A holding clip still playing is NEVER cut. The answer's TTS request goes
+  // out now and buffers; playback starts the instant the clip ends.
+  await speak(text, turn, holdPlaying ?? undefined)
 }
 
 /** Ijro. Rad etilishi XATO EMAS: brauzer avtomatik ijroga ruxsat bermasligi

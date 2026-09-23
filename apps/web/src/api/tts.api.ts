@@ -83,6 +83,14 @@ export async function speakStream(
   text: string,
   language: string,
   signal?: AbortSignal,
+  /** Playback starts only after this settles — the REQUEST does not wait.
+   *
+   *  Used to queue the answer behind a holding clip without paying for it:
+   *  the TTS request goes out the moment the answer is ready and its audio
+   *  buffers in the response body while the clip finishes, so playback can
+   *  start the instant the clip ends instead of ~1.1 s (measured TTS time to
+   *  first audio) after it. */
+  after?: Promise<unknown>,
 ): Promise<Playback> {
   const token = getToken()
   const response = await fetch(`${BASE_URL}/api/v1/tts/speak`, {
@@ -109,6 +117,9 @@ export async function speakStream(
   }
 
   const rate = rateOf(response)
+  // The body keeps buffering while we wait; a failed gate must not cost the
+  // answer, so its rejection is swallowed here.
+  if (after) await after.catch(() => undefined)
   return playPcmStream(response.body, rate, signal)
 }
 
@@ -321,4 +332,34 @@ export function play(blob: Blob): { audio: HTMLAudioElement; done: Promise<void>
     finish()
   }
   return { audio, done, stop }
+}
+
+
+/**
+ * Fetches a ready-made holding clip (`hold` frame's `clip`).
+ *
+ * WHY THIS EXISTS. A holding phrase is only worth saying if it costs no
+ * wait. Synthesising it here would add the measured ~1.1 s of TTS, and by
+ * then a fast answer has already arrived — so the backend pre-synthesises a
+ * small fixed set at startup and this just plays the bytes.
+ *
+ * Returns null instead of throwing: a missing clip is NOT an error (the
+ * service may have just restarted), and the caller falls back to speaking
+ * the text. A holding phrase must never turn into a visible failure.
+ */
+export async function holdClip(clip: string, signal?: AbortSignal): Promise<Blob | null> {
+  const token = getToken()
+  try {
+    const response = await fetch(`${BASE_URL}/api/v1/tts/hold/${encodeURIComponent(clip)}.wav`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal,
+      // The clip never changes (the text is in the source), so let the
+      // browser keep it: after the first wait it plays from disk.
+      cache: 'force-cache',
+    })
+    if (!response.ok) return null
+    return await response.blob()
+  } catch {
+    return null
+  }
 }

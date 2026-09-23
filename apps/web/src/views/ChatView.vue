@@ -47,6 +47,12 @@ let historyRequest = 0
 const theme = ref<Theme>(getInitialTheme())
 const sidebarOpen = ref(false)
 const voiceOpen = ref(false)
+/** The holding phrase the backend sent for the question in flight.
+ *
+ *  Lives here rather than in the panel because it arrives on the CHAT
+ *  stream — the panel only speaks it. Cleared on every new question so a
+ *  phrase from the previous turn can never surface late. */
+const holdCue = ref<{ text: string; clip?: string; at?: number } | null>(null)
 
 // --- "Salom Venera" ---------------------------------------------------------
 // ON by default: the assistant should answer when spoken to, without anyone
@@ -345,6 +351,12 @@ function runPipeline(id: string, question: string) {
         }
         break
       }
+      case 'hold':
+        // A ready-made holding clip while HRM/CRM works. Voice only: the
+        // panel plays it, and nothing is written into the exchange. In text
+        // mode the backend does not send these at all.
+        if (frame.clip) holdCue.value = { text: frame.text ?? '', clip: frame.clip, at: frame.at }
+        break
       case 'token':
         answer += frame.text ?? ''
         // The response object appears with the FIRST token, which is what
@@ -362,7 +374,16 @@ function runPipeline(id: string, question: string) {
     }
   }
 
-  streamAsk(question, onFrame, { chatId, signal: controller.signal })
+  // A new question retires the previous holding phrase, so a phrase from
+  // the last turn can never be spoken over this one's answer.
+  holdCue.value = null
+  streamAsk(question, onFrame, {
+    chatId,
+    signal: controller.signal,
+    // Only the client knows whether anyone is listening.
+    voice: voiceOpen.value,
+    locale: String(locale.value),
+  })
     .then(() => {
       const durationMs = performance.now() - t0
       if (failure && !answer) {
@@ -491,6 +512,7 @@ const actorType = computed<ActorType>(() => (user.value?.actorType as ActorType)
         <AnswerGlow :phase="phase" />
 
         <VoicePanel
+          :hold="holdCue"
           :open="voiceOpen"
           :send="send"
           :busy="phase !== 'idle'"

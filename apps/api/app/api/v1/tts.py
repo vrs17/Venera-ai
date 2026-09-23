@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, Path
+from fastapi.responses import Response, StreamingResponse
 
 from ...core.config import settings
 from ...core.errors import bad_request, error_status
@@ -132,3 +132,56 @@ def speak(body: SpeakRequest, user: AuthUser = Depends(current_user)) -> Streami
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get(
+    "/hold/{clip}.wav",
+    response_class=Response,
+    responses={200: {"content": {"audio/wav": {}}},
+               404: {"description": "Bu ovoz hali sintez qilinmagan"}},
+)
+def hold_clip(clip: str = Path(pattern=r"^[a-z0-9-]{1,80}$"),
+              user: AuthUser = Depends(current_user)) -> Response:
+    """Tayyor kutish gapining ovozi.
+
+    NEGA ALOHIDA YO'L, kadr ichida emas. Kutish gapining butun ma'nosi
+    KECHIKISHNING NOLLIGIDA: agar klient matnni olib, uni TTS ga yuborsa,
+    o'lchangan 1.1 sekund yana qo'shilardi - ya'ni "tayyor ovoz" ning
+    afzalligi yo'qolardi. Ovozni kadr ichida base64 bilan yuborish esa
+    oqimni bloklaydi (~34 KB) va javob kadrlarini kechiktiradi.
+
+    Shu yo'l esa keshlanadi: brauzer ovozni bir marta oladi va keyingi
+    barcha kutishlarda uni DISKDAN o'ynatadi - ya'ni tarmoq ham
+    ishlatilmaydi. `immutable` xavfsiz, chunki kalit oxirida gap MATNINING
+    xeshi bor (`services/hold.py: clip_key`): matn o'zgarsa kalit ham
+    o'zgaradi va brauzer eski ovozni o'ynatib qolmaydi.
+
+    Kalit naqshi faqat kichik harf, raqam va chiziqcha: nuqta ham, `/` ham
+    yo'q - ya'ni kalit orqali fayl tizimida boshqa joyga chiqib bo'lmaydi.
+    """
+    data = _hold_voices().get(clip)
+    if not data:
+        # Sintez hali tugamagan (xizmat yangi ishga tushgan) yoki TTS
+        # o'chiq. Bu XATO EMAS: klient matnni o'zi ovozga aylantiradi.
+        raise error_status(404, "Bu ovoz hali tayyor emas")
+    return Response(
+        content=data,
+        media_type="audio/wav",
+        headers={
+            # Matn kodda yozilgan va o'zgarmaydi, ya'ni ovoz ham o'zgarmaydi.
+            # Uzoq kesh - bu yo'l kutishning eng tez qismi bo'lishi kerak.
+            "Cache-Control": "private, max-age=86400, immutable",
+        },
+    )
+
+
+def _hold_voices():
+    """Kutish ovozlari keshi.
+
+    Import FUNKSIYA ICHIDA: `api/v1/chat.py` ni modul boshida import
+    qilish aylanma bog'liqlik yasaydi. Kesh obyekti CHAT modulida turadi,
+    chunki uni to'ldiradigan reja ham o'sha yerda.
+    """
+    from .chat import _hold_voices as voices
+
+    return voices

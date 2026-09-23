@@ -19,6 +19,7 @@ qo'shganda router'ga tegilmaydi.
 from __future__ import annotations
 
 import logging
+import threading
 
 from pathlib import Path
 
@@ -184,6 +185,37 @@ app.include_router(v1_router)
 _upstream = UpstreamHealth(settings.stt_base_url, settings.tts_base_url)
 
 
+@app.on_event("startup")
+def _warm_hold_voices() -> None:
+    """Tayyor kutish ovozlarini FON ipida sintez qiladi.
+
+    NEGA ISHGA TUSHGANDA. Kutish gapining butun ma'nosi kechikishning
+    nolligida. Sintez esa o'lchangan holda 1-3 sekund oladi - ya'ni uni
+    so'rov ichida qilish tuzatayotgan muammoning o'zini yasagan bo'lardi:
+    javob kechikardi va TTS ning ikki slotidan biri band bo'lardi.
+
+    NEGA IP. `startup` hodisasi tugamaguncha xizmat so'rov qabul
+    qilmaydi. 12 ta ovoz ketma-ket ~20 sekund oladi, ya'ni har qayta ishga
+    tushish yigirma sekundlik uzilish bo'lardi - holbuki ovozlar
+    BO'LMASA ham hammasi ishlaydi (klient matnni o'zi aytadi).
+    """
+    if not settings.hold_enabled or not settings.hold_warm:
+        return
+    if not settings.tts_client_secret:
+        log.info("Kutish ovozlari: TTS sozlanmagan, o'tkazib yuborildi")
+        return
+
+    def run() -> None:
+        from .api.v1.chat import _hold_voices
+        from .services.hold import all_clips
+
+        client = tts_client()
+        _hold_voices.warm(all_clips(),
+                          lambda text: client.synthesize_wav(text, voice=settings.tts_voice))
+
+    threading.Thread(target=run, name="hold-warm", daemon=True).start()
+
+
 def stt_variants() -> dict:
     """STT variantlarining holati - `/api/health/detail` uchun.
 
@@ -214,6 +246,28 @@ def stt_variants() -> dict:
         # Zahira qachon ishlagani. `last_5min > 0` degani "2-variant
         # tanlangan, lekin AMALDA 1-variant ishlayapti".
         "fallback": _fallbacks.snapshot(),
+    }
+
+
+def hold_state() -> dict:
+    """Kutish gapi holati - `/api/health/detail` uchun.
+
+    KALIT QIYMATI YO'Q - faqat sozlangan/sozlanmagan va ovozlar soni.
+    """
+    from .api.v1.chat import _hold_classifier, _hold_voices, _holds
+    from .services.hold import all_clips
+
+    return {
+        "enabled": settings.hold_enabled,
+        "model": settings.ollama_model if _hold_classifier.configured else "",
+        "model_configured": _hold_classifier.configured,
+        "first_ms": settings.hold_first_ms,
+        "repeat_ms": settings.hold_repeat_ms,
+        "max": settings.hold_max,
+        "voices": _hold_voices.snapshot(all_clips()),
+        # Nechta ovoz aytilgani va yorliq qayerdan kelgani. `jadval` ko'p
+        # bo'lsa - model ulgurmayapti yoki ishlamayapti.
+        "said": _holds.snapshot(),
     }
 
 
@@ -318,6 +372,18 @@ def _diagnostics() -> dict:
     #
     # KALIT QIYMATI YO'Q - faqat sozlangan/sozlanmagan.
     stt_state = stt_variants()
+    hold = hold_state()
+    if hold["enabled"] and not hold["model_configured"]:
+        warnings.append(
+            "Kutish ovozi yoqilgan, lekin tasniflovchi model sozlanmagan "
+            "(OLLAMA_API_KEY / VENERA_API_URL) - mavzuni faqat kalit so'z jadvali tanlaydi"
+        )
+    if hold["enabled"] and hold["voices"]["tayyor"] < hold["voices"]["jami"]:
+        warnings.append(
+            f"Kutish ovozlari to'liq emas ({hold['voices']['tayyor']}/"
+            f"{hold['voices']['jami']}) - ovozi yo'q holatlarda kutish ovozi "
+            "aytilmaydi (xizmat yangi ishga tushgan bo'lsa ~50 s da to'ladi)"
+        )
     for nomi, tanlov in (("STT_PROVIDER", settings.stt_provider),
                          ("STT_WAKE_PROVIDER", settings.stt_wake_provider)):
         if tanlov == "gapi" and not stt_state["gapi_configured"]:
@@ -346,6 +412,8 @@ def _diagnostics() -> dict:
         "users": len(store),
         "tts_slots": {"busy": tts_busy, "limit": settings.tts_max_concurrent},
         "stt": stt_state,
+        # Kutish gapi: yoqilganmi, model sozlanganmi, tayyor ovoz nechta.
+        "hold": hold,
         # TOKEN QIYMATI YO'Q - faqat holat va muddat.
         "crm_session": crm,
         # Foydalanuvchi ulanishlari: sozlanganmi va nechta odam ulangan.

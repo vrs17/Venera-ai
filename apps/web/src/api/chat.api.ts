@@ -61,6 +61,11 @@ export async function askAi(question: string, signal?: AbortSignal): Promise<Pip
 /** Frames arrive in this order: stage… sources, artifact?, token…, done.
  *  On failure an `error` frame comes instead of the tokens, then `done`. */
 export interface StreamOptions {
+  /** True while the voice panel is open, so the backend may send holding
+   *  phrases to fill the wait. Left out entirely in text mode. */
+  voice?: boolean
+  /** UI locale — the holding phrase comes back in this language. */
+  locale?: string
   /** Conversation key. Turns sharing it share the assistant's server-side
    *  memory, so follow-up questions ("va o'tgan oyda?") work. */
   chatId?: string | null
@@ -87,7 +92,16 @@ export async function streamAsk(
       Accept: 'application/x-ndjson',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ question, chatId: options.chatId ?? undefined }),
+    body: JSON.stringify({
+      question,
+      chatId: options.chatId ?? undefined,
+      // VOICE MODE IS DECLARED BY THE CLIENT, and it has to be: the server
+      // cannot know whether anyone is listening. Holding phrases (`hold`
+      // frames) are only sent when it is true — in a text chat the wait is
+      // already visible, so "One moment, checking" would be pure noise.
+      voice: options.voice ?? undefined,
+      locale: options.locale ?? undefined,
+    }),
     signal: options.signal,
   })
 

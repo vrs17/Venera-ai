@@ -224,6 +224,23 @@ Ya'ni `app/services/tts.py` dagi `risky_for_normalizer()` shu ikki naqshni
 qidiradi va topsa normalizatsiyani o'chiradi - xato javobdan ko'ra raqamni
 model o'zicha o'qigani afzal.
 
+**Sana, vaqt, qisqartma - normalizatorga BERILMAYDI.** Ular yomon o'qiladi
+(jonli, TTS ovozi STT bilan qayta matnga o'girilib tekshirilgan), shuning
+uchun `app/services/speech_text.py` ularni oldinroq o'zbekcha so'z bilan
+yozadi. Ekrandagi javob o'zgarmaydi - faqat TTS'ga ketadigan nusxa:
+
+| Matnda | Normalizator bilan eshitilardi | Endi |
+|---|---|---|
+| `09.09.2025dan` | HTTP 422 - javob OVOZSIZ | "ikki ming yigirma beshinchi yil to'qqizinchi sentabrdan" |
+| `2026-10-21` | "ikki ming yigirma olti o'n yigirma bir" | "yigirma birinchi oktabr" (joriy yil aytilmaydi) |
+| `25.09.2026-30.09.2026` | "... yil, yil o'ttizinchi ..." | "yigirma beshinchi sentabrdan o'ttizinchi sentabrgacha" |
+| `09:00-18:00` | "to'qqiz nol o'n sakkiz nol" | "soat to'qqizdan o'n sakkizgacha" |
+| `“BRB-TECH” MCHJ` | "b chepche" | "BRB-TECH mas'uliyati cheklangan jamiyati" |
+
+Normalizator baribir yangi naqshda 422 bersa, matn bir marta
+normalizatsiyasiz qayta yuboriladi va jurnalga WARNING yoziladi: javob jim
+qolmaydi, naqsh esa `speech_text.py` ga qo'shilishi kerak.
+
 **Nega `l16`, `wav` emas.** Oqim boshida umumiy uzunlik hali noma'lum,
 shuning uchun server `format=wav` da WAV sarlavhasidagi ikkala hajm maydoniga
 `0xFFFFFFFF` yozadi: audio to'g'ri, lekin pleyerlar davomiylikni **74 soat**

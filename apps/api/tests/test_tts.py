@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import http.client
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -51,6 +52,11 @@ class FakeServer:
         self.chunks = [PCM, PCM, PCM]
         #: Nechanchi bo'lakdan keyin ulanish uziladi (oqim o'rtasidagi nosozlik).
         self.cut_after: int | None = None
+        #: Haqiqiy normalizator xatosi (jonli, 2026-09-23): qo'shimchasi
+        #: YOPISHGAN sana (`09.09.2025dan`) -> 422.
+        self.glued_date_bug = False
+        #: Biz bilmagan naqsh: normalizatsiya yoqilgan HAR QANDAY matn -> 422.
+        self.normalizer_crash = False
 
     def open(self, request, timeout=None):
         path = "/" + request.full_url.split("://", 1)[1].split("/", 1)[1]
@@ -70,6 +76,12 @@ class FakeServer:
             if self.stream_status:
                 raise _http_error(path, self.stream_status,
                                   "Matnni normalizatsiya qilib bo'lmadi: list index out of range")
+            if payload["normalize_numbers"] and (
+                self.normalizer_crash
+                or (self.glued_date_bug
+                    and re.search(r"\d{1,2}\.\d{1,2}\.\d{4}[^\W\d_]", payload["text"]))
+            ):
+                raise _http_error(path, 422, "invalid literal for int() with base 10: '09.2025'")
             return _stream(self.chunks, {
                 "x-stream-id": "abc123",
                 "x-chunk-count": str(len(self.chunks)),
@@ -285,6 +297,89 @@ def test_risky_ishlaydiganlarga_tegmaydi(text):
     """Har bir noto'g'ri "ha" BUTUN gapdagi raqamlarni normalizatsiyasiz
     qoldiradi - ya'ni bitta sana tufayli "2450000" ham buzilib o'qilardi."""
     assert not risky_for_normalizer(text), f"ishlaydigan holat tuzoq deb belgilandi: {text}"
+
+
+@pytest.mark.parametrize("text", [
+    "Siz 01.09.2026, 03.09.2026 va 05.09.2026 kunlari kechikdingiz",
+    "Ta'til 25.09.2026 - 30.09.2026",
+    "Ta'til 25.09.2026-30.09.2026",
+])
+def test_sanalar_royxati_karta_emas(text):
+    """JONLI (2026-09-23): ikki sana yonma-yon kelsa "16 xonali raqam" deb
+    topilardi va BUTUN javob normalizatsiyasiz ketardi - sanalar "mundoq
+    suzish ikki ming yigirma besh" bo'lib eshitildi. Normalizator esa ularni
+    to'g'ri o'qiydi."""
+    assert not risky_for_normalizer(text), f"sanalar karta deb topildi: {text}"
+
+
+def test_yopishgan_sana_ovozsiz_qolmaydi(tts, server):
+    """JONLI XATO (2026-09-23): "...09.09.2025dan tuzilgan..." javobi 422
+    bilan rad etildi va odam javobni ESHITMADI. Endi sana serverga raqam
+    bo'lib umuman bormaydi - so'z bilan yoziladi (`speech_text.py`)."""
+    server.glued_date_bug = True
+    assert drain(tts, "Shartnoma 09.09.2025dan tuzilgan.") == PCM * 3
+    calls = [c[1] for c in server.calls if c[0] == "/api/v1/tts/stream"]
+    assert len(calls) == 1, "zahiraga tushdi - sana so'zga aylanmadi"
+    assert calls[0]["normalize_numbers"] is True
+    assert "to'qqizinchi sentabrdan tuzilgan" in calls[0]["text"]
+    assert "09.09.2025" not in calls[0]["text"]
+
+
+def test_sozlar_qisqartirishdan_keyin_qoshiladi(tts, server):
+    """Klient javobni 3000 belgiga O'ZI sig'diradi. So'zlar matnni uzaytiradi
+    - agar ular qisqartirishdan OLDIN qo'shilsa, sig'dirilgan javobning
+    oxiri shu uzayish hisobiga kesilib qolardi."""
+    text = ("Muddat 25.09.2026. " * 150).strip()        # 2849 belgi, chegaradan past
+    assert len(text) < 3000
+    drain(tts, text, max_chars=3000)
+    sent = next(c[1]["text"] for c in server.calls if c[0] == "/api/v1/tts/stream")
+    assert sent.count("sentabr") == 150, "javob oxiri kesildi"
+
+
+def test_nomalum_naqshda_normalizatsiyasiz_qayta_yuboriladi(tts, server):
+    """Biz bilmagan yangi naqsh: raqamlar yomonroq o'qilgani jim qolishdan
+    afzal."""
+    server.normalizer_crash = True
+    assert drain(tts, "Qarzdorlik 2450000 som") == PCM * 3
+    flags = [c[1]["normalize_numbers"] for c in server.calls if c[0] == "/api/v1/tts/stream"]
+    assert flags == [True, False]
+
+
+def test_500_da_qayta_yuborilmaydi(tts, server):
+    """500 - GPU/model xatosi: qayta urinish uni tuzatmaydi, faqat GPU
+    navbatiga ikkinchi og'ir so'rov qo'shadi."""
+    server.stream_status = 500
+    with pytest.raises(TtsError):
+        drain(tts)
+    assert sum(c[0] == "/api/v1/tts/stream" for c in server.calls) == 1
+
+
+def test_zahira_ham_yiqilsa_bir_marta(tts, server):
+    """Zahira BITTA: ikkinchi 422 foydalanuvchiga o'z xabari bilan boradi."""
+    server.stream_status = 422
+    with pytest.raises(TtsError) as caught:
+        drain(tts)
+    assert caught.value.status == 422
+    assert sum(c[0] == "/api/v1/tts/stream" for c in server.calls) == 2
+
+
+def test_normalizatsiyasiz_matn_qayta_yuborilmaydi(tts, server):
+    """Normalizatsiya allaqachon o'chiq bo'lsa, zahira ma'nosiz."""
+    server.stream_status = 422
+    with pytest.raises(TtsError):
+        drain(tts, "Kartangiz 8600123456789012 raqami")
+    assert sum(c[0] == "/api/v1/tts/stream" for c in server.calls) == 1
+
+
+def test_zahira_slotni_sizdirmaydi(server):
+    """Qayta urinish slot ichida: ikkalasi yiqilsa ham slot qaytishi kerak."""
+    client = TtsClient("http://tts", "frontend", "s3cret", max_concurrent=1, queue_wait=0.05)
+    server.stream_status = 422
+    for _ in range(3):
+        with pytest.raises(TtsError):
+            client.stream("salom")
+    server.stream_status = None
+    assert b"".join(client.stream("salom").chunks), "slot sizib ketdi"
 
 
 def test_qisqa_ttl_da_kesh_olmaydi(server, monkeypatch):
@@ -608,6 +703,18 @@ def test_yuqoridagi_401_brauzerga_502(client, auth, monkeypatch, server):
     )
     response = _speak(client, auth, language="uz")
     assert response.status_code == 502, "sozlama xatosi foydalanuvchi 401 iga aylandi"
+
+
+def test_endpoint_yopishgan_sanali_javob_ovozli(client, auth, monkeypatch, server):
+    """Foydalanuvchi ko'rgan holat: "Javob keldi, lekin ovoz tayyorlanmadi"."""
+    import app.api.v1.tts as module
+    monkeypatch.setattr(module, "_client", TtsClient("http://tts", "frontend", "s3cret"))
+    server.glued_date_bug = True
+    response = _speak(client, auth, language="uz",
+                      text="Ariza tayyorlandi: 09.09.2025dan tuzilgan mehnat shartnomasini "
+                           "bekor qilishni so'rayman. Sana: 25.09.2026")
+    assert response.status_code == 200
+    assert response.content == PCM * 3
 
 
 def _raise(exc):

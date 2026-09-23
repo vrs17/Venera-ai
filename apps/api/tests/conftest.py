@@ -125,3 +125,41 @@ def _stt_provider_pinned(monkeypatch, tmp_path):
 
     monkeypatch.setattr(settings, "stt_provider", "router", raising=False)
     monkeypatch.setattr(settings, "stt_wake_provider", "router", raising=False)
+    # Kutish ovozlarini QIZDIRMASLIK: `startup` hodisasi jonli TTS
+    # serveriga chiqib ketardi (12 ta sintez, har test yurishida).
+    monkeypatch.setattr(settings, "hold_warm", False, raising=False)
+    # Savolni tasniflaydigan model ham TASHQI va PULLIK xizmat. Test
+    # natijasi mashinaning `.env` iga bog'liq bo'lmasligi kerak, va hech
+    # bir test hisobdan pul yechmasligi kerak - modelning O'ZI
+    # `test_hold.py` da soxta transport bilan sinaladi.
+    import app.api.v1.chat as chat_module
+
+    monkeypatch.setattr(chat_module._hold_classifier, "_api_key", "", raising=False)
+    # Tayyor kutish ovozlari keshi HAR TESTDA bo'sh va vaqtinchalik.
+    #
+    # Aks holda test natijasi mashinada sintez qilingan ovozlarga bog'liq
+    # bo'lardi - va aynan shunday bo'ldi: jonli xizmat 12 ta ovozni
+    # yasagandan keyin "ovoz tayyor emas" testi 404 o'rniga 200 oldi.
+    from app.services.hold import HoldVoices
+
+    monkeypatch.setattr(chat_module, "_hold_voices",
+                        HoldVoices(tmp_path / "hold"), raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _telegram_bot_off(tmp_path, monkeypatch):
+    """Telegram bot HAR TESTDA o'chiq, ulanishlar ombori esa vaqtinchalik.
+
+    `TestClient` ilovani ishga tushiradi va `startup` hodisasi botni
+    yoqardi - `.env` dagi JONLI token bilan. U holda test yurishi haqiqiy
+    odamlarning xabarlarini Telegram'dan olib ("yutib") yuborardi, ya'ni
+    ular javobsiz qolardi. Ulanishlar fayli ham jonli ma'lumot.
+    """
+    import app.bot as bot_module
+    from app.services.integrations.telegram import TelegramApi
+    from app.services.telegram_links import LinkStore
+
+    monkeypatch.setattr(settings, "telegram_bot_enabled", False, raising=False)
+    monkeypatch.setattr(bot_module, "api", TelegramApi(""), raising=False)
+    monkeypatch.setattr(bot_module, "links", LinkStore(tmp_path / "telegram" / "links.json"),
+                        raising=False)

@@ -139,6 +139,64 @@ class Settings(BaseSettings):
     #: chegarasidan past, ya'ni foydalanuvchining SAVOLI uchun joy qoladi.
     wake_gapi_total_min: int = 45
 
+    # --- USHLAB TURISH (kutish ovozi) ---
+    #
+    # MUAMMO. Ovozli suhbatda HRM/CRM javobi darhol kelmaydi: o'lchangan
+    # `hrm` 3-4 s, `rules` 15.7 s mediana va 38.7 s p90 (eng yomoni 72.6 s).
+    # Shu paytda Venera JIM turadi - odam esa "eshitdimi?" deb o'ylab
+    # savolni qaytaradi yoki panelni tashlab ketadi.
+    #
+    # TARTIB:
+    #   t=0    STT matni -> HRM/CRM ga (javob) + PARALLEL -> gemma (tasnif)
+    #   t~0.8  gemma: mavzu|ohang -> mos TAYYOR ovoz darhol o'ynaladi
+    #   har `hold_repeat_ms` da - javob hali yo'q bo'lsa, keyingi ovoz
+    #   javob  joriy ovoz OXIRIGACHA eshittiriladi, keyin javob TTS orqali
+    #
+    # Model gapni YOZMAYDI, faqat TANLAYDI (`services/hold.py` sababini
+    # o'lchovlar bilan yozadi): tayyor ovozda TTS kutilmaydi, va model javobni
+    # to'qib qo'ya olmaydi.
+    hold_enabled: bool = True
+    #: Tasnifni shuncha kutamiz, keyin birinchi ovoz ZAHIRA (kalit so'z)
+    #: bilan tanlanadi. O'lchangan tasnif mediana 0.77 s, eng sekini 1.48 s.
+    #: Kutish ovozining butun ma'nosi TEZ tan olishda - ya'ni model kechiksa,
+    #: undan ko'ra jadval yaxshiroq. Kech kelgan model yorlig'i keyingi
+    #: ovozlar uchun baribir ishlatiladi.
+    hold_first_ms: int = 1200
+    #: Javob hali kelmagan bo'lsa, har shuncha vaqtda keyingi ovoz. Ovozlar
+    #: 1.5-3.5 s, ya'ni orada 6 sekunddan ko'p sukunat qoladi: tinimsiz
+    #: gapirish ham, uzoq jimlik ham yomon.
+    hold_repeat_ms: int = 9000
+    #: Bitta savol uchun eng ko'pi. 4 ta: ~27 sekundgacha qoplaydi, ya'ni
+    #: `rules` yo'lining ko'p qismini (p90 38.7 s). Undan keyin ham gapirish
+    #: suhbat emas, shovqin bo'ladi.
+    hold_max: int = 4
+    #: Tayyor ovozlar shu papkada. Diskda saqlanadi, chunki 44 ta ovozni
+    #: sintez qilish ~50 sekund oladi va har qayta ishga tushganda qaytadan
+    #: to'lash bekor.
+    hold_voice_dir: Path = BASE_DIR / "data" / "hold"
+    #: Ishga tushganda yetishmayotgan ovozlarni sintez qilish. Testlarda
+    #: O'CHIRILADI (`conftest.py`): aks holda har test yurishi jonli TTS
+    #: serveriga chiqib ketardi.
+    hold_warm: bool = True
+
+    # --- Ollama (savolni tasniflaydigan model) ---
+    #: Ollama Cloud. Lokal server ISHLATILMAYDI: bu hostda 3.9 GB RAM va GPU
+    #: yo'q, ustiga jonli Venera servislari turadi.
+    ollama_base_url: str = "https://ollama.com"
+    #: Kalit. `.env` da tarixiy sabab bilan `VENERA_API_URL` deb yozilgan
+    #: (nomi noto'g'ri - u URL emas, token), shuning uchun IKKI nom ham
+    #: o'qiladi: avval `OLLAMA_API_KEY`, keyin `VENERA_API_URL`.
+    ollama_api_key: str = ""
+    venera_api_url: str = ""
+    ollama_model: str = "gemma4:31b"
+    #: Tasnif so'rovining o'z chegarasi. Birinchi ovoz uni kutmaydi
+    #: (`hold_first_ms`), lekin kechroq kelgan yorliq keyingi ovozlar uchun
+    #: ishlatiladi - shuning uchun bu 1.2 sekunddan uzunroq.
+    ollama_timeout: float = 2.5
+    #: Bir vaqtda nechta tasnif. Har ovozli savolga bittadan, navbatsiz:
+    #: to'lgan bo'lsa zahira darhol ishlaydi.
+    ollama_max_concurrent: int = 4
+
     # --- TTS (matnni ovozga o'girish) ---
     #: TTS serveri. Ichki tarmoqda, VPN ortida - STT bilan bir xil hostda,
     #: boshqa portda.
@@ -365,6 +423,19 @@ def _env_token(key: str, fallback: str = "") -> str:
         resolved = value if value is not None else ""
         _token_cache[key] = (mark, resolved)
         return resolved
+
+
+def ollama_key_now() -> str:
+    """Ollama kaliti - IKKI nomdan.
+
+    `.env` da kalit `VENERA_API_URL` deb yozilgan, holbuki u URL emas,
+    token (shakli `<32 hex>.<24 belgi>`). Nomni `.env` da tuzatish jonli
+    xizmatni buzadi, shuning uchun kod ikkalasini ham qabul qiladi va
+    to'g'ri nom BIRINCHI o'rinda turadi - keyin `.env` ni bemalol
+    tozalash mumkin.
+    """
+    return _env_token("ollama_api_key", settings.ollama_api_key) or \
+        _env_token("venera_api_url", settings.venera_api_url)
 
 
 def hrm_token_now() -> str:
