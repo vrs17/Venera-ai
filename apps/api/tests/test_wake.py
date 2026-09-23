@@ -232,7 +232,7 @@ def test_qaror_va_matn_qaytadi(client, auth, monkeypatch, tmp_path):
     from app.services.stt import Transcript
     import app.api.v1.stt as module
 
-    monkeypatch.setattr(module._client, "transcribe",
+    monkeypatch.setattr(module._router_client, "transcribe",
                         lambda audio, **kw: Transcript(text="salom venera", language="uz"))
     monkeypatch.setattr(module, "_wake_log", WakeLog(tmp_path))
 
@@ -251,7 +251,7 @@ def test_buzilgan_audio_haqida_aytiladi(client, auth, monkeypatch, tmp_path):
     from app.services.stt import Transcript
     import app.api.v1.stt as module
 
-    monkeypatch.setattr(module._client, "transcribe",
+    monkeypatch.setattr(module._router_client, "transcribe",
                         lambda audio, **kw: Transcript(text="assalomu alaykum", language="uz"))
     monkeypatch.setattr(module, "_wake_log", WakeLog(tmp_path))
     tone = _tone()
@@ -277,7 +277,7 @@ def test_stt_xatosi_jim_otadi(client, auth, monkeypatch, tmp_path):
     def busy(audio, **kw):
         raise SttError("navbat to'la", status=503, retryable=True)
 
-    monkeypatch.setattr(module._client, "transcribe", busy)
+    monkeypatch.setattr(module._router_client, "transcribe", busy)
     monkeypatch.setattr(module, "_wake_log", WakeLog(tmp_path))
     response = client.post("/api/v1/stt/wake", files=_clip(),
                            data={"language": "uz"}, headers=auth)
@@ -290,6 +290,158 @@ def test_stt_xatosi_jim_otadi(client, auth, monkeypatch, tmp_path):
     assert body["checked"] is False
 
 
+def _fake_transcript(text: str):
+    from app.services.stt import Transcript
+
+    return Transcript(text=text, language="uz", backend="uzbek_stt",
+                      model="uzbek_stt_v1", duration_sec=1.2, elapsed_sec=0.1)
+
+
+def _wake_on_gapi(monkeypatch, module):
+    """Uyg'otishni 2-variantga o'tkazadi (conftest hammasini `router` ga
+    qadab qo'yadi - bu testlar aynan GAPI yo'lini sinaydi, lekin TARMOQQA
+    chiqmaydi: klientlarning `transcribe`'si almashtiriladi)."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "stt_wake_provider", "gapi")
+    monkeypatch.setattr(module._gapi_client, "_api_key", "gapi_test_kalit")
+
+
+def test_gapi_berilmasa_uygotish_routerga_tushadi(client, auth, monkeypatch, tmp_path):
+    """Uyg'otish 2-variantda, ammo chegara urilganda 1-variant davom ettiradi.
+
+    NEGA BU KERAK. GAPI uyg'otish uchun PULLIK va chegaralangan: kunlik
+    480 audio-daqiqa, daqiqasiga 60 yuklash (bitta parcha o'lchangan narxi
+    0.03 g). Zahirasiz kvota tugagan kuni uyg'otish YARIM KECHAGACHA
+    butunlay ishlamas edi: tinglagich xatolarni ko'rib oraliqni 60
+    sekundgacha uzaytiradi, ya'ni odam "Salom Venera" deb chaqirsa ham
+    javob bo'lmasdi - va buni hech kim jurnalga qaramasa bilmasdi.
+    """
+    from app.services.stt import SttError
+    import app.api.v1.stt as module
+
+    _wake_on_gapi(monkeypatch, module)
+    calls: list[str] = []
+
+    def chegara(audio, **kw):
+        calls.append("gapi")
+        raise SttError("kunlik chegara tugadi", status=429, retryable=True)
+
+    def router(audio, **kw):
+        calls.append("router")
+        return _fake_transcript("salom venera")
+
+    monkeypatch.setattr(module._gapi_wake_client, "transcribe", chegara)
+    monkeypatch.setattr(module._router_client, "transcribe", router)
+    monkeypatch.setattr(module, "_wake_log", WakeLog(tmp_path))
+
+    body = client.post("/api/v1/stt/wake", files=_clip(),
+                       data={"language": "uz"}, headers=auth).json()
+    assert calls == ["gapi", "router"], "zahiraga tushmadi"
+    assert body["matched"] is True
+    assert body["checked"] is not False
+
+
+@pytest.mark.parametrize("status", [400, 413, 415])
+def test_yaroqsiz_parcha_ikki_marta_yuborilmaydi(client, auth, monkeypatch, tmp_path, status):
+    """Yaroqsiz parcha Router'da ham yaroqsiz. Ikkinchi urinish - behuda
+    sarf va ikki barobar kechikish, natija esa o'sha."""
+    from app.services.stt import SttError
+    import app.api.v1.stt as module
+
+    _wake_on_gapi(monkeypatch, module)
+    calls: list[str] = []
+
+    def yaroqsiz(audio, **kw):
+        calls.append("gapi")
+        raise SttError("audio yaroqsiz", status=status)
+
+    def router(audio, **kw):
+        calls.append("router")
+        return _fake_transcript("salom venera")
+
+    monkeypatch.setattr(module._gapi_wake_client, "transcribe", yaroqsiz)
+    monkeypatch.setattr(module._router_client, "transcribe", router)
+    monkeypatch.setattr(module, "_wake_log", WakeLog(tmp_path))
+
+    body = client.post("/api/v1/stt/wake", files=_clip(),
+                       data={"language": "uz"}, headers=auth).json()
+    assert calls == ["gapi"], "Router'ga behuda yuborildi"
+    assert body["checked"] is False
+
+
+def test_byudjet_tugasa_routerga_tushadi(client, auth, monkeypatch, tmp_path):
+    """Pullik so'rovlar byudjeti tugaganda uyg'otish TO'XTAMAYDI - bepul
+    1-variant davom ettiradi.
+
+    Chegara MIJOZDA turgan edi (`COOLDOWN_MS = 2500`), ya'ni o'zgartirilgan
+    sahifa yoki bir odamning uchta varag'i hisobni yeb qo'yishi mumkin edi.
+    Server tomonidagi byudjet mijozga bog'liq emas.
+    """
+    import app.api.v1.stt as module
+    from app.core.config import settings
+
+    _wake_on_gapi(monkeypatch, module)
+    monkeypatch.setattr(settings, "wake_gapi_total_min", 1)
+    monkeypatch.setattr(module, "_wake_budget", module._WakeBudget())
+    calls: list[str] = []
+
+    def gapi(audio, **kw):
+        calls.append("gapi")
+        return _fake_transcript("salom venera")
+
+    def router(audio, **kw):
+        calls.append("router")
+        return _fake_transcript("salom venera")
+
+    monkeypatch.setattr(module._gapi_wake_client, "transcribe", gapi)
+    monkeypatch.setattr(module._router_client, "transcribe", router)
+    monkeypatch.setattr(module, "_wake_log", WakeLog(tmp_path))
+
+    for _ in range(3):
+        body = client.post("/api/v1/stt/wake", files=_clip(),
+                           data={"language": "uz"}, headers=auth).json()
+        # Har safar ishlaydi - byudjet FAQAT qaysi xizmat ishlashini
+        # hal qiladi, ishlash-ishlamaslikni emas.
+        assert body["matched"] is True
+    assert calls == ["gapi", "router", "router"], calls
+
+
+def test_uygotish_vaqt_byudjeti_qisqa():
+    """Uyg'otish parchasi savol byudjetini olmasligi kerak.
+
+    `gapi_timeout = 60` va `stt_deadline = 100` - SAVOL uchun o'lchangan.
+    Uyg'otish parchasi har 2.5 sekundda keladi va brauzer keyingisini
+    yuborganda oldingisini bekor qiladi, ya'ni 60 sekund kutish javobsiz
+    qoladigan, lekin slotni va threadpool ishchisini band qilib turadigan,
+    ustiga PULI ketgan ish bo'lardi.
+    """
+    import app.api.v1.stt as module
+
+    assert module._gapi_wake_client.timeout <= 8.0
+    assert module._gapi_wake_client.deadline <= 10.0
+
+
+def test_uygotish_savolning_slotini_olmaydi():
+    """O'LCHANGAN XAVF. Bitta klientda slotlar umumiy bo'lardi va 4 ta
+    parallel so'rovdan to'rtinchisi `503 ilova GAPI chegarasida` olgan
+    edi - ya'ni tinglagich har 2.5 sekundda parcha yuborib turganda
+    foydalanuvchining SAVOLI "Ovoz xizmati band" xatosini olishi mumkin
+    edi. Uyg'otish Router'da turganda bunday bo'lishi mumkin emas edi.
+
+    Shuning uchun uyg'otishning ALOHIDA semafori bor: fon ishi asosiy
+    ishning ikki slotiga tegmaydi.
+    """
+    import app.api.v1.stt as module
+
+    assert module._gapi_wake_client is not module._gapi_client
+    assert module._gapi_wake_client.max_concurrent == 1
+    assert module._gapi_wake_client._slots is not module._gapi_client._slots
+    # Fon ishi kutib qayta urinmaydi: kechikkan uyg'otishning qadri yo'q,
+    # va `Retry-After` kutishi threadpool ishchisini ushlab turardi.
+    assert module._gapi_wake_client.attempts == 1
+
+
 def test_katta_audio_rad_etiladi(client, auth):
     """Uyg'otish parchasi qisqa (0.35-2.6 s). Kattasi xato yoki suiiste'mol."""
     import io
@@ -300,6 +452,140 @@ def test_katta_audio_rad_etiladi(client, auth):
 
 
 # --- yuqoridagi xizmatlar holati --------------------------------------------
+
+
+@pytest.mark.parametrize("status", [402, 429, 502, 503, 504])
+def test_savol_ham_kvota_tugasa_routerga_tushadi(client, auth, monkeypatch, status):
+    """SAVOL yo'li ham zahirali bo'lishi kerak, nafaqat uyg'otish.
+
+    Avval zahira faqat uyg'otishda edi va assimetriya noto'g'ri edi: kvota
+    tugagan kuni mikrofon tugmasi kun oxirigacha xato qaytarardi, holbuki
+    ichki Router bepul, chegarasiz va bir qadam narida turgan. Ovoz
+    butunlay o'lgandan ko'ra Router'ning matni (kichik harf, tinish
+    belgisisiz) aniq afzal.
+    """
+    from app.services.stt import SttError
+    import app.api.v1.stt as module
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "stt_provider", "gapi")
+    monkeypatch.setattr(module._gapi_client, "_api_key", "gapi_test_kalit")
+    calls: list[str] = []
+
+    def gapi(audio, **kw):
+        calls.append("gapi")
+        raise SttError("chegara", status=status, retryable=True)
+
+    def router(audio, **kw):
+        calls.append("router")
+        return _fake_transcript("bugun kim kechikdi")
+
+    monkeypatch.setattr(module._gapi_client, "transcribe", gapi)
+    monkeypatch.setattr(module._router_client, "transcribe", router)
+
+    response = client.post("/api/v1/stt/transcribe", files=_clip(),
+                           data={"language": "uz"}, headers=auth)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["text"] == "bugun kim kechikdi"
+    # Javob QAYSI variant ishlaganini aytadi - almashish jim emas.
+    assert body["backend"] == "uzbek_stt"
+    assert calls == ["gapi", "router"], calls
+
+
+@pytest.mark.parametrize("status", [400, 413, 415, 422])
+def test_savolda_yaroqsiz_audio_ikki_marta_yuborilmaydi(client, auth, monkeypatch, status):
+    """Yaroqsiz parcha Router'da ham yaroqsiz: ikkinchi urinish kechikishni
+    ikki barobar qilib, natijani o'zgartirmaydi."""
+    from app.services.stt import SttError
+    import app.api.v1.stt as module
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "stt_provider", "gapi")
+    monkeypatch.setattr(module._gapi_client, "_api_key", "gapi_test_kalit")
+    calls: list[str] = []
+
+    def gapi(audio, **kw):
+        calls.append("gapi")
+        raise SttError("yaroqsiz", status=status)
+
+    def router(audio, **kw):
+        calls.append("router")
+        return _fake_transcript("bo'lmasin")
+
+    monkeypatch.setattr(module._gapi_client, "transcribe", gapi)
+    monkeypatch.setattr(module._router_client, "transcribe", router)
+
+    response = client.post("/api/v1/stt/transcribe", files=_clip(),
+                           data={"language": "uz"}, headers=auth)
+    assert calls == ["gapi"], calls
+    assert response.status_code == status
+
+
+def test_router_ham_yiqilsa_xato_yashirilmaydi(client, auth, monkeypatch):
+    """Zahira ham ishlamasa foydalanuvchi ROSTINI ko'rishi kerak - jim
+    "matn yo'q" emas."""
+    from app.services.stt import SttError
+    import app.api.v1.stt as module
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "stt_provider", "gapi")
+    monkeypatch.setattr(module._gapi_client, "_api_key", "gapi_test_kalit")
+
+    def gapi(audio, **kw):
+        raise SttError("chegara", status=429, retryable=True)
+
+    def router(audio, **kw):
+        raise SttError("navbat to'la", status=503, retryable=True)
+
+    monkeypatch.setattr(module._gapi_client, "transcribe", gapi)
+    monkeypatch.setattr(module._router_client, "transcribe", router)
+
+    response = client.post("/api/v1/stt/transcribe", files=_clip(),
+                           data={"language": "uz"}, headers=auth)
+    assert response.status_code == 503
+    assert "band" in response.json()["message"].lower()
+    # Ichki manzil yoki kalit chiqmasligi kerak.
+    assert "10.10.50" not in response.text
+
+
+def test_kvota_xatosi_rostini_aytadi(client, auth, monkeypatch):
+    """Pullik chegara tugaganda foydalanuvchi ROSTINI ko'rishi kerak.
+
+    429 `_MESSAGES` da yo'q bo'lganda status 502 ga tushib, ekranda "Ovoz
+    xizmati javob bermadi" chiqardi - holbuki xizmat javob bergan, faqat
+    bizning chegaramiz tugagan. Yolg'on xabar muammoni yashiradi va odam
+    tarmoqni tekshira boshlaydi.
+    """
+    from app.services.stt import SttError
+    import app.api.v1.stt as module
+
+    def chegara(audio, **kw):
+        raise SttError("kunlik chegara", status=429, retryable=True)
+
+    monkeypatch.setattr(module._router_client, "transcribe", chegara)
+    response = client.post("/api/v1/stt/transcribe", files=_clip(),
+                           data={"language": "uz"}, headers=auth)
+    assert response.status_code == 429
+    assert "chegara" in response.json()["message"]
+
+
+def test_gapi_da_uz_backend_ogohlantirishi_boshqacha(monkeypatch):
+    """Ogohlantirish YOLG'ON aytmasligi kerak: o'zbek yo'llari GAPI da
+    bo'lsa, Router'ning uz backend'i o'chgani uyg'otishni to'xtatmaydi."""
+    from app.core.config import settings
+    from app.services.upstream import warnings_for
+
+    monkeypatch.setattr(settings, "stt_provider", "gapi")
+    monkeypatch.setattr(settings, "stt_wake_provider", "gapi")
+    warnings = warnings_for({
+        "stt": {"status": "degraded", "broken": ["uzbek_stt"]},
+        "tts": {"status": "ok"},
+    })
+    assert len(warnings) == 1
+    assert "ISHLAMAYDI" not in warnings[0]
+    # Lekin ZAHIRA yo'qolgani aytilishi kerak - bu haqiqiy xavf.
+    assert "ZAHIRA" in warnings[0]
 
 
 def test_uz_backend_ochganda_health_aytadi():
@@ -351,3 +637,95 @@ def test_upstream_yiqilsa_health_yiqilmaydi(monkeypatch):
     snapshot = health.snapshot()
     assert snapshot["stt"]["status"] == "unreachable"
     assert snapshot["tts"]["status"] == "unreachable"
+
+
+def test_gapi_500_da_ham_zahira_ishlaydi(client, auth, monkeypatch):
+    """Qoida TESKARI: zahira faqat MIJOZ xatosida ishlamaydi.
+
+    Avval "zahira ishlaydigan kodlar" ro'yxati bor edi va u jimgina
+    to'liqsiz chiqdi - GAPI o'z serverida 500 (yoki 507, 409) bersa kod
+    ro'yxatda yo'q edi va foydalanuvchiga xato ketardi, holbuki bepul
+    Router bir qadam narida turgan.
+    """
+    from app.services.stt import SttError
+    import app.api.v1.stt as module
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "stt_provider", "gapi")
+    monkeypatch.setattr(module._gapi_client, "_api_key", "gapi_test_kalit")
+    calls: list[str] = []
+
+    def gapi(audio, **kw):
+        calls.append("gapi")
+        raise SttError("GAPI 500 internal", status=500)
+
+    def router(audio, **kw):
+        calls.append("router")
+        return _fake_transcript("bugun kim kechikdi")
+
+    monkeypatch.setattr(module._gapi_client, "transcribe", gapi)
+    monkeypatch.setattr(module._router_client, "transcribe", router)
+
+    response = client.post("/api/v1/stt/transcribe", files=_clip(),
+                           data={"language": "uz"}, headers=auth)
+    assert response.status_code == 200
+    assert calls == ["gapi", "router"], calls
+
+
+def test_zahira_hisoblanadi_va_health_aytadi(client, auth, monkeypatch):
+    """Zahira ishlagani KO'RINADIGAN joyda turishi kerak.
+
+    Zahira ishlaganda foydalanuvchi uchun hammasi joyida ko'rinadi - va
+    aynan shu xavfli: tizim kun bo'yi 1-variantda ishlab, health esa
+    `provider=gapi` deb ko'rsatib turishi mumkin edi.
+    """
+    from app.services.stt import SttError
+    import app.api.v1.stt as module
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "stt_provider", "gapi")
+    monkeypatch.setattr(module._gapi_client, "_api_key", "gapi_test_kalit")
+    monkeypatch.setattr(module, "_fallbacks", module._FallbackLog())
+
+    monkeypatch.setattr(module._gapi_client, "transcribe",
+                        lambda audio, **kw: (_ for _ in ()).throw(
+                            SttError("kvota", status=429, retryable=True)))
+    monkeypatch.setattr(module._router_client, "transcribe",
+                        lambda audio, **kw: _fake_transcript("javob"))
+
+    client.post("/api/v1/stt/transcribe", files=_clip(),
+                data={"language": "uz"}, headers=auth)
+
+    snap = module._fallbacks.snapshot()
+    assert snap["total"] == 1
+    assert snap["last_5min"] == 1
+    assert snap["last_status"] == 429
+    assert snap["last_path"] == "Transkripsiya"
+
+    detail = client.get("/api/health/detail", headers=auth).json()
+    assert detail["stt"]["fallback"]["last_5min"] == 1
+    assert any("zahirasi" in w for w in detail["warnings"]), detail["warnings"]
+
+
+def test_oxirgi_urinishdan_keyin_uxlamaydi(monkeypatch):
+    """`attempts=1` bo'lgan klient ham bekorga uxlardi - shu vaqt davomida
+    PULLIK slot va threadpool ishchisi band turardi."""
+    import time as _time
+    import urllib.request
+    from app.services.integrations.gapi_stt import GapiSttClient
+    from app.services.stt import SttError
+    from tests.test_gapi_stt import FakeGapi, KEY, BASE, AUDIO
+
+    fake = FakeGapi()
+    fake.fail = (429, {"error": "rate_limited"}, {"Retry-After": "60"})
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    uxlagan: list[float] = []
+    monkeypatch.setattr(_time, "sleep", lambda s: uxlagan.append(s))
+    import app.services.integrations.gapi_stt as mod
+    monkeypatch.setattr(mod.time, "sleep", lambda s: uxlagan.append(s))
+
+    client = GapiSttClient(BASE, KEY, timeout=5, deadline=30, attempts=1)
+    with pytest.raises(SttError):
+        client.transcribe(AUDIO, language="uz")
+    assert uxlagan == [], f"bekorga uxladi: {uxlagan}"
+    assert len(fake.calls) == 1

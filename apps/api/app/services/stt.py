@@ -155,6 +155,7 @@ class SttClient:
         *,
         language: str,
         content_type: str = "audio/wav",
+        budget: float | None = None,
     ) -> Transcript:
         """Audio -> matn, AYNAN so'ralgan tilda.
 
@@ -178,14 +179,21 @@ class SttClient:
                 status=503, retryable=True,
             )
         try:
-            return self._with_retries(audio, safe_filename(content_type), content_type, language)
+            return self._with_retries(audio, safe_filename(content_type), content_type,
+                                      language, budget)
         finally:
             self._slots.release()
 
-    def _with_retries(self, audio: bytes, filename: str, content_type: str, language: str) -> Transcript:
+    def _with_retries(self, audio: bytes, filename: str, content_type: str,
+                      language: str, budget: float | None = None) -> Transcript:
         body, ctype = _multipart(audio, filename, content_type, language)
         started = time.monotonic()
         last: SttError | None = None
+        # `budget` - SHU CHAQIRUV uchun chegara. Zahira yo'lida (2-variant
+        # yiqilib, bu klient uni almashtirganda) 2-variant allaqachon
+        # vaqtning bir qismini yeb bo'lgan, ya'ni bu klient o'zining to'liq
+        # `deadline` ini olsa jami nginx byudjetidan oshib ketardi.
+        deadline = self.deadline if budget is None else min(self.deadline, budget)
 
         for attempt in range(self.attempts):
             try:
@@ -199,8 +207,8 @@ class SttClient:
                 delay = _BACKOFF_BASE * (2 ** attempt) * (0.5 + random.random())
                 # Devor-soat: keyingi urinish nginx byudjetidan chiqib ketsa,
                 # brauzer javobni baribir olmaydi - to'xtaymiz.
-                if time.monotonic() - started + delay + self.timeout > self.deadline:
-                    log.warning("STT: byudjet tugadi (%.0f s), qayta urinilmaydi", self.deadline)
+                if time.monotonic() - started + delay + self.timeout > deadline:
+                    log.warning("STT: byudjet tugadi (%.0f s), qayta urinilmaydi", deadline)
                     raise
                 log.warning("STT %s - %.1f s dan keyin qayta urinish (%d/%d)",
                             exc, delay, attempt + 1, self.attempts)

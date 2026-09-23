@@ -91,10 +91,31 @@ def warnings_for(snapshot: dict) -> list[str]:
     if stt.get("status") == "unreachable":
         out.append("STT Router javob bermayapti - ovozdan matnga o'girish ishlamaydi")
     elif "uzbek_stt" in (stt.get("broken") or []):
-        out.append(
-            "STT: o'zbek backend'i o'chgan (10.10.50.4 dagi 8002) - o'zbekcha "
-            "ovoz va \"Salom Venera\" ISHLAMAYDI, ru/en ishlaydi"
-        )
+        # Bu xabar 2-variant (GAPI) paydo bo'lgandan keyin YOLG'ON aytishi
+        # mumkin: o'zbek yo'llari GAPI ga o'tgan bo'lsa, Router'ning o'zbek
+        # backend'i o'chgani ularga TEGMAYDI. Eski matn esa odamni butunlay
+        # boshqa joyni tuzatishga yuborardi - ogohlantirishning eng yomon
+        # turi shu: aniq, lekin noto'g'ri.
+        from ..core.config import settings
+
+        routerda = [
+            nomi for nomi, tanlov in (
+                ("o'zbekcha ovoz", settings.stt_provider),
+                ('"Salom Venera"', settings.stt_wake_provider),
+            ) if tanlov != "gapi"
+        ]
+        if routerda:
+            out.append(
+                "STT: o'zbek backend'i o'chgan (10.10.50.4 dagi 8002) - "
+                f"{' va '.join(routerda)} ISHLAMAYDI, ru/en ishlaydi"
+            )
+        else:
+            out.append(
+                "STT: Router'ning o'zbek backend'i o'chgan (10.10.50.4 dagi "
+                "8002). O'zbek yo'llari 2-variantda (GAPI), ya'ni hozir "
+                "ishlaydi - lekin ZAHIRA yo'q: GAPI yiqilsa uyg'otish ham "
+                "to'xtaydi"
+            )
     elif stt.get("broken"):
         out.append(f"STT: backend o'chgan ({', '.join(stt['broken'])})")
 

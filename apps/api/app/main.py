@@ -184,6 +184,39 @@ app.include_router(v1_router)
 _upstream = UpstreamHealth(settings.stt_base_url, settings.tts_base_url)
 
 
+def stt_variants() -> dict:
+    """STT variantlarining holati - `/api/health/detail` uchun.
+
+    Import FUNKSIYA ICHIDA: `api/v1/stt.py` ni modul boshida import qilish
+    aylanma bog'liqlik yasaydi (`main` -> `api` -> `main`).
+    """
+    from .api.v1.stt import _fallbacks, _gapi_client, _gapi_wake_client, _wake_budget
+
+    spend = _gapi_client.spend()
+    wake_spend = _gapi_wake_client.spend()
+    return {
+        "provider": settings.stt_provider,
+        "wake_provider": settings.stt_wake_provider,
+        "gapi_configured": _gapi_client.configured,
+        # Bugun shu jarayon GAPI da sarflagan audio - kunlik chegara 480
+        # daqiqa (28800 s) va u Toshkent yarim kechasida to'ldiriladi.
+        "gapi_spend": {
+            "day": spend["day"],
+            "audio_sec": round(float(spend["audio_sec"]) + float(wake_spend["audio_sec"]), 1),
+            "calls": int(spend["calls"]) + int(wake_spend["calls"]),
+            # `sent` > `calls` degani: urinish yuborilgan, javob kelmagan -
+            # va o'lchangan holda javobsiz urinishning ham puli ketadi.
+            "sent": int(spend["sent"]) + int(wake_spend["sent"]),
+            "wake_audio_sec": wake_spend["audio_sec"],
+            "wake_calls": wake_spend["calls"],
+        },
+        "wake_budget": _wake_budget.snapshot(),
+        # Zahira qachon ishlagani. `last_5min > 0` degani "2-variant
+        # tanlangan, lekin AMALDA 1-variant ishlayapti".
+        "fallback": _fallbacks.snapshot(),
+    }
+
+
 def _diagnostics() -> dict:
     """To'liq tashxis. FAQAT sessiya bilan ko'rsatiladi (pastga qara).
 
@@ -278,12 +311,41 @@ def _diagnostics() -> dict:
             "ovoz javoblari 503 olyapti"
         )
 
+    # QAYSI STT VARIANTI ishlayotgani va PULLIK variantda bugun qancha
+    # sarflangani. Bularning ikkisi ham jurnalda bor, lekin hech narsa
+    # ularni qo'shmaydi - kvota tugashini esa oldindan bilish kerak, aks
+    # holda u foydalanuvchiga XATO ko'rinishida yetib boradi.
+    #
+    # KALIT QIYMATI YO'Q - faqat sozlangan/sozlanmagan.
+    stt_state = stt_variants()
+    for nomi, tanlov in (("STT_PROVIDER", settings.stt_provider),
+                         ("STT_WAKE_PROVIDER", settings.stt_wake_provider)):
+        if tanlov == "gapi" and not stt_state["gapi_configured"]:
+            warnings.append(
+                f"{nomi}=gapi, lekin GAPI_API_KEY bo'sh - 1-variant (Router) ishlayapti"
+            )
+    # ZAHIRA ISHLAYOTGANI - jim degradatsiya. Foydalanuvchi uchun hammasi
+    # joyida ko'rinadi, ya'ni buni faqat shu yerda aytish mumkin.
+    fb = stt_state["fallback"]
+    if fb["last_5min"]:
+        warnings.append(
+            f"STT zahirasi oxirgi 5 daqiqada {fb['last_5min']} marta ishladi "
+            f"(oxirgisi: {fb['last_path']}, kod {fb['last_status']}) - 2-variant "
+            "tanlangan, lekin amalda 1-variant (Router) javob berayapti"
+        )
+    spend = stt_state["gapi_spend"]
+    if spend["sent"] > spend["calls"]:
+        warnings.append(
+            f"GAPI: {spend['sent']} urinish yuborilgan, {spend['calls']} tasi javob bergan - "
+            "javobsiz urinishlarning ham puli ketadi"
+        )
     return {
         "status": "degraded" if warnings else "ok",
         "upstream": upstream,
         "version": settings.version,
         "users": len(store),
         "tts_slots": {"busy": tts_busy, "limit": settings.tts_max_concurrent},
+        "stt": stt_state,
         # TOKEN QIYMATI YO'Q - faqat holat va muddat.
         "crm_session": crm,
         # Foydalanuvchi ulanishlari: sozlanganmi va nechta odam ulangan.

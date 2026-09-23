@@ -20,12 +20,15 @@ def fake_stt(monkeypatch):
     """Klientni almashtiradi va nima yuborilganini yozib boradi."""
     calls: list[dict] = []
 
-    def transcribe(audio, *, language, filename="a.webm", content_type="audio/webm"):
+    # `budget` - zahira yo'li uchun: 2-variant yiqilganda Router'ga QOLGAN
+    # vaqt beriladi. Soxta klient ham haqiqiy imzoni qabul qilishi kerak.
+    def transcribe(audio, *, language, filename="a.webm", content_type="audio/webm",
+                   budget=None):
         calls.append({"bytes": len(audio), "language": language, "filename": filename})
         return Transcript(text="salom dunyo", language=language, duration_sec=1.5)
 
     import app.api.v1.stt as module
-    monkeypatch.setattr(module._client, "transcribe", transcribe)
+    monkeypatch.setattr(module._router_client, "transcribe", transcribe)
     return calls
 
 
@@ -107,7 +110,7 @@ def test_navbat_tola_bolsa_503(client, auth, monkeypatch):
     def busy(*a, **k):
         raise SttError("navbat to'la", status=503, retryable=True)
 
-    monkeypatch.setattr(module._client, "transcribe", busy)
+    monkeypatch.setattr(module._router_client, "transcribe", busy)
     response = client.post("/api/v1/stt/transcribe", files=_audio(),
                            data={"language": "uz"}, headers=auth)
     assert response.status_code == 503
@@ -121,7 +124,7 @@ def test_xato_ichki_manzilni_oshkor_qilmaydi(client, auth, monkeypatch):
     def leak(*a, **k):
         raise SttError("http://10.10.50.4:8006/transcribe ishlamadi", status=500)
 
-    monkeypatch.setattr(module._client, "transcribe", leak)
+    monkeypatch.setattr(module._router_client, "transcribe", leak)
     body = client.post("/api/v1/stt/transcribe", files=_audio(),
                        data={"language": "uz"}, headers=auth).json()
     assert "10.10.50" not in body["message"]
@@ -224,7 +227,7 @@ def test_slot_xatoda_ham_boshatiladi(monkeypatch):
 
 def test_endpoint_yangi_maydonlarni_uzatadi(client, auth, monkeypatch):
     import app.api.v1.stt as module
-    monkeypatch.setattr(module._client, "transcribe", lambda *a, **k: Transcript(
+    monkeypatch.setattr(module._router_client, "transcribe", lambda *a, **k: Transcript(
         text="salom", language="uz", backend="uzbek_stt", low_confidence=True, truncated=True))
     body = client.post("/api/v1/stt/transcribe", files=_audio(), data={"language": "uz"},
                        headers=auth).json()
@@ -254,7 +257,7 @@ def test_javobda_aniqlangan_til_yoq(client, auth, monkeypatch):
     """`detectedLanguage` klientga chiqmaydi - u tizim tilini o'zgartirishga
     undaydigan ma'lumot, mahsulotda esa bunday xulq yo'q."""
     import app.api.v1.stt as module
-    monkeypatch.setattr(module._client, "transcribe", lambda *a, **k: Transcript(
+    monkeypatch.setattr(module._router_client, "transcribe", lambda *a, **k: Transcript(
         text="x", language="ru", language_mismatch=True, detected_language="zh"))
     body = client.post("/api/v1/stt/transcribe", files=_audio(), data={"language": "ru"},
                        headers=auth).json()
@@ -424,7 +427,7 @@ def test_klient_fayl_nomi_multipartga_tushmaydi(client, auth, monkeypatch):
 def test_endpoint_status_va_xabar(client, auth, monkeypatch, code, word):
     import app.api.v1.stt as module
     def boom(*a, **k): raise SttError("http://10.10.50.4:8006 ichki", status=code, retryable=code == 503)
-    monkeypatch.setattr(module._client, "transcribe", boom)
+    monkeypatch.setattr(module._router_client, "transcribe", boom)
     r = client.post("/api/v1/stt/transcribe", files=_audio(), data={"language": "uz"}, headers=auth)
     assert r.status_code == code
     assert word in r.json()["message"].lower()

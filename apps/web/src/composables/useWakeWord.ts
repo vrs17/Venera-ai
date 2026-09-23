@@ -441,7 +441,27 @@ export function useWakeWord(options: WakeWordOptions) {
     // length must not spend the next 2.5 s of budget.
     lastRequest = performance.now()
 
-    aborter?.abort()
+    // DO NOT cancel a check that is still running. This used to be
+    // `aborter?.abort()`, which was harmless only because the internal
+    // Router answers in 0.13 s — a verdict always beat the 2.5 s cooldown,
+    // so there was never a request to cancel. The second STT variant (GAPI)
+    // answers in 1.2 s, and 3.6 s under load, which opened two holes at once:
+    //
+    //   * the phrase was heard, PAID FOR, and then thrown away. The documented
+    //     case is the common one: people say "Salom", pause, then "Venera" —
+    //     two turns 1.4 s apart, and the second one cancelled the first one's
+    //     verdict.
+    //   * an aborted request never reached the `failures` line below, so the
+    //     backoff was never armed: a slow backend kept getting a clip every
+    //     2.5 s while its worker threads piled up.
+    //
+    // Skipping the new clip instead is strictly better: a wake phrase that is
+    // already being checked does not need checking twice, and the in-flight
+    // request still carries a verdict. `stop()` still aborts.
+    if (aborter) {
+      console.debug('[wake] oldingi so`rov hali javob bermadi, yuborilmadi')
+      return
+    }
     aborter = new AbortController()
     const signal = aborter.signal
     try {
@@ -466,6 +486,22 @@ export function useWakeWord(options: WakeWordOptions) {
       // not ask for anything yet. Errors here are also the common case when
       // the STT queue is full, and a visible error every few seconds would be
       // worse than silence.
+      //
+      // The backoff still has to be armed here, or a backend that fails by
+      // THROWING (timeout, network) would look free of charge to the gate
+      // above and keep getting a clip every 2.5 s.
+      failures += 1
+    } finally {
+      // Releases the in-flight guard above. Without this the guard would latch
+      // after the first request and the wake word would stop working entirely —
+      // so it belongs in `finally`, not on the happy path.
+      //
+      // The identity check matters: `stop()` also clears `aborter`, so a
+      // stop/start cycle can hand the guard to a NEWER request while this one
+      // is still unwinding. Clearing it blindly would release someone else's
+      // guard and let two checks run at once — the exact thing this guard
+      // exists to prevent.
+      if (aborter?.signal === signal) aborter = null
     }
   }
 

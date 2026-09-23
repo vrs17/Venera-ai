@@ -105,3 +105,23 @@ def _default_secret():
     settings.secret_key = "test-secret"
     yield
     settings.secret_key = original
+
+@pytest.fixture(autouse=True)
+def _stt_provider_pinned(monkeypatch, tmp_path):
+    """HAR BIR test uchun: STT tanlovi 1-variantda (ichki Router).
+
+    NEGA AUTOUSE. Tanlov `.env` dan o'qiladi, ya'ni mashinada
+    `STT_PROVIDER=gapi` bo'lsa endpoint testlari TASHQI PULLIK xizmatga
+    chiqib ketardi - va aynan shunday bo'ldi: kalit qo'yilgan zahoti 13
+    test yiqildi, chunki ular soxta Router klientini patch qilib, endpoint
+    esa GAPI ni tanlagan edi.
+
+    Test natijasi mashinaning sozlamasiga bog'liq bo'lmasligi kerak, va
+    hech bir test hisobdan pul yechmasligi kerak. 2-variantning O'ZI
+    `test_gapi_stt.py` da sinaladi - u klientni to'g'ridan-to'g'ri
+    quradi va transportni almashtiradi, ya'ni bu kafolatga tegmaydi.
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "stt_provider", "router", raising=False)
+    monkeypatch.setattr(settings, "stt_wake_provider", "router", raising=False)

@@ -63,6 +63,82 @@ class Settings(BaseSettings):
     #: o'tib, faqat oxirida rad etilardi.
     stt_max_upload_mb: float = 10.0
 
+    # --- STT VARIANTI: qaysi xizmat ishlatiladi ---
+    #: `router` - 1-variant, ichki STT Router (yuqorida). `gapi` -
+    #: 2-variant, `console.gapi.uz`.
+    #:
+    #: IKKALASI HAM QOLADI. Qaytarish uchun kod o'zgartirilmaydi: `.env`
+    #: dagi `STT_PROVIDER` qatorini o'chirib, xizmatni qayta ishga
+    #: tushirish yetadi. Shu sababli KODDAGI default `router` - isbotlangan
+    #: yo'l, va sinov `.env` orqali yoqiladi.
+    #:
+    #: GAPI faqat O'ZBEK tilini biladi va matnni faqat LOTIN yozuvida
+    #: qaytaradi. `ru`/`en` uchun unda model yo'q, shuning uchun tanlovchi
+    #: (`api/v1/stt.py`) bu tillarni baribir Router'ga yuboradi - ya'ni
+    #: GAPI ga o'tish rus yoki ingliz interfeysini buzmaydi.
+    stt_provider: str = "router"
+    #: UYG'OTISH SO'ZI uchun ALOHIDA tanlov, va default ATAYLAB `router`.
+    #:
+    #: Sababi o'lchangan. Tinglagich `COOLDOWN_MS = 2500` bilan ishlaydi,
+    #: ya'ni tinglab turgan har bir varaq daqiqasiga 24 TAGACHA so'rov
+    #: yuborishi mumkin (jim xonada - nol, chunki sukunat brauzerdan
+    #: chiqmaydi). GAPI da esa yuklash chegarasi daqiqasiga 60 ta va har
+    #: bo'lak PULLIK - holbuki bu bo'laklarning deyarli hammasi "bu
+    #: uyg'otish so'zi emas" degan javob beradi. Ichki Router shu ishni
+    #: 0.1 sekundda va bepul qiladi.
+    #:
+    #: Ya'ni bu "tejamkorlik" emas, vazifaning boshqaligi: uyg'otish so'zi
+    #: - kalit so'z qidirish, transkripsiya emas.
+    stt_wake_provider: str = "router"
+
+    # --- GAPI STT (2-variant) ---
+    gapi_base_url: str = "https://console.gapi.uz/v1"
+    #: Loyihaga bog'langan token. Bo'sh bo'lsa 2-variant O'CHIQ.
+    gapi_api_key: str = ""
+    #: O'lchangan tezlik: mediana 1.2 s, yuklama ostida 3.6 s; 35 s yozuv
+    #: 1-3 sekundda.
+    #:
+    #: 60 EMAS, 20 - va sababi zahira. GAPI yiqilganda so'rov Router'ga
+    #: tushadi, ya'ni BITTA so'rov ikki klientning vaqtini ketma-ket yeydi.
+    #: 60 s bo'lganda jami 121 s ga chiqardi, nginx esa 120 s da ulanishni
+    #: uzadi - Router'ning javobi o'lgan socketga yozilardi. 20 s esa
+    #: o'lchangan eng yomon holatdan (3.6 s) besh barobar katta, ya'ni
+    #: sog'lom GAPI bunga bemalol sig'adi; sig'masa - Router tezroq
+    #: javob beradi.
+    gapi_timeout: float = 20.0
+    #: Yuklash chegarasi daqiqasiga 60 ta (token uchun) - bu bizning ulush.
+    gapi_max_concurrent: int = 2
+
+    # --- UYG'OTISH SO'ZI uchun GAPI byudjeti ---
+    #
+    # NEGA BU KERAK. Uyg'otish so'zi tinglagichi FONDA ishlaydi va har bir
+    # chat varag'ida default YOQIQ. Brauzerdagi `COOLDOWN_MS = 2500` esa
+    # bizning YAGONA chegaramiz edi - ya'ni pullik xizmatning tormozi
+    # MIJOZDA turgan. O'zgartirilgan sahifa, ochiq qolgan eski varaq yoki
+    # bir odamning uchta varag'i hisobni yeb qo'yishi mumkin edi.
+    #
+    # O'LCHANGAN SONLAR (jonli GAPI, shu loyiha tokeni):
+    #   * bitta parcha = 0.03 g, ya'ni 1 g = 1 audio-daqiqa, kunlik 480 g;
+    #   * bitta varaq daqiqasiga 24 tagacha parcha yuboradi (2.5 s oraliq);
+    #   * tokenning yuklash chegarasi 60/daqiqa - va o'sha tokendan
+    #     foydalanuvchining SAVOLI ham o'tadi, ya'ni uch varaq 72 ta qilib
+    #     chegaradan oshadi va 429 aynan SAVOLGA tegadi;
+    #   * jonli uyg'otish jurnalida parchalarning ~71 foizi uyg'otish
+    #     so'zi EMAS - ya'ni pulning katta qismi "bu u emas" javobiga
+    #     ketadi.
+    #
+    # Chegaradan oshganda so'rov RAD ETILMAYDI - 1-variantga (bepul, ichki
+    # Router) tushadi. Uyg'otish - kalit so'z qidirish, Router buni
+    # baribir 0.1 sekundda bajaradi. Ya'ni bu chegara xizmatni emas,
+    # HISOBNI cheklaydi.
+    #: Bitta foydalanuvchi uchun daqiqada nechta parcha GAPI ga ketadi.
+    #: 30 - bitta halol varaq (24/daqiqa) erkin o'tadi, ikkinchi varaqdan
+    #: boshlab esa ortiqchasi Router'ga tushadi.
+    wake_gapi_per_actor_min: int = 30
+    #: HAMMA foydalanuvchilar uchun jami. 45 - tokenning 60/daqiqa
+    #: chegarasidan past, ya'ni foydalanuvchining SAVOLI uchun joy qoladi.
+    wake_gapi_total_min: int = 45
+
     # --- TTS (matnni ovozga o'girish) ---
     #: TTS serveri. Ichki tarmoqda, VPN ortida - STT bilan bir xil hostda,
     #: boshqa portda.
