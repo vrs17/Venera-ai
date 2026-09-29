@@ -193,6 +193,7 @@ class AssistantClient:
         tokens: Mapping[str, str] | None = None,
         hrm_employee: str | None = None,
         max_chars: int = 2000,
+        mode: str = "standard",
     ) -> AnswerStream:
         """Savolni yuboradi va kadr generatorini qaytaradi.
 
@@ -236,6 +237,11 @@ class AssistantClient:
             payload["tokens"] = live
         if hrm_employee:
             payload["hrm_employee"] = hrm_employee
+        # `standard` YUBORILMAYDI: u xizmatning o'z default'i, va uni
+        # ochiq yozish eski nusxalar uchun ortiqcha maydon bo'lardi.
+        # `pro` esa faqat odam shu xabar uchun yoqqanda keladi.
+        if mode == "pro":
+            payload["mode"] = "pro"
 
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
@@ -386,6 +392,17 @@ class AssistantClient:
                 body["tokens"] = live
         return self._json(path, method="POST" if verb else "GET", body=body,
                           limit=_MAX_LINE_BYTES, what="amal")
+
+    def pro_quota(self, *, user_id: str) -> dict[str, Any]:
+        """Odamning "Pro" byudjeti: qolgani, chegarasi va sarflangani.
+
+        Uchta oyna: oxirgi 24 soat / 7 kun / 30 kun (SURILADIGAN, ya'ni
+        "kun boshida nollanadi" EMAS).
+
+        CHEGARALAR QOTIRILMAYDI: hujjat aniq aytadi - ular rolga qarab
+        keyinroq pasayadi, va yagona haqiqat manbai shu endpoint.
+        """
+        return self._json("/api/pro/quota", query={"user_id": user_id}, what="Pro byudjeti")
 
     # --- suhbatlar tarixi ----------------------------------------------------
     #

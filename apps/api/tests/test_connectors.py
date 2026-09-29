@@ -216,6 +216,103 @@ def test_hrm_muddati_yaqin_bolsa_yuborilmaydi(hub, net):
     assert hub.tokens("1") == {}
 
 
+# --- HRM o'zini yangilaydi (xotiradagi parol bilan) -------------------------
+#
+# HRM da refresh YO'Q va token 10 soatda o'ladi (2026-09-29 da jonli HRM da
+# o'lchangan: "meni eslab qol" maydoni ham ishlamaydi). Shuning uchun parol
+# XOTIRADA tutiladi va muddati yaqinlashganda qayta kiriladi. Bu testlar
+# aynan shu kelishuvni qo'riqlaydi - ayniqsa parolning diskka TUSHMASLIGINI.
+
+
+def test_parolsiz_yangilanmaydi(hub, net):
+    """Parol eslab qolinmagan bo'lsa - eski xatti-harakat: token
+    yuborilmaydi va odam qayta kiradi."""
+    net.hrm_exp = time.time() + 200
+    hub.connect("1", "hrm", "y.m", PASSWORD)
+    assert hub.tokens("1") == {}
+    assert net.urls().count(f"{HRM}/api/authenticate") == 1, "qayta login qilinmadi"
+
+
+def test_parol_bilan_ozi_yangilanadi(hub, net):
+    """Muddati yaqin token - savol oldidan jimgina yangilanadi."""
+    net.hrm_exp = time.time() + 200
+    hub.connect("1", "hrm", "y.m", PASSWORD)
+    hub.remember_password("1", PASSWORD)
+
+    net.hrm_exp = time.time() + 10 * 3600        # HRM endi yangi token beradi
+    assert hub.tokens("1").get("hrm"), "token yangilanmadi"
+    assert net.urls().count(f"{HRM}/api/authenticate") == 2, "qayta login bo'lishi kerak"
+    assert hub.status("1")[0]["state"] == "connected"
+
+
+def test_yangilangan_token_saqlanadi(hub, net):
+    """Yangilangandan keyin keyingi savollar QAYTA login qilmaydi."""
+    net.hrm_exp = time.time() + 200
+    hub.connect("1", "hrm", "y.m", PASSWORD)
+    hub.remember_password("1", PASSWORD)
+    net.hrm_exp = time.time() + 10 * 3600
+    first = hub.tokens("1")["hrm"]
+    second = hub.tokens("1")["hrm"]
+    assert first == second
+    assert net.urls().count(f"{HRM}/api/authenticate") == 2, "ikkinchi savol login qilmasligi kerak"
+
+
+def test_parol_ozgarsa_unutiladi(hub, net, monkeypatch):
+    """HRM "login yoki parol noto'g'ri" desa - saqlangan parol o'chadi.
+
+    Aks holda har savolda noto'g'ri parol bilan urinib, hisobni
+    bloklatib qo'yish mumkin edi.
+    """
+    net.hrm_exp = time.time() + 200
+    hub.connect("1", "hrm", "y.m", PASSWORD)
+    hub.remember_password("1", "eski-parol")
+    assert hub.has_password("1")
+
+    assert hub.tokens("1") == {}
+    assert not hub.has_password("1"), "noto'g'ri parol xotirada qolmasligi kerak"
+    # Keyingi savol QAYTA urinmaydi.
+    before = len(net.urls())
+    hub.tokens("1")
+    assert len(net.urls()) == before
+
+
+def test_parol_diskka_tushmaydi(hub, net, tmp_path):
+    """ENG MUHIMI: parol faylda ham, API javobida ham bo'lmaydi."""
+    hub.connect("1", "hrm", "y.m", PASSWORD)
+    hub.remember_password("1", PASSWORD)
+    raw = (tmp_path / "connectors" / "tokens.json").read_text(encoding="utf-8")
+    assert PASSWORD not in raw, "parol diskka yozilgan"
+    assert "password" not in raw.lower()
+    assert PASSWORD not in json.dumps(hub.status("1"), ensure_ascii=False)
+
+
+def test_holat_yangilanadigan_ulanishni_ulangan_deydi(hub, net):
+    """Muddati o'tgan, lekin O'ZI YANGILANADIGAN ulanish "ulangan" deyiladi.
+
+    Aks holda odam menyuda "muddati tugagan" ni ko'rib, qo'lda qayta
+    ulardi - avtomatik yangilashdan foyda qolmasdi.
+    """
+    net.hrm_exp = time.time() + 100
+    hub.connect("1", "hrm", "y.m", PASSWORD)
+    assert hub.status("1")[0]["state"] == "expired", "parolsiz - muddati tugagan"
+    hub.remember_password("1", PASSWORD)
+    assert hub.status("1")[0]["state"] == "connected", "parol bilan - o'zi yangilanadi"
+
+
+def test_uzish_parolni_ochiradi(hub, net):
+    hub.connect("1", "hrm", "y.m", PASSWORD)
+    hub.remember_password("1", PASSWORD)
+    hub.disconnect("1", "hrm")
+    assert not hub.has_password("1")
+
+
+def test_parol_odamlar_orasida_aralashmaydi(hub, net):
+    hub.connect("1", "hrm", "y.m", PASSWORD)
+    hub.remember_password("1", PASSWORD)
+    assert hub.has_password("1")
+    assert not hub.has_password("2"), "boshqa odamning paroli ko'rinmasligi kerak"
+
+
 def test_hrm_notogri_parol(hub, net):
     """HRM 500 ichida 401 beradi - bu PAROL xatosi, "javob bermadi" emas."""
     with pytest.raises(ConnectorError) as exc:
@@ -433,3 +530,18 @@ def test_chat_odamning_tokeni_umumiydan_ustun(client, auth, hub, net, monkeypatc
 def test_health_ulanishlar_holati(client, auth, hub):
     body = client.get("/api/health/detail", headers=auth).json()
     assert body["connectors"] == {"hrm": True, "crm": True, "users": 0}
+
+
+def test_hrm_login_tanasi_ikki_maydon(net):
+    """HRM login so'rovida FAQAT login va parol bo'ladi.
+
+    2026-09-29 da jonli HRM'da "meni eslab qol" maydoni uchala
+    yozilishida sinaldi (`rememberMe`, `remember-me`, `remember_me`):
+    HRM ularni qabul qildi, lekin tokenni baribir 10.0 soatlik qilib
+    berdi. Ya'ni ortiqcha maydon FOYDA BERMAYDI - bu test uni
+    qaytadan qo'shib qo'yishdan saqlaydi.
+    """
+    from app.services.integrations.connectors import HrmAuth
+
+    HrmAuth(HRM).login("y.m", PASSWORD)
+    assert net.calls[-1][1] == {"username": "y.m", "password": PASSWORD}

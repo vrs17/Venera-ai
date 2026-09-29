@@ -99,6 +99,23 @@ def _isolated_connectors(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_identities(tmp_path, monkeypatch):
+    """SSO hisoblar fayli HAR TESTDA vaqtinchalik va bo'sh.
+
+    `data/identities.json` jonli ma'lumot (ishlab chiqish mashinasida
+    odamning haqiqiy Keycloak `sub` i). `get_identity_store` keshlangan -
+    kesh testdan oldin va keyin tozalanadi, shunda `Depends` ham,
+    to'g'ridan-to'g'ri chaqiruv ham vaqtinchalik faylni oladi.
+    """
+    from app.api.deps import get_identity_store
+
+    monkeypatch.setattr(settings, "identities_file", tmp_path / "identities.json", raising=False)
+    get_identity_store.cache_clear()
+    yield
+    get_identity_store.cache_clear()
+
+
+@pytest.fixture(autouse=True)
 def _default_secret():
     """Testlar default kalit bilan ishlaydi - natija takrorlanadigan bo'lsin."""
     original = settings.secret_key

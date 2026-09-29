@@ -10,7 +10,10 @@ umumiy token bilan esa javob token EGASI haqida bo'lardi (`core/config.py`,
 IKKI PLATFORMA, IKKI XIL SHAKL:
 
   HRM   POST /api/authenticate {username, password} -> JWT, 10 SOAT.
-        Refresh yo'q: muddati tugasa odam qayta kiradi. Token yuqoridagi
+        Refresh yo'q: muddati tugasa odam qayta kiradi. "Meni eslab qol"
+        maydoni ham yo'q - 2026-09-29 da jonli HRM'da uchala yozilishi
+        sinaldi (`rememberMe`, `remember-me`, `remember_me`), HRM ularni
+        e'tiborsiz qoldirib, baribir 10.0 soatlik token berdi. Token yuqoridagi
         xizmatga muddati `hrm_margin` dan KO'P qolgandagina beriladi -
         savol-javob bir necha daqiqa cho'zilishi mumkin va token javob
         OXIRIGACHA yaroqli turishi kerak. Kam qolsa holat "expired".
@@ -28,8 +31,18 @@ to'liq sessiya. Shuning uchun:
 
   * `data/connectors/` da, 600 huquq bilan, atomik yoziladi (`data/`
     gitignore'da);
-  * PAROL HECH QACHON SAQLANMAYDI - u faqat login so'roviga ketadi va
-    javob kelishi bilan unutiladi;
+  * PAROL DISKKA HECH QACHON YOZILMAYDI. Lekin u XOTIRADA saqlanadi
+    (`ConnectorHub._passwords`), chunki HRM tokenini 10 soatdan keyin
+    yangilashning BOSHQA YO'LI YO'Q: HRM da na refresh, na uzoq
+    yashaydigan token bor (2026-09-29 da jonli HRM da o'lchangan).
+    Shartlari:
+      - parol faqat kirishda yoki "+" menyusidan ulanishda olinadi va
+        FAQAT HRM ga qayta kirish uchun ishlatiladi;
+      - jarayon qayta ishga tushsa yo'qoladi - diskda, jurnalda va
+        zaxira nusxada izi qolmaydi;
+      - chiqishda va HRM uzilganda darhol o'chiriladi;
+      - HRM "login yoki parol noto'g'ri" desa ham o'chiriladi (parol
+        o'zgargan) va odam qaytadan kiradi;
   * tokenlar jurnalga, xato matniga va API javobiga TUSHMAYDI - klient
     faqat holatni ko'radi: ulanmagan / ulangan / muddati tugagan.
 """
@@ -264,6 +277,15 @@ class HrmAuth:
                         _shape(reply.payload), sorted(reply.headers))
             raise ConnectorError("HRM javobida token yo'q", status=502, code="BAD_RESPONSE")
         exp = jwt_exp(token)
+        # BERILGAN MUDDAT jurnalga yoziladi (token EMAS, faqat soat).
+        # `rememberMe` tajribasi aynan shu qator bilan o'lchanadi: HRM uni
+        # tushunsa muddat 10 soatdan sezilarli uzun bo'ladi.
+        # BERILGAN MUDDAT jurnalga yoziladi (token EMAS, faqat soat).
+        # HRM muddatni o'zgartirsa buni shu qator bilan darhol bilamiz -
+        # aks holda "nega yana uzildi" degan savolga faqat taxmin bilan
+        # javob berilardi.
+        log.info("HRM tokeni: %.1f soat",
+                 ((exp or 0) - time.time()) / 3600 if exp else _HRM_DEFAULT_TTL / 3600)
         # `exp` o'tib ketgan bo'lsa ham O'SHA olinadi: holat darhol "expired"
         # bo'ladi va bu halol - 10 soat deb yolg'on va'da berishdan yaxshi.
         return token, exp if exp is not None else time.time() + _HRM_DEFAULT_TTL
@@ -495,30 +517,98 @@ class ConnectorHub:
         #: Har odam uchun alohida qulf: bir vaqtda kelgan ikki savol BITTA
         #: yangilashni bo'lishadi, aks holda rotatsiya bir-birini bekor qilardi.
         self._user_locks: dict[str, threading.Lock] = {}
+        #: user_id -> parol. FAQAT XOTIRADA (modul izohidagi shartlarga
+        #: qara) va faqat HRM ga qayta kirish uchun.
+        self._passwords: dict[str, str] = {}
+
+    # --- parol (xotirada) -------------------------------------------------
+
+    def remember_password(self, user_id: str, password: str) -> None:
+        """HRM tokenini o'zi yangilash uchun parolni xotirada tutadi.
+
+        Chaqiriladi: Venera'ga kirishda (SSO parolni tasdiqlagan) va "+"
+        menyusidan HRM ga qo'lda ulanganda.
+        """
+        if not password:
+            return
+        with self._lock:
+            self._passwords[str(user_id)] = password
+
+    def forget_password(self, user_id: str) -> None:
+        """Chiqish, HRM uzilishi yoki noto'g'ri parol - darhol o'chadi."""
+        with self._lock:
+            self._passwords.pop(str(user_id), None)
+
+    def _password(self, user_id: str) -> str:
+        with self._lock:
+            return self._passwords.get(str(user_id), "")
+
+    def has_password(self, user_id: str) -> bool:
+        """Holat uchun: HRM ulanishi o'zini yangilay oladimi."""
+        return bool(self._password(user_id))
 
     # --- tashqi yuz -------------------------------------------------------
 
     def status(self, user_id: str) -> list[dict[str, Any]]:
         data = self.store.get(user_id)
-        return [self._entry_status(p, data.get(p)) for p in PLATFORMS]
+        return [self._entry_status(p, data.get(p), user_id=user_id) for p in PLATFORMS]
 
-    def connect(self, user_id: str, platform: str, username: str, password: str) -> dict[str, Any]:
-        """Login + parol -> ulanish. Parol shu yerdan nariga o'tmaydi."""
+    def connect(self, user_id: str, platform: str, username: str, password: str,
+                *, keep_enabled: bool = False) -> dict[str, Any]:
+        """Login + parol -> ulanish. Parol shu yerdan nariga o'tmaydi.
+
+        `keep_enabled` - kirishda avtomatik ulanish uchun (`api/v1/auth.py`):
+        odam kalitni o'chirib qo'ygan bo'lsa qayta kirganda u o'chiq
+        qoladi. "+" menyusidan qo'lda ulash esa har doim yoqadi.
+        """
         self._check(platform)
         username = username.strip()
         if platform == "hrm":
             token, expires_at = self.hrm.login(username, password)
-            entry = {"login": username, "token": token, "expires_at": expires_at,
-                     "enabled": True, "connected_at": time.time()}
-        else:
-            access, refresh, ttl = self.crm.login(username, password)
-            entry = {"login": username, "refresh_token": refresh, "expired": False,
-                     "enabled": True, "connected_at": time.time()}
-            with self._lock:
-                self._crm_cache[user_id] = (access, time.monotonic() + ttl)
-        self.store.set(user_id, platform, entry)
-        log.info("Ulanish: %s -> %s", user_id, platform)
-        return self._entry_status(platform, entry)
+            return self.adopt_hrm(user_id, username, token, expires_at, keep_enabled=keep_enabled)
+        access, refresh, ttl = self.crm.login(username, password)
+        return self.adopt_crm(user_id, username, access, refresh, ttl, keep_enabled=keep_enabled)
+
+    def adopt_hrm(self, user_id: str, username: str, token: str, expires_at: float,
+                  *, keep_enabled: bool = False) -> dict[str, Any]:
+        """Tayyor HRM sessiyasini saqlaydi - `connect` yoki SSO kirishi bergan."""
+        entry = {"login": username, "token": token, "expires_at": expires_at,
+                 "enabled": self._enabled_after(user_id, "hrm", keep_enabled),
+                 "connected_at": time.time()}
+        self.store.set(user_id, "hrm", entry)
+        log.info("Ulanish: %s -> hrm", user_id)
+        return self._entry_status("hrm", entry, user_id=user_id)
+
+    def adopt_crm(self, user_id: str, username: str, access: str, refresh: str, ttl: float,
+                  *, keep_enabled: bool = False, revoke_old: bool = False) -> dict[str, Any]:
+        """Tayyor Keycloak sessiyasini CRM ulanishi sifatida saqlaydi.
+
+        SSO kirishida (`services/sso.py`) Keycloak javobi ikki ish qiladi:
+        shaxsni beradi VA shu yerda CRM ulanishiga aylanadi - odam CRM ga
+        alohida kirmaydi. `revoke_old`: oldingi `refresh_token` CRM da
+        bekor qilinadi - har kirish yangi doimiy kredensial yasaydi,
+        eskilari to'planib qolmasin.
+        """
+        old = self.store.get(user_id).get("crm")
+        entry = {"login": username, "refresh_token": refresh, "expired": False,
+                 "enabled": self._enabled_after(user_id, "crm", keep_enabled, old),
+                 "connected_at": time.time()}
+        with self._lock:
+            self._crm_cache[user_id] = (access, time.monotonic() + ttl)
+        self.store.set(user_id, "crm", entry)
+        stale = (old or {}).get("refresh_token")
+        if revoke_old and stale and stale != refresh and self.crm.configured:
+            self.crm.logout(stale)
+        log.info("Ulanish: %s -> crm", user_id)
+        return self._entry_status("crm", entry, user_id=user_id)
+
+    def _enabled_after(self, user_id: str, platform: str, keep: bool,
+                       old: dict[str, Any] | None = None) -> bool:
+        if not keep:
+            return True
+        if old is None:
+            old = self.store.get(user_id).get(platform)
+        return bool(old.get("enabled", True)) if old else True
 
     def disconnect(self, user_id: str, platform: str) -> dict[str, Any]:
         self._check(platform, need_configured=False)
@@ -530,9 +620,12 @@ class ConnectorHub:
             # deb gumon qilsa, uzish uni darhol yaroqsiz qilsin.
             if entry and entry.get("refresh_token") and self.crm.configured:
                 self.crm.logout(entry["refresh_token"])
+        if platform == "hrm":
+            # Parol faqat HRM ni yangilash uchun turardi - endi keraksiz.
+            self.forget_password(user_id)
         self.store.set(user_id, platform, None)
         log.info("Uzish: %s -> %s", user_id, platform)
-        return self._entry_status(platform, None)
+        return self._entry_status(platform, None, user_id=user_id)
 
     def set_enabled(self, user_id: str, platform: str, enabled: bool) -> dict[str, Any]:
         self._check(platform, need_configured=False)
@@ -541,7 +634,7 @@ class ConnectorHub:
             raise ConnectorError(f"{LABELS[platform]} ulanmagan", status=409, code="NOT_CONNECTED")
         entry["enabled"] = bool(enabled)
         self.store.set(user_id, platform, entry)
-        return self._entry_status(platform, entry)
+        return self._entry_status(platform, entry, user_id=user_id)
 
     def tokens(self, user_id: str) -> dict[str, str]:
         """Chat uchun: FAQAT ulangan, yoqilgan va yaroqli tokenlar.
@@ -557,8 +650,16 @@ class ConnectorHub:
             token = str(hrm.get("token") or "")
             if token and self._hrm_left(hrm) > self.hrm_margin:
                 out["hrm"] = token
-            elif token:
-                log.info("HRM tokeni muddati yaqin (%s) - yuborilmaydi, qayta kirish kerak", user_id)
+            else:
+                # Muddati yaqin yoki tugagan. Parol xotirada bo'lsa QAYTA
+                # KIRAMIZ - aks holda odam har 10 soatda "+" menyusidan
+                # qo'lda ulanishi kerak edi.
+                renewed = self._renew_hrm(user_id, hrm)
+                if renewed:
+                    out["hrm"] = renewed
+                elif token:
+                    log.info("HRM tokeni muddati yaqin (%s), parol xotirada yo'q - "
+                             "yuborilmaydi, qayta kirish kerak", user_id)
 
         crm = data.get("crm")
         if crm and crm.get("enabled", True) and crm.get("refresh_token"):
@@ -566,6 +667,42 @@ class ConnectorHub:
             if access:
                 out["crm"] = access
         return out
+
+    def _renew_hrm(self, user_id: str, entry: dict[str, Any]) -> str:
+        """HRM ga xotiradagi parol bilan QAYTA KIRADI. -> token yoki "".
+
+        HRM da refresh yo'q, ya'ni "yangilash" = qayta kirish. Qulf shuning
+        uchun: bir vaqtda kelgan ikki savol ikkita login qilib, biri
+        ikkinchisining tokenini behuda almashtirib yubormasin.
+        """
+        password = self._password(user_id)
+        login_name = str(entry.get("login") or "")
+        if not password or not login_name or not self.hrm.configured:
+            return ""
+        with self._user_lock(user_id):
+            # Qulfni kutayotganda boshqa ip allaqachon yangilagan bo'lishi
+            # mumkin - o'shanda ikkinchi login QILINMAYDI.
+            current = self.store.get(user_id).get("hrm") or entry
+            token = str(current.get("token") or "")
+            if token and self._hrm_left(current) > self.hrm_margin:
+                return token
+            try:
+                token, expires_at = self.hrm.login(login_name, password)
+            except ConnectorError as exc:
+                if exc.code == "BAD_CREDENTIALS":
+                    # Parol o'zgargan. Saqlanganini TASHLAYMIZ: aks holda
+                    # har savolda noto'g'ri parol bilan urinib, hisobni
+                    # bloklatib qo'yish mumkin edi.
+                    self.forget_password(user_id)
+                    log.info("HRM o'zini yangilay olmadi (%s): parol o'zgargan", user_id)
+                else:
+                    log.warning("HRM o'zini yangilay olmadi (%s): %s", user_id, exc)
+                return ""
+            entry = {**current, "token": token, "expires_at": expires_at}
+            self.store.set(user_id, "hrm", entry)
+            log.info("HRM tokeni o'zi yangilandi (%s): %.1f soat",
+                     user_id, (expires_at - time.time()) / 3600)
+            return token
 
     # --- ichki ------------------------------------------------------------
 
@@ -584,7 +721,8 @@ class ConnectorHub:
         except (TypeError, ValueError):
             return 0.0
 
-    def _entry_status(self, platform: str, entry: dict[str, Any] | None) -> dict[str, Any]:
+    def _entry_status(self, platform: str, entry: dict[str, Any] | None,
+                      *, user_id: str = "") -> dict[str, Any]:
         """API javobi. TOKEN YO'Q - faqat holat."""
         auth = self.hrm if platform == "hrm" else self.crm
         status: dict[str, Any] = {
@@ -603,7 +741,13 @@ class ConnectorHub:
         if platform == "hrm":
             left = self._hrm_left(entry)
             status["expiresAt"] = _iso(time.time() + left) if entry.get("expires_at") else None
-            status["state"] = "connected" if left > self.hrm_margin else "expired"
+            # Parol xotirada bo'lsa ULANGAN deb ko'rsatiladi: token
+            # muddati o'tgan bo'lsa ham, keyingi savol oldidan o'zi
+            # yangilanadi (`_renew_hrm`). Aks holda odam menyuda
+            # "muddati tugagan" ni ko'rib, keraksiz joydan qayta ulardi -
+            # ya'ni avtomatik yangilashning butun foydasi yo'qolardi.
+            renews = bool(user_id) and self.has_password(user_id)
+            status["state"] = "connected" if left > self.hrm_margin or renews else "expired"
         else:
             dead = bool(entry.get("expired")) or not entry.get("refresh_token")
             status["state"] = "expired" if dead else "connected"

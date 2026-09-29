@@ -21,6 +21,7 @@ from ..core.config import settings
 from ..core.errors import unauthorized
 from ..core.security import verify_token
 from ..schemas.auth import AuthUser
+from ..services.identities import Directory, IdentityStore
 from ..services.users import UserStore
 
 
@@ -32,6 +33,18 @@ def get_user_store() -> UserStore:
     DB ga o'tilganda `lru_cache` olib tashlanadi.
     """
     return UserStore.from_file(settings.users_file)
+
+
+@lru_cache(maxsize=1)
+def get_identity_store() -> IdentityStore:
+    """SSO bilan kirganlar (`services/identities.py`). Fayl o'zgarsa
+    ombor o'zi qayta o'qiydi - qayta ishga tushirish shart emas."""
+    return IdentityStore(settings.identities_file)
+
+
+def get_directory() -> Directory:
+    """Telegram bot uchun: `actor_id` -> hisob, ikkala manbadan."""
+    return Directory(get_identity_store(), get_user_store())
 
 
 def bearer_token(request: Request) -> str:
@@ -46,18 +59,26 @@ def bearer_token(request: Request) -> str:
 def current_user(
     token: str = Depends(bearer_token),
     store: UserStore = Depends(get_user_store),
+    identities: IdentityStore = Depends(get_identity_store),
 ) -> AuthUser:
     """Token'dan foydalanuvchini tiklaydi.
 
     MUHIM: shaxs FAQAT shu yerdan keladi. Endpoint'lar so'rov tanasidagi
     email/id ga HECH QACHON ishonmaydi - aks holda klient o'zini boshqa
     xodim deb tanishtira olardi.
+
+    Tokenning `sub` i ikki xil: SSO bilan kirganda Keycloak `sub` (UUID,
+    `identities.json` da), zahira hisobda email (`users.yaml` da). UUID
+    ichida `@` bo'lmaydi, shuning uchun ikkisi aralashmaydi.
     """
-    email = verify_token(token)
-    if not email:
+    subject = verify_token(token)
+    if not subject:
         raise unauthorized("Token yaroqsiz yoki muddati tugagan")
 
-    user = store.by_email(email)
+    identity = identities.by_subject(subject)
+    if identity is not None:
+        return identity.to_public()
+    user = store.by_email(subject)
     if user is None:
         # Token haqiqiy, lekin foydalanuvchi o'chirilgan - 401 beramiz,
         # 403 emas: sessiya endi yaroqsiz va qayta kirish kerak.

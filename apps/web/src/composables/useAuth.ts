@@ -61,10 +61,10 @@ export function useAuth() {
     }
   }
 
-  async function login(email: string, password: string): Promise<LoginResponse> {
+  async function login(username: string, password: string): Promise<LoginResponse> {
     loading.value = true
     try {
-      const res = await authApi.login({ email, password })
+      const res = await authApi.login({ username, password })
       setToken(res.token)
       user.value = res.user
       initialized.value = true

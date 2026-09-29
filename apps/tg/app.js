@@ -203,8 +203,9 @@
   // =========================================================================
 
   const api = {
-    login: (email, password) =>
-      apiFetch('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+    // `username` - HRM/CRM (Keycloak) logini; kirgach ikkala ulanish o'zi ochiladi.
+    login: (username, password) =>
+      apiFetch('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
     me: () => apiFetch('/api/v1/auth/me'),
     logout: () => apiFetch('/api/v1/auth/logout', { method: 'POST' }),
     // Bot chati (Telegram'ning o'zi) shu hisobga ulanadi - `api/v1/telegram.py`.
@@ -796,7 +797,7 @@
 
   const bootView = $('bootView'), authView = $('authView'), appView = $('appView');
   const bootText = $('bootText');
-  const loginForm = $('loginForm'), emailInput = $('email'), passwordInput = $('password'),
+  const loginForm = $('loginForm'), loginInput = $('login'), passwordInput = $('password'),
         loginBtn = $('loginBtn'), authError = $('authError'),
         signupLink = $('signupLink'), forgotLink = $('forgotLink');
   const orbWrap = $('orbWrap'), ripple = $('ripple'), logEmpty = $('logEmpty'),
@@ -1553,14 +1554,14 @@
 
   loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const email = emailInput.value.trim();
+    const username = loginInput.value.trim();
     const password = passwordInput.value;
-    if (!email || !password) return;
+    if (!username || !password) return;
     loginBtn.disabled = true;
     loginBtn.textContent = 'Kirilmoqda…';
     showAuthError('');
     try {
-      const result = await api.login(email, password);
+      const result = await api.login(username, password);
       setToken(result.token);
       passwordInput.value = '';
       enterApp(result.user);
@@ -1575,7 +1576,7 @@
   // Server hozircha 501 qaytaradi - uning O'Z xabarini ko'rsatamiz.
   signupLink.addEventListener('click', async () => {
     showAuthError('');
-    const email = emailInput.value.trim();
+    const email = loginInput.value.trim();
     try {
       await api.signup({ email, fullName: email });
       showAuthError('Ro\'yxatdan o\'tish so\'rovi yuborildi.');

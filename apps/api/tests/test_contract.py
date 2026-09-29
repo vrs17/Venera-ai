@@ -39,6 +39,10 @@ BASE_STAGE_FIELDS = {"rawAnswer", "model", "adapter", "seconds"}
 # types.ts: Transcript
 TRANSCRIPT_FIELDS = {"text", "language", "durationSec", "lowConfidence", "truncated", "backend"}
 
+# types.ts: ProQuota / ProWindows
+PRO_QUOTA_FIELDS = {"remaining", "limits", "used"}
+PRO_WINDOW_FIELDS = {"day", "week", "month"}
+
 # types.ts: ChatSummary / ChatDetail / ChatMessage / ChatList / ChatDeleted
 CHAT_SUMMARY_FIELDS = {"chat_id", "title", "title_source", "created_at", "updated_at", "messages"}
 CHAT_MESSAGE_FIELDS = {"role", "content", "created_at"}
@@ -50,6 +54,12 @@ def test_login_javobi_types_ts_ga_mos(client):
     body = client.post("/api/v1/auth/login", json=ADMIN).json()
     assert set(body) == LOGIN_FIELDS, "LoginResponse maydonlari mos kelmadi"
     assert set(body["user"]) == AUTH_USER_FIELDS, "AuthUser maydonlari mos kelmadi"
+
+
+def test_login_sorovi_types_ts_ga_mos():
+    """types.ts: LoginRequest - `username` + `password` (`email` eski nom, zahira)."""
+    from app.schemas.auth import LoginRequest
+    assert {"username", "password"} <= set(LoginRequest.model_fields)
 
 
 def test_me_javobi_types_ts_ga_mos(client, auth):
@@ -126,3 +136,26 @@ def test_suhbatlar_tarixi_types_ts_ga_mos():
     assert set(ChatMessage.model_fields) == CHAT_MESSAGE_FIELDS
     assert set(ChatList.model_fields) == CHAT_LIST_FIELDS
     assert set(ChatDeleted.model_fields) == CHAT_DELETED_FIELDS
+
+
+def test_pro_byudjeti_types_ts_ga_mos():
+    """`schemas/pro.py` <-> `types.ts` dagi `ProQuota` va `ProWindows`.
+
+    Sxemadan o'qiladi: byudjet yuqoridagi xizmatda hisoblanadi va testda
+    chaqirilmaydi (HTTP yo'li `tests/test_pro.py` da soxta xizmat bilan).
+    """
+    from app.schemas.pro import ProQuota, ProWindows
+    assert set(ProQuota.model_fields) == PRO_QUOTA_FIELDS
+    assert set(ProWindows.model_fields) == PRO_WINDOW_FIELDS
+
+
+def test_stream_sorovida_mode_bor():
+    """`mode` KLIENTDAN keladi va faqat ikki qiymat qabul qilinadi."""
+    import pytest
+    from pydantic import ValidationError
+    from app.schemas.chat import StreamRequest
+
+    assert StreamRequest(question="a").mode == "standard", "default standard"
+    assert StreamRequest(question="a", mode="pro").mode == "pro"
+    with pytest.raises(ValidationError):
+        StreamRequest(question="a", mode="turbo")

@@ -42,7 +42,36 @@ cd apps/web && npm run dev
 `apps/web/.env` dagi `VITE_API_TARGET` shu backend'ga qaraydi, ya'ni Vite
 `/api/*` so'rovlarini unga uzatadi va brauzerda CORS umuman kerak bo'lmaydi.
 
-## Foydalanuvchilar
+## Kirish: Keycloak (SSO)
+
+Odam HRM/CRM logini va paroli bilan kiradi (masalan `y.mamajonov`). Login
+so'rovi Keycloak'ka (`CRM_IDP_TOKEN_URL`, `crm-client`) parol granti bilan
+ketadi - CRM ulanishi allaqachon shu yo'l bilan ochilardi. Keycloak "ha"
+desa:
+
+- shaxs `data/identities.json` ga yoziladi: Keycloak `sub` -> `actor_id`.
+  `actor_id` BIR MARTA tanlanadi va qotadi (suhbat tarixi, ulanishlar,
+  Telegram ulanishi shunga bog'liq). `users.yaml` dagi eski hisob email
+  bo'yicha topilsa uning eski raqami beriladi;
+- Keycloak sessiyasi CRM ulanishiga aylanadi, o'sha parol bilan HRM ga ham
+  kiriladi - "+" menyusida ikkalasi ham ulangan turadi, odam faqat kalitni
+  buradi. HRM yiqilsa kirish baribir bo'ladi, HRM qatori "ulanmagan" qoladi.
+
+HRM Keycloak tokenini QABUL QILMAYDI (JHipster, o'z JWT'si, faqat login +
+parol), shuning uchun redirect (authorization code) oqimi emas, parol
+granti: HRM ni ochish uchun parolni bir marta ko'rish shart. HRM va
+Keycloak paroli bir xil.
+
+Sozlama: `.env` da `CRM_IDP_TOKEN_URL`, `CRM_CLIENT_ID`, `CRM_CLIENT_SECRET`,
+`CRM_BASE_URL`, `HRM_BASE_URL`. `TOKEN_TTL_HOURS=10` tavsiya (HRM tokeni 10
+soat). Mantiq: `services/sso.py`, `services/identities.py`, `api/v1/auth.py`.
+
+## Foydalanuvchilar (zahira)
+
+`config/users.yaml` endi ZAHIRA: Keycloak sozlanmagan, o'chgan yoki parolni
+rad etgan bo'lsa shu yerdagi hisob sinab ko'riladi - administrator
+Keycloak'siz ham kira olsin. Kerak bo'lmasa `LOCAL_LOGIN_ENABLED=false`.
+
 
 `config/users.example.yaml` da ikkita namunaviy hisob bor: `admin@venera.uz`
 (ADMIN, RAG_ADMIN) va `demo@venera.uz` (USER).

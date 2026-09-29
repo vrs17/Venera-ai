@@ -191,6 +191,27 @@ class UserStore:
             return None
         return found[0] if found else None
 
+    def by_login(self, username: str) -> StoredUser | None:
+        """Login (`y.mamajonov`) bo'yicha: email'ning `@` gacha qismi shu bo'lgan hisob.
+
+        SSO bilan BIRINCHI kirishda eski `actor_id` ni topish uchun
+        (`services/identities.py`) - shunda tarix va Telegram ulanishi
+        joyida qoladi. Ikkita hisob mos kelsa `None`: taxmin qilib boshqa
+        odamning hisobini berish mumkin emas.
+        """
+        login = str(username).strip().lower()
+        if not login:
+            return None
+        found = [u for u in self._users.values() if u.email.split("@", 1)[0] == login]
+        if len(found) > 1:
+            log.error("login %s bir nechta hisobga mos keldi - SSO bog'lanmadi", login)
+            return None
+        return found[0] if found else None
+
+    def actor_ids(self) -> set[int]:
+        """Band raqamlar - yangi SSO hisobga bo'sh raqam berish uchun."""
+        return {u.actor_id for u in self._users.values()}
+
     def emails_using(self, hashes: set[str]) -> list[str]:
         """Berilgan xeshlardan birini ishlatayotgan hisoblar."""
         if not hashes:
