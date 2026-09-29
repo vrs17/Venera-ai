@@ -86,7 +86,13 @@ def connect(
     oddiy `def` ni threadpool'da bajaradi.
     """
     try:
-        return ConnectorStatus(**hub.connect(_uid(user), platform, body.username, body.password))
+        status = ConnectorStatus(**hub.connect(_uid(user), platform, body.username, body.password))
+        if platform == "hrm":
+            # Parol XOTIRADA qoladi - HRM tokeni 10 soatda o'ladi va uni
+            # yangilashning boshqa yo'li yo'q (`services/integrations/
+            # connectors.py` moduli izohi). Diskka yozilmaydi.
+            hub.remember_password(_uid(user), body.password)
+        return status
     except ConnectorError as exc:
         raise _fail(exc, user, platform, "rad etildi") from exc
 

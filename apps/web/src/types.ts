@@ -257,7 +257,8 @@ export interface SignupResponse {
 }
 
 export interface LoginRequest {
-  email: string
+  /** HRM/CRM (Keycloak) logini, masalan `y.mamajonov`; zahira hisob uchun email. */
+  username: string
   password: string
 }
 export interface LoginResponse {

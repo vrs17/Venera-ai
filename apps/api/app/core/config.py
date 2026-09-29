@@ -37,7 +37,21 @@ class Settings(BaseSettings):
     #: Bu default qiymat ataylab "xavfsiz emas" deb ko'rinadi - unutib
     #: qo'yilsa `/health` uni ogohlantirish sifatida ko'rsatadi.
     secret_key: str = "dev-only-insecure-change-me"
+    #: HRM ulanishi 10 soat yashaydi va yangilanmaydi (`hrm_token_margin`
+    #: izohi). Sessiya undan UZUN bo'lsa "+" menyusida HRM qatori sessiya
+    #: tugamasdan "muddati tugagan" bo'lib qoladi - `.env` da 10 tavsiya.
     token_ttl_hours: int = 12
+    #: Kirish Keycloak orqali (`services/sso.py`): `crm_idp_token_url`,
+    #: `crm_client_id/secret`, `crm_base_url` (pastda) to'ldirilgan bo'lsa
+    #: login + parol Keycloak'ka ketadi va kirgan odam uchun HRM/CRM
+    #: ulanishlari o'zi ochiladi. `users.yaml` dagi hisoblar ZAHIRA:
+    #: Keycloak sozlanmagan, o'chgan yoki parolni rad etgan bo'lsa sinab
+    #: ko'riladi - administrator Keycloak'siz ham kira olsin. Prod'da
+    #: o'chirish mumkin.
+    local_login_enabled: bool = True
+    #: SSO bilan kirganlar: Keycloak `sub` -> `actor_id`
+    #: (`services/identities.py`). Sir yo'q, lekin `data/` da, 600.
+    identities_file: Path = BASE_DIR / "data" / "identities.json"
 
     #: Demo foydalanuvchilar fayli. Keyinchalik bu joyni DB egallaydi -
     #: `services/users.py` interfeysi o'zgarmaydi.
@@ -341,7 +355,17 @@ class Settings(BaseSettings):
     #: o'chiq - menyuda "serverda sozlanmagan" ko'rinadi.
     hrm_base_url: str = ""
     hrm_timeout: float = 10.0
-    #: HRM tokeni 10 SOAT yashaydi va refresh'i yo'q. Muddati shundan KAM
+    #: HRM tokeni 10 SOAT yashaydi va refresh'i YO'Q.
+    #:
+    #: O'LCHANGAN (2026-09-29, jonli HRM, odamning o'z hisobi bilan):
+    #: login so'roviga "meni eslab qol" maydoni uchala yozilishida ham
+    #: (`rememberMe`, `remember-me`, `remember_me`) qo'shib ko'rildi -
+    #: HRM ularni QABUL QILDI (login ishladi) va tokenni baribir 10.0
+    #: soatlik qilib berdi. Ya'ni uzoqroq token so'rashning YO'LI YO'Q:
+    #: uni faqat HRM tomonida uzaytirish yoki refresh qo'shish mumkin.
+    #: Qayta sinab ko'rishning hojati yo'q.
+    #:
+    #: Muddati shundan KAM
     #: qolganda u yuqoridagi xizmatga BERILMAYDI va odam qayta kiradi:
     #: savol-javob bir necha daqiqa cho'zilishi mumkin, token esa javob
     #: OXIRIGACHA yaroqli turishi kerak.

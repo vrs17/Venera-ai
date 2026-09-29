@@ -30,7 +30,7 @@ from fastapi.staticfiles import StaticFiles
 
 from fastapi import Depends
 
-from .api.deps import current_user, docs_viewer, get_user_store
+from .api.deps import current_user, docs_viewer, get_identity_store, get_user_store
 from .api.v1 import router as v1_router
 from .core import errors
 from .core.config import crm_token_now, hrm_token_now, settings
@@ -373,6 +373,14 @@ def _diagnostics() -> dict:
     # Foydalanuvchilarning o'z HRM/CRM ulanishlari. Sozlanmagan bo'lsa "+"
     # menyusidagi tugma "serverda sozlanmagan" deydi - sababi shu yerda.
     hub = connector_hub()
+    # Kirish yo'li: SSO (Keycloak = CRM ulanishi sozlamasi) yoki zahira
+    # (`users.yaml`). Ikkalasi ham yo'q bo'lsa HECH KIM kira olmaydi - va
+    # bu `/api/health` da aytilmasa faqat login oynasidagi xatodan bilinardi.
+    if not hub.crm.configured and not settings.local_login_enabled:
+        warnings.append(
+            "kirish yo'li yo'q: Keycloak (CRM_IDP_TOKEN_URL/CRM_CLIENT_SECRET/CRM_BASE_URL) "
+            "sozlanmagan va LOCAL_LOGIN_ENABLED=false"
+        )
     if not hub.hrm.configured:
         warnings.append("hrm_base_url bo'sh - HRM ulanishi (foydalanuvchi hisobi) o'chiq")
     if not hub.crm.configured:
@@ -460,6 +468,12 @@ def _diagnostics() -> dict:
             "hrm": hub.hrm.configured,
             "crm": hub.crm.configured,
             "users": hub.store.user_count(),
+        },
+        # Kirish: SSO sozlanganmi, zahira ochiqmi, SSO bilan nechta odam kirgan.
+        "login": {
+            "sso": hub.crm.configured,
+            "local": settings.local_login_enabled,
+            "identities": len(get_identity_store()),
         },
         # Telegram bot: ishlayaptimi va nechta odam ulangan. TOKEN YO'Q.
         "telegram": telegram,

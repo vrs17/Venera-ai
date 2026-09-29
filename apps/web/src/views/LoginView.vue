@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
 import { localizeApiError } from '../api/errors'
-import { LockIcon, LoginIcon, MailIcon } from '../icons'
+import { LockIcon, LoginIcon, UserIcon } from '../icons'
 import AuthShell from '../components/AuthShell.vue'
 import AuthField from '../components/AuthField.vue'
 import AuthButton from '../components/AuthButton.vue'
@@ -14,7 +14,7 @@ const { t } = useI18n({ useScope: 'global' })
 const router = useRouter()
 const { login } = useAuth()
 
-const email = ref('')
+const username = ref('')
 const password = ref('')
 const busy = ref(false)
 const shell = ref<{ ignite: () => void } | null>(null)
@@ -22,13 +22,12 @@ const shell = ref<{ ignite: () => void } | null>(null)
 const submitted = ref(false)
 const formError = ref('')
 
-const emailValid = computed(() => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim()))
-const valid = computed(() => emailValid.value && password.value.length > 0)
+// Login - HRM/CRM (Keycloak) hisobi, masalan `y.mamajonov`; email emas.
+// Zahira hisob (users.yaml) uchun email ham shu maydonga yoziladi.
+const valid = computed(() => username.value.trim().length > 0 && password.value.length > 0)
 // Errors are computed and only surface once submit was attempted, so they appear
 // on submit and clear live as the user fixes the field (no watcher races).
-const emailError = computed(() =>
-  !submitted.value ? '' : !email.value.trim() ? t('required') : emailValid.value ? '' : t('emailInvalid'),
-)
+const usernameError = computed(() => (!submitted.value ? '' : username.value.trim() ? '' : t('required')))
 const passwordError = computed(() => (!submitted.value ? '' : password.value ? '' : t('required')))
 
 async function submit() {
@@ -38,7 +37,7 @@ async function submit() {
   busy.value = true
   shell.value?.ignite()
   try {
-    const res = await login(email.value.trim(), password.value)
+    const res = await login(username.value.trim(), password.value)
     // First login returns passwordChangeRequired; the guard would bounce us
     // there anyway, but routing explicitly avoids a flash of the chat page.
     router.push(res.passwordChangeRequired ? { name: 'change-password' } : '/')
@@ -60,13 +59,13 @@ async function submit() {
       <AuthError :message="formError" />
 
       <AuthField
-        v-model="email"
-        :label="t('email')"
-        type="email"
-        autocomplete="email"
-        :icon="MailIcon"
-        placeholder="you@venera.uz"
-        :error="emailError"
+        v-model="username"
+        :label="t('loginName')"
+        type="text"
+        autocomplete="username"
+        :icon="UserIcon"
+        placeholder="y.mamajonov"
+        :error="usernameError"
         reveal-delay="0.06s"
       />
       <AuthField

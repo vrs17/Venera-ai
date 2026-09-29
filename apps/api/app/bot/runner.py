@@ -46,6 +46,7 @@ from ..services.integrations.assistant import AssistantError
 from ..services.integrations.telegram import TelegramApi, TelegramError
 from ..services.stt import SttError, Transcript
 from ..services.telegram_links import LinkStore, TelegramLink
+from ..services.identities import Directory
 from ..services.users import UserStore
 from . import render
 from .render import esc
@@ -238,7 +239,7 @@ class VeneraBot:
         api: TelegramApi,
         links: LinkStore,
         *,
-        users: Callable[[], UserStore],
+        users: Callable[[], Directory | UserStore],
         backend: Backend | None = None,
         webapp_url: str = "",
         workers: int = 4,

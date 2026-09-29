@@ -58,10 +58,11 @@ def start() -> None:
         log.warning("Telegram bot ishga tushirilmadi: %s", _state["note"])
         return
 
-    from ..api.deps import get_user_store
+    from ..api.deps import get_directory
     from .runner import VeneraBot
 
-    _bot = VeneraBot(api, links, users=get_user_store, webapp_url=settings.telegram_webapp_url,
+    # `get_directory`: SSO bilan kirganlar (`identities.json`) + `users.yaml`.
+    _bot = VeneraBot(api, links, users=get_directory, webapp_url=settings.telegram_webapp_url,
                      workers=settings.telegram_workers)
     _bot.start()
     _state["note"] = ""

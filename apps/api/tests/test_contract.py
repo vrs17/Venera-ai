@@ -52,6 +52,12 @@ def test_login_javobi_types_ts_ga_mos(client):
     assert set(body["user"]) == AUTH_USER_FIELDS, "AuthUser maydonlari mos kelmadi"
 
 
+def test_login_sorovi_types_ts_ga_mos():
+    """types.ts: LoginRequest - `username` + `password` (`email` eski nom, zahira)."""
+    from app.schemas.auth import LoginRequest
+    assert {"username", "password"} <= set(LoginRequest.model_fields)
+
+
 def test_me_javobi_types_ts_ga_mos(client, auth):
     body = client.get("/api/v1/auth/me", headers=auth).json()
     assert set(body) == AUTH_USER_FIELDS
