@@ -840,18 +840,32 @@ HRM/CRM savollari, yozuv amalini tasdiqlash (tugmalar), ariza fayli (DOCX
 chatga keladi, PDF tugma bilan), manba hujjati (`📄 [1]` tugmasi - PDF chatga
 keladi). Suhbatlar veb ilova va mini app tarixida ham ko'rinadi.
 
-**Qayerda ishlaydi.** API jarayoni ichida (`app/bot/`), long polling bilan -
-nginx ga tegilmaydi, tashqaridan yangi yo'l ochilmaydi. Alohida xizmat EMAS:
-bot `api/v1/chat.py` dagi AYNI klientlarni ishlatadi (CRM sessiyasi
+**Qayerda ishlaydi.** API jarayoni ichida (`app/bot/`), long polling bilan
+(`TELEGRAM_MODE=polling`) - nginx ga tegilmaydi. Alohida xizmat EMAS: bot
+`api/v1/chat.py` dagi AYNI klientlarni ishlatadi (CRM sessiyasi
 `refresh_token` ni rotatsiya qiladi - ikkinchi nusxa uni bekor qilardi).
-Ikkinchi API nusxasi (masalan qo'lda ishga tushirilgan sinov serveri) botni
-o'qimaydi: `data/telegram/poll.lock` fayl qulfi.
+Bitta xostda ikkinchi API nusxasi botni o'qimaydi: `data/telegram/poll.lock`.
+
+**Bitta token - bitta o'quvchi.** 2026-09-24 da boshqa muhitdagi (dev) server
+shu token bilan ishga tushdi: xabarlar ikkiga bo'lindi va dev nusxa - unda
+ulanishlar yo'q - odamdan qayta kirishni so'radi. Endi bot 409 ni ko'rishi
+bilan ulanishni DARHOL qaytarib oladi (u nusxa ~30 s kutadi), `/api/health/
+detail` esa `conflicts_10min` va ogohlantirishni ko'rsatadi. To'liq yechim:
+@BotFather'da `/revoke`, yangi tokenni faqat shu `.env` ga qo'yish.
+
+**Webhook** (`TELEGRAM_MODE=webhook`, `/api/v1/telegram/webhook`, sir
+sarlavhasi bilan) kodda bor, lekin jonli tizimda O'CHIQ: sinovda Telegram'ning
+`195.158.16.251` ga ulanishi ko'pincha birinchi urinishda "Connection timed
+out" bo'ldi va ovozli savol ~80 s kechikdi (GAPI 1.6 s, javob 7 s). Tarmoq
+tuzatilsa - bitta qator bilan yoqiladi. Polling'ga qaytishda webhook qo'lda
+o'chiriladi (`deleteWebhook`), aks holda `getUpdates` 409 oladi.
 
 **Hisobni ulash - faqat mini app orqali.** Odam botdagi "Venera" tugmasi bilan
 mini app'ni ochib kiradi; ilova `POST /api/v1/telegram/link` ga Telegram
 imzolagan `initData` ni yuboradi. Isbot ikkita: sessiya (kim kirgan) va
 imzo (kim ochgan) - `user.id` klientdan olinmaydi. Botda parol so'ralmaydi.
-Ulanish 30 kun yashaydi va faqat mini app ochilganda yangilanadi; mini
+Ulanish oxirgi faollikdan 30 kun yashaydi: mini app ochilishi ham, botdagi
+har savol ham uni yangilaydi - faol odamdan qayta kirish so'ralmaydi. Mini
 app'dan chiqish (`/unlink`) va botdagi `/logout` uni uzadi. Hisob
 `users.yaml` dan o'chirilsa - keyingi xabarda ulanish uziladi.
 
@@ -870,3 +884,50 @@ bot jim (javoblarda shaxsiy HR ma'lumoti bor).
 **Holat:** `/api/health/detail` -> `telegram` (ishlayaptimi, oxirgi muvaffaqiyatli
 so'rov, xato, ulanganlar soni). 409 xatosi = boshqa nusxa shu botni
 o'qiyapti. O'chirish: `.env` da `TELEGRAM_BOT_ENABLED=false` + restart.
+
+## Xodimlar ma'lumotnomasi (kontaktlar)
+
+F.I.SH, Telegram, telefon, email - `apps/api/data/contacts/contacts.db` (SQLite,
+gitignore'da, 600). Shaxsiy ma'lumot: jurnalga qiymatlar yozilmaydi, tashqi
+LLM ga yuborilmaydi - qidiruv Venera'ning o'zida (`services/contacts.py`).
+
+**Chatda (web, mini app, Telegram bot - bitta yo'l, `chat.open_stream`):**
+
+| Yozadi | Natija |
+|---|---|
+| "Azizov Boburning telefoni?" / "...ning telegrami", "emaili", "kontakti" | Javob ro'yxatdan, darhol |
+| "...ning telefonini +998901234567 ga o'zgartir" | Tasdiq kartasi -> saqlanadi |
+| "...ga telegram qo'sh: @username" | Tasdiq kartasi (bo'sh maydonni to'ldirish) |
+| "...ning telegramini o'chir" | Tasdiq kartasi (maydon tozalanadi) |
+| "...ning ismini Familiya Ism Otasi ga o'zgartir" | Tasdiq kartasi |
+| "Yangi xodim qo'sh: Familiya Ism, +998..., @user, email" | Tasdiq kartasi |
+| "...ni ro'yxatdan o'chir" | Tasdiq kartasi (yumshoq o'chirish) |
+
+Qiymat turi o'zidan aniqlanadi (`+998...` telefon, `@...` Telegram, `...@...`
+email). Ism imlosi farq qilsa ham topiladi (o'/oʻ, x/h, kirill, qo'shimchalar,
+bitta harf xatosi). Kartani CRM takliflari bilan BIR XIL UI ko'rsatadi
+(`connector: "xodimlar"`), tasdiqlash - `/api/v1/actions/{token}/confirm`
+(kalit `ct_` bilan boshlanadi, Venera'ning o'zida bajariladi).
+
+**Ruxsat:** qidirish - har qanday kirgan foydalanuvchi; taklif va tasdiqlash -
+`contacts_editor_roles` (default `ADMIN`), rol tasdiq paytida qayta
+tekshiriladi. Har o'zgarish `employee_changes` jadvaliga yoziladi (kim, qachon,
+maydon, eski -> yangi). Bir telefon/Telegram/email ikki xodimda bo'lmaydi;
+taklifdan keyin ma'lumot o'zgargan bo'lsa ustidan yozilmaydi.
+
+**Ommaviy yuklash / nusxa** (jadvaldan nusxalangan TSV yoki CSV, birinchi qator
+sarlavha):
+
+```bash
+cd ~/Venera/apps/api
+venv/bin/python -m app.tools.contacts_import royxat.tsv --dry-run
+venv/bin/python -m app.tools.contacts_import royxat.tsv
+venv/bin/python -m app.tools.contacts_import --export nusxa.csv
+```
+
+Qayta yuklash xavfsiz: email yoki F.I.SH bo'yicha topilgan xodimning faqat
+TO'LDIRILGAN maydonlari yangilanadi, bo'sh katak mavjud qiymatni o'chirmaydi,
+faylda yo'q xodim o'chirilmaydi. Birinchi yuklash: 2026-09-25, 77 xodim.
+
+**Cheklov:** ma'lumotnoma javoblari yuqoridagi xizmatga bormaydi, shuning
+uchun suhbatlar TARIXIDA saqlanmaydi (yuqoridagi xizmat ularni ko'rmaydi).

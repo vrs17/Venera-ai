@@ -163,3 +163,14 @@ def _telegram_bot_off(tmp_path, monkeypatch):
     monkeypatch.setattr(bot_module, "api", TelegramApi(""), raising=False)
     monkeypatch.setattr(bot_module, "links", LinkStore(tmp_path / "telegram" / "links.json"),
                         raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_contacts(tmp_path, monkeypatch):
+    """Xodimlar ma'lumotnomasi HAR TESTDA vaqtinchalik va bo'sh - jonli
+    kontaktlar (shaxsiy ma'lumot) testlarga tegmaydi, va bo'sh ma'lumotnoma
+    chatni o'zgartirmaydi (savollar odatdagidek yordamchiga ketadi)."""
+    from app.services import contacts
+    from app.services.contacts import ContactStore
+
+    monkeypatch.setattr(contacts, "store", ContactStore(tmp_path / "contacts" / "contacts.db"))

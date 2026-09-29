@@ -39,6 +39,7 @@ from ...services.integrations.assistant import (
     AssistantError,
     artifact_ref_ok,
 )
+from ...services import contacts_chat
 from ...services.hold import HoldVoices, keyword_topic, pick
 from ...services.integrations.crm_auth import CrmAuth
 from ...services.integrations.ollama import HoldClassifier
@@ -401,6 +402,25 @@ def _live_tokens(user: AuthUser) -> dict[str, str]:
     return tokens
 
 
+def open_stream(question: str, user: AuthUser, chat_id: str | None):
+    """Savol -> javob oqimi: web, mini app va Telegram bot BITTA yo'ldan.
+
+    Avval xodimlar ma'lumotnomasi (`services/contacts_chat.py`): kontakt
+    savoli yoki tahriri bo'lsa javob shu yerda tayyorlanadi va yuqoridagi
+    xizmatga BORMAYDI. Qolgan hamma savol - yordamchiga.
+    """
+    local = contacts_chat.answer(question, user)
+    if local is not None:
+        return local
+    return _assistant.stream(
+        question,
+        user_id=assistant_user_id(user),
+        chat_id=chat_id,
+        tokens=_live_tokens(user),
+        max_chars=settings.hrm_assistant_max_question_chars,
+    )
+
+
 def _fail(exc: AssistantError, user: AuthUser | str, what: str):
     """Xatoni log'ga yozadi va foydalanuvchiga xabarga o'giradi. `user` -
     sessiya egasi yoki (tokensiz havolada) havola egasining `actorId` si."""
@@ -424,6 +444,15 @@ def stream(body: StreamRequest, user: AuthUser = Depends(current_user)) -> Strea
     bo'sh qoladi - aks holda bitta uzun javob butun serverni to'xtatib
     qo'yardi.
     """
+    # Xodimlar ma'lumotnomasi - javob darhol, kutish ovozi ham kerak emas.
+    local = contacts_chat.answer(body.question, user)
+    if local is not None:
+        return StreamingResponse(
+            local.frames,
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-store", "X-Venera-Request-Id": local.request_id,
+                     "X-Accel-Buffering": "no"},
+        )
     # Kutish rejasi va tasnif ENG BOSHIDA, yuqoridagi xizmatga ulanishdan
     # OLDIN: ulanishning o'zi 0-2 sekund oladi va tasnif shu vaqtda parallel
     # ishlaydi (`_HoldPlan.start` izohida o'lchov).
