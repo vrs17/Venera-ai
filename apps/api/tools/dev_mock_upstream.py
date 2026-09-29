@@ -78,8 +78,14 @@ tashqari nosozlik holatlari:
     fail      oqim ochilmasdan 500
     slow      birinchi so'zdan oldin ~9 s jimlik - kutish ovozini (hold) sinash uchun
 
+"PRO" REJIMI. `mode: "pro"` bilan kelgan savolning `done` kadrida `pro` bloki
+bo'ladi (`types.ts: ProInfo`): hujjat/HRM/CRM savoli byudjetdan bittani yeydi
+(`used: true`), kichik gap va aniqlashtirish yemaydi (`used: false`), byudjet
+tugagan bo'lsa javob baribir keladi, blokda esa `reason: "limit"`. Qolgani
+`GET /api/pro/quota?user_id=` da; kunlik chegara `--pro-day` (default 5).
+
 HOLAT XOTIRADA: suhbatlar `(user_id, chat_id)` bo'yicha, takliflar (15 daqiqa),
-ariza fayllari va TTS tokenlari. Qayta ishga tushsa hammasi yo'qoladi - TTS
+ariza fayllari, "Pro" byudjeti va TTS tokenlari. Qayta ishga tushsa hammasi yo'qoladi - TTS
 tokeni ham, va bu ataylab: Venera 401 olib, tokenni o'zi yangilaydi (jonli
 server qayta ishga tushgandagi kabi).
 
@@ -127,6 +133,7 @@ class _Opts:
     speed: float = 1.0          # kechikishlar ko'paytuvchisi; 0 - kechikishsiz
     strict_tokens: bool = False  # HRM/CRM tokeni yo'q savol -> auth_missing
     silent_tts: bool = False     # TTS jim audio beradi
+    pro_day: int = 5             # "Pro" kunlik chegarasi (tugashini sinash uchun kichik)
 
 
 OPTS = _Opts()
@@ -881,10 +888,56 @@ class TtsTokens:
             return len(self._items)
 
 
+class ProBudget:
+    """"Pro" byudjeti: odam bo'yicha uchta SURILADIGAN oyna (24 soat / 7 kun /
+    30 kun), `GET /api/pro/quota` va `done.pro` shakli jonli xizmatnikidek
+    (`schemas/pro.py`, `types.ts: ProInfo`). Chegaralar jonli xizmatda rolga
+    qarab o'zgaradi - bu yerda bitta, kunligi `--pro-day` bilan (default 5,
+    tugagan holatni tez ko'rish uchun)."""
+
+    _SPANS = {"day": 86400, "week": 7 * 86400, "month": 30 * 86400}
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._spent: dict[str, list[float]] = {}
+
+    def _limits(self) -> dict[str, int]:
+        day = max(0, OPTS.pro_day)
+        return {"day": day, "week": day * 4, "month": day * 12}
+
+    def _view(self, user_id: str) -> dict[str, dict[str, int]]:
+        now, stamps = time.time(), self._spent.get(user_id, [])
+        used = {name: sum(1 for t in stamps if now - t < span) for name, span in self._SPANS.items()}
+        limits = self._limits()
+        return {"remaining": {k: max(0, limits[k] - used[k]) for k in limits},
+                "limits": limits, "used": used}
+
+    def quota(self, user_id: str) -> dict[str, dict[str, int]]:
+        with self._lock:
+            return self._view(user_id)
+
+    def answer(self, user_id: str, needed: bool) -> dict[str, Any]:
+        """`done` kadridagi `pro` bloki. Kichik gapga maslahat kerak emas -
+        byudjet yeyilmaydi (`used: false`, sababsiz)."""
+        with self._lock:
+            view = self._view(user_id)
+            if not needed:
+                return {"requested": True, "used": False, "calls": 0,
+                        "remaining": view["remaining"], "limits": view["limits"]}
+            if min(view["remaining"].values()) <= 0:
+                return {"requested": True, "used": False, "calls": 0, "reason": "limit",
+                        "remaining": view["remaining"], "limits": view["limits"]}
+            self._spent.setdefault(user_id, []).append(time.time())
+            view = self._view(user_id)
+            return {"requested": True, "used": True, "calls": 1,
+                    "remaining": view["remaining"], "limits": view["limits"]}
+
+
 CHATS = ChatStore()
 ACTIONS = ActionStore()
 ARTIFACTS = ArtifactStore()
 TTS_TOKENS = TtsTokens()
+PRO = ProBudget()
 
 
 # --- ssenariylar -----------------------------------------------------------
@@ -1637,12 +1690,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         chat_id = body.get("chat_id") if isinstance(body.get("chat_id"), str) else None
         tokens = body.get("tokens") if isinstance(body.get("tokens"), dict) else {}
+        pro = body.get("mode") == "pro"
         scenario, q = choose(question)
         ctx = Ctx(question=question, q=q, user_id=user_id, chat_id=chat_id or None,
                   tokens={k: str(v) for k, v in tokens.items() if v},
                   base=f"http://{self.headers.get('Host') or '127.0.0.1'}", request_id=self._rid)
         plan = build_plan(ctx, scenario)
-        self._note = f"  [{plan.scenario}]"
+        self._note = f"  [{plan.scenario}{' pro' if pro else ''}]"
         if plan.http_error:
             _pause(0.2, 0.5)
             self._json(*plan.http_error)
@@ -1668,7 +1722,11 @@ class Handler(BaseHTTPRequestHandler):
                     send({"type": "token", "text": piece})
                     _pause(0.025, 0.04)
             elif kind == "done":
-                send({"type": "done", "route": step[1], "request_id": self._rid})
+                done = {"type": "done", "route": step[1], "request_id": self._rid}
+                if pro:
+                    # Blok faqat "pro" so'ralganda keladi (standart javobda yo'q).
+                    done["pro"] = PRO.answer(user_id, needed=plan.scenario not in ("smalltalk", "clarify"))
+                send(done)
             elif kind == "cut":
                 if step[1]:
                     # Kadr O'RTASIDA: chunk sarlavhasi to'liq uzunlikni aytadi,
@@ -1686,6 +1744,13 @@ class Handler(BaseHTTPRequestHandler):
         # kalitsiz savol jonli xizmatda ham xotirasiz bajariladi.
         if plan.store and plan.answer and ctx.chat_id:
             CHATS.add_turn(user_id, ctx.chat_id, question, plan.answer, asked, time.time())
+
+    def pro_quota(self) -> None:
+        if not self._client_ok():
+            return
+        user_id = self._user_id()
+        if user_id:
+            self._json(200, PRO.quota(user_id))
 
     # --- HR Assistant: suhbatlar tarixi ------------------------------------------
 
@@ -1956,6 +2021,7 @@ ROUTES: list[tuple[str, re.Pattern[str], Callable[..., None]]] = [
         ("GET", r"/_mock", Handler.mock_state),
         # HR Assistant
         ("POST", r"/api/chat/stream", Handler.chat_stream),
+        ("GET", r"/api/pro/quota", Handler.pro_quota),
         ("GET", r"/api/chats", Handler.chats_list),
         ("GET", r"/api/chats/([^/]+)", Handler.chat_get),
         ("PATCH", r"/api/chats/([^/]+)", Handler.chat_patch),
@@ -1986,12 +2052,15 @@ def main() -> int:
     parser.add_argument("--strict-tokens", action="store_true",
                         help="HRM/CRM tokeni yuborilmagan savolga auth_missing (jonli xulq)")
     parser.add_argument("--silent-tts", action="store_true", help="TTS jim audio beradi")
+    parser.add_argument("--pro-day", type=int, default=5,
+                        help='"Pro" kunlik chegarasi (hafta x4, oy x12; default 5)')
     parser.add_argument("--seed", type=int, default=None, help="tasodifiy kechikishlar urug'i")
     args = parser.parse_args()
     # Jurnal faylga yo'naltirilganda ham o'zbekcha/ruscha belgilar yiqitmasin.
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     OPTS.speed, OPTS.strict_tokens, OPTS.silent_tts = max(0.0, args.speed), args.strict_tokens, args.silent_tts
+    OPTS.pro_day = args.pro_day
     if args.seed is not None:
         _rng.seed(args.seed)
 
@@ -2001,6 +2070,7 @@ def main() -> int:
     print(f"Venera dev mock: http://{args.host}:{args.port}  (speed={OPTS.speed}, "
           f"strict_tokens={OPTS.strict_tokens})\n"
           "  HR Assistant  POST /api/chat/stream · /api/chats · /api/actions · /api/hr/artifacts · /doc\n"
+          "                GET /api/pro/quota   (\"Pro\": done.pro, kunlik chegara --pro-day)\n"
           "  STT Router    POST /transcribe            TTS  POST /api/v1/auth/token · /api/v1/tts/stream\n"
           "  GAPI STT      POST /v1/transcribe         Ollama  POST /api/chat        holat  GET /health\n"
           "  ssenariylar: " + " ".join(name for name, _ in _RULES) + " smalltalk"
