@@ -227,9 +227,26 @@ nusxasi.
 * **O'chirilgan suhbat kaliti ishlatilmaydi.** Ochishda 404 (boshqa qurilmada
   o'chirilgan) bo'lsa, yangi kalit olinadi: eski kalit bilan savol berish
   o'chirilgan suhbatni qayta tiriltirardi.
-* Ekranda oxirgi **200** xabar turadi (avval 20 edi).
-* Manbalar (`[1]` hujjatlar) tarixdan ochilgan javoblarda ko'rinmaydi: server
-  ularni xabar bilan saqlamaydi.
+* Suhbatdan **200** xabar olinadi (`LOG_LIMIT`), ekranda esa **240** tagacha
+  turadi (`LOG_KEEP`; avval 20 edi). Farq ataylab: teng bo'lsa 200 xabarli
+  suhbat ochilgach birinchi yangi savoldanoq eski xabarlar qirqilardi.
+* **Xabar vaqti** har pufakchada, DOIM ko'rinadi (sensorli ekranda "ustiga
+  olib borish" yo'q): bugungi uchun "11:39", eskisi "18-sentabr, 11:39",
+  o'tgan yilniki yil bilan. O'zbek oy nomlari QO'LDA - `Intl` o'zbek uchun
+  "M09 18" beradi (`apps/web/src/time.ts` bilan bir xil). Tarixdan ochilgan
+  xabarda vaqt SERVERNIKI (`created_at`); yo'q bo'lsa ko'rsatilmaydi. Javobga
+  vaqt oqim TUGAGACH qo'yiladi.
+* **Manbalar xotirasi.** Server manbalarni (`[1]` hujjatlar) xabar bilan
+  saqlamaydi. Shuning uchun ular SHU qurilmada eslab qolinadi
+  (`venera_tg_sources`, suhbat kaliti + javob boshining 120 belgisi,
+  60 suhbatgacha) va suhbat qayta ochilganda qaytariladi -
+  `apps/web/src/sourcesCache.ts` nusxasi. Boshqa qurilmada ochilgan suhbatda
+  manbalar bo'lmaydi. "Chiqish" xotirani o'chiradi (hujjat nomlari keyingi
+  odamga qolmasin); sessiya tugashi o'chirmaydi.
+* Nom tahrirlanayotganda fon yangilanishi ro'yxatni QAYTA CHIZMAYDI (aks holda
+  yozilayotgan nom yo'qolardi); qayta chizilganda fokus o'sha qatorga qaytadi.
+* Varaq ochiq turganda javob kelsa, ro'yxat yangilanadi - yangi suhbat darhol
+  ko'rinadi.
 
 ## Hujjatni yuklab olish
 
@@ -325,6 +342,13 @@ cp apps/tg/index.html apps/tg/app.js ~/.local/share/venera-tg/
 > kiritilganlar: suhbatlar tarixi (12b), hujjatni yuklab olish (12c), taklif
 > kartasi (16 + karta uchun 16a yordamchilar). Har biridan oldin zahira:
 > `~/.local/share/venera-tg/*.bak-<sana>-<nom>`.
+>
+> 2026-09-29 holati: jonli nusxa (2026-09-23 12:29) = shu fayl MINUS 15-bo'lim
+> (va "+" uslublari) MINUS xabar vaqti va manbalar xotirasi (12b, ular
+> `venera-ui-2026-backup` tegidagi f2cb86e/833d333 dan keyin qo'shildi).
+> Jonlida repoda yo'q funksiya YO'Q - farq faqat ayirish, izoh matni va
+> 13-bo'limning joyi. Keyingi joylashtirish to'liq nusxalash bo'lsa, "+"
+> menyusi ham chiqadi - bu alohida qaror.
 
 Xizmatni qayta ishga tushirish **shart emas** - nginx faylni har so'rovda
 diskdan o'qiydi, va `/tg/` javobida `Cache-Control: no-cache` turadi.

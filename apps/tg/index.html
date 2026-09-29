@@ -167,6 +167,11 @@
   .msg.system { align-self: center; background: rgba(255,255,255,.05); color: var(--muted); font-size: 13px; }
   .msg .who { display: block; font-size: 11px; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
   .msg .src { display: block; margin-top: 7px; font-size: 12.5px; color: var(--muted); }
+  /* Xabar vaqti. Veb ilovada sichqoncha ustida ko'rinadi; bu yerda DOIM,
+     chunki sensorli ekranda "ustiga olib borish" yo'q - va suhbat
+     ilovasida vaqt ko'rinib turishi odatiy. */
+  .msg .at { display: block; margin-top: 5px; font-size: 11px; color: var(--muted); opacity: .75; }
+  .msg.you .at { text-align: right; }
   .msg .files { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 8px; }
   .cursor { display: inline-block; width: 2px; height: 1em; background: var(--fg); vertical-align: -2px; margin-left: 1px; animation: blink .8s steps(1) infinite; }
 
@@ -579,7 +584,9 @@
       <button class="btn sm" id="newChatBtn" type="button">+ Yangi suhbat</button>
     </div>
     <div class="hist-list" id="histList"></div>
-    <div class="hist-undo" id="histUndo" hidden>
+    <!-- O'chirildi, lekin YO'QOLMADI: 8 soniya qaytarish mumkin. `status` -
+         skrin-rider ham aytadi. -->
+    <div class="hist-undo" id="histUndo" role="status" hidden>
       <span>Suhbat o'chirildi</span>
       <button class="link" id="histUndoBtn" type="button">Bekor qilish</button>
     </div>
