@@ -150,6 +150,46 @@ export interface AnswerArtifact {
 
 /** One NDJSON line. `type` is open: the assistant may add frames, and an
  *  unknown one must be ignored rather than crash the reader. */
+/* ── "Pro" rejimi (2026-09-29) ───────────────────────────────────────────
+ *
+ * HAR XABAR uchun yoqiladigan rejim: yordamchi tashqi (hosted) modeldan
+ * maslahat oladi. Bu pulga tushadi va odamning byudjetidan yeydi, shuning
+ * uchun default O'CHIQ va har savol uchun alohida hal qilinadi.
+ * Maydon nomlari xizmatnikidek (snake_case) - `schemas/pro.py` nusxasi.
+ */
+
+/** Uchta SURILADIGAN oyna: oxirgi 24 soat / 7 kun / 30 kun. */
+export interface ProWindows {
+  day: number
+  week: number
+  month: number
+}
+
+/** schemas/pro.py: ProQuota - `GET /api/v1/pro/quota`. Chegaralar rolga
+ *  qarab o'zgaradi, shuning uchun ular QOTIRILMAYDI - shundan o'qiladi. */
+export interface ProQuota {
+  remaining: ProWindows
+  limits: ProWindows
+  used: ProWindows
+}
+
+/** Javob bilan kelgan `pro` bloki (`done` kadrida). Faqat "pro" so'ralgan
+ *  turlarda bo'ladi. */
+export interface ProInfo {
+  /** Shu xabar uchun "pro" so'ralganmi. */
+  requested?: boolean
+  /** Tashqi modeldan HAQIQATAN maslahat olindimi. Faqat shunda byudjetdan
+   *  yeyiladi. */
+  used?: boolean
+  calls?: number
+  remaining?: ProWindows
+  limits?: ProWindows
+  /** FAQAT so'ralib, berilmaganda: `limit` (byudjet tugagan) yoki
+   *  `no user` (so'rovda `user_id` yo'q). Javobning o'zi baribir bor -
+   *  u standart rejimda tayyorlangan. */
+  reason?: 'limit' | 'no user' | (string & {})
+}
+
 export interface ChatFrame {
   type: 'stage' | 'sources' | 'artifact' | 'proposal' | 'token' | 'done' | 'error' | 'hold' | (string & {})
   /** stage: human status text. token: the piece of answer to append. error: user-safe message. */
@@ -189,6 +229,8 @@ export interface ChatFrame {
   proposal?: ActionProposal
   /** done: which side answered. */
   route?: string | null
+  /** done: "Pro" natijasi, faqat shu rejim so'ralgan bo'lsa. */
+  pro?: ProInfo
   /** error: machine-readable cause, e.g. auth_missing. */
   code?: string
   request_id?: string
@@ -221,6 +263,11 @@ export interface UIExchange {
   route?: string | null
   /** Audit key: the same value is in the assistant's own log. */
   requestId?: string | null
+  /** "Pro" natijasi - javob ostidagi kichik belgi uchun. */
+  pro?: ProInfo | null
+  /** Shu tur "pro" bo'lib YUBORILGANmi. Qayta yaratish o'sha rejimda
+   *  bo'lishi uchun kerak (javob kelmasdan oldin ham ma'lum). */
+  proRequested?: boolean
   /** An `error` frame that arrived AFTER some of the answer. The answer is
    *  kept and this is shown under it — discarding a partial answer because
    *  its last step failed throws away the part that was useful. */

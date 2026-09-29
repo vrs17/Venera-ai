@@ -61,6 +61,10 @@ export async function askAi(question: string, signal?: AbortSignal): Promise<Pip
 /** Frames arrive in this order: stage… sources, artifact?, token…, done.
  *  On failure an `error` frame comes instead of the tokens, then `done`. */
 export interface StreamOptions {
+  /** "Pro" - SHU xabar uchun. Default `standard`: u pulga tushadi va
+   *  odamning byudjetidan yeydi, shuning uchun hech qachon o'z-o'zidan
+   *  yuborilmaydi. Javob `done` kadrida `pro` bloki bilan qaytadi. */
+  mode?: 'standard' | 'pro'
   /** True while the voice panel is open, so the backend may send holding
    *  phrases to fill the wait. Left out entirely in text mode. */
   voice?: boolean
@@ -94,6 +98,8 @@ export async function streamAsk(
     },
     body: JSON.stringify({
       question,
+      // `standard` YUBORILMAYDI - u serverning o'z default'i.
+      mode: options.mode === 'pro' ? 'pro' : undefined,
       chatId: options.chatId ?? undefined,
       // VOICE MODE IS DECLARED BY THE CLIENT, and it has to be: the server
       // cannot know whether anyone is listening. Holding phrases (`hold`

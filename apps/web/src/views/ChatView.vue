@@ -7,6 +7,7 @@ import { openChat as fetchChat } from '../api/chats.api'
 import { localizeApiError } from '../api/errors'
 import { ApiError } from '../api/http'
 import { useAuth } from '../composables/useAuth'
+import { usePro } from '../composables/usePro'
 import { useChats } from '../composables/useChats'
 import { useWakeWord, WAKE_LOCALES, WAKE_STORAGE_KEY } from '../composables/useWakeWord'
 import { warmGreeting } from '../api/greeting'
@@ -31,6 +32,10 @@ const router = useRouter()
 // Identity now comes from the authenticated session (derived from the token by
 // the backend); the chat request carries only the question.
 const { user, logout } = useAuth()
+// "Pro" - HAR XABAR uchun. Kalit kiritish panelida turadi, byudjet esa
+// shu yerda yangilanadi: javob bilan kelgan `pro.remaining` qayta
+// so'rashdan aniqroq va bepul.
+const pro = usePro()
 // Iqtibos qilingan hujjat - chat yonidagi panel. Manba ro'yxati ochadi.
 const { doc: viewerDoc, close: closeViewer } = useDocViewer()
 // Suhbatlar tarixi (yon panel). Ro'yxat serverdan; bu ekran faqat qaysi
@@ -250,6 +255,11 @@ onMounted(() => {
   const owner = user.value ? String(user.value.actorId) : null
   if (owner) void chats.load(owner)
 })
+// Byudjet bir marta yuklanadi; keyin har javob bilan o'zi yangilanadi
+// (`pro.noteAnswer`), ya'ni qayta so'rashning hojati yo'q.
+onMounted(() => {
+  if (user.value) void pro.load()
+})
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
@@ -259,6 +269,7 @@ function toggleDevMode() {
 
 async function onLogout() {
   abortController?.abort()
+  pro.reset()
   // The list belongs to this person; the next login must not see it.
   chats.reset()
   await logout()
@@ -309,7 +320,7 @@ function errorText(frame: ChatFrame): string {
 
 // Run (or re-run) the question for an existing exchange. Shared by send and
 // regenerate so both paths handle abort/error/timing identically.
-function runPipeline(id: string, question: string) {
+function runPipeline(id: string, question: string, mode: 'standard' | 'pro' = 'standard') {
   phase.value = 'sending'
   const t0 = performance.now()
   const controller = new AbortController()
@@ -368,6 +379,12 @@ function runPipeline(id: string, question: string) {
         break
       case 'done':
         patch(id, { route: frame.route ?? null, stage: null })
+        // "Pro" natijasi: ishlatildimi, nechta qoldi, berilmagan bo'lsa
+        // sababi. Blok FAQAT shu rejim so'ralgan turlarda keladi.
+        if (frame.pro) {
+          patch(id, { pro: frame.pro })
+          pro.noteAnswer(frame.pro)
+        }
         break
       default:
         break
@@ -379,6 +396,9 @@ function runPipeline(id: string, question: string) {
   holdCue.value = null
   streamAsk(question, onFrame, {
     chatId,
+    // "Pro" FAQAT shu xabar uchun: kalit yoqiq bo'lsa ham har savol
+    // alohida hal qilinadi (u pulga tushadi).
+    mode,
     signal: controller.signal,
     // Only the client knows whether anyone is listening.
     voice: voiceOpen.value,
@@ -427,7 +447,12 @@ function send(text: string): boolean {
     ...exchanges.value,
     { id, question: trimmed, response: null, error: null, durationMs: null, stage: null, askedAt: Date.now() },
   ]
-  runPipeline(id, trimmed)
+  // Rejim SHU YERDA qotiriladi: odam javob kelguncha kalitni bossa ham,
+  // bu tur o'zi yuborilgan rejimda qolishi kerak - aks holda javob ostidagi
+  // belgi boshqa narsani ko'rsatardi.
+  const mode = pro.enabled.value ? 'pro' : 'standard'
+  patch(id, { proRequested: mode === 'pro' })
+  runPipeline(id, trimmed, mode)
   return true
 }
 
@@ -439,8 +464,12 @@ function regenerate(id: string) {
   patch(id, {
     response: null, error: null, cancelled: false, durationMs: null,
     stage: null, sources: [], artifact: null, proposal: null, warning: null, route: null, answeredAt: null,
+    pro: null,
   })
-  runPipeline(id, ex.question)
+  // Qayta yaratish O'SHA rejimda: "pro" savolni standart rejimda qayta
+  // so'rash boshqa javob berardi, teskarisi esa odam so'ramagan holda
+  // byudjetdan yeyardi.
+  runPipeline(id, ex.question, ex.proRequested ? 'pro' : 'standard')
 }
 
 // The newest answer, for the voice panel to read back after a spoken turn.

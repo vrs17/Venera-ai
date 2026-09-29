@@ -129,6 +129,26 @@ const headline = computed<string | null>(() => {
   return t('headlinePending')
 })
 
+// "Pro" belgisi: rejim so'ralgan turlarda javob ostida bir qator.
+//
+// UCH XIL HOLAT, va farq MUHIM: "ishlatildi" byudjetdan yegan, "kerak
+// bo'lmadi" esa yemagan (yordamchi savolni o'zi hal qilgan), "berilmadi"
+// ham yemagan - javob standart rejimda tayyorlangan va SABABI aytiladi.
+// Uchalasini bitta "Pro" yorlig'i bilan ko'rsatish odamni chalg'itardi:
+// u byudjeti qayerga ketganini bilolmasdi.
+const proBadge = computed(() => {
+  const info = props.exchange.pro
+  if (!info) return null
+  if (info.used) return { text: t('proUsed'), tone: 'on' as const }
+  if (info.reason) {
+    const why = info.reason === 'limit' ? t('proReasonLimit')
+      : info.reason === 'no user' ? t('proReasonNoUser')
+      : info.reason
+    return { text: t('proDenied', { why }), tone: 'off' as const }
+  }
+  return { text: t('proNotNeeded'), tone: 'off' as const }
+})
+
 // Text the Copy button puts on the clipboard: the answer if present, otherwise
 // the headline (the blocked / denied / pending message).
 const answerCopyText = computed(() => {
@@ -203,6 +223,8 @@ const answerCopyText = computed(() => {
            the person presses Confirm here. -->
       <ActionCard v-if="exchange.proposal" :key="exchange.proposal.token" :proposal="exchange.proposal" />
 
+      <div v-if="proBadge" class="pro-badge" :class="`is-${proBadge.tone}`">{{ proBadge.text }}</div>
+
       <AnswerSources :sources="exchange.sources" :artifact="exchange.artifact" />
 
       <MessageActions :copy-text="answerCopyText" :busy="busy" :at="exchange.answeredAt" @regenerate="emit('regenerate')" />
@@ -230,6 +252,25 @@ const answerCopyText = computed(() => {
 </template>
 
 <style scoped>
+/* "Pro" belgisi - kichik va bosilmaydi: u ma'lumot, tugma emas. */
+.pro-badge {
+  display: inline-flex;
+  align-items: center;
+  margin: 10px 0 2px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.pro-badge.is-on {
+  border-color: transparent;
+  background: var(--ink);
+  color: var(--ink-contrast);
+}
 .result__warning {
   margin: 10px 0 2px;
   padding: 7px 10px;

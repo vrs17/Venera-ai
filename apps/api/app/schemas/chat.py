@@ -15,7 +15,7 @@ esa nima uchun ruxsat berilgani/berilmaganini aytadi.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -146,6 +146,17 @@ class StreamRequest(BaseModel):
     #: `uz-Cyrl` uchun gap lotin yozuvida keladi: u ESHITILADI, va TTS
     #: lotin yozuvida ishlaydi.
     locale: str = Field(default="uz", max_length=16)
+    #: "Pro" rejimi - SHU savol uchun (2026-09-29 dagi API).
+    #:
+    #: `pro` bo'lsa yuqoridagi yordamchi tashqi (hosted) modeldan
+    #: maslahat oladi - bu PULGA tushadi va odamning kunlik/haftalik/
+    #: oylik byudjetidan yeydi. Shuning uchun u HAR XABAR uchun alohida
+    #: va default `standard`: klient aytmasa hech narsa o'zgarmaydi va
+    #: savol tarmoqdan tashqariga chiqmaydi.
+    #:
+    #: `Literal` bilan qotirilgan: notanish qiymat 422 beradi va
+    #: yuqoridagi xizmatga bormaydi.
+    mode: Literal["standard", "pro"] = "standard"
 
     # `hrmEmployee` ATAYLAB YO'Q.
     #

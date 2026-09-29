@@ -6,6 +6,7 @@ import type { Phase } from '../types'
 import { AttachIcon, ConversationIcon, MicIcon, SendIcon, StopIcon } from '../icons'
 import BottomCurrent from './BottomCurrent.vue'
 import ComposerMenu from './ComposerMenu.vue'
+import { usePro } from '../composables/usePro'
 
 // Grow the textarea up to ~7 lines, then scroll internally.
 const MAX_HEIGHT = 168
@@ -66,6 +67,15 @@ function onKeyDown(e: KeyboardEvent) {
     e.preventDefault()
     trySend()
   }
+}
+
+// "Pro" kaliti. Holat modul darajasida (`usePro`): javob kelganda
+// byudjetni `ChatView` yangilaydi, bu yerda faqat ko'rsatiladi.
+const { enabled: proOn, remaining: proLeft, exhausted: proSpent, loadFailed: proUnknown } = usePro()
+
+function togglePro() {
+  if (proSpent.value) return
+  proOn.value = !proOn.value
 }
 
 const roundButton: CSSProperties = {
@@ -256,6 +266,23 @@ const sendBtnStyle = computed<CSSProperties>(() => {
         @focus="focused = true"
         @blur="focused = false"
       />
+      <!-- "Pro": SHU xabar uchun. Byudjet tugagan bo'lsa bosilmaydi -
+           yoqiq kalit bilan yuborilgan savol baribir standart rejimda
+           javob olardi va odam "pro so'radim" deb o'ylab qolardi. -->
+      <button
+        class="pro-toggle"
+        type="button"
+        role="switch"
+        :aria-checked="proOn"
+        :aria-label="t('proLabel')"
+        :title="proSpent ? t('proExhausted') : t('proHint')"
+        :class="{ 'is-on': proOn }"
+        :disabled="proSpent"
+        @click="togglePro"
+      >
+        <span>{{ t('proLabel') }}</span>
+        <span v-if="!proUnknown && proLeft !== null" class="pro-toggle__left">{{ proLeft }}</span>
+      </button>
       <button :title="t('comingSoon')" aria-disabled="true" :style="disabledRoundButton">
         <MicIcon />
       </button>
@@ -287,3 +314,49 @@ const sendBtnStyle = computed<CSSProperties>(() => {
     <div :style="{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }">{{ t('disclaimer') }}</div>
   </div>
 </template>
+
+<style scoped>
+/* "Pro" kaliti - matn bilan, ikonkasiz: u REJIM, amal emas, va yoniq
+   holati bir qarashda ko'rinishi kerak. */
+.pro-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-hover);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: 'Figtree', sans-serif;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.pro-toggle:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.pro-toggle.is-on {
+  background: var(--ink);
+  border-color: transparent;
+  color: var(--ink-contrast);
+}
+.pro-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.pro-toggle__left {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+/* Eng tor telefonda qoldiq raqami joy yeydi - kalitning o'zi qoladi. */
+@media (max-width: 380px) {
+  .pro-toggle__left {
+    display: none;
+  }
+}
+</style>

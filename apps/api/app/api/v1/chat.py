@@ -462,6 +462,13 @@ def stream(body: StreamRequest, user: AuthUser = Depends(current_user)) -> Strea
             # Token yo'q platforma haqidagi savol `auth_missing` bilan
             # qaytadi ("CRM tizimiga kiring"), qolgani esa ishlaydi.
             tokens=_live_tokens(user),
+            # "PRO" - shu xabar uchun (klient aytadi, default `standard`).
+            # KESHLANMAYDI va QAYTA URINILMAYDI: har bir "pro" savol
+            # pulga tushadi va odamning byudjetidan yeydi (hujjat
+            # talabi). Javobdagi `pro` bloki `done` kadrida o'zgarishsiz
+            # brauzerga o'tadi - `_clean_frame` notanish maydonlarga
+            # tegmaydi.
+            mode=body.mode,
             max_chars=settings.hrm_assistant_max_question_chars,
         )
     except AssistantError as exc:

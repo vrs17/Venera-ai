@@ -312,6 +312,15 @@ const en = {
   deleteChat: 'Delete',
   chatDeleted: 'Chat deleted',
   undo: 'Undo',
+  // Pro rejimi (per-xabar)
+  proLabel: 'Pro',
+  proHint: 'Pro: for hard questions — the assistant consults an external model (within your limit).',
+  proExhausted: 'Pro limit reached. It resets as the window rolls.',
+  proUsed: 'Pro: external model consulted',
+  proNotNeeded: 'Pro: not needed for this answer',
+  proDenied: 'Pro not granted: {why}',
+  proReasonLimit: 'limit reached',
+  proReasonNoUser: 'user not identified',
 }
 
 export type MsgKey = keyof typeof en
@@ -561,6 +570,15 @@ const uz: Dict = {
   deleteChat: 'Oʻchirish',
   chatDeleted: 'Suhbat oʻchirildi',
   undo: 'Bekor qilish',
+  // Pro rejimi (per-xabar)
+  proLabel: 'Pro',
+  proHint: 'Pro: murakkab savollar uchun — yordamchi tashqi modeldan maslahat oladi (limit doirasida).',
+  proExhausted: 'Pro limiti tugadi. Oyna surilgani sari tiklanadi.',
+  proUsed: 'Pro: tashqi modeldan maslahat olindi',
+  proNotNeeded: 'Pro: bu javob uchun kerak boʻlmadi',
+  proDenied: 'Pro berilmadi: {why}',
+  proReasonLimit: 'limit tugagan',
+  proReasonNoUser: 'foydalanuvchi aniqlanmadi',
 }
 
 const uzCyrl: Dict = {
@@ -807,6 +825,15 @@ const uzCyrl: Dict = {
   deleteChat: 'Ўчириш',
   chatDeleted: 'Суҳбат ўчирилди',
   undo: 'Бекор қилиш',
+  // Pro rejimi (per-xabar)
+  proLabel: 'Pro',
+  proHint: 'Pro: мураккаб саволлар учун — ёрдамчи ташқи моделдан маслаҳат олади (лимит доирасида).',
+  proExhausted: 'Pro лимити тугади. Ойна сурилгани сари тикланади.',
+  proUsed: 'Pro: ташқи моделдан маслаҳат олинди',
+  proNotNeeded: 'Pro: бу жавоб учун керак бўлмади',
+  proDenied: 'Pro берилмади: {why}',
+  proReasonLimit: 'лимит тугаган',
+  proReasonNoUser: 'фойдаланувчи аниқланмади',
 }
 
 const ru: Dict = {
@@ -1053,6 +1080,15 @@ const ru: Dict = {
   deleteChat: 'Удалить',
   chatDeleted: 'Чат удалён',
   undo: 'Отменить',
+  // Pro rejimi (per-xabar)
+  proLabel: 'Pro',
+  proHint: 'Pro: для сложных вопросов — ассистент консультируется с внешней моделью (в пределах лимита).',
+  proExhausted: 'Лимит Pro исчерпан. Он восстанавливается по мере сдвига окна.',
+  proUsed: 'Pro: внешняя модель использована',
+  proNotNeeded: 'Pro: для этого ответа не потребовалась',
+  proDenied: 'Pro не предоставлен: {why}',
+  proReasonLimit: 'лимит исчерпан',
+  proReasonNoUser: 'пользователь не определён',
 }
 
 export const i18n = createI18n({
