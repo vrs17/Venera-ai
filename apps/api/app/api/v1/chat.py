@@ -535,6 +535,10 @@ def stream(body: StreamRequest, request: Request,
     """
     rec = TurnRecorder(user, channel_of(request), "chat", body.question,
                        chat_id=body.chatId, locale=body.locale, input_mode=body.voice)
+    if body.mode == "pro":
+        # "Pro" so'ralgani izda: yuqoridagi xizmat haqiqatan bergani va
+        # byudjet qoldig'i esa `done` kadridagi `pro` blokidan (`pro` kadri).
+        rec.point("pro.requested", mode=body.mode)
     # Shu ipdagi hamma hisob (tokenlar yangilanishi, ulanish, tasnif ipi)
     # shu savolga yoziladi. Oqim qadamlarini esa `rec.wrap` o'zi bog'laydi.
     binding = rec.bind()

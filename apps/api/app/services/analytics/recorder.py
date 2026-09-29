@@ -604,6 +604,15 @@ class TurnRecorder:
         if served and not self.request_id:
             self.request_id = served
         self._event("frame", "done", {"route": self.route, "request_id": served})
+        pro = frame.get("pro")
+        if isinstance(pro, Mapping):
+            # "Pro" rejimi (`mode=pro`): yuqoridagi xizmat tashqi modelni
+            # haqiqatan ishlatdimi, nechta chaqiruv, bermagan bo'lsa nega
+            # (`reason`) va byudjet qoldig'i - admin panel savol izida ko'radi.
+            # Sxema o'zgarmaydi: vaqt chizig'idagi alohida `pro` kadri.
+            self._event("frame", "pro", {key: pro.get(key) for key in (
+                "requested", "used", "calls", "reason", "remaining", "limits",
+            ) if pro.get(key) is not None})
 
     def _on_error(self, frame: Mapping[str, Any]) -> None:
         self.error_code = _str(frame.get("code"), 64) or self.error_code or "error"

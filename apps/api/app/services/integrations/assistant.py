@@ -439,7 +439,8 @@ class AssistantClient:
         CHEGARALAR QOTIRILMAYDI: hujjat aniq aytadi - ular rolga qarab
         keyinroq pasayadi, va yagona haqiqat manbai shu endpoint.
         """
-        return self._json("/api/pro/quota", query={"user_id": user_id}, what="Pro byudjeti")
+        return self._json("/api/pro/quota", query={"user_id": user_id}, what="Pro byudjeti",
+                          op="pro.quota")
 
     # --- suhbatlar tarixi ----------------------------------------------------
     #
