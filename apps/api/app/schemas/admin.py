@@ -413,7 +413,7 @@ class SystemConfig(BaseModel):
 
     ssoEnabled: bool = False
     localLoginEnabled: bool = False
-    #: polling (bot ishlaydi) | off
+    #: polling | webhook (bot ishlaydi, botning o'zi aytgan rejim) | off
     telegramMode: str = "off"
     telegramBotEnabled: bool = False
     retentionDays: int = 0

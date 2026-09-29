@@ -352,6 +352,7 @@ const en = {
     crmSession: 'CRM session',
     ttsQueue: 'Voice queue',
     modePolling: 'Polling',
+    modeWebhook: 'Webhook',
     auditHint: 'Last 50 changes',
   },
   auditAction: {
@@ -789,6 +790,7 @@ const uz: Mirror<typeof en> = {
     crmSession: 'CRM sessiyasi',
     ttsQueue: 'Ovoz navbati',
     modePolling: 'Polling',
+    modeWebhook: 'Webhook',
     auditHint: 'Oxirgi 50 ta oʻzgarish',
   },
   auditAction: {
@@ -1226,6 +1228,7 @@ const uzCyrl: Mirror<typeof en> = {
     crmSession: 'CRM сессияси',
     ttsQueue: 'Овоз навбати',
     modePolling: 'Поллинг',
+    modeWebhook: 'Вебҳук',
     auditHint: 'Охирги 50 та ўзгариш',
   },
   auditAction: {
@@ -1663,6 +1666,7 @@ const ru: Mirror<typeof en> = {
     crmSession: 'CRM-сессия',
     ttsQueue: 'Очередь озвучки',
     modePolling: 'Поллинг',
+    modeWebhook: 'Вебхук',
     auditHint: 'Последние 50 изменений',
   },
   auditAction: {

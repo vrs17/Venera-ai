@@ -508,7 +508,7 @@ export interface HealthDetail {
 export interface SystemConfig {
   ssoEnabled: boolean
   localLoginEnabled: boolean
-  /** polling | off */
+  /** polling | webhook | off */
   telegramMode: string
   telegramBotEnabled: boolean
   retentionDays: number

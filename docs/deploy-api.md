@@ -881,9 +881,11 @@ olmaydi (shaxsiy chatda media cheklovi yo'q). Rasm, fayl, stiker - faqat izoh.
 suhbat, `/app` mini app, `/help`, `/logout`. Faqat SHAXSIY chat - guruhda
 bot jim (javoblarda shaxsiy HR ma'lumoti bor).
 
-**Holat:** `/api/health/detail` -> `telegram` (ishlayaptimi, oxirgi muvaffaqiyatli
-so'rov, xato, ulanganlar soni). 409 xatosi = boshqa nusxa shu botni
-o'qiyapti. O'chirish: `.env` da `TELEGRAM_BOT_ENABLED=false` + restart.
+**Holat:** `/api/health/detail` (FAQAT ADMIN - `ADMIN_LOGINS` yoki admin panel
+orqali berilgan rol) -> `telegram` (ishlayaptimi, rejimi, oxirgi muvaffaqiyatli
+so'rov, xato, ulanganlar soni); admin panelning "Tizim" sahifasi ham shu
+tashxisdan botning HAQIQIY rejimini (`polling` / `webhook`) ko'rsatadi. 409
+xatosi = boshqa nusxa shu botni o'qiyapti. O'chirish: `.env` da `TELEGRAM_BOT_ENABLED=false` + restart.
 
 ## Xodimlar ma'lumotnomasi (kontaktlar)
 

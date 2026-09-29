@@ -174,7 +174,9 @@ const flags = computed(() => {
 const botMode = computed(() => {
   const m = sys.value?.config.telegramMode
   if (!m) return '—'
-  return m === 'polling' ? t('admin.system.modePolling') : m === 'off' ? t('ui.off') : m
+  if (m === 'polling') return t('admin.system.modePolling')
+  if (m === 'webhook') return t('admin.system.modeWebhook')
+  return m === 'off' ? t('ui.off') : m
 })
 
 /* ---- ombor ---- */

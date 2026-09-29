@@ -280,6 +280,18 @@ def _sso_configured() -> bool:
         return False
 
 
+def _bot_mode(telegram: dict[str, Any]) -> str:
+    """Botning HAQIQIY rejimi - `bot.status()["mode"]` dan.
+
+    Prod'da ikki rejim bor (`bot/runner.py`): `polling` va `webhook`, va
+    webhook ishlamasa bot o'zi `polling` ga qaytadi - ya'ni sozlamaga emas,
+    botning o'ziga qarash kerak. Bot hali ishga tushmagan bo'lsa (holatda
+    `mode` yo'q) - `polling`, u zaxira rejim.
+    """
+    mode = telegram.get("mode")
+    return mode if mode in ("polling", "webhook") else "polling"
+
+
 def _config(health: dict[str, Any]) -> dict[str, Any]:
     """Sozlamalar - QIYMATLARSIZ, faqat yoqilgan/o'chiq (kalit va manzillar
     admin panelga ham chiqmaydi)."""
@@ -291,8 +303,7 @@ def _config(health: dict[str, Any]) -> dict[str, Any]:
     return {
         "ssoEnabled": sso if isinstance(sso, bool) else _sso_configured(),
         "localLoginEnabled": bool(settings.local_login_enabled),
-        # Bot faqat long polling bilan ishlaydi (`app/bot/__init__.py`).
-        "telegramMode": "polling" if bot_enabled and bot_configured else "off",
+        "telegramMode": _bot_mode(telegram) if bot_enabled and bot_configured else "off",
         "telegramBotEnabled": bot_enabled,
         "retentionDays": analytics.retention_days(),
         "analyticsEnabled": analytics.analytics_enabled(),
