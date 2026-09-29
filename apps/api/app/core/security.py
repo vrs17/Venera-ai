@@ -9,9 +9,9 @@ turadi. Xeshni yasash uchun: `python -m app.tools.hash_password`.
 
 TOKEN: JWT (PyJWT). Nima uchun sessiya emas: backend HOLATSIZ (stateless)
 bo'lsa gorizontal kengayadi - ikkinchi nusxa qo'shsangiz hech narsa
-sozlamaysiz. Narxi: chiqarilgan tokenni muddatidan oldin bekor qilib
-bo'lmaydi. Demo uchun bu maqbul; keyinchalik kerak bo'lsa qora ro'yxat
-(Redis) qo'shiladi va faqat `verify_token` o'zgaradi.
+sozlamaysiz. Tokenni muddatidan oldin bekor qilish uchun qora ro'yxat
+(Redis) o'rniga tokenda `ver` turadi - odamning sessiya versiyasi. Admin
+versiyani oshirsa eski tokenlar rad etiladi (`TokenClaims`, `api/deps.py`).
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -56,27 +57,60 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(digest.hex(), expected)
 
 
-def create_token(subject: str) -> tuple[str, datetime]:
-    """(token, tugash vaqti). `subject` - foydalanuvchi emaili."""
+@dataclass(frozen=True)
+class TokenClaims:
+    """Tekshirilgan tokendan kerakli ikki narsa.
+
+    `version` - token berilgan paytdagi `user_admin.token_version`. Admin
+    "hamma sessiyalardan chiqarish" ni bossa versiya oshadi va shu
+    paytgacha berilgan HAMMA token yaroqsiz bo'ladi (`api/deps.py`).
+    """
+
+    subject: str
+    version: int = 0
+
+
+def create_token(subject: str, *, version: int = 0) -> tuple[str, datetime]:
+    """(token, tugash vaqti). `subject` - SSO `sub` yoki zahira hisob emaili.
+
+    `version` - `ver` claim'i. Eski tokenlarda u YO'Q va 0 deb o'qiladi:
+    shu tufayli bu o'zgarishdan oldin berilgan sessiyalar uzilmaydi.
+    """
     expires = datetime.now(timezone.utc) + timedelta(hours=settings.token_ttl_hours)
     payload = {
         "sub": subject,
         "exp": expires,
         "iat": datetime.now(timezone.utc),
+        "ver": int(version),
     }
     token = jwt.encode(payload, settings.secret_key, algorithm=_ALGORITHM)
     return token, expires
 
 
-def verify_token(token: str) -> str | None:
-    """Token haqiqiy bo'lsa `sub` (email) qaytaradi, aks holda None.
+def verify_claims(token: str) -> TokenClaims | None:
+    """Token haqiqiy bo'lsa `TokenClaims`, aks holda None.
 
     ISTISNO TASHLAMAYDI: chaqiruvchi (api/deps.py) 401 ni o'zi hosil qiladi
     va shu bilan xato matni bitta joyda boshqariladi.
+
+    `ver` butun son bo'lmasa token RAD ETILADI: bu maydonni faqat biz
+    yozamiz, boshqacha qiymat - buzilgan yoki soxta token.
     """
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[_ALGORITHM])
     except jwt.PyJWTError:
         return None
     subject = payload.get("sub")
-    return str(subject) if subject else None
+    if not subject:
+        return None
+    version = payload.get("ver", 0)
+    if isinstance(version, bool) or not isinstance(version, int):
+        return None
+    return TokenClaims(subject=str(subject), version=version)
+
+
+def verify_token(token: str) -> str | None:
+    """Token haqiqiy bo'lsa `sub` qaytaradi, aks holda None (`verify_claims`
+    ning qisqa shakli - versiya kerak bo'lmagan joylar uchun)."""
+    claims = verify_claims(token)
+    return claims.subject if claims else None

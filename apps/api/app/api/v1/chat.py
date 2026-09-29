@@ -26,13 +26,15 @@ import urllib.parse
 from collections import deque
 
 import jwt
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Request, Response
 from fastapi.responses import StreamingResponse
 
+from ...core.channels import channel_of
 from ...core.config import ollama_key_now, platform_tokens, settings
 from ...core.errors import bad_request, error_status
 from ...schemas.auth import AuthUser
 from ...schemas.chat import AskRequest, FileLink, FileLinkRequest, PipelineResponse, StreamRequest
+from ...services.analytics import TurnRecorder, bind, carry, redact
 from ...services.integrations.assistant import (
     ARTIFACT_KINDS,
     AssistantClient,
@@ -45,6 +47,11 @@ from ...services.integrations.ollama import HoldClassifier
 from ...services.pipeline import pipeline
 from . import connectors as _connectors
 from ..deps import current_user
+
+#: Javob sarlavhasi: Venera'ning SAVOL kaliti (`turns.id`). Klient uni
+#: shikoyatga (`/reports` `turnId`) va ovozga (`/tts/speak`) qo'shadi -
+#: admin panelda savol, javob, ovoz va shikoyat bitta kalit bilan bog'lanadi.
+TURN_HEADER = "X-Venera-Turn"
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -163,7 +170,7 @@ class _HoldPlan:
     yarmida kesilardi. Yarim kesilgan gap jimlikdan yomonroq.
     """
 
-    def __init__(self, question: str, locale: str) -> None:
+    def __init__(self, question: str, locale: str, recorder: TurnRecorder | None = None) -> None:
         self.question = question
         self.locale = locale
         self.started = time.monotonic()
@@ -175,6 +182,9 @@ class _HoldPlan:
         self._model_done = threading.Event()
         self._started_model = False
         self._wake = None
+        #: Savol izi (admin panel): tasnif qancha vaqt olgani va nima
+        #: tanlagani. Kutish kadrlarining o'zini oqim qobig'i (`wrap`) yozadi.
+        self.recorder = recorder
 
     # --- tasnif ------------------------------------------------------------
 
@@ -193,21 +203,31 @@ class _HoldPlan:
             return
         self._started_model = True
         if not _hold_classifier.configured:
+            if self.recorder is not None:
+                self.recorder.point("hold.classify", skipped="not_configured")
             self._model_done.set()
             return
 
         def run() -> None:
+            boshlandi = time.monotonic()
             natija = _hold_classifier.classify(self.question)
             if natija is not None:
                 # Kech kelgan yorliq ham foydali: birinchi ovoz jadval bilan
                 # aytilgan bo'lsa ham, KEYINGILARI endi aniqroq bo'ladi.
                 self.label, self.source = natija, "ollama"
+            if self.recorder is not None:
+                mavzu, ohang = natija or (None, None)
+                self.recorder.record_span(
+                    "hold.classify", boshlandi, model=getattr(_hold_classifier, "model", None),
+                    ok=natija is not None, topic=mavzu, tone=ohang)
             self._model_done.set()
             wake = self._wake
             if wake is not None:
                 wake(_TASNIF_TAYYOR)
 
-        threading.Thread(target=run, name="hold-classify", daemon=True).start()
+        # `carry`: yangi ip kontekstni meros olmaydi - usiz Ollama chaqiruvi
+        # hisobda egasiz (kim, qaysi kanal, qaysi savol) qolardi.
+        threading.Thread(target=carry(run), name="hold-classify", daemon=True).start()
 
     def attach(self, wake) -> None:
         """Navbatga ulanadi: tasnif tayyor bo'lganda `wake(belgi)` chaqiriladi.
@@ -264,6 +284,8 @@ class _HoldPlan:
             # bo'ladi (ovozlar fonda sintez qilinayotganda).
             log.info("Kutish ovozi %d o'tkazib yuborildi: %s hali tayyor emas",
                      self.fired, kalit)
+            if self.recorder is not None:
+                self.recorder.point("hold.skip", at=self.fired, clip=kalit, reason="not_ready")
             return None
         _holds.record(self.source)
         # Matnning o'zi yozilmaydi (u kodda turadi) - faqat nima tanlangani.
@@ -303,7 +325,8 @@ def _with_hold(answer, plan: _HoldPlan):
         finally:
             navbat.put(TUGADI)
 
-    threading.Thread(target=pump, name="chat-stream", daemon=True).start()
+    # `carry` - hisob konteksti (kim, kanal, savol) ipga ham o'tsin.
+    threading.Thread(target=carry(pump), name="chat-stream", daemon=True).start()
     # AVVAL ulanish, keyin (hali boshlanmagan bo'lsa) tasnif - aks holda
     # tasnif ulanishdan oldin tugab, uyg'otish yo'qolardi. `next_wait` baribir
     # `_model_done` ni tekshiradi, ya'ni bu ikkinchi to'r.
@@ -333,7 +356,7 @@ def _with_hold(answer, plan: _HoldPlan):
         yield element
 
 
-def _hold_plan(body: StreamRequest) -> _HoldPlan | None:
+def _hold_plan(body: StreamRequest, recorder: TurnRecorder | None = None) -> _HoldPlan | None:
     """Kutish rejasi kerakmi?
 
     To'rt shart, to'rttasi ham kerak: sozlama yoqilgan; klient OVOZLI
@@ -344,7 +367,7 @@ def _hold_plan(body: StreamRequest) -> _HoldPlan | None:
         return None
     if body.locale not in _HOLD_LOCALES or not body.question.strip():
         return None
-    return _HoldPlan(body.question, body.locale)
+    return _HoldPlan(body.question, body.locale, recorder)
 
 
 def assistant_user_id(user: AuthUser) -> str:
@@ -406,8 +429,13 @@ def _fail(exc: AssistantError, user: AuthUser | str, what: str):
     sessiya egasi yoki (tokensiz havolada) havola egasining `actorId` si."""
     who = user if isinstance(user, str) else user.email
     log.warning("Assistant %s (%s): %s", what, who, exc)
-    status = exc.status if exc.status in _MESSAGES else 502
+    status = _user_status(exc)
     return error_status(status, _MESSAGES[status])
+
+
+def _user_status(exc: AssistantError) -> int:
+    """Foydalanuvchiga qaytadigan status - `_MESSAGES` da bo'lmasa 502."""
+    return exc.status if exc.status in _MESSAGES else 502
 
 
 @router.post(
@@ -416,31 +444,32 @@ def _fail(exc: AssistantError, user: AuthUser | str, what: str):
     responses={200: {"content": {"application/x-ndjson": {}},
                      "description": "Kadrlar oqimi: stage, sources, artifact, token, done"}},
 )
-def stream(body: StreamRequest, user: AuthUser = Depends(current_user)) -> StreamingResponse:
+def stream(body: StreamRequest, request: Request,
+           user: AuthUser = Depends(current_user)) -> StreamingResponse:
     """Savol -> javob oqimi (NDJSON, har qatorda bitta JSON kadri).
 
     `async def` EMAS, ataylab: klient bloklaydigan `urllib` ishlatadi.
     Oddiy `def` bilan FastAPI uni threadpool'da bajaradi va event loop
     bo'sh qoladi - aks holda bitta uzun javob butun serverni to'xtatib
     qo'yardi.
+
+    SAVOL IZI (admin panel) shu yerda boshlanadi - oqim ochilishidan OLDIN:
+    ochilmasa ham (501/503) savol "xato" bo'lib, statusi bilan ko'rinsin.
+    Iz yozish faqat navbatga qo'yadi - disk kutilmaydi, kadrlar kechikmaydi.
     """
-    # Kutish rejasi va tasnif ENG BOSHIDA, yuqoridagi xizmatga ulanishdan
-    # OLDIN: ulanishning o'zi 0-2 sekund oladi va tasnif shu vaqtda parallel
-    # ishlaydi (`_HoldPlan.start` izohida o'lchov).
-    plan = _hold_plan(body)
-    if plan is not None:
-        plan.start()
+    rec = TurnRecorder(user, channel_of(request), "chat", body.question,
+                       chat_id=body.chatId, locale=body.locale, input_mode=body.voice)
+    # Shu ipdagi hamma hisob (tokenlar yangilanishi, ulanish, tasnif ipi)
+    # shu savolga yoziladi. Oqim qadamlarini esa `rec.wrap` o'zi bog'laydi.
+    binding = rec.bind()
     try:
-        # Oqim SHU YERDA ochiladi, generator ichida emas: 400/501/503
-        # shunda ODDIY HTTP javobi bo'lib chiqadi. Generator ichida
-        # ochilsa, 200 allaqachon ketgan bo'lardi va xato brauzerga
-        # "uzilgan oqim" bo'lib ko'rinardi.
-        answer = _assistant.stream(
-            body.question,
-            # KIMLIK TOKEN'DAN (`assistant_user_id`) - suhbat xotirasi va
-            # tarixi shu kalit bo'yicha.
-            user_id=assistant_user_id(user),
-            chat_id=body.chatId,
+        try:
+            # Kutish rejasi va tasnif ENG BOSHIDA, yuqoridagi xizmatga ulanishdan
+            # OLDIN: ulanishning o'zi 0-2 sekund oladi va tasnif shu vaqtda parallel
+            # ishlaydi (`_HoldPlan.start` izohida o'lchov).
+            plan = _hold_plan(body, rec)
+            if plan is not None:
+                plan.start()
             # PLATFORMA TOKENLARI: avval odamning O'Z ulanishi ("+"
             # menyusi, `/api/v1/connectors`), u yo'q bo'lsa `.env` dagi
             # umumiy token / agent sessiyasi - `_live_tokens` ga qara.
@@ -461,11 +490,41 @@ def stream(body: StreamRequest, user: AuthUser = Depends(current_user)) -> Strea
             #
             # Token yo'q platforma haqidagi savol `auth_missing` bilan
             # qaytadi ("CRM tizimiga kiring"), qolgani esa ishlaydi.
-            tokens=_live_tokens(user),
-            max_chars=settings.hrm_assistant_max_question_chars,
-        )
-    except AssistantError as exc:
-        raise _fail(exc, user, "savol") from exc
+            #
+            # Alohida oraliq: CRM sessiyasi shu yerda yangilanishi mumkin
+            # (yuzlab ms) - izda "javob nega kech boshlandi" shu bilan ko'rinadi.
+            with rec.span("tokens") as info:
+                tokens = _live_tokens(user)
+                # Faqat NOMLAR - token qiymati izga HECH QACHON tushmaydi.
+                info["platforms"] = sorted(tokens)
+            # Oqim SHU YERDA ochiladi, generator ichida emas: 400/501/503
+            # shunda ODDIY HTTP javobi bo'lib chiqadi. Generator ichida
+            # ochilsa, 200 allaqachon ketgan bo'lardi va xato brauzerga
+            # "uzilgan oqim" bo'lib ko'rinardi.
+            with rec.span("assistant.open") as info:
+                answer = _assistant.stream(
+                    body.question,
+                    # KIMLIK TOKEN'DAN (`assistant_user_id`) - suhbat xotirasi va
+                    # tarixi shu kalit bo'yicha.
+                    user_id=assistant_user_id(user),
+                    chat_id=body.chatId,
+                    tokens=tokens,
+                    max_chars=settings.hrm_assistant_max_question_chars,
+                )
+                info["requestId"] = answer.request_id
+        except AssistantError as exc:
+            rec.error_code = "open_failed"
+            rec.finish("error", http_status=_user_status(exc), error=exc)
+            failure = _fail(exc, user, "savol")
+            # Xato javobida ham savol kaliti: klient shikoyatga qo'sha oladi.
+            failure.headers = {**(failure.headers or {}), TURN_HEADER: rec.turn_id}
+            raise failure from exc
+        except BaseException as exc:
+            rec.finish("error", error=exc)
+            raise
+    finally:
+        binding.reset()
+    rec.update(request_id=answer.request_id)
 
     def frames():
         # OQIM IKKI MANBADAN: yuqoridagi xizmatning kadrlari va BIZNING
@@ -485,7 +544,10 @@ def stream(body: StreamRequest, user: AuthUser = Depends(current_user)) -> Strea
             # yuboriladi: u shu shaklni allaqachon tushunadi, ya'ni
             # "javob yarim qoldi" holati uchun alohida yo'l kerak emas.
             log.warning("Assistant oqimi (%s): %s", user.email, exc)
-            status = exc.status if exc.status in _MESSAGES else 502
+            status = _user_status(exc)
+            # Izga ICHKI sabab (timeout, uzilish) - foydalanuvchi faqat
+            # umumiy xabarni ko'radi, admin esa nima bo'lganini.
+            rec.point("assistant.broken", status=exc.status, error=redact(exc))
             yield (b'{"type":"error","code":"stream_broken","text":'
                    + _json_text(_MESSAGES[status]) + b'}\n')
             yield b'{"type":"done","route":null}\n'
@@ -494,7 +556,10 @@ def stream(body: StreamRequest, user: AuthUser = Depends(current_user)) -> Strea
                      user.email, answer.request_id, answer.outcome or "-")
 
     return StreamingResponse(
-        frames(),
+        # `wrap` - kadrlarni O'ZGARTIRMASDAN va BUFERSIZ uzatadi, yo'l-yo'lakay
+        # izga yozadi (kutish kadrlari ham, xato kadri ham) va oxirida savolni
+        # yakunlaydi: klient uzilsa `cancelled`, xato kadri bo'lsa `error`.
+        rec.wrap(frames()),
         media_type="application/x-ndjson",
         headers={
             # Javob shu odamga xos - proksi yoki brauzer keshiga tushmasin.
@@ -503,6 +568,7 @@ def stream(body: StreamRequest, user: AuthUser = Depends(current_user)) -> Strea
             # ham turadi, ya'ni "shu javob nega bunday" degan savolni
             # ikki tizimda BITTA kalit bilan izlash mumkin.
             "X-Venera-Request-Id": answer.request_id,
+            TURN_HEADER: rec.turn_id,
             # nginx uchun: bu yo'lda buferlash O'CHIQ bo'lishi kerak, aks
             # holda kadrlar to'planib, bir yo'la beriladi va oqimning
             # ma'nosi qolmaydi. `location` sozlamasi asosiy, bu qo'shimcha.
@@ -670,16 +736,19 @@ def file_by_link(signed: str = Path(max_length=4096, description="`/link` bergan
     filename = _download_name(str(claims.get("fn") or ""), kind)
     who = f"havola:{claims.get('uid', '?')}"
     log.info("Fayl havola orqali (%s): %s", who, kind)
-    return _file(
-        lambda: _assistant.fetch_artifact(token, kind), who, "artifact",
-        disposition=_attachment(filename),
-        headers={
-            "Access-Control-Allow-Origin": _TELEGRAM_WEB,
-            "Access-Control-Expose-Headers": "Content-Disposition",
-            # Havola manzilda turadi - u boshqa saytga Referer bilan chiqmasin.
-            "Referrer-Policy": "no-referrer",
-        },
-    )
+    # Sessiya yo'q, lekin kimligi imzoda (`uid`), havolani esa faqat mini app
+    # so'raydi - yuklab olish hisobda egasi va kanali bilan tursin.
+    with bind(claims.get("uid"), "miniapp"):
+        return _file(
+            lambda: _assistant.fetch_artifact(token, kind), who, "artifact",
+            disposition=_attachment(filename),
+            headers={
+                "Access-Control-Allow-Origin": _TELEGRAM_WEB,
+                "Access-Control-Expose-Headers": "Content-Disposition",
+                # Havola manzilda turadi - u boshqa saytga Referer bilan chiqmasin.
+                "Referrer-Policy": "no-referrer",
+            },
+        )
 
 
 def _json_text(text: str) -> bytes:
@@ -690,11 +759,52 @@ def _json_text(text: str) -> bytes:
 @router.post("/ask", response_model=PipelineResponse)
 async def ask(
     data: AskRequest,
+    request: Request,
+    response: Response,
     user: AuthUser = Depends(current_user),
 ) -> PipelineResponse:
     """Savol -> quvur -> javob (bosqichli, bitta JSON).
 
     Foydalanuvchi TOKEN'dan olinadi, so'rov tanasidan emas: `access`
     bosqichi shu shaxs bo'yicha huquq tekshiradi.
+
+    Bu yo'l ham izga yoziladi (`kind=ask`): Assistant sozlanmagan muhitda
+    frontend shu yerdan ishlaydi va admin panel u yerdagi savollarni ham
+    ko'rishi kerak.
     """
-    return await pipeline.ask(data.question, user)
+    rec = TurnRecorder(user, channel_of(request), "ask", data.question)
+    response.headers[TURN_HEADER] = rec.turn_id
+    try:
+        with rec.bind(), rec.span("pipeline") as info:
+            result = await pipeline.ask(data.question, user)
+            info["finalStatus"] = result.finalStatus
+    except BaseException as exc:
+        rec.finish("error", error=exc)
+        raise
+    _record_pipeline(rec, result)
+    return result
+
+
+def _record_pipeline(rec: TurnRecorder, result: PipelineResponse) -> None:
+    """Quvur natijasi izga: bosqichlar qarori (nuqta), manbalar va javob.
+
+    Manbalar `sources` kadri shaklida beriladi - `turn_sources` ga oqimdagi
+    kabi yassilanadi (`documentId`, `rerankScore` ni recorder taniydi).
+    """
+    orchestrator = result.orchestrator
+    rec.point(
+        "pipeline.result",
+        finalStatus=result.finalStatus,
+        domain=result.domain,
+        guard=result.guard.decision if result.guard else None,
+        intent=result.intent.intent if result.intent else None,
+        target=orchestrator.targetModule if orchestrator else None,
+        access=result.access.decision if result.access else None,
+    )
+    chunks = result.retrieval.results if result.retrieval else []
+    if chunks:
+        rec.observe({"type": "sources",
+                     "items": [chunk.model_dump(exclude_none=True) for chunk in chunks]})
+    rec.update(route=(orchestrator.route or None) if orchestrator else None,
+               answer=result.answer or "")
+    rec.finish("ok")

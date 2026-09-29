@@ -30,6 +30,7 @@ import threading
 import urllib.error
 import urllib.request
 
+from ..analytics.meter import begin
 from ..hold import MAVZULAR, OHANGLAR
 
 log = logging.getLogger(__name__)
@@ -139,6 +140,9 @@ class HoldClassifier:
             headers={"Authorization": f"Bearer {self._api_key}",
                      "Content-Type": "application/json"},
         )
+        # Hisob: PULLIK tashqi xizmat - har chaqiruv, xatosi bilan. Kalit
+        # xato matniga tushmaydi (`_safe`, keyin `redact` ham).
+        call = begin("ollama", "classify", units={"chars": len(question.strip()[:400])})
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
@@ -146,7 +150,12 @@ class HoldClassifier:
             # 401/402/429 - sozlama yoki hisob. Jim: zahira ishlaydi, holat
             # `/api/health/detail` da ko'rinadi.
             log.info("Tasnif: Ollama %s - zahira ishlatiladi", exc.code)
+            call.end("error", http_status=exc.code, error=f"Ollama HTTP {exc.code}")
             return None
+        except BaseException as exc:
+            call.end("error", error=f"{type(exc).__name__}: {_safe(str(exc), self._api_key)}")
+            raise
+        call.end("ok", http_status=200)
         raw = ((payload.get("message") or {}).get("content")) or ""
         label = parse_label(raw)
         if label is None and raw.strip():

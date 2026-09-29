@@ -27,9 +27,18 @@ from collections.abc import Mapping
 from socket import timeout as socket_timeout
 from typing import Any
 
+from ..analytics.meter import begin, current
+
 log = logging.getLogger(__name__)
 
 TELEGRAM_API = "https://api.telegram.org"
+
+#: Hisobga FAQAT XATOSI yoziladigan usullar. `getUpdates` - 25 soniyalik uzun
+#: so'rov, kuniga ~3500 marta: har birini yozish xizmat statistikasini
+#: (p50 = 25 s) ma'nosiz qilardi. `sendChatAction` ("yozmoqda...") javob
+#: davomida har 4.5 s da ketadi - u ham shovqin. Ularning XATOSI esa muhim
+#: (409 - botni boshqa jarayon o'qiyapti, 401 - token bekor qilingan).
+_QUIET_OK = frozenset({"getUpdates", "sendChatAction"})
 
 #: 429 da Telegram aytgan kutish shundan uzun bo'lsa QAYTA URINILMAYDI -
 #: xabar kechikib kelgandan ko'ra xato jurnalda qolgani yaxshi.
@@ -127,19 +136,50 @@ class TelegramApi:
         limit = min(limit, _MAX_DOWNLOAD)
         path = urllib.parse.quote(file_path, safe="/")
         request = urllib.request.Request(f"{self.base_url}/file/bot{self.token}/{path}")
+        # Hisob: ovozli xabar fayli (`bytes`). Manzilda token bor - xato
+        # matni `_redact` dan o'tadi.
+        call = begin("telegram", "file", channel=current().channel or "bot")
         try:
             with urllib.request.urlopen(request, timeout=max(self.timeout, 60.0)) as response:
                 data = response.read(limit + 1)
         except urllib.error.HTTPError as exc:
-            raise TelegramError(self._redact(f"fayl olinmadi: HTTP {exc.code}"), code=exc.code) from exc
+            error = TelegramError(self._redact(f"fayl olinmadi: HTTP {exc.code}"), code=exc.code)
+            call.end("error", http_status=exc.code, error=error)
+            raise error from exc
         except (urllib.error.URLError, TimeoutError, socket_timeout, OSError) as exc:
-            raise TelegramError(self._redact(f"fayl olinmadi: {exc}")) from exc
+            error = TelegramError(self._redact(f"fayl olinmadi: {exc}"))
+            call.end("error", error=error)
+            raise error from exc
+        call.end("ok", http_status=200, units={"bytes": len(data)})
         if len(data) > limit:
             raise TelegramError(f"fayl juda katta (> {limit} bayt)", code=413)
         return data
 
     def _send(self, method: str, body: bytes, headers: dict[str, str],
               timeout: float | None) -> Any:
+        """Bitta chaqiruv - hisob bilan (`api_calls`, xizmat `telegram`).
+
+        Kanal kontekstdan (bot ishlovchisi `bot` qo'yadi); yo'q bo'lsa ham
+        `bot` - Bot API ga faqat bot murojaat qiladi. Xato matnida token
+        yo'q: `_redact` dan o'tgan.
+        """
+        call = begin("telegram", method, units={"bytes": len(body)},
+                     channel=current().channel or "bot")
+        try:
+            result = self._send_raw(method, body, headers, timeout)
+        except TelegramError as exc:
+            call.end("error", http_status=exc.code if 100 <= exc.code <= 599 else None,
+                     error=exc)
+            raise
+        except BaseException as exc:
+            call.end("error", error=self._redact(str(exc)) or type(exc).__name__)
+            raise
+        if method not in _QUIET_OK:
+            call.end("ok", http_status=200)
+        return result
+
+    def _send_raw(self, method: str, body: bytes, headers: dict[str, str],
+                  timeout: float | None) -> Any:
         request = urllib.request.Request(
             f"{self.base_url}/bot{self.token}/{method}", data=body, headers=headers, method="POST",
         )

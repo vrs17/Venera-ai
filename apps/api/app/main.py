@@ -30,7 +30,8 @@ from fastapi.staticfiles import StaticFiles
 
 from fastapi import Depends
 
-from .api.deps import current_user, docs_viewer, get_identity_store, get_user_store
+from .api.deps import current_user, docs_viewer, get_identity_store, get_user_store, require_roles
+from .api.metering import ChannelMiddleware
 from .api.v1 import router as v1_router
 from .core import errors
 from .core.config import crm_token_now, hrm_token_now, settings
@@ -175,7 +176,13 @@ if settings.cors_origins:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Boshqa domendan JS faqat shu ro'yxatdagi sarlavhalarni o'qiy oladi:
+        # savol kaliti shikoyat va ovoz so'rovlariga qo'shiladi.
+        expose_headers=["X-Venera-Turn", "X-Venera-Request-Id"],
     )
+
+# Hisob kanali (web / miniapp / ...) har so'rov boshida - `api/metering.py`.
+app.add_middleware(ChannelMiddleware)
 
 app.include_router(v1_router)
 
@@ -233,6 +240,19 @@ def _stop_telegram_bot() -> None:
     from . import bot
 
     bot.stop()
+
+
+@app.on_event("shutdown")
+def _flush_analytics() -> None:
+    """Analitika navbatida qolgan yozuvlarni diskka tushiradi.
+
+    Botdan KEYIN (hodisalar ro'yxatdagi tartibda): botning oxirgi savoli
+    ham yozilsin. Yozuvchi ip o'zi birinchi yozuvda ishga tushadi - bu
+    yerda faqat to'xtatiladi; `atexit` esa ikkinchi to'r.
+    """
+    from .services import analytics
+
+    analytics.shutdown()
 
 
 def telegram_state() -> dict:
@@ -509,11 +529,12 @@ def health() -> dict:
 
 
 @app.get("/api/health/detail", tags=["service"])
-def health_detail(user: AuthUser = Depends(current_user)) -> dict:
-    """To'liq tashxis - SESSIYA TALAB QILADI.
+def health_detail(user: AuthUser = Depends(require_roles("ADMIN"))) -> dict:
+    """To'liq tashxis - FAQAT ADMIN.
 
-    IT xodimi uchun mo'ljallangan ma'lumot shu yerda qoladi. Kirish
-    huquqi tekshiriladi, chunki ro'yxatdagi har bir satr tizim haqida
-    biror narsani oshkor qiladi.
+    IT xodimi uchun mo'ljallangan ma'lumot shu yerda qoladi. Oddiy sessiya
+    yetmaydi: ro'yxatdagi har bir satr tizim haqida biror narsani oshkor
+    qiladi (ichki xizmatlar holati, sozlanmagan kalitlar, namuna parolli
+    hisoblar), va buni har bir xodim ko'rishi shart emas.
     """
     return _diagnostics()

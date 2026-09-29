@@ -24,6 +24,11 @@ faqat guruhlar uchun). Bot qila oladigani - qabul qilmaslik va o'chirish.
 
 JURNAL: savol, transkript va javob MATNI yozilmaydi (shaxsiy ma'lumot) -
 faqat `actorId`, uzunlik va natija.
+
+ADMIN PANEL IZI esa veb chatdagi bilan bir xil (`services/analytics`):
+har savol `turns` ga kanal `bot`, tur `bot` bilan yoziladi - kadrlar,
+manbalar, vaqtlar va natija. Bu jurnal emas, ADMIN uchun ruxsatli ombor
+(saqlash muddati `analytics_retention_days`).
 """
 
 from __future__ import annotations
@@ -42,6 +47,8 @@ from typing import Any
 
 from ..core.config import settings
 from ..schemas.auth import AuthUser
+from ..services import admin_users
+from ..services.analytics import TurnRecorder, bind, redact, set_proposal_status
 from ..services.integrations.assistant import AssistantError
 from ..services.integrations.telegram import TelegramApi, TelegramError
 from ..services.stt import SttError, Transcript
@@ -87,6 +94,9 @@ _EXPIRED = (
     "Xavfsizlik uchun ulanish muddati tugadi ({days} kun). Venera ilovasini ochib "
     "kiring - ulanish yangilanadi va shu yerda davom etasiz."
 )
+#: Admin panelda bloklangan hisob. Sabab va kim bloklagani AYTILMAYDI -
+#: faqat nima qilish kerakligi.
+_BLOCKED = "Hisobingiz bloklangan. Administratorga murojaat qiling."
 _HELP = (
     "<b>Venera</b> - HRM va CRM bo'yicha yordamchi.\n\n"
     "• Savolni yozing yoki 🎙 ovozli xabar yuboring - javobni matn bilan beraman.\n"
@@ -182,6 +192,13 @@ def _action_message(status: int) -> str:
     return _actions._MESSAGES.get(status, _actions._MESSAGES[502])
 
 
+def _proposal_outcome(verb: str, result: dict[str, Any]) -> str | None:
+    """Taklif holati izga - veb ilovadagi AYNI qoida (`actions.proposal_outcome`)."""
+    from ..api.v1 import actions as _actions
+
+    return _actions.proposal_outcome(verb, result)
+
+
 @dataclass
 class _Answer:
     parts: list[str] = field(default_factory=list)
@@ -189,6 +206,8 @@ class _Answer:
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     proposals: list[dict[str, Any]] = field(default_factory=list)
     failure: str | None = None
+    #: Savol izi uchun: oqim ochilmagan yoki o'rtada uzilgan bo'lsa - sababi.
+    error: BaseException | None = None
 
 
 class _Typing:
@@ -453,13 +472,17 @@ class VeneraBot:
         user = self._user_for(chat_id, link)
         if user is None:
             return
-        if isinstance(msg.get("voice"), dict):
-            self._voice(chat_id, tg_id, user, msg)
-        elif text:
-            self._ask(chat_id, tg_id, user, text)
-        else:
-            # Rasm, fayl, stiker, audio fayl... - ishlanmaydi.
-            self._note(chat_id, "Faqat matn va 🎙 ovozli xabar qabul qilinadi.")
+        # Hisob: shu xabar bo'yicha har tashqi chaqiruv (STT, Assistant,
+        # Telegram) shu odam va `bot` kanali bilan yoziladi. Bot HTTP dan
+        # kelmaydi - kanalni sarlavha emas, kodning o'zi aytadi.
+        with bind(user.actorId, "bot"):
+            if isinstance(msg.get("voice"), dict):
+                self._voice(chat_id, tg_id, user, msg)
+            elif text:
+                self._ask(chat_id, tg_id, user, text)
+            else:
+                # Rasm, fayl, stiker, audio fayl... - ishlanmaydi.
+                self._note(chat_id, "Faqat matn va 🎙 ovozli xabar qabul qilinadi.")
 
     def _reject_video(self, chat_id: int, msg: dict[str, Any]) -> None:
         """Video (kamera) - yuklab olinmaydi va chatdan o'chiriladi."""
@@ -487,7 +510,13 @@ class VeneraBot:
 
     def _user_for(self, chat_id: int, link: TelegramLink) -> AuthUser | None:
         """Ulanishdagi hisob HALI BORMI - har xabarda tekshiriladi: hisob
-        `users.yaml` dan olib tashlansa bot darhol to'xtashi kerak."""
+        `users.yaml` dan olib tashlansa bot darhol to'xtashi kerak.
+
+        Admin qarorlari veb ilovadagi bilan AYNI funksiyadan
+        (`admin_users.access`): rollar samarali, bloklangan odam esa
+        xushmuomala rad oladi. Bloklanganda ulanish UZILMAYDI - blok olib
+        tashlansa odam mini app'ni qayta ochmasdan davom etsin.
+        """
         stored = self.users().by_actor_id(link.actor_id)
         if stored is None:
             self.links.unlink(link.tg_id, actor_id=link.actor_id)
@@ -495,7 +524,12 @@ class VeneraBot:
             self._send(chat_id, "Venera hisobingiz topilmadi. Ilovani ochib qaytadan kiring.",
                        markup=render.app_button(self.webapp_url))
             return None
-        return stored.to_public()
+        verdict = admin_users.access(stored.to_public(), login=getattr(stored, "username", None))
+        if verdict.blocked:
+            log.info("Telegram: hisob bloklangan (%s) - savol qabul qilinmadi", link.actor_id)
+            self._note(chat_id, _BLOCKED)
+            return None
+        return verdict.user
 
     def _link_prompt(self, chat_id: int, state: str, *, force: bool = False) -> None:
         now = time.monotonic()
@@ -548,30 +582,51 @@ class VeneraBot:
 
     # --- savol -> javob -----------------------------------------------------------
 
-    def _ask(self, chat_id: int, tg_id: int, user: AuthUser, question: str) -> None:
+    def _ask(self, chat_id: int, tg_id: int, user: AuthUser, question: str, *,
+             stt: dict[str, Any] | None = None) -> None:
+        """`stt` - ovozli xabar bo'lsa: transkripsiya qancha vaqt olgani va
+        qaysi variant (izga nuqta bo'lib tushadi, savol undan KEYIN boshlanadi)."""
         limit = settings.hrm_assistant_max_question_chars
         if len(question) > limit:
             self._say(chat_id, f"Savol juda uzun ({len(question)} belgi) - {limit} belgigacha yozing.")
             return
         chat = self.links.chat_for(tg_id, idle_sec=settings.telegram_chat_idle_hours * 3600)
-        typing = _Typing(self.api, chat_id, self.typing_every).start()
-        holder = self._send(chat_id, "⏳ Javob tayyorlanmoqda…")
+        # SAVOL IZI (admin panel) - veb chatdagi bilan bir xil shakl.
+        rec = TurnRecorder(user, "bot", "bot", question, chat_id=chat, locale="uz",
+                           input_mode="voice" if stt else "text")
+        if stt:
+            rec.point("stt", **stt)
         try:
-            answer = self._collect(question, user, chat, chat_id, holder)
-        finally:
-            typing.stop()
-        self._deliver(chat_id, holder, answer)
+            with rec.bind():
+                typing = _Typing(self.api, chat_id, self.typing_every).start()
+                holder = self._send(chat_id, "⏳ Javob tayyorlanmoqda…")
+                try:
+                    answer = self._collect(question, user, chat, chat_id, holder, rec)
+                finally:
+                    typing.stop()
+                # Javobni Telegram'ga yetkazish ham izda: uzun javob bir
+                # necha xabarga bo'linadi va har biri tarmoq so'rovi.
+                with rec.span("telegram.deliver"):
+                    self._deliver(chat_id, holder, answer)
+        except BaseException as exc:
+            rec.finish("error", error=exc)
+            raise
+        rec.finish(error=answer.error)
 
     def _collect(self, question: str, user: AuthUser, chat: str, chat_id: int,
-                 holder: int | None) -> _Answer:
+                 holder: int | None, rec: TurnRecorder) -> _Answer:
         answer = _Answer()
         log.info("Telegram savol (%s): %d belgi", user.actorId, len(question))
         try:
-            stream = self.backend.stream(question, user, chat)
+            with rec.span("assistant.open") as info:
+                stream = self.backend.stream(question, user, chat)
+                info["requestId"] = stream.request_id
         except AssistantError as exc:
             log.warning("Telegram savol (%s): %s", user.actorId, exc)
             answer.failure = _chat_message(exc.status)
+            rec.error_code, answer.error = "open_failed", exc
             return answer
+        rec.update(request_id=stream.request_id)
         frames = stream.frames
         stage_text, stage_at = "", 0.0
         try:
@@ -582,6 +637,8 @@ class VeneraBot:
                     continue
                 if not isinstance(frame, dict):
                     continue
+                # Izga - JSON qayta o'qilmaydi, tayyor lug'at beriladi.
+                rec.observe(frame)
                 kind = frame.get("type")
                 if kind == "token":
                     answer.parts.append(str(frame.get("text") or ""))
@@ -609,6 +666,9 @@ class VeneraBot:
             # Oqim o'rtasida uzildi - kelgan qism baribir ko'rsatiladi.
             log.warning("Telegram javob oqimi (%s): %s", user.actorId, exc)
             answer.failure = _chat_message(exc.status)
+            # Veb chatdagi kabi kod (`stream_broken`), ichki sabab esa nuqtada.
+            rec.point("assistant.broken", status=exc.status, error=redact(exc))
+            rec.error_code, answer.error = "stream_broken", exc
         finally:
             # Oqim OXIRIGACHA o'qilmagan bo'lsa ham yopiladi - yuqoridagi
             # xizmat sloti faqat shunda bo'shaydi.
@@ -669,12 +729,14 @@ class VeneraBot:
                 log.warning("Telegram ovozi olinmadi (%s): %s", user.actorId, exc)
                 self._say(chat_id, "Ovozli xabarni olib bo'lmadi - qaytadan yuboring.")
                 return
+            boshlandi = time.monotonic()
             try:
                 result = self.backend.transcribe(audio, str(voice.get("mime_type") or "audio/ogg"))
             except SttError as exc:
                 log.warning("Telegram STT (%s): %s", user.actorId, exc)
                 self._say(chat_id, _stt_message(exc.status))
                 return
+            stt_ms = int((time.monotonic() - boshlandi) * 1000)
         finally:
             typing.stop()
         text = (result.text or "").strip()
@@ -686,7 +748,10 @@ class VeneraBot:
             return
         note = "\n<i>(yozuv uzun - boshi olindi)</i>" if result.truncated else ""
         self._send(chat_id, f"🎙 <i>{esc(text)}</i>{note}", reply_to=msg.get("message_id"))
-        self._ask(chat_id, tg_id, user, text)
+        self._ask(chat_id, tg_id, user, text, stt={
+            "durMs": stt_ms, "audioSec": duration, "backend": result.backend or None,
+            "truncated": bool(result.truncated),
+        })
 
     # --- tugmalar -------------------------------------------------------------------
 
@@ -708,6 +773,13 @@ class VeneraBot:
             self._answer_cb(cq_id)
             return
         kind, _, rest = str(cq.get("data") or "").partition(":")
+        # Hisob: tugma bo'yicha chaqiruvlar (tasdiqlash, fayl) shu odam va
+        # `bot` kanali bilan yoziladi.
+        with bind(user.actorId, "bot"):
+            self._button(cq_id, chat_id, msg, user, kind, rest)
+
+    def _button(self, cq_id: str, chat_id: int, msg: dict[str, Any], user: AuthUser,
+                kind: str, rest: str) -> None:
         if kind == "a":
             verb, _, token = rest.partition(":")
             self._action(cq_id, chat_id, msg.get("message_id"), user, verb, token)
@@ -748,9 +820,15 @@ class VeneraBot:
             except AssistantError as exc:
                 log.warning("Telegram amal %s (%s, %s): %s", what, user.actorId, token, exc)
                 self._answer_cb(cq_id, _action_message(exc.status), alert=True)
-                if exc.status == 404 and isinstance(message_id, int):
-                    self._clear_buttons(chat_id, message_id)
+                if exc.status == 404:
+                    # Veb ilovadagi kabi: xizmat tanimagan taklif - muddati o'tgan.
+                    set_proposal_status(token, "expired")
+                    if isinstance(message_id, int):
+                        self._clear_buttons(chat_id, message_id)
                 return
+            outcome = _proposal_outcome("confirm" if verb == "c" else "cancel", result)
+            if outcome:
+                set_proposal_status(token, outcome)
             settled, text, toast = render.outcome(result)
             log.info("Telegram amal %s (%s): token=%s holat=%s ok=%s", what, user.actorId, token,
                      result.get("status"), result.get("ok"))

@@ -29,7 +29,7 @@ KADRLAR (frames), hujjat bo'yicha shu tartibda:
     proposal  -> TAKLIF qilingan yozuv amali (bo'lishi shart emas): hech
                  narsa o'zgarmagan, odam tasdiqlasa `confirm_action` bajaradi
     token     -> javob matni bo'laklari, ko'p
-    done      -> yakun: `route`, `request_id`
+    done      -> yakun: `route`, `request_id`. MAJBURIY: usiz EOF - uzilish
     error     -> tokenlar O'RNIGA keladi, keyin `done`
 
 FAYL HAVOLALARI QAYTA YOZILADI. `artifact` kadridagi `docx_url` yuqoridagi
@@ -57,11 +57,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import weakref
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from socket import timeout as socket_timeout
 from typing import Any, Iterator
+
+from ..analytics.meter import Call, begin
 
 log = logging.getLogger(__name__)
 
@@ -243,11 +246,16 @@ class AssistantClient:
         # kelganda emas: oqim davomida yuqoridagi LLM hali band.
         if not self._slots.acquire(blocking=False):
             raise AssistantError("navbat to'la", status=503, retryable=True)
-        released = False
+        # Hisob: chaqiruv ULANISHDAN boshlanadi va oqim TUGAGANDA yopiladi,
+        # ya'ni davomiyligi - butun javob. Kim/qaysi savol - `begin` shu
+        # paytdagi kontekstdan oladi (oqim keyin boshqa ipda o'qilsa ham).
+        end = _StreamEnd(begin("assistant", "stream"), self._slots)
         try:
             with _mapped_errors(self.client_secret):
                 response = self._open("/api/chat/stream", body, accept="application/x-ndjson",
                                       request_id=request_id)
+            end.response = response
+            end.call.http_status = _http_status(response)
             # Xizmat o'z `X-Request-Id` ini qaytarsa - AUDIT kaliti o'shanikisi.
             served = (response.headers.get("X-Request-Id") or "").strip()
             outcome: dict[str, Any] = {}
@@ -255,6 +263,14 @@ class AssistantClient:
             def pump() -> Iterator[bytes]:
                 total = 0
                 frames = 0
+                # `done` kadri keldimi - oqim TO'LIQ tugaganining YAGONA
+                # belgisi. Ulanish ikki kadr ORASIDA yopilsa `http.client`
+                # ning chunked o'quvchisi `b''` qaytaradi - bu toza EOF
+                # bilan bir xil ko'rinadi va xato ko'tarilmaydi. `done` ni
+                # sanamasak, yarim javob brauzerga TO'LIQ javob bo'lib
+                # borardi (`mock:cut` stsenariysi, `tools/dev_mock_upstream.py`).
+                finished = False
+                failure: BaseException | None = None
                 try:
                     while True:
                         try:
@@ -278,38 +294,59 @@ class AssistantClient:
                             # tashlanardi - ya'ni oqimning qolgani ham
                             # ishonchsiz. To'xtaymiz.
                             log.warning("Assistant kadri chegaradan katta: %d bayt", len(line))
-                            break
+                            if finished:
+                                break
+                            # `done` hali kelmagan - javob YARIM. Jim
+                            # `break` uni to'liq javob qilib ko'rsatardi.
+                            raise AssistantError("javob oqimi uzildi (kadr chegaradan katta)",
+                                                 status=502)
                         total += len(line)
                         if total > _MAX_STREAM_BYTES:
                             log.warning("Assistant oqimi chegaradan oshdi (%s): %d bayt",
                                         served or request_id, total)
-                            break
+                            if finished:
+                                break
+                            raise AssistantError("javob oqimi uzildi (oqim chegaradan katta)",
+                                                 status=502)
                         out = _clean_frame(line, self.base_url)
                         if out is None:
                             continue
                         frames += 1
                         if out.get("type") == "done":
                             outcome["route"] = out.get("route")
+                            finished = True
                         elif out.get("type") == "error":
                             outcome["error"] = out.get("code")
                         yield json.dumps(out, ensure_ascii=False).encode("utf-8") + b"\n"
+                    if not finished:
+                        # EOF, lekin `done` yo'q: yuqoridagi xizmat yoki
+                        # oradagi proksi ulanishni kadrlar orasida yopdi.
+                        # Xato SHU YERDA ko'tariladi - `chat.py` uni allaqachon
+                        # xato kadri + `done` ga o'giradi va savol izda
+                        # `error` bo'lib qoladi. `error` kadri kelgan bo'lsa
+                        # ham `done` shart: hujjat bo'yicha u `error` dan
+                        # KEYIN keladi, kelmasa oqim baribir chala.
+                        raise AssistantError("javob oqimi uzildi (done kadri kelmadi)",
+                                             status=503, retryable=True)
+                except BaseException as exc:
+                    failure = exc
+                    raise
                 finally:
                     outcome["frames"] = frames
-                    nonlocal released
-                    if not released:
-                        released = True
-                        self._slots.release()
-                    with contextlib.suppress(Exception):
-                        response.close()
+                    end.call.units.update(frames=frames, bytes=total)
+                    end(failure)
 
-            stream = AnswerStream(request_id=served or request_id, frames=pump(), outcome=outcome)
-            return stream
-        except BaseException:
+            frames_iter = pump()
+            # Generator HECH BOSHLANMAY tashlab ketilsa (brauzer sarlavhadan
+            # keyin, tanadan oldin uzildi) uning `finally` si ishlamaydi -
+            # slot mangu band qolardi. Obyekt yig'ilganda yakun shu yerdan.
+            weakref.finalize(frames_iter, end, _ABANDONED)
+            return AnswerStream(request_id=served or request_id, frames=frames_iter,
+                                outcome=outcome)
+        except BaseException as exc:
             # Oqim ochilmadi - slotni DARHOL qaytaramiz, aks holda birinchi
             # nosozlik navbatni abadiy egallab qolardi.
-            if not released:
-                released = True
-                self._slots.release()
+            end(exc)
             raise
 
     def ask(self, question: str, **kwargs) -> dict[str, Any]:
@@ -385,7 +422,7 @@ class AssistantClient:
             if live:
                 body["tokens"] = live
         return self._json(path, method="POST" if verb else "GET", body=body,
-                          limit=_MAX_LINE_BYTES, what="amal")
+                          limit=_MAX_LINE_BYTES, what="amal", op=f"action.{verb or 'get'}")
 
     # --- suhbatlar tarixi ----------------------------------------------------
     #
@@ -400,30 +437,33 @@ class AssistantClient:
         O'chirilganlar ro'yxatga kirmaydi."""
         return self._json("/api/chats",
                           query={"user_id": user_id, "limit": limit, "offset": offset},
-                          what="suhbatlar ro'yxati")
+                          what="suhbatlar ro'yxati", op="chats.list")
 
     def get_chat(self, chat_id: str, *, user_id: str, limit: int = 200) -> dict[str, Any]:
         """Bitta suhbat xabarlari bilan - eskisi birinchi, oxirgi `limit` tasi."""
         return self._json(self._chat_path(chat_id), query={"user_id": user_id, "limit": limit},
-                          what="suhbat")
+                          what="suhbat", op="chats.get")
 
     def rename_chat(self, chat_id: str, *, user_id: str, title: str) -> dict[str, Any]:
         """Nomini o'zgartiradi. Shundan keyin model nomga BOSHQA TEGMAYDI
         (`title_source` = `user`)."""
         return self._json(self._chat_path(chat_id), method="PATCH",
-                          query={"user_id": user_id}, body={"title": title}, what="suhbat nomi")
+                          query={"user_id": user_id}, body={"title": title}, what="suhbat nomi",
+                          op="chats.rename")
 
     def delete_chat(self, chat_id: str, *, user_id: str) -> dict[str, Any]:
         """YUMSHOQ o'chirish: suhbat ro'yxatdan chiqadi va ochilmaydi, lekin
         hech narsa o'chmaydi - `restore_chat` yoki o'sha `chat_id` bilan
         yangi savol uni qaytaradi. Takroriy chaqiruv xato emas."""
         return self._json(self._chat_path(chat_id), method="DELETE",
-                          query={"user_id": user_id}, what="suhbatni o'chirish")
+                          query={"user_id": user_id}, what="suhbatni o'chirish",
+                          op="chats.delete")
 
     def restore_chat(self, chat_id: str, *, user_id: str) -> dict[str, Any]:
         """O'chirishni bekor qiladi - nomi va xabarlari bilan qaytadi."""
         return self._json(self._chat_path(chat_id) + "/restore", method="POST",
-                          query={"user_id": user_id}, what="suhbatni tiklash")
+                          query={"user_id": user_id}, what="suhbatni tiklash",
+                          op="chats.restore")
 
     @staticmethod
     def _chat_path(chat_id: str) -> str:
@@ -446,13 +486,15 @@ class AssistantClient:
         body: Mapping[str, Any] | None = None,
         limit: int = _MAX_JSON_BYTES,
         what: str = "javob",
+        op: str = "json",
     ) -> dict[str, Any]:
         """JSON so'rov -> JSON obyekt. Yozuv amallari va suhbatlar tarixi
         uchun umumiy qatlam; oqim (`stream`) va fayllar (`_download`) bundan
         o'tmaydi - ular javobni bo'lak-bo'lak beradi.
 
         `what` - xato matnida "qaysi javob" ekani (`amal`, `suhbat`); jurnal
-        o'qiydigan odam uchun.
+        o'qiydigan odam uchun. `op` - hisobdagi amal nomi (`chats.list`,
+        `action.confirm`): admin panel xizmat yukini amal bo'yicha ajratadi.
         """
         if not self.configured:
             raise AssistantError("HR Assistant sozlanmagan", status=501)
@@ -461,21 +503,29 @@ class AssistantClient:
         raw_body = (json.dumps(body, ensure_ascii=False).encode("utf-8")
                     if body is not None else None)
         request_id = uuid.uuid4().hex
-        with _mapped_errors(self.client_secret):
-            response = self._open(path, raw_body, accept="application/json",
-                                  request_id=request_id, method=method)
-            with contextlib.closing(response):
-                raw = response.read(limit + 1)
-                served = (response.headers.get("X-Request-Id") or "").strip()
-        if len(raw) > limit:
-            # Qisqartirib tahlil qilish buzuq JSON berardi; sabab aniq aytiladi.
-            raise AssistantError(f"Assistant {what} javobi chegaradan katta", status=502)
+        call = begin("assistant", op)
         try:
-            result = json.loads(raw.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise AssistantError(f"Assistant {what} javobi o'qilmadi", status=502) from exc
-        if not isinstance(result, dict):
-            raise AssistantError(f"Assistant {what} javobi obyekt emas", status=502)
+            with _mapped_errors(self.client_secret):
+                response = self._open(path, raw_body, accept="application/json",
+                                      request_id=request_id, method=method)
+                with contextlib.closing(response):
+                    raw = response.read(limit + 1)
+                    served = (response.headers.get("X-Request-Id") or "").strip()
+            call.http_status = _http_status(response)
+            call.units["bytes"] = len(raw)
+            if len(raw) > limit:
+                # Qisqartirib tahlil qilish buzuq JSON berardi; sabab aniq aytiladi.
+                raise AssistantError(f"Assistant {what} javobi chegaradan katta", status=502)
+            try:
+                result = json.loads(raw.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise AssistantError(f"Assistant {what} javobi o'qilmadi", status=502) from exc
+            if not isinstance(result, dict):
+                raise AssistantError(f"Assistant {what} javobi obyekt emas", status=502)
+        except BaseException as exc:
+            call.end("error", http_status=_upstream_status(exc), error=exc)
+            raise
+        call.end()
         # Audit kaliti: xizmatniki ustun, bo'lmasa biznikini yozamiz.
         result.setdefault("request_id", served or request_id)
         return result
@@ -494,24 +544,34 @@ class AssistantClient:
             raise AssistantError(f"noma'lum fayl turi: {kind}", status=400)
         if not artifact_ref_ok(token, kind):
             raise AssistantError("fayl kaliti yaroqsiz", status=400)
-        return self._download(f"/api/hr/artifacts/{urllib.parse.quote(token, safe='')}/{kind}")
+        return self._download(f"/api/hr/artifacts/{urllib.parse.quote(token, safe='')}/{kind}",
+                              op="artifact")
 
     def fetch_doc(self, doc_id: str) -> tuple[str, str, Iterator[bytes]]:
         """Iqtibos qilingan hujjat PDF'i."""
         if not doc_id or not _SAFE_KEY.fullmatch(doc_id):
             raise AssistantError("hujjat kaliti yaroqsiz", status=400)
-        return self._download(f"/doc/{urllib.parse.quote(doc_id, safe='')}")
+        return self._download(f"/doc/{urllib.parse.quote(doc_id, safe='')}", op="doc")
 
-    def _download(self, path: str) -> tuple[str, str, Iterator[bytes]]:
+    def _download(self, path: str, *, op: str = "download") -> tuple[str, str, Iterator[bytes]]:
         if not self.configured:
             raise AssistantError("HR Assistant sozlanmagan", status=501)
-        with _mapped_errors(self.client_secret):
-            response = self._open(path, None, accept="*/*", request_id=uuid.uuid4().hex)
+        # Hisob oqimdagi kabi: ochilishdan fayl oxirigacha, birligi - bayt.
+        end = _StreamEnd(begin("assistant", op))
+        try:
+            with _mapped_errors(self.client_secret):
+                response = self._open(path, None, accept="*/*", request_id=uuid.uuid4().hex)
+        except BaseException as exc:
+            end(exc)
+            raise
+        end.response = response
+        end.call.http_status = _http_status(response)
         content_type = (response.headers.get("Content-Type") or "application/octet-stream").strip()
         filename = _filename(response.headers.get("Content-Disposition") or "", path)
 
         def pump() -> Iterator[bytes]:
             total = 0
+            failure: BaseException | None = None
             try:
                 while True:
                     chunk = response.read(_DOWNLOAD_CHUNK)
@@ -522,11 +582,16 @@ class AssistantClient:
                         log.warning("Assistant fayli chegaradan oshdi: %s", path)
                         break
                     yield chunk
+            except BaseException as exc:
+                failure = exc
+                raise
             finally:
-                with contextlib.suppress(Exception):
-                    response.close()
+                end.call.units["bytes"] = total
+                end(failure)
 
-        return content_type, filename, pump()
+        chunks = pump()
+        weakref.finalize(chunks, end, _ABANDONED)
+        return content_type, filename, chunks
 
     # --- past qatlam ---------------------------------------------------------
 
@@ -782,3 +847,63 @@ def _detail(exc: urllib.error.HTTPError) -> str:
             if isinstance(value, str) and value:
                 return value[:300]
     return raw[:300]
+
+
+# --- hisob (`api_calls`) ------------------------------------------------------
+
+#: "Oqim o'qilmay tashlab ketildi" belgisi. `GeneratorExit` - hisobda
+#: `cancelled` bo'lib yoziladi va XATO sanalmaydi: yuqoridagi xizmat
+#: o'z ishini qilgan, klient ketib qolgan.
+_ABANDONED = GeneratorExit("abandoned")
+
+
+class _StreamEnd:
+    """Oqim yakuni - BIR MARTA: slot qaytadi, ulanish yopiladi, hisob yoziladi.
+
+    Uch yo'ldan chaqiriladi, qaysi biri birinchi bo'lsa o'sha ishlaydi:
+    generatorning `finally` si (oddiy tugash va o'rtada uzilish), ochilish
+    xatosi, va `weakref.finalize` - generator HECH BOSHLANMAY tashlab
+    ketilganda. Oxirgisi bo'lmasa slot mangu band qolardi: TTS da aynan shu
+    jonli tizimda o'lchangan (`services/tts.py`, `_Slot`).
+    """
+
+    def __init__(self, call: Call, slots: threading.BoundedSemaphore | None = None) -> None:
+        self.call = call
+        self.response: Any = None
+        self._slots = slots
+        self._lock = threading.Lock()
+        self._done = False
+
+    def __call__(self, error: BaseException | None = None) -> None:
+        with self._lock:
+            if self._done:
+                return
+            self._done = True
+        if self._slots is not None:
+            self._slots.release()
+        if self.response is not None:
+            with contextlib.suppress(Exception):
+                self.response.close()
+        if error is None or isinstance(error, GeneratorExit):
+            self.call.end("ok", error=error)
+        else:
+            self.call.end("error", http_status=_upstream_status(error), error=error)
+
+
+def _http_status(response: Any) -> int:
+    """Javob statusi (`http.client` da `.status`); bilinmasa 200 - bu yerga
+    faqat muvaffaqiyatli ochilgan javob keladi."""
+    status = getattr(response, "status", None)
+    return status if isinstance(status, int) and 100 <= status <= 599 else 200
+
+
+def _upstream_status(exc: BaseException) -> int | None:
+    """Yuqoridagi xizmatning HAQIQIY statusi (`HTTPError.code`).
+
+    `AssistantError.status` - FOYDALANUVCHIGA ko'rsatiladigani: xizmatning
+    401 i u yerda 502. Admin esa aynan 401 ni ko'rishi kerak - "bizning
+    ilova siri noto'g'ri" degani. HTTP javobi umuman bo'lmagan bo'lsa
+    (`None`) hisob o'zi `AssistantError.status` ni oladi.
+    """
+    cause = exc.__cause__
+    return cause.code if isinstance(cause, urllib.error.HTTPError) else None
