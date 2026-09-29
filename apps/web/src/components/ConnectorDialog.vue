@@ -1,67 +1,166 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, useId } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { FunctionalComponent } from 'vue'
+import type { Component } from 'vue'
+import { ArrowLeft, CircleAlert, Eye, EyeOff, KeyRound, SquareKanban, UserRound, Users } from 'lucide-vue-next'
 import { localizeApiError } from '../api/errors'
 import { ApiError } from '../api/http'
 import { useConnectors } from '../composables/useConnectors'
 import type { ConnectorId } from '../composables/useConnectors'
-import { BoardIcon, KeyIcon, UserIcon, UsersIcon, XIcon } from '../icons'
-import AuthButton from './AuthButton.vue'
-import AuthError from './AuthError.vue'
-import AuthField from './AuthField.vue'
+import VButton from '../ui/VButton.vue'
+import VDialog from '../ui/VDialog.vue'
+import VIconButton from '../ui/VIconButton.vue'
+import VInput from '../ui/VInput.vue'
+import VSwitch from '../ui/VSwitch.vue'
+import { fmtTime } from '../ui/format'
+import { toast } from '../ui/useToast'
+import { useId } from '../ui/composables/useId'
+import ConnectorList from './ConnectorList.vue'
 
 /**
- * Ulanish oynasi: login + parol, saytning o'zida (tashqi sahifaga yubormaydi).
- * Parol serverga ketadi (`POST /api/v1/connectors/{id}/connect`), server
- * platformaga kiradi va tokenni O'ZIDA saqlaydi - brauzer uni ko'rmaydi.
- * Ulangan tizim uchun esa hisob ko'rsatiladi va "Uzish" tugmasi bor; muddati
- * tugagan bo'lsa (HRM 10 soat, CRM refresh rad etilgan) yana kirish shakli,
- * login to'ldirilgan holda.
+ * Ulanishlar oynasi (spec §4.3): HRM / CRM ro'yxati, kirish shakli va hisob - bitta
+ * VDialog ichida uch ko'rinish. Fokus tuzog'i, Esc, sahifa qulfi, fokusni ochgan
+ * tugmaga qaytarish va telefonda pastki sheet - VDialog'da.
  *
- * <body>ga teleport qilinadi: menyu `.glass` (contain: paint) ichida, oyna esa
- * butun ekranni qoplashi kerak. Fon (backdrop) bosilsa yoki Escape bosilsa
- * `close` chiqadi - Escape'ni ota komponent (ComposerMenu) tutadi, chunki
- * u allaqachon document'ni tinglaydi va oyna ochiqligini biladi.
+ * Kirish saytning o'zida: parol serverga ketadi (`POST /api/v1/connectors/{id}/connect`),
+ * server platformaga kiradi va tokenni O'ZIDA saqlaydi - brauzer uni ko'rmaydi. Parol
+ * brauzerda ham saqlanmaydi: ko'rinish almashsa yoki oyna yopilsa - maydon tozalanadi.
+ *
+ * Uzish ikki bosqichli: g'ildirak -> hisob -> "Uzish" -> "Ha, uzish". Uzilgan hisobni
+ * qaytarish uchun yana login va parol kerak - tasodifiy bosish qimmat.
+ *
+ * `connectorId` berilsa - ro'yxatsiz, to'g'ridan-to'g'ri o'sha tizim uchun ochiladi
+ * (masalan, chat "HRM ulanmagan" desa) va ish bitgach o'zi yopiladi.
  */
-const props = defineProps<{ connectorId: ConnectorId }>()
-const emit = defineEmits<{ close: [] }>()
+const props = defineProps<{ connectorId?: ConnectorId | null }>()
+const open = defineModel<boolean>('open', { default: false })
 
 const { t } = useI18n({ useScope: 'global' })
-const { connectors, connect, disconnect } = useConnectors()
-const connector = computed(() => connectors.find((c) => c.id === props.connectorId) ?? connectors[0])
+const { connectors, load, connect, disconnect, toggle } = useConnectors()
 
-const ICONS: Record<ConnectorId, FunctionalComponent<{ size?: number }>> = { hrm: UsersIcon, crm: BoardIcon }
+type View = 'list' | 'connect' | 'account'
+const view = ref<View>('list')
+const activeId = ref<ConnectorId>('hrm')
+const direct = ref(false)
 
+const ICONS: Record<ConnectorId, Component> = { hrm: Users, crm: SquareKanban }
+const connector = computed(() => connectors.find((c) => c.id === activeId.value) ?? connectors[0])
 const connected = computed(() => connector.value.state === 'connected')
 const expired = computed(() => connector.value.state === 'expired')
 
-const titleId = useId()
-const cardRef = ref<HTMLFormElement | null>(null)
-// Qayta kirishda login oldindan to'ldirilgan - odam faqat parol yozadi.
-const login = ref(connector.value.login ?? '')
+const formId = useId('cdlg-form')
+const login = ref('')
 const password = ref('')
+const showPassword = ref(false)
 const submitted = ref(false)
 const busy = ref(false)
 const formError = ref('')
-// Uzish ikki bosqichli: "Uzish" -> "Haqiqatan ham?" (ha / yo'q). Uzilgan
-// hisobni qaytarish uchun yana login va parol kerak - tasodifiy bosish
-// qimmat, shuning uchun tasdiq.
 const confirming = ref(false)
 
 const loginError = computed(() => (submitted.value && !login.value.trim() ? t('required') : ''))
 const passwordError = computed(() => (submitted.value && !password.value ? t('required') : ''))
 const valid = computed(() => login.value.trim().length > 0 && password.value.length > 0)
+// Qayta kirishda login oldindan to'ldirilgan - odam faqat parol yozadi, fokus ham o'sha yerga.
+const loginPrefilled = computed(() => view.value === 'connect' && !!connector.value.login)
 
-// Fokus: ochilganda birinchi maydonga, yopilganda - oynani ochgan tugmaga.
-let opener: Element | null = null
-onMounted(() => {
-  opener = document.activeElement
-  cardRef.value?.querySelector<HTMLElement>('input, button')?.focus()
+const title = computed(() => {
+  const name = connector.value.label
+  if (view.value === 'list') return t('connectors')
+  if (view.value === 'connect') return t('connectTo', { name })
+  return confirming.value ? t('disconnectConfirm', { name }) : name
 })
-onBeforeUnmount(() => {
-  if (opener instanceof HTMLElement && opener.isConnected) opener.focus()
+const subtitle = computed(() => {
+  const name = connector.value.label
+  if (view.value === 'connect') return expired.value ? t('connectorExpiredHint', { name }) : t('connectHint', { name })
+  if (view.value === 'account') {
+    if (confirming.value) return t('composer.reconnectNeedsPassword')
+    return connected.value ? t('connectedAs', { login: connector.value.login ?? '' }) : t('connectorExpired')
+  }
+  return ''
 })
+const sessionText = computed(() =>
+  connected.value && connector.value.expiresAt
+    ? t('composer.sessionUntil', { time: fmtTime(connector.value.expiresAt) })
+    : '',
+)
+
+/* ---- fokus: ko'rinish almashganda odam qayerda ekanini yo'qotmasin ---- */
+const listRef = ref<InstanceType<typeof ConnectorList> | null>(null)
+const loginRef = ref<InstanceType<typeof VInput> | null>(null)
+const passwordRef = ref<InstanceType<typeof VInput> | null>(null)
+const headingRef = ref<HTMLElement | null>(null)
+
+function focusRow(id: ConnectorId) {
+  const root = listRef.value?.$el as HTMLElement | undefined
+  root?.querySelector<HTMLElement>(`[data-connector="${id}"] .clist__controls button`)?.focus()
+}
+
+function focusView() {
+  if (view.value === 'connect') (loginPrefilled.value ? passwordRef : loginRef).value?.focus()
+  // Hisob ko'rinishida sarlavhaga: ekran o'quvchi yangi sarlavhani darhol o'qiydi.
+  else if (view.value === 'account') headingRef.value?.focus()
+}
+
+function clearForm() {
+  password.value = ''
+  showPassword.value = false
+  submitted.value = false
+  formError.value = ''
+  confirming.value = false
+}
+
+function show(next: View, id?: ConnectorId) {
+  if (id) activeId.value = id
+  clearForm()
+  if (next === 'connect') login.value = connector.value.login ?? ''
+  view.value = next
+}
+
+function go(next: View, id: ConnectorId) {
+  show(next, id)
+  void nextTick(focusView)
+}
+
+function toList() {
+  const id = activeId.value
+  show('list')
+  void nextTick(() => focusRow(id))
+}
+
+/** Ish bitdi: ro'yxatdan kelgan bo'lsa - ro'yxatga (natija o'sha yerda ko'rinadi),
+ *  to'g'ridan-to'g'ri ochilgan bo'lsa - oyna yopiladi. */
+function done() {
+  if (direct.value) open.value = false
+  else toList()
+}
+
+watch(
+  open,
+  (isOpen) => {
+    if (!isOpen) {
+      // Parol va login xotirada qolmasin.
+      clearForm()
+      login.value = ''
+      return
+    }
+    // Har ochilishda holat serverdan: HRM sessiyasi 10 soatda tugaydi.
+    void load()
+    direct.value = !!props.connectorId
+    if (props.connectorId) {
+      const c = connectors.find((x) => x.id === props.connectorId)
+      show(c?.state === 'connected' ? 'account' : 'connect', props.connectorId)
+    } else show('list')
+  },
+  { immediate: true },
+)
+
+// Holat oyna ochilgandan KEYIN kelsa ham qayta kirish logini to'ldirilsin.
+watch(
+  () => connector.value.login,
+  (value) => {
+    if (view.value === 'connect' && value && !login.value) login.value = value
+  },
+)
 
 async function onSubmit() {
   submitted.value = true
@@ -69,11 +168,11 @@ async function onSubmit() {
   if (!valid.value || busy.value) return
   busy.value = true
   try {
-    await connect(props.connectorId, login.value.trim(), password.value)
-    emit('close')
+    await connect(activeId.value, login.value.trim(), password.value)
+    password.value = ''
+    done()
   } catch (err) {
-    // Server xabari bo'lsa - o'sha (tarjima bilan); tarmoq/noma'lum xato
-    // bo'lsa umumiy "ulanib bo'lmadi".
+    // Server xabari bo'lsa - o'sha (tarjima bilan); tarmoq/noma'lum xato bo'lsa umumiy.
     formError.value = err instanceof ApiError ? localizeApiError(err, t) : t('connectFailed')
   } finally {
     busy.value = false
@@ -85,248 +184,237 @@ async function onDisconnect() {
   busy.value = true
   formError.value = ''
   try {
-    await disconnect(props.connectorId)
-    emit('close')
+    await disconnect(activeId.value)
+    done()
   } catch (err) {
-    formError.value = err instanceof ApiError ? localizeApiError(err, t) : t('connectFailed')
+    formError.value = err instanceof ApiError ? localizeApiError(err, t) : t('composer.disconnectFailed')
     confirming.value = false
   } finally {
     busy.value = false
   }
 }
+
+async function onToggle() {
+  if (!(await toggle(activeId.value))) toast.error(t('composer.toggleFailed'))
+}
+
+function setConfirming(value: boolean) {
+  formError.value = ''
+  confirming.value = value
+  // Tugma o'rnida boshqasi chiqadi - fokus sarlavhaga (yangi savol o'qiladi).
+  void nextTick(() => headingRef.value?.focus())
+}
+
+function cancel() {
+  if (direct.value) open.value = false
+  else toList()
+}
 </script>
 
 <template>
-  <Teleport to="body">
-    <!-- Fon: faqat o'ziga bosilganda yopadi (kartada boshlangan sudrash
-         tashqarida tugasa - yopilmaydi, shuning uchun mousedown.self). -->
-    <div class="cdlg" @mousedown.self="emit('close')">
-      <form
-        ref="cardRef"
-        class="cdlg__card"
-        role="dialog"
-        aria-modal="true"
-        :aria-labelledby="titleId"
-        novalidate
-        @submit.prevent="onSubmit"
-      >
-        <button type="button" class="cdlg__close" :title="t('close')" :aria-label="t('close')" @click="emit('close')">
-          <XIcon :size="16" />
-        </button>
-
-        <div class="cdlg__head">
-          <span class="cdlg__badge" aria-hidden="true"><component :is="ICONS[connector.id]" :size="18" /></span>
-          <div class="cdlg__head-text">
-            <h2 :id="titleId" class="cdlg__title">
-              <template v-if="confirming">{{ t('disconnectConfirm', { name: connector.label }) }}</template>
-              <template v-else>{{ connected ? connector.label : t('connectTo', { name: connector.label }) }}</template>
-            </h2>
-            <p class="cdlg__sub">
-              <template v-if="confirming">{{ t('disconnectConfirmHint', { name: connector.label }) }}</template>
-              <template v-else-if="connected">{{ t('connectedAs', { login: connector.login ?? '' }) }}</template>
-              <template v-else-if="expired">{{ t('connectorExpiredHint', { name: connector.label }) }}</template>
-              <template v-else>{{ t('connectHint', { name: connector.label }) }}</template>
-            </p>
-          </div>
+  <VDialog v-model:open="open" size="sm" :dismissible="!busy">
+    <template #header="{ titleId }">
+      <div class="cdlg__head">
+        <VIconButton
+          v-if="view !== 'list' && !direct"
+          class="cdlg__back"
+          :label="t('composer.back')"
+          :icon="ArrowLeft"
+          size="sm"
+          tooltip-placement="bottom"
+          :disabled="busy"
+          @click="toList"
+        />
+        <div class="cdlg__titles">
+          <h2 :id="titleId" ref="headingRef" class="cdlg__title" tabindex="-1">{{ title }}</h2>
+          <p v-if="subtitle" class="cdlg__sub">{{ subtitle }}</p>
         </div>
+      </div>
+    </template>
 
-        <template v-if="!connected">
-          <div v-if="formError" class="cdlg__error"><AuthError :message="formError" /></div>
-          <AuthField
-            v-model="login"
-            :label="t('login')"
-            autocomplete="username"
-            :icon="UserIcon"
-            :error="loginError"
-          />
-          <AuthField
-            v-model="password"
-            :label="t('password')"
-            type="password"
-            autocomplete="current-password"
-            :icon="KeyIcon"
-            :error="passwordError"
-          />
-          <div class="cdlg__actions">
-            <button type="button" class="cdlg__secondary" @click="emit('close')">{{ t('cancel') }}</button>
-            <div class="cdlg__primary">
-              <AuthButton :label="busy ? t('connecting') : expired ? t('reconnect') : t('connect')" :valid="valid" :busy="busy" />
-            </div>
-          </div>
-        </template>
+    <ConnectorList v-if="view === 'list'" ref="listRef" @connect="go('connect', $event)" @manage="go('account', $event)" />
 
-        <!-- Ulangan: yopish / uzish; uzishda ikkinchi qadam - tasdiq. -->
-        <template v-else>
-          <div v-if="formError" class="cdlg__error"><AuthError :message="formError" /></div>
-          <div v-if="confirming" class="cdlg__actions">
-            <button type="button" class="cdlg__secondary" :disabled="busy" @click="confirming = false">{{ t('no') }}</button>
-            <button type="button" class="cdlg__danger is-filled" :disabled="busy" :aria-busy="busy" @click="onDisconnect">
-              {{ busy ? t('disconnecting') : t('yesDisconnect') }}
-            </button>
-          </div>
-          <div v-else class="cdlg__actions">
-            <button type="button" class="cdlg__secondary" @click="emit('close')">{{ t('close') }}</button>
-            <button type="button" class="cdlg__danger" @click="confirming = true">{{ t('disconnect') }}</button>
-          </div>
+    <form v-else-if="view === 'connect'" :id="formId" class="cdlg__form" novalidate @submit.prevent="onSubmit">
+      <p v-if="formError" class="cdlg__error" role="alert">
+        <CircleAlert :size="16" :stroke-width="1.75" aria-hidden="true" />
+        <span>{{ formError }}</span>
+      </p>
+      <VInput
+        ref="loginRef"
+        v-model="login"
+        :label="t('login')"
+        :icon="UserRound"
+        size="lg"
+        autocomplete="username"
+        autocapitalize="off"
+        spellcheck="false"
+        :error="loginError"
+        :data-autofocus="loginPrefilled ? undefined : ''"
+      />
+      <VInput
+        ref="passwordRef"
+        v-model="password"
+        :label="t('password')"
+        :type="showPassword ? 'text' : 'password'"
+        :icon="KeyRound"
+        size="lg"
+        autocomplete="current-password"
+        :error="passwordError"
+        :data-autofocus="loginPrefilled ? '' : undefined"
+      >
+        <template #trailing>
+          <VIconButton
+            :label="showPassword ? t('hidePassword') : t('showPassword')"
+            :icon="showPassword ? EyeOff : Eye"
+            size="sm"
+            :pressed="showPassword"
+            @click="showPassword = !showPassword"
+          />
         </template>
-      </form>
+      </VInput>
+    </form>
+
+    <div v-else class="cdlg__account">
+      <div class="cdlg__who">
+        <span class="cdlg__glyph" aria-hidden="true">
+          <component :is="ICONS[connector.id]" :size="18" :stroke-width="1.75" />
+        </span>
+        <span class="cdlg__who-text">
+          <span class="cdlg__login">{{ connector.login || connector.label }}</span>
+          <span v-if="sessionText" class="cdlg__meta">{{ sessionText }}</span>
+        </span>
+      </div>
+      <VSwitch
+        v-if="connected && !confirming"
+        class="cdlg__use"
+        label-first
+        :label="t('composer.useInChat')"
+        :model-value="connector.enabled"
+        @update:model-value="onToggle"
+      />
+      <p v-if="formError" class="cdlg__error" role="alert">
+        <CircleAlert :size="16" :stroke-width="1.75" aria-hidden="true" />
+        <span>{{ formError }}</span>
+      </p>
     </div>
-  </Teleport>
+
+    <template v-if="view === 'connect'" #footer>
+      <VButton variant="ghost" :disabled="busy" @click="cancel">{{ t('cancel') }}</VButton>
+      <VButton variant="primary" type="submit" :form="formId" :loading="busy">
+        {{ expired ? t('reconnect') : t('connect') }}
+      </VButton>
+    </template>
+    <template v-else-if="view === 'account'" #footer>
+      <template v-if="confirming">
+        <VButton variant="ghost" :disabled="busy" @click="setConfirming(false)">{{ t('no') }}</VButton>
+        <VButton variant="danger" :loading="busy" @click="onDisconnect">{{ t('yesDisconnect') }}</VButton>
+      </template>
+      <template v-else>
+        <VButton variant="danger" @click="setConfirming(true)">{{ t('disconnect') }}</VButton>
+        <VButton v-if="expired" variant="primary" @click="go('connect', connector.id)">{{ t('reconnect') }}</VButton>
+      </template>
+    </template>
+  </VDialog>
 </template>
 
 <style scoped>
-.cdlg {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  background: rgba(0, 0, 0, 0.45);
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
-  animation: cdlgFade 0.18s ease both;
-}
-.cdlg__card {
-  position: relative;
-  width: min(400px, 100%);
-  box-sizing: border-box;
-  margin: 0;
-  padding: 22px;
-  border-radius: 20px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  box-shadow: var(--menu-shadow);
-  color: var(--text);
-  font-family: 'Figtree', sans-serif;
-  animation: fadeUp 0.28s var(--spring) both;
-}
-.cdlg__close {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.cdlg__close:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
 .cdlg__head {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 18px;
-  padding-right: 30px;
+  gap: var(--s-2);
 }
-.cdlg__badge {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
-  background: var(--ink);
-  color: var(--ink-contrast);
+.cdlg__back {
+  margin: -4px 0 0 -8px;
 }
-.cdlg__head-text {
+.cdlg__titles {
+  flex: 1;
   min-width: 0;
 }
 .cdlg__title {
-  margin: 0 0 3px;
-  font-size: 17px;
-  font-weight: 700;
-  line-height: 1.25;
-  color: var(--text-strong);
-}
-.cdlg__sub {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.4;
-  color: var(--text-secondary);
+  font-size: var(--fs-title-3);
+  line-height: var(--lh-title-3);
+  font-weight: 600;
+  letter-spacing: -0.011em;
+  text-wrap: balance;
   overflow-wrap: anywhere;
 }
-.cdlg__error {
-  margin-bottom: 12px;
+/* Sarlavhaga fokus faqat ekran o'quvchi uchun (ko'rinish almashdi) - halqa kerak emas. */
+.cdlg__title:focus,
+.cdlg__title:focus-visible {
+  outline: none;
 }
-.cdlg__actions {
+.cdlg__sub {
+  margin-top: var(--s-1);
+  color: var(--text-3);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.cdlg__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding-top: var(--s-2);
+}
+
+.cdlg__account {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+  padding-top: var(--s-2);
+}
+.cdlg__who {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 6px;
+  gap: var(--s-3);
 }
-.cdlg__primary {
-  flex: 1;
-  max-width: 200px;
+.cdlg__glyph {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-full);
+  background: var(--fill);
+  color: var(--text-2);
 }
-.cdlg__secondary,
-.cdlg__danger {
-  padding: 11px 16px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: transparent;
-  font-family: 'Figtree', sans-serif;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+.cdlg__who-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
-.cdlg__secondary {
-  color: var(--text-secondary);
-}
-.cdlg__secondary:hover {
-  background: var(--surface-hover);
-  border-color: var(--border-hover);
+.cdlg__login {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+  font-weight: 500;
 }
-/* Uzish: qizil faqat sichqoncha ustida - oyna ochilishi bilan "xavf"
-   baqirmasin. */
-.cdlg__danger {
-  color: var(--bad-fg);
+.cdlg__meta {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-variant-numeric: tabular-nums;
 }
-.cdlg__danger:hover {
-  background: var(--bad-bg);
-  border-color: var(--bad-bd);
+.cdlg__use {
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
 }
-/* Tasdiq qadamida "Ha, uzish" to'ldirilgan: bu yerda qizil endi "ehtiyot
-   bo'l" emas, "shuni qilyapsan" degan aniq tugma. */
-.cdlg__danger.is-filled {
-  background: var(--bad-fg);
-  border-color: transparent;
-  color: #fff;
+
+.cdlg__error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  color: var(--crit-text);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
 }
-.cdlg__danger.is-filled:hover {
-  filter: brightness(1.08);
-}
-.cdlg__secondary:disabled,
-.cdlg__danger:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-@keyframes cdlgFade {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .cdlg,
-  .cdlg__card {
-    animation: none !important;
-  }
+.cdlg__error svg {
+  flex-shrink: 0;
+  margin-top: 2px;
 }
 </style>

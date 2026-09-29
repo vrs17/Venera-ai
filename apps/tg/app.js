@@ -112,7 +112,10 @@
 
   function authHeaders(extra) {
     const token = getToken();
-    const headers = Object.assign({ Accept: 'application/json', 'Accept-Language': 'uz' }, extra || {});
+    // `X-Venera-Client` - admin panel statistikasi uchun kanal: server web va
+    // mini app so'rovini boshqacha ajrata olmaydi (`core/channels.py`).
+    const headers = Object.assign({ Accept: 'application/json', 'Accept-Language': 'uz',
+                                    'X-Venera-Client': 'miniapp' }, extra || {});
     if (token) headers.Authorization = `Bearer ${token}`;
     return headers;
   }

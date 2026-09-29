@@ -54,10 +54,22 @@ def users_file(tmp_path):
 
 
 @pytest.fixture
-def client(users_file):
-    """Sinov klienti - vaqtinchalik foydalanuvchilar fayli bilan."""
+def client(users_file, monkeypatch):
+    """Sinov klienti - vaqtinchalik foydalanuvchilar fayli bilan.
+
+    `main._diagnostics` (`/api/health/detail`) omborni `Depends` orqali
+    EMAS, to'g'ridan-to'g'ri chaqiradi - `dependency_overrides` unga
+    yetmaydi va u HAQIQIY `config/users.yaml` ni sanardi: test natijasi
+    mashinadagi hisoblar soniga bog'liq bo'lib qolgan edi. Shuning uchun
+    modul atributi ham shu omborga qaratiladi. `settings.users_file`
+    ATAYLAB o'zgartirilmaydi: tashxis uning yonidagi `users.example.yaml`
+    ni o'qiydi (namuna parollar tekshiruvi).
+    """
+    import app.main as main_module
+
     store = UserStore.from_file(users_file)
     app.dependency_overrides[get_user_store] = lambda: store
+    monkeypatch.setattr(main_module, "get_user_store", lambda: store)
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -74,6 +86,14 @@ def token(client) -> str:
 @pytest.fixture
 def auth(token) -> dict:
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def user_auth(client) -> dict:
+    """Oddiy xodim (faqat USER roli) - admin bo'limlari uni 403 bilan qaytarishi kerak."""
+    response = client.post("/api/v1/auth/login", json=USER)
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['token']}"}
 
 
 @pytest.fixture(autouse=True)
@@ -113,6 +133,26 @@ def _isolated_identities(tmp_path, monkeypatch):
     get_identity_store.cache_clear()
     yield
     get_identity_store.cache_clear()
+
+
+#: `.env` dan o'qiladigan, lekin testlar KODDAGI default'ini kutadigan
+#: sozlamalar. Mashinada `HOLD_ENABLED=false` yoki `WAKE_LOG_ENABLED=false`
+#: turgani uchun kutish ovozi va uyg'otish jurnali testlari yiqilgan edi -
+#: kod emas, mashina sozlamasi sinalayotgan edi. Qolganlari xuddi shu
+#: turdagi tuzoq: `LOCAL_LOGIN_ENABLED=false` bo'lsa deyarli hamma test
+#: kira olmaydi, `ADMIN_LOGINS` / `SSO_TRUSTED_ROLES` esa rollarni
+#: o'zgartiradi. O'zgacha qiymat kerak bo'lgan test uni o'zi qo'yadi.
+_CODE_DEFAULTS = ("hold_enabled", "wake_log_enabled", "local_login_enabled",
+                  "admin_logins", "sso_trusted_roles")
+
+
+@pytest.fixture(autouse=True)
+def _code_defaults(monkeypatch):
+    """HAR TESTDA: `_CODE_DEFAULTS` dagi sozlamalar - `Settings` sinfidagi
+    default qiymatda, `.env` dagi qiymatda emas."""
+    fields = type(settings).model_fields
+    for name in _CODE_DEFAULTS:
+        monkeypatch.setattr(settings, name, fields[name].default, raising=False)
 
 
 @pytest.fixture(autouse=True)
@@ -191,3 +231,40 @@ def _isolated_contacts(tmp_path, monkeypatch):
     from app.services.contacts import ContactStore
 
     monkeypatch.setattr(contacts, "store", ContactStore(tmp_path / "contacts" / "contacts.db"))
+
+
+class _OfflineUpstream:
+    """`main._upstream` o'rnida: STT/TTS "sog'lom", tarmoqqa chiqilmaydi."""
+
+    def snapshot(self) -> dict:
+        return {"stt": {"status": "ok", "broken": []}, "tts": {"status": "ok"}}
+
+
+@pytest.fixture(autouse=True)
+def _offline_upstream(monkeypatch):
+    """`/health`, `/api/health/detail` va `/admin/system` STT/TTS ning
+    `/health` iga JONLI tarmoq orqali borardi (`settings.stt_base_url` -
+    ichki server). Test natijasi o'sha serverning holatiga bog'liq
+    bo'lmasligi va unga so'rov yubormasligi kerak. Tekshiruvning o'zi
+    `test_wake.py` da soxta `urlopen` bilan sinaladi."""
+    import app.main as main_module
+
+    monkeypatch.setattr(main_module, "_upstream", _OfflineUpstream(), raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_analytics(tmp_path):
+    """Analitika ombori HAR TESTDA vaqtinchalik va bo'sh.
+
+    `current_user` har so'rovda `user_admin` ni o'qiydi (blok, rollar,
+    sessiya versiyasi), kirish esa `auth_events` ga yozadi - ya'ni endi
+    deyarli HAR test shu omborga tegadi. Jonli `data/analytics/venera.db`
+    da haqiqiy savollar va admin qarorlari turadi: test ularni o'qimasligi
+    ham, ularga yozmasligi ham kerak.
+    """
+    from app.services import analytics
+
+    database = analytics.reset_for_tests(tmp_path / "analytics" / "venera.db")
+    yield database
+    analytics.shutdown()
+    database.close_all()

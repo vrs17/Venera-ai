@@ -89,6 +89,18 @@ class LinkStore:
             return None, "expired"
         return link, "linked"
 
+    def by_actor(self, actor_id: int) -> list[TelegramLink]:
+        """Shu Venera hisobiga ulangan HAMMA Telegram hisoblari, muddati
+        o'tganlari ham - admin panel uchun ("nechta ulanish bor"). Bitta odam
+        bir necha Telegram hisobidan ulangan bo'lishi mumkin."""
+        with self._lock:
+            self._reload()
+            items = list(self._links.items())
+        found = [_parse(int(key), raw) for key, raw in items
+                 if key.lstrip("-").isdigit() and isinstance(raw, dict)
+                 and raw.get("actor_id") == actor_id]
+        return [link for link in found if link is not None]
+
     def count(self, *, now: float | None = None) -> int:
         """Amaldagi (muddati o'tmagan) ulanishlar soni - `/api/health/detail`."""
         now = time.time() if now is None else now
@@ -142,6 +154,22 @@ class LinkStore:
             del self._links[key]
             self._write()
         return True
+
+    def unlink_actor(self, actor_id: int) -> int:
+        """Shu hisobning HAMMA Telegram ulanishlarini uzadi -> nechtasi uzildi.
+
+        Admin "hamma sessiyalardan chiqarish" yoki "Telegramni uzish" ni
+        bosganda: bot sessiyasi JWT emas, u faqat shu ulanish bilan yashaydi.
+        """
+        with self._lock:
+            self._reload()
+            keys = [key for key, raw in self._links.items()
+                    if isinstance(raw, dict) and raw.get("actor_id") == actor_id]
+            for key in keys:
+                del self._links[key]
+            if keys:
+                self._write()
+        return len(keys)
 
     def chat_for(self, tg_id: int, *, idle_sec: float, now: float | None = None) -> str:
         """Joriy suhbat kaliti. Uzoq jimlikdan keyin - YANGI suhbat.

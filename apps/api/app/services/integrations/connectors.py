@@ -67,6 +67,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from ..analytics.meter import begin
 from .crm_auth import CrmAuthError, _safe, post_json
 
 log = logging.getLogger(__name__)
@@ -153,9 +154,16 @@ class _Reply(NamedTuple):
     headers: dict[str, str]
 
 
-def _send(request: urllib.request.Request, timeout: float, *, what: str) -> _Reply:
+def _send(request: urllib.request.Request, timeout: float, *, what: str,
+          service: str = "", op: str = "request") -> _Reply:
     """So'rovni yuboradi. 2xx -> tahlil qilingan tana + sarlavhalar; HTTP
-    xato -> `_HttpFailure`; tarmoq -> `ConnectorError` (502)."""
+    xato -> `_HttpFailure`; tarmoq -> `ConnectorError` (502).
+
+    Hisob (`api_calls`): `service`/`op` - masalan `hrm`/`authenticate`,
+    `keycloak`/`token`. Parol so'rov tanasida - u hisobga HECH QACHON
+    tushmaydi: xato matni faqat javobdagi kod va tavsifdan yasaladi.
+    """
+    call = begin(service or what.lower(), op)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read()
@@ -165,10 +173,16 @@ def _send(request: urllib.request.Request, timeout: float, *, what: str) -> _Rep
             payload = json.loads(exc.read().decode("utf-8", "replace"))
         except Exception:
             payload = None
+        call.end("error", http_status=exc.code, error=_failure_text(exc.code, payload))
         raise _HttpFailure(exc.code, payload) from None
     except (urllib.error.URLError, OSError) as exc:
         log.warning("%s ga ulanib bo'lmadi: %s", what, _safe(str(exc)))
+        call.end("error", error=_safe(f"ulanib bo'lmadi: {exc}"))
         raise ConnectorError(f"{what} tizimiga ulanib bo'lmadi", status=502, code="UNREACHABLE") from exc
+    except BaseException as exc:
+        call.end("error", error=exc)
+        raise
+    call.end("ok", http_status=200)
     if not raw:
         return _Reply({}, headers)
     text = raw.decode("utf-8", "replace")
@@ -177,6 +191,19 @@ def _send(request: urllib.request.Request, timeout: float, *, what: str) -> _Rep
     except ValueError:
         # JSON emas - yalang'och token bo'lishi mumkin (`_pick_token` tekshiradi).
         return _Reply(text.strip(), headers)
+
+
+def _failure_text(status: int, payload: Any) -> str:
+    """Hisob uchun qisqa sabab: HTTP kodi + javobdagi kod/tavsif
+    (`invalid_grant: Account is not fully set up`). JWT lar `_safe` bilan
+    olib tashlanadi; qolgan sirlarni `analytics.redact` tozalaydi."""
+    parts = [f"HTTP {status}"]
+    if isinstance(payload, dict):
+        for key in ("error", "error_description", "detail", "title", "message"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip()[:120])
+    return _safe(": ".join(parts))
 
 
 def _as_jwt(value: Any) -> str:
@@ -261,7 +288,7 @@ class HrmAuth:
             method="POST",
         )
         try:
-            reply = _send(request, self.timeout, what="HRM")
+            reply = _send(request, self.timeout, what="HRM", service="hrm", op="authenticate")
         except _HttpFailure as exc:
             raise self._error(exc) from None
         # Token tanada, bo'lmasa `Authorization` sarlavhasida (ba'zi API'lar
@@ -346,7 +373,8 @@ class CrmUserAuth:
             method="POST",
         )
         try:
-            payload = _send(request, self.timeout, what="CRM").payload
+            payload = _send(request, self.timeout, what="CRM", service="keycloak",
+                            op="token").payload
         except _HttpFailure as exc:
             raise self._error(exc) from None
         if not isinstance(payload, dict):

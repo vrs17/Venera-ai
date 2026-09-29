@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { FunctionalComponent } from 'vue'
+import type { Component } from 'vue'
+import { Check, PenLine, SquareKanban, TriangleAlert, Users } from 'lucide-vue-next'
 import { cancelAction, confirmAction } from '../api/actions.api'
 import { localizeApiError } from '../api/errors'
 import type { ActionProposal, ActionResult } from '../types'
-import { BoardIcon, CheckIcon, PencilIcon, UsersIcon } from '../icons'
+import VBadge from '../ui/VBadge.vue'
+import VButton from '../ui/VButton.vue'
+import VCard from '../ui/VCard.vue'
 
 /**
  * Yordamchi TAKLIF qilgan yozuv amali (masalan CRM da vaqt yozish).
@@ -26,8 +29,8 @@ const result = ref<ActionResult | null>(null)
 const busy = ref<'confirm' | 'cancel' | null>(null)
 const error = ref('')
 
-const ICONS: Record<string, FunctionalComponent<{ size?: number }>> = { crm: BoardIcon, hrm: UsersIcon }
-const icon = computed(() => ICONS[String(props.proposal.connector || '').toLowerCase()] ?? PencilIcon)
+const ICONS: Record<string, Component> = { crm: SquareKanban, hrm: Users }
+const icon = computed(() => ICONS[String(props.proposal.connector || '').toLowerCase()] ?? PenLine)
 const platform = computed(() => (props.proposal.connector || '').toUpperCase())
 
 /** Yakuniy holat: tugmalar yo'qoladi, natija qoladi. */
@@ -36,14 +39,16 @@ const settled = computed(() => {
   return s === 'executed' || s === 'cancelled' || s === 'expired' || s === 'failed'
 })
 
-const outcome = computed(() => {
+type Tone = 'good' | 'neutral' | 'warn' | 'crit'
+const outcome = computed<{ tone: Tone; label: string } | null>(() => {
   const r = result.value
   if (!r) return null
-  if (r.status === 'executed' && r.ok !== false) return { tone: 'ok', label: t('actionDone') }
-  if (r.status === 'cancelled') return { tone: 'muted', label: t('actionCancelled') }
+  // ok === false - platforma "bajarildi" desa ham natija yo'q: bu muvaffaqiyatsizlik.
+  if (r.status === 'executed' && r.ok !== false) return { tone: 'good', label: t('actionDone') }
+  if (r.status === 'cancelled') return { tone: 'neutral', label: t('actionCancelled') }
   if (r.status === 'expired') return { tone: 'warn', label: t('actionExpired') }
   if (r.status === 'pending') return null
-  return { tone: 'bad', label: t('actionFailed') }
+  return { tone: 'crit', label: t('actionFailed') }
 })
 
 /** Platforma qaytargan ko'rsatkich, masalan yaratilgan vazifa kaliti. */
@@ -65,6 +70,42 @@ function text(value: unknown): string {
 }
 const target = computed(() => (props.proposal.target ? text(props.proposal.target) : ''))
 const changes = computed(() => (props.proposal.changes ?? []).filter((c) => c && (c.field || c.to !== undefined)))
+function hasFrom(from: unknown): boolean {
+  return from !== undefined && from !== null && from !== ''
+}
+
+/* ---- muddat: `expires_at` bo'lsa - qancha qolgani, har 15 s yangilanadi ---- */
+const expiresAt = computed(() => {
+  const ms = props.proposal.expires_at ? Date.parse(props.proposal.expires_at) : NaN
+  return Number.isFinite(ms) ? ms : null
+})
+const now = ref(Date.now())
+let tick: ReturnType<typeof setInterval> | undefined
+watch(
+  () => expiresAt.value !== null && !settled.value,
+  (live) => {
+    clearInterval(tick)
+    tick = live ? setInterval(() => (now.value = Date.now()), 15_000) : undefined
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => clearInterval(tick))
+
+const expiryText = computed(() => {
+  if (expiresAt.value === null) return ''
+  const left = expiresAt.value - now.value
+  // Muddat o'tdi - holatni server aytadi (tugma bosilsa "Muddati tugagan" keladi).
+  if (left <= 0) return t('actionExpired')
+  if (left < 60_000) return t('composer.underMinute')
+  return t('composer.minutesLeft', { n: Math.ceil(left / 60_000) })
+})
+
+/** Ekran o'quvchi uchun: holat o'zgarishi e'lon qilinadi (tugma yo'qolganda jim qolmasin). */
+const live = computed(() => {
+  if (busy.value === 'confirm') return t('actionWorking')
+  if (busy.value === 'cancel') return t('actionRejecting')
+  return outcome.value?.label ?? ''
+})
 
 async function run(kind: 'confirm' | 'cancel') {
   if (busy.value || settled.value) return
@@ -81,227 +122,227 @@ async function run(kind: 'confirm' | 'cancel') {
 </script>
 
 <template>
-  <section class="act" :class="outcome ? `is-${outcome.tone}` : ''" :aria-label="t('actionProposed')">
+  <VCard as="section" padding="md" class="act" :aria-label="t('actionProposed')">
     <header class="act__head">
-      <span class="act__icon" aria-hidden="true"><component :is="icon" :size="15" stroke="currentColor" /></span>
-      <span class="act__title">{{ t('actionProposed') }}</span>
-      <span v-if="platform" class="act__platform">{{ platform }}</span>
-      <span v-if="outcome" class="act__status" :class="`is-${outcome.tone}`">
-        <CheckIcon v-if="outcome.tone === 'ok'" :size="12" stroke="currentColor" />
-        {{ outcome.label }}
-      </span>
+      <span class="act__glyph" aria-hidden="true"><component :is="icon" :size="16" :stroke-width="1.75" /></span>
+      <div class="act__titles">
+        <!-- Sarlavha - xulosaning o'zi (asl mazmun); "Taklif qilingan o'zgarish" - uning
+             ustidagi jim yorliq. Yakuniy holat nishoni shu qatorda: sarlavha tor ekranda
+             ham butun kenglikni oladi. -->
+        <div v-if="proposal.summary || platform || outcome" class="act__top">
+          <p class="act__eyebrow">
+            {{ proposal.summary ? [platform, t('actionProposed')].filter(Boolean).join(' · ') : platform }}
+          </p>
+          <VBadge v-if="outcome" class="act__badge" :tone="outcome.tone" :icon="outcome.tone === 'good' ? Check : undefined">
+            {{ outcome.label }}
+          </VBadge>
+        </div>
+        <h3 class="act__title">{{ proposal.summary || t('actionProposed') }}</h3>
+      </div>
     </header>
 
-    <p v-if="proposal.summary" class="act__summary">{{ proposal.summary }}</p>
-
-    <dl v-if="target || changes.length" class="act__details">
-      <template v-if="target">
+    <dl v-if="target || changes.length" class="act__rows">
+      <div v-if="target" class="act__row">
         <dt>{{ t('actionTarget') }}</dt>
         <dd>{{ target }}</dd>
-      </template>
-      <template v-for="(c, i) in changes" :key="i">
+      </div>
+      <div v-for="(c, i) in changes" :key="i" class="act__row">
         <dt>{{ c.field || t('actionChanges') }}</dt>
         <dd>
-          <template v-if="c.from !== undefined && c.from !== null && c.from !== ''">
+          <template v-if="hasFrom(c.from)">
             <s class="act__from">{{ text(c.from) }}</s>
             <span class="act__arrow" aria-hidden="true">→</span>
           </template>
           <span class="act__to">{{ text(c.to) }}</span>
         </dd>
-      </template>
+      </div>
     </dl>
 
-    <ul v-if="proposal.warnings?.length" class="act__warnings">
-      <li v-for="(w, i) in proposal.warnings" :key="i">{{ w }}</li>
-    </ul>
+    <div v-if="proposal.warnings?.length" class="act__warn">
+      <TriangleAlert class="act__warn-icon" :size="16" :stroke-width="1.75" aria-hidden="true" />
+      <ul>
+        <li v-for="(w, i) in proposal.warnings" :key="i">{{ w }}</li>
+      </ul>
+    </div>
 
-    <!-- Natija: bajarilgan bo'lsa platforma nima qaytargani, yiqilgan
-         bo'lsa sababi. -->
-    <p v-if="result && outcome?.tone === 'ok' && resultText" class="act__result">{{ resultText }}</p>
-    <p v-if="result && outcome?.tone === 'bad'" class="act__bad" role="alert">
+    <!-- Natija: bajarilgan bo'lsa platforma nima qaytargani, yiqilgan bo'lsa sababi. -->
+    <p v-if="result && outcome?.tone === 'good' && resultText" class="act__result">{{ resultText }}</p>
+    <p v-if="result && outcome?.tone === 'crit'" class="act__bad" role="alert">
       {{ result.error || t('actionFailedGeneric') }}
     </p>
     <p v-if="error" class="act__bad" role="alert">{{ error }}</p>
 
     <footer v-if="!settled" class="act__foot">
-      <span class="act__hint">{{ t('actionHint') }}</span>
+      <p class="act__hint">
+        {{ t('composer.actionSafe') }}<template v-if="expiryText"> · <span class="act__expiry">{{ expiryText }}</span></template>
+      </p>
       <div class="act__buttons">
-        <button type="button" class="act__btn act__btn--reject" :disabled="!!busy" @click="run('cancel')">
-          {{ busy === 'cancel' ? t('actionRejecting') : t('actionReject') }}
-        </button>
-        <button type="button" class="act__btn act__btn--confirm" :disabled="!!busy" :aria-busy="busy === 'confirm'" @click="run('confirm')">
-          {{ busy === 'confirm' ? t('actionWorking') : t('actionConfirm') }}
-        </button>
+        <VButton variant="ghost" size="sm" :loading="busy === 'cancel'" :disabled="busy === 'confirm'" @click="run('cancel')">
+          {{ t('actionReject') }}
+        </VButton>
+        <VButton variant="primary" size="sm" :loading="busy === 'confirm'" :disabled="busy === 'cancel'" @click="run('confirm')">
+          {{ t('actionConfirm') }}
+        </VButton>
       </div>
     </footer>
-  </section>
+    <p class="sr-only" aria-live="polite">{{ live }}</p>
+  </VCard>
 </template>
 
 <style scoped>
 .act {
-  margin: 12px 0 6px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px solid var(--border-hover);
-  background: var(--surface-sunken);
-  font-size: 13.5px;
-  line-height: 1.45;
-  color: var(--text);
+  /* Qatorlar joylashuvi ekranga emas, KARTAning kengligiga qarab: hujjat paneli ochiq
+     keng ekranda ham ustun tor bo'lishi mumkin. Karta blok element - kengligi ota
+     ustundan keladi, shuning uchun inline-size cheklovi uni siqmaydi. */
+  container: act / inline-size;
+  gap: var(--s-4);
+  margin: var(--s-3) 0 var(--s-1_5);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
 }
-/* Yakuniy holat rang bilan: yashil - bajarildi, kulrang - rad etildi,
-   sariq - muddati tugagan, qizil - yiqildi. */
-.act.is-ok {
-  border-color: var(--ok-bd);
-}
-.act.is-bad {
-  border-color: var(--bad-bd);
-}
-.act.is-warn {
-  border-color: var(--warn-bd);
-}
+
 .act__head {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
+  align-items: flex-start;
+  gap: var(--s-3);
 }
-.act__icon {
-  display: inline-flex;
-  color: var(--text-secondary);
+.act__glyph {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-full);
+  background: var(--fill);
+  color: var(--text-2);
+}
+.act__titles {
+  flex: 1;
+  min-width: 0;
+  padding-top: 1px;
+}
+.act__eyebrow {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.act__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-2);
+  margin-bottom: 2px;
 }
 .act__title {
+  color: var(--text);
+  font-size: var(--fs-title-3);
+  line-height: var(--lh-title-3);
   font-weight: 600;
-}
-.act__platform {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 1px 7px;
-}
-.act__status {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: 999px;
-  padding: 2px 9px;
-}
-.act__status.is-ok {
-  color: var(--ok-fg);
-  background: var(--ok-bg);
-  border: 1px solid var(--ok-bd);
-}
-.act__status.is-bad {
-  color: var(--bad-fg);
-  background: var(--bad-bg);
-  border: 1px solid var(--bad-bd);
-}
-.act__status.is-warn {
-  color: var(--warn-fg);
-  background: var(--warn-bg);
-  border: 1px solid var(--warn-bd);
-}
-.act__status.is-muted {
-  color: var(--text-secondary);
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
-}
-.act__summary {
-  margin: 0 0 8px;
-}
-.act__details {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 3px 12px;
-  margin: 0 0 8px;
-  font-size: 13px;
-}
-.act__details dt {
-  color: var(--text-secondary);
-}
-.act__details dd {
-  margin: 0;
+  letter-spacing: -0.011em;
   overflow-wrap: anywhere;
 }
+.act__badge {
+  flex-shrink: 0;
+}
+
+/* Tor kartada (telefon) yorliq qiymat ustida - uzun qiymat tor ustunga siqilmasin.
+   Eslatma: oldingi `minmax(0, fit-content(40%))` yaroqsiz (fit-content() minmax ichida
+   ruxsat etilmaydi) - brauzer butun qoidani tashlab, qatorlar doim ustma-ust turardi. */
+.act__rows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 2px;
+}
+.act__row {
+  display: contents;
+}
+.act__row + .act__row dt {
+  margin-top: var(--s-2);
+}
+.act__row dt {
+  color: var(--text-3);
+  overflow-wrap: break-word;
+}
+.act__row dd {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+/* >= 560px karta: ikki ustun - chapda ~160px yorliq, o'ngda qiymat, qatorlar orasi 8px.
+   Hamma qiymat bitta chiziqdan boshlanadi, karta balandligi ~ikki baravar kamayadi. */
+@container act (min-width: 560px) {
+  .act__rows {
+    grid-template-columns: 160px minmax(0, 1fr);
+    gap: var(--s-2) var(--s-4);
+  }
+  .act__row + .act__row dt {
+    margin-top: 0;
+  }
+}
 .act__from {
-  color: var(--text-muted);
+  color: var(--text-3);
+  text-decoration-color: var(--text-4);
 }
 .act__arrow {
-  margin: 0 6px;
-  color: var(--text-muted);
+  margin: 0 var(--s-1_5);
+  color: var(--text-4);
 }
 .act__to {
-  font-weight: 600;
+  font-weight: 500;
 }
-.act__warnings {
-  margin: 0 0 8px;
-  padding-left: 18px;
-  font-size: 12.5px;
-  color: var(--warn-fg);
+
+.act__warn {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border-radius: var(--r-md);
+  background: var(--warn-soft);
+  color: var(--warn-text);
 }
-.act__result {
+.act__warn-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.act__warn ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
   margin: 0;
-  font-size: 12.5px;
-  color: var(--text-secondary);
+  padding: 0;
+  list-style: none;
+}
+
+.act__result {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
 }
 .act__bad {
-  margin: 0 0 8px;
-  font-size: 12.5px;
-  color: var(--bad-fg);
+  color: var(--crit-text);
 }
+
 .act__foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
   flex-wrap: wrap;
-  margin-top: 4px;
+  gap: var(--s-3);
 }
 .act__hint {
-  font-size: 11.5px;
-  color: var(--text-muted);
-  flex: 1;
-  min-width: 160px;
+  flex: 1 1 200px;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.act__expiry {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .act__buttons {
   display: flex;
-  gap: 8px;
-}
-.act__btn {
-  padding: 8px 14px;
-  border-radius: 999px;
-  border: 1px solid var(--border-hover);
-  background: transparent;
-  font-family: 'Figtree', sans-serif;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s, filter 0.15s;
-}
-.act__btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.act__btn--reject {
-  color: var(--text-secondary);
-}
-.act__btn--reject:hover:not(:disabled) {
-  background: var(--surface-hover);
-  color: var(--text);
-}
-/* Tasdiqlash - to'ldirilgan: bu javobning yagona haqiqiy "qil" tugmasi. */
-.act__btn--confirm {
-  background: var(--ink);
-  border-color: transparent;
-  color: var(--ink-contrast);
-}
-.act__btn--confirm:hover:not(:disabled) {
-  filter: brightness(1.1);
+  gap: var(--s-2);
+  margin-left: auto;
 }
 </style>

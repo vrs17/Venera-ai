@@ -1,257 +1,193 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import type { FunctionalComponent } from 'vue'
+import type { Component } from 'vue'
+import { Settings, SquareKanban, Users } from 'lucide-vue-next'
 import { useConnectors } from '../composables/useConnectors'
 import type { ConnectorId, ConnectorStatus } from '../composables/useConnectors'
-import { BoardIcon, GearIcon, PlusIcon, UsersIcon } from '../icons'
+import VBadge from '../ui/VBadge.vue'
+import VButton from '../ui/VButton.vue'
+import VIconButton from '../ui/VIconButton.vue'
+import VSkeleton from '../ui/VSkeleton.vue'
+import VSwitch from '../ui/VSwitch.vue'
+import { toast } from '../ui/useToast'
 
-// HRM / CRM qatorlari. Ulanmagan yoki muddati tugagan qatorda "+" (ulanish
-// oynasini ochadi), ulanganida kalit (chatda ishlatish / ishlatmaslik).
-// Ikki joyda chiqadi - desktopda yon panelda, mobilda "Ulanishlar" qatori
-// ostida - shuning uchun alohida komponent. Oynani ochish ota komponentning
-// ishi (`open`).
-const emit = defineEmits<{ open: [id: ConnectorId] }>()
+// HRM / CRM qatorlari (ulanishlar oynasining ichida). Qator = platforma belgisi, nomi,
+// bitta jim holat qatori va BITTA asosiy boshqaruv: ulangan bo'lsa - kalit (chatda
+// ishlatish), aks holda "Ulanish" / "Qayta ulanish". Tishli g'ildirak - hisob
+// (sessiya muddati, uzish). Qaysi ko'rinish ochilishi ota komponentning ishi:
+// `connect` - kirish shakli, `manage` - hisob.
+const emit = defineEmits<{ connect: [id: ConnectorId]; manage: [id: ConnectorId] }>()
 const { t } = useI18n({ useScope: 'global' })
-const { connectors, loadFailed, toggle } = useConnectors()
+const { connectors, loading, loaded, loadFailed, toggle } = useConnectors()
 
-const ICONS: Record<ConnectorId, FunctionalComponent<{ size?: number }>> = { hrm: UsersIcon, crm: BoardIcon }
+const ICONS: Record<ConnectorId, Component> = { hrm: Users, crm: SquareKanban }
 const HINTS = { hrm: 'connectorHrmHint', crm: 'connectorCrmHint' } as const
 
-function hint(c: ConnectorStatus): string {
+function statusText(c: ConnectorStatus): string {
   if (!c.configured) return t('connectorUnavailable')
   if (c.state === 'connected') return c.login || t('connected')
   if (c.state === 'expired') return t('connectorExpired')
+  // Ulanmagan: holat emas, tizim nima berishini aytamiz - "nega ulanay?" savoliga javob.
   return t(HINTS[c.id])
 }
-function title(c: ConnectorStatus): string {
-  if (c.state === 'connected') return t('connectedAs', { login: c.login ?? '' })
-  if (c.state === 'expired') return t('reconnect')
-  return t('connectTo', { name: c.label })
+function connectLabel(c: ConnectorStatus): string {
+  return c.state === 'expired' ? t('reconnect') : t('connectTo', { name: c.label })
+}
+
+async function onToggle(id: ConnectorId) {
+  if (!(await toggle(id))) toast.error(t('composer.toggleFailed'))
 }
 </script>
 
 <template>
-  <div class="clist" role="group" :aria-label="t('connectors')">
-    <div
-      v-for="c in connectors"
-      :key="c.id"
-      class="clist__row"
-      :class="{ 'is-on': c.state === 'connected' && c.enabled, 'is-unavailable': !c.configured }"
-    >
-      <!-- Nom + izoh: bosilsa ulanish (ulangan bo'lsa - hisob) oynasi ochiladi. -->
-      <button type="button" class="clist__main" :title="title(c)" :disabled="!c.configured" @click="emit('open', c.id)">
-        <span class="clist__icon"><component :is="ICONS[c.id]" :size="16" /></span>
+  <div class="clist">
+    <ul class="clist__rows" :aria-label="t('connectors')">
+      <li
+        v-for="c in connectors"
+        :key="c.id"
+        class="clist__row"
+        :class="{ 'is-unavailable': !c.configured }"
+        :data-connector="c.id"
+      >
+        <span class="clist__glyph" aria-hidden="true">
+          <component :is="ICONS[c.id]" :size="18" :stroke-width="1.75" />
+        </span>
         <span class="clist__text">
           <span class="clist__name">{{ c.label }}</span>
-          <span class="clist__hint">
-            <span v-if="c.configured && c.state !== 'disconnected'" class="clist__dot" :class="`is-${c.state}`" aria-hidden="true" />
-            {{ hint(c) }}
-          </span>
+          <VBadge
+            v-if="c.configured && c.state !== 'disconnected'"
+            class="clist__status"
+            dot
+            size="sm"
+            :tone="c.state === 'connected' ? 'good' : 'warn'"
+          >
+            <span class="clist__status-text">{{ statusText(c) }}</span>
+          </VBadge>
+          <span v-else class="clist__hint">{{ statusText(c) }}</span>
         </span>
-      </button>
 
-      <!-- Tishli g'ildirak: hisob oynasi (uzish, qayta kirish). Ulanmagan
-           qatorda yo'q - u yerda "+" ning o'zi oynani ochadi. -->
-      <button
-        v-if="c.configured && c.state !== 'disconnected'"
-        type="button"
-        class="clist__gear"
-        :title="t('connectorSettings')"
-        :aria-label="`${c.label}: ${t('connectorSettings')}`"
-        @click="emit('open', c.id)"
-      >
-        <GearIcon :size="15" />
-      </button>
-
-      <!-- Ulangan: kalit. Aks holda "+" - ulanish yoki qayta ulanish. -->
-      <button
-        v-if="c.state === 'connected'"
-        type="button"
-        class="clist__switch"
-        role="switch"
-        :aria-checked="c.enabled"
-        :aria-label="c.label"
-        @click="toggle(c.id)"
-      >
-        <span class="clist__knob" aria-hidden="true" />
-      </button>
-      <button
-        v-else
-        type="button"
-        class="clist__connect"
-        :title="c.state === 'expired' ? t('reconnect') : t('connect')"
-        :aria-label="title(c)"
-        :disabled="!c.configured"
-        @click="emit('open', c.id)"
-      >
-        <PlusIcon :size="14" />
-      </button>
-    </div>
+        <!-- Birinchi yuklash tugaguncha boshqaruv o'rnida jim o'rinbosar: ulangan
+             odamga bir lahzaga "Ulanish" tugmasi ko'rinib qolmasin. -->
+        <span v-if="!loaded && loading" class="clist__controls" aria-hidden="true">
+          <VSkeleton :width="64" :height="28" radius="sm" />
+        </span>
+        <span v-else-if="c.configured" class="clist__controls">
+          <VIconButton
+            v-if="c.state !== 'disconnected'"
+            data-role="manage"
+            :label="`${c.label}: ${t('connectorSettings')}`"
+            :icon="Settings"
+            size="sm"
+            @click="emit('manage', c.id)"
+          />
+          <VSwitch
+            v-if="c.state === 'connected'"
+            class="clist__switch"
+            :model-value="c.enabled"
+            :aria-label="c.label"
+            @update:model-value="onToggle(c.id)"
+          />
+          <VButton
+            v-else
+            data-role="connect"
+            size="sm"
+            :variant="c.state === 'expired' ? 'primary' : 'secondary'"
+            :aria-label="connectLabel(c)"
+            @click="emit('connect', c.id)"
+          >
+            {{ c.state === 'expired' ? t('reconnect') : t('connect') }}
+          </VButton>
+        </span>
+      </li>
+    </ul>
     <p v-if="loadFailed" class="clist__note" role="status">{{ t('connectorsLoadFailed') }}</p>
   </div>
 </template>
 
 <style scoped>
-.clist {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.clist__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 .clist__row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding-right: 10px;
-  border-radius: 10px;
-  color: var(--text-secondary);
-  transition: background 0.15s, color 0.15s;
+  gap: var(--s-3);
+  min-height: 64px;
+  padding: var(--s-3) 0;
 }
-.clist__row:hover {
-  background: var(--surface-hover);
-  color: var(--text);
+.clist__row + .clist__row {
+  border-top: 1px solid var(--line);
 }
-.clist__row.is-on {
-  color: var(--text);
-}
-.clist__row.is-unavailable {
-  opacity: 0.55;
-}
-.clist__row.is-unavailable:hover {
-  background: transparent;
-  color: var(--text-secondary);
-}
-.clist__main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border: none;
-  border-radius: 10px;
-  background: transparent;
-  color: inherit;
-  font-family: 'Figtree', sans-serif;
-  text-align: left;
-  cursor: pointer;
-}
-.clist__main:disabled {
-  cursor: not-allowed;
-}
-.clist__icon {
-  display: inline-flex;
+
+.clist__glyph {
+  display: grid;
+  place-items: center;
   flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-full);
+  background: var(--fill);
+  color: var(--text-2);
 }
+
 .clist__text {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  flex: 1;
   min-width: 0;
-  line-height: 1.25;
 }
 .clist__name {
-  font-size: 13.5px;
-  font-weight: 600;
+  color: var(--text);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+  font-weight: 500;
 }
 .clist__hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11.5px;
-  color: var(--text-secondary);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
-/* Yashil - ulangan, sariq - muddati tugagan (qayta kirish kerak). */
-.clist__dot {
-  flex-shrink: 0;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ok-fg);
+.clist__status {
+  max-width: 100%;
 }
-.clist__dot.is-expired {
-  background: var(--warn-fg);
+.clist__status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-/* Tishli g'ildirak - kalitning chap tomonida, kichik va jim: qatorning
-   asosiy amali kalit, sozlama esa ikkinchi darajali. */
-.clist__gear {
-  flex-shrink: 0;
-  width: 26px;
-  height: 26px;
-  display: inline-flex;
+
+.clist__controls {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.clist__gear:hover {
-  background: var(--surface);
-  color: var(--text);
-}
-/* "+" - ulanish. Kalit bilan bir xil balandlikda, qator sakramasin. */
-.clist__connect {
+  gap: var(--s-2);
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 1px solid var(--border-hover);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-.clist__connect:hover:not(:disabled) {
-  background: var(--ink);
-  border-color: transparent;
-  color: var(--ink-contrast);
+/* Barmoq uchun kalitning bosish maydoni kattaroq - ko'rinishi o'zgarmaydi. */
+@media (pointer: coarse) {
+  .clist__switch :deep(.v-switch__track)::after {
+    content: '';
+    position: absolute;
+    inset: -12px -6px;
+  }
 }
-.clist__connect:disabled {
-  cursor: not-allowed;
+
+.clist__row.is-unavailable .clist__glyph,
+.clist__row.is-unavailable .clist__name,
+.clist__row.is-unavailable .clist__hint {
+  color: var(--text-4);
 }
-/* Yon paneldagi kalit bilan bir xil o'lcham va ranglar - ilova bitta tilda
-   gaplashsin. Tugma, chunki o'zi bosiladi (nom alohida tugma). */
-.clist__switch {
-  flex-shrink: 0;
-  box-sizing: content-box;
-  width: 34px;
-  height: 19px;
-  padding: 0;
-  border-radius: 999px;
-  background: var(--surface-hover);
-  border: 1px solid var(--border-hover);
-  position: relative;
-  cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
-}
-.clist__row.is-on .clist__switch {
-  background: var(--ink);
-  border-color: transparent;
-}
-.clist__knob {
-  position: absolute;
-  top: 1.5px;
-  left: 1.5px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-  transition: transform 0.22s var(--spring);
-}
-.clist__row.is-on .clist__knob {
-  transform: translateX(15px);
-}
+
 .clist__note {
-  margin: 4px 10px 2px;
-  font-size: 11.5px;
-  color: var(--warn-fg);
+  margin-top: var(--s-2);
+  color: var(--warn-text);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 </style>

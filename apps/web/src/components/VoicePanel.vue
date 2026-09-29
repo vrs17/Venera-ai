@@ -6,19 +6,12 @@
  * the chat pipeline. Nothing here talks to the STT server directly; see
  * `api/stt.api.ts` for why.
  *
- * VISUALS. The reference is `assets/voice.gif`: a glowing sphere on near-black,
- * glass-like colour sheets drifting inside it, a thin white rim with a bright
- * spot travelling around it, and smoky violet loops outside. It is rebuilt here
- * in CSS rather than shipped as the GIF — the GIF is 10 MB and cannot react to
- * the microphone; the CSS version is a few hundred bytes and does.
- *
- * THEMING. The reference is black, and the dark theme reproduces it. The light
- * theme is not the same picture on a white page — a white rim and a white bloom
- * vanish there. Instead the sphere gets a pale base, the colour sheets blend
- * with `multiply` (glass on paper rather than light in a dark room), the rim
- * turns violet and the glow becomes a soft coloured shadow. Every colour is a
- * `--vp-*` variable set once per theme below; nothing else in the stylesheet
- * knows which theme it is in.
+ * VISUALS (spec §4.3). A full-bleed `--bg` overlay with one brand orb in the
+ * middle, a status caption under it and a single close button. The orb is one
+ * element painted from tokens (so light/dark come for free); the microphone
+ * level reaches it through a single CSS variable, `--lvl`, which drives its
+ * scale and a soft ring. No blur layers, no blend modes: office laptops render
+ * it without a GPU fan spinning up.
  *
  * The single most surprising failure this component has to explain is the
  * secure-context rule: over plain HTTP on a LAN address `navigator.mediaDevices`
@@ -28,13 +21,17 @@
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Globe, Mic, MicOff, Volume2, X } from 'lucide-vue-next'
 import { micAvailable, micBlockedByPolicy, secureUrl, transcribe } from '../api/stt.api'
 import { canSpeak, holdClip, play, speakStream } from '../api/tts.api'
+import { prepareSpeech } from './chat/readAloud'
 import { preparedGreeting } from '../api/greeting'
 import { localizeApiError } from '../api/errors'
 import { ApiError } from '../api/http'
 import { LOCALES } from '../i18n'
-import { MicIcon, MicOffIcon, SpeakerIcon, XIcon } from '../icons'
+import VButton from '../ui/VButton.vue'
+import VIconButton from '../ui/VIconButton.vue'
+import { useFocusTrap } from '../ui/composables/useFocusTrap'
 
 const props = defineProps<{
   open: boolean
@@ -45,6 +42,8 @@ const props = defineProps<{
   busy: boolean
   /** The most recent answer text, shown under the orb once it arrives. */
   answer?: string | null
+  /** O'sha javobning savol kaliti (`X-Venera-Turn`) - ovoz admin izida unga bog'lanadi. */
+  answerTurn?: string | null
   /** A holding phrase to say while the answer is still being worked out.
    *
    *  WHY THIS EXISTS. HRM/CRM lookups are not instant: measured, the rules
@@ -375,7 +374,7 @@ function voiceErrorText(err: unknown): string {
  * Bu turnning ASOSIY ishi EMAS. Sintez yiqilsa javob EKRANDA qoladi - ya'ni
  * kelgan javob ishlamayotgan TTS tufayli yo'qolmaydi.
  */
-async function speak(text: string, turn: number, after?: Promise<unknown>) {
+async function speak(text: string, turn: number, after?: Promise<unknown>, turnKey?: string | null) {
   if (!canSpeak(String(locale.value))) return
   speechAborter?.abort()
   speechAborter = new AbortController()
@@ -385,7 +384,7 @@ async function speak(text: string, turn: number, after?: Promise<unknown>) {
     // resolves once the headers are in, which is also where every server-side
     // error has already surfaced — so a failure here is still a plain error,
     // not a silently truncated answer.
-    const playback = await speakStream(text, String(locale.value), speechAborter.signal, after)
+    const playback = await speakStream(text, String(locale.value), speechAborter.signal, after, turnKey)
     if (turn !== turnId || !props.open) {
       playback.stop()
       return
@@ -417,114 +416,6 @@ async function speak(text: string, turn: number, after?: Promise<unknown>) {
     // yiqilganidan ko'ra muhimroq.
     if (!note.value) note.value = t('voiceSpeakFailed')
   }
-}
-
-//: O'qiladigan belgilar chegarasi. Backend ham shu qiymatda kesadi
-//: (`tts_max_chars`), lekin u SO'Z chegarasida kesadi, ya'ni gap yarmida
-//: to'xtaydi. Shuning uchun qisqartirishni o'zimiz, GAP chegarasida
-//: qilamiz - backenddagisi zaxira bo'lib qoladi.
-//:
-//: 600 EDI va bu javobni yarmida kesardi: mehnat ta'tili bo'yicha 6 bandli
-//: javob 1016 belgi bo'lib, ovoz 3-band oxirida to'xtab qolardi.
-//:
-//: 3000 jonli o'lchovga asoslangan: TTS serveri 5000 belgini ham qabul
-//: qiladi va birinchi bayt UZUNLIKDAN QAT'I NAZAR ~1.37 s da keladi, ya'ni
-//: uzun matn kechikish qo'shmaydi. Ovoz esa real vaqtdan ~4.7x tez
-//: yetkaziladi (3000 belgi = ~198 s ovoz, ~41 s oqim), shuning uchun ijro
-//: hech qachon oqimdan o'zib ketmaydi.
-const SPEAK_LIMIT = 3000
-
-/**
- * Javobning O'QILADIGAN qismi: audit izidan oldingi hammasi.
- *
- * Javob IKKI qismdan iborat bo'lib keladi - avval javobning O'ZI, keyin
- * "Tekshirilgan HRM ma'lumotlari:" va `[T1] hrm_search_employees - ... ->`
- * ko'rinishidagi iz. Iz EKRAN uchun kerak: bank muhitida xodim javob qaysi
- * so'rovdan chiqqanini ko'rishi shart. Lekin O'QILGANDA u javobdan bir
- * necha barobar uzun: jonli o'lchangan savolda javobning o'zi 87 belgi,
- * iz bilan birga 614 belgi. Ya'ni ovoz javobni aytib bo'lgach, yana yarim
- * daqiqa "employeeId=22, month=9, year=2026" o'qib turardi.
- *
- * Ajratish NAQSH bo'yicha, matn bo'yicha EMAS: iz qatorlari `[T1]` kabi
- * marker bilan BOSHLANADI, javob ichidagi iqtibos esa gap OXIRIDA turadi
- * (`... kech qolmagan [T3].`). Izni tanishtirgan qator (`:` bilan tugaydi)
- * ham tashlanadi - uning MATNI yuqoridagi modelning tilidan kelib chiqadi
- * va o'zgarishi mumkin, shakli esa yo'q.
- */
-function answerBody(markdown: string): string {
-  const lines = markdown.split(/\r?\n/)
-  let at = lines.findIndex((line) => /^\s*\[[A-Za-z]{1,4}[_-]?\d{1,6}\]\s/.test(line))
-  if (at < 0) return markdown
-  while (at > 0 && (!lines[at - 1].trim() || lines[at - 1].trim().endsWith(':'))) at--
-  const body = lines.slice(0, at).join('\n').trim()
-  // Hammasi iz bo'lib chiqdi (javobning o'zi yo'q): boricha o'qiymiz -
-  // jim qolgandan ko'ra afzal.
-  return body || markdown
-}
-
-/**
- * Javob matnini O'QISHGA tayyorlaydi.
- *
- * Javob markdown bo'lib keladi: `**bo'lim:**`, `* ro'yxat`, `[T1]` iqtibos
- * markerlari, ba'zan jadval. O'qigichga shundayligicha berilsa, u
- * yulduzchani ham, `T1` ni ham gap deb o'qiydi - ya'ni javob eshitilmaydi,
- * "yulduzcha yulduzcha dasturlash bo'limi" eshitiladi.
- *
- * Ro'yxat va jadval qatorlari NUQTAGA aylanadi: aks holda hamma qator bitta
- * uzun gap bo'lib qolib, ovoz nafas olmay o'qiydi.
- */
-function forSpeech(markdown: string): { text: string; shortened: boolean } {
-  const text = answerBody(markdown)
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]*)`/g, '$1')
-    // Havola va rasm: ko'rinadigan matn qoladi, URL ketadi. Iqtibos
-    // qoidalaridan OLDIN bo'lishi shart - aks holda `[matn](url)` ning
-    // birinchi qismi marker deb o'chirilardi.
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
-    // Iqtibos markerlari: `[T1]`, `[HR_045]`, `[1]`, `[1, 2]`. Ular EKRAN
-    // uchun - hujjatga havola, va o'qilganda faqat shovqin. Naqsh ATAYLAB
-    // tor: `[eslatma]` kabi oddiy qavsli so'z matnning o'zi bo'lishi mumkin.
-    .replace(/\[[A-Za-z]{1,4}[_-]?\d{1,6}\]/g, ' ')
-    .replace(/\[\d{1,3}(?:\s*,\s*\d{1,3})*\]/g, ' ')
-    // Qavs ichidagi dalil markerlari: `(e4)`, `(e1, e2)`. Ular hujjat
-    // ichidagi parchaga ishora qiladi va `sources` kadrida UMUMAN yo'q,
-    // ya'ni ekranda ham tushuntirilmaydi - o'qilganda esa "e to'rt" bo'lib
-    // chiqadi. Naqsh harf+raqam TALAB qiladi: "(lavozimi)" va "(sentyabr)"
-    // javobning o'z matni, "(21)" esa band raqami bo'lishi mumkin.
-    .replace(/\((?:[A-Za-z]{1,2}\d{1,3})(?:\s*,\s*[A-Za-z]{1,2}\d{1,3})*\)/g, ' ')
-    .replace(/^#{1,6}\s*/gm, '')
-    // Jadval ajratgich qatori (`|---|---|`) - butunlay ketadi.
-    .replace(/^[ \t]*\|?[\s:|-]{3,}\|?[ \t]*$/gm, ' ')
-    // Ro'yxat belgisi -> gap chegarasi. `*` ni olib tashlashdan OLDIN.
-    .replace(/^[ \t]*[-*+\u2022][ \t]+/gm, '. ')
-    .replace(/\|/g, ', ')
-    .replace(/\*\*|__|~~/g, '')
-    .replace(/\*/g, '')
-    .replace(/\r?\n+/g, '. ')
-    .replace(/\s+/g, ' ')
-    // Yuqoridagi almashtirishlardan qolgan bo'shliq va takror tinish
-    // belgilari: "kechikdi [T1]:" -> "kechikdi :" -> "kechikdi:".
-    .replace(/\s+([,.;:!?])/g, '$1')
-    // Ro'yxat va jadval qatorlaridan qolgan qo'shaloq tinish belgilari.
-    // TARTIB MUHIM: avval takroriy nuqta bittaga tushadi, keyingina
-    // ":." / ",." juftliklari tuzatiladi. Teskari tartibda ":.." ning
-    // faqat yarmi tuzalib, ":." qolib ketardi.
-    .replace(/(?:\.\s*){2,}/g, '. ')
-    .replace(/,\s*\./g, '.')           // "3," + qator oxiri -> "3."
-    .replace(/([;:])\s*\./g, '$1')     // "kechikdi:" + ro'yxat -> "kechikdi:"
-    .replace(/([.:;])\s*,\s*/g, '$1 ') // gap boshidagi ortiqcha vergul
-    .replace(/^[\s.,;:]+/, '')
-    .replace(/[\s,;:|-]+$/, '')
-    .trim()
-
-  if (text.length <= SPEAK_LIMIT) return { text, shortened: false }
-  const cut = text.slice(0, SPEAK_LIMIT)
-  const stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '))
-  // Gap chegarasi juda boshida bo'lsa ishlatilmaydi: javobning uchdan biri
-  // o'qilib to'xtagandan ko'ra so'z chegarasida kesish tushunarliroq.
-  if (stop > SPEAK_LIMIT / 2) return { text: cut.slice(0, stop + 1), shortened: true }
-  const space = cut.lastIndexOf(' ')
-  return { text: (space > 0 ? cut.slice(0, space) : cut).replace(/[\s,;:-]+$/, ''), shortened: true }
 }
 
 /**
@@ -575,14 +466,14 @@ watch(() => props.hold, (cue) => {
 })
 
 async function speakAnswer(turn: number) {
-  const { text, shortened } = forSpeech(props.answer || '')
+  const { text, shortened } = prepareSpeech(props.answer || '')
   // Javob kelmadi (xato yoki bo'sh): JIM qolamiz. Xato matni suhbatda
   // ko'rinadi, va uni ovoz bilan takrorlash hech kimga yordam bermaydi.
   if (!text) return
   if (shortened && !note.value) note.value = t('voiceAnswerShortened')
   // A holding clip still playing is NEVER cut. The answer's TTS request goes
   // out now and buffers; playback starts the instant the clip ends.
-  await speak(text, turn, holdPlaying ?? undefined)
+  await speak(text, turn, holdPlaying ?? undefined, props.answerTurn)
 }
 
 /** Ijro. Rad etilishi XATO EMAS: brauzer avtomatik ijroga ruxsat bermasligi
@@ -707,8 +598,16 @@ onBeforeUnmount(() => { teardown(); stopSpeaking() })
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') { e.preventDefault(); close() }
-  if (e.key === ' ' && supported.value) { e.preventDefault(); onOrbClick() }
+  // Space faqat panelning o'zida (fokus ochilganda shu yerda) sharni bosadi. Tugma
+  // ustida Space o'sha tugmaniki: "Yopish" yoki "Baribir yuborish" tinglashni yoqib
+  // yubormasin, shar tugmasi esa o'zi bosiladi (ikki marta emas).
+  if (e.key === ' ' && supported.value && e.target === e.currentTarget) { e.preventDefault(); onOrbClick() }
 }
+
+// Ochilganda fokus panelga (Space / Esc darhol ishlasin), ichida aylanadi, yopilganda
+// ochgan tugmaga (mikrofon) qaytadi. Panel <body> ga teleport - butun ekranni qoplaydi.
+const rootRef = ref<HTMLElement | null>(null)
+useFocusTrap(rootRef, () => props.open, { initialFocus: () => rootRef.value })
 
 /** One CSS variable carries the microphone level into the stylesheet; every
  *  reactive part of the orb (scale, rim glow, halo, wisp opacity) reads it
@@ -717,510 +616,328 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
 </script>
 
 <template>
-  <div
-    v-if="open"
-    class="vp"
-    :data-state="supported ? state : 'unsupported'"
-    :style="orbVars"
-    role="dialog"
-    aria-modal="true"
-    :aria-label="t('voiceTitle')"
-    tabindex="-1"
-    @keydown="onKeydown"
-  >
-    <button class="vp-close" :aria-label="t('voiceClose')" :title="t('voiceClose')" @click="close">
-      <XIcon :size="18" />
-    </button>
+  <Teleport to="body">
+    <div
+      v-if="open"
+      ref="rootRef"
+      class="vp"
+      :data-state="supported ? state : 'unsupported'"
+      :style="orbVars"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="t('voiceTitle')"
+      tabindex="-1"
+      @keydown="onKeydown"
+    >
+      <VIconButton class="vp-close" :label="t('voiceClose')" :icon="X" size="lg" tooltip-placement="bottom" @click="close" />
 
-    <div class="vp-stage">
-      <!-- Soft violet light behind everything; breathes with the voice. -->
-      <div class="vp-halo" aria-hidden="true" />
-
-      <!-- Smoky loops drifting outside the sphere, deliberately off-centre. -->
-      <div class="vp-wisp vp-wisp-a" aria-hidden="true" />
-      <div class="vp-wisp vp-wisp-b" aria-hidden="true" />
-      <div class="vp-wisp vp-wisp-c" aria-hidden="true" />
-
-      <button
-        class="vp-orb"
-        :disabled="!supported || state === 'transcribing' || state === 'thinking'"
-        :aria-label="state === 'listening' ? t('voiceStopListening') : t('voiceTapToSpeak')"
-        @click="onOrbClick"
-      >
-        <!-- Glass sheets: large blurred colour fields orbiting the centre at
-             different speeds, overlapping with `screen` so they read as
-             translucent layers rather than opaque shapes. -->
-        <span class="vp-sheets" aria-hidden="true">
-          <span class="vp-sheet vp-sheet-cyan" />
-          <span class="vp-sheet vp-sheet-blue" />
-          <span class="vp-sheet vp-sheet-violet" />
-          <span class="vp-sheet vp-sheet-magenta" />
-        </span>
-        <!-- Thin white rim and its bloom. -->
-        <span class="vp-rim" aria-hidden="true" />
-        <!-- The bright spot that travels around the rim. -->
-        <span class="vp-spark" aria-hidden="true" />
-        <span class="vp-icon" aria-hidden="true">
-          <MicOffIcon v-if="!supported" :size="30" />
-          <MicIcon v-else />
-        </span>
-      </button>
-    </div>
-
-    <div class="vp-text">
-      <p class="vp-status" :class="{ 'vp-status--bad': state === 'error' || !supported }">{{ statusText }}</p>
-
-      <p v-if="!supported" class="vp-sub">
-        {{ t('voiceNeedsHttpsHow') }}<br />
-        <a class="vp-link" :href="secureUrl()">{{ secureUrl() }}</a>
-      </p>
-      <p v-else-if="errorHint" class="vp-sub">{{ errorHint }}</p>
-      <p v-else-if="state === 'idle' && !heard" class="vp-sub">{{ t('voiceHint') }}</p>
-
-      <p v-if="heard" class="vp-heard">
-        <span class="vp-heard-label">{{ t('voiceHeard') }}</span>
-        {{ heard }}
-      </p>
-      <p v-if="note" class="vp-note">{{ note }}</p>
-
-      <!-- Ovoz javobi. Ijro davom etayotgani ko'rinib turadi, chunki panel
-           o'zi jim: sfera esa mikrofonga qaraydi, karnayga emas. -->
-      <p v-if="speaking" class="vp-speaking">
-        <SpeakerIcon :size="14" />
-        {{ t('voiceSpeaking') }}
-      </p>
-      <div v-else-if="speech" class="vp-confirm">
-        <button class="vp-btn" @click="replay">
-          <SpeakerIcon :size="14" />
-          {{ speechBlocked ? t('voicePlay') : t('voiceReplay') }}
+      <div class="vp-stage">
+        <button
+          type="button"
+          class="vp-orb"
+          :disabled="!supported || state === 'transcribing' || state === 'thinking'"
+          :aria-label="state === 'listening' ? t('voiceStopListening') : t('voiceTapToSpeak')"
+          @click="onOrbClick"
+        >
+          <span class="vp-icon" aria-hidden="true">
+            <MicOff v-if="!supported" :size="28" :stroke-width="1.75" />
+            <Mic v-else :size="28" :stroke-width="1.75" />
+          </span>
         </button>
       </div>
 
-      <div v-if="state === 'confirm'" class="vp-confirm">
-        <button class="vp-btn vp-btn--primary" @click="confirmSend">{{ t('voiceSendAnyway') }}</button>
-        <button class="vp-btn" @click="onOrbClick">{{ t('voiceRetry') }}</button>
+      <div class="vp-text">
+        <p class="vp-status" :class="{ 'vp-status--bad': state === 'error' || !supported }" role="status">{{ statusText }}</p>
+
+        <p v-if="!supported" class="vp-sub">
+          {{ t('voiceNeedsHttpsHow') }}<br />
+          <a class="vp-link" :href="secureUrl()">{{ secureUrl() }}</a>
+        </p>
+        <p v-else-if="errorHint" class="vp-sub">{{ errorHint }}</p>
+        <p v-else-if="state === 'idle' && !heard" class="vp-sub">{{ t('composer.voiceHint') }}</p>
+
+        <p v-if="heard" class="vp-heard">
+          <span class="vp-heard-label">{{ t('voiceHeard') }}</span>
+          {{ heard }}
+        </p>
+        <p v-if="note" class="vp-note">{{ note }}</p>
+
+        <!-- Ovoz javobi. Ijro davom etayotgani ko'rinib turadi, chunki panel
+             o'zi jim: shar esa mikrofonga qaraydi, karnayga emas. -->
+        <p v-if="speaking" class="vp-speaking">
+          <Volume2 :size="16" :stroke-width="1.75" aria-hidden="true" />
+          {{ t('voiceSpeaking') }}
+        </p>
+        <div v-else-if="speech" class="vp-actions">
+          <VButton variant="ghost" size="sm" :icon="Volume2" @click="replay">
+            {{ speechBlocked ? t('voicePlay') : t('voiceReplay') }}
+          </VButton>
+        </div>
+
+        <div v-if="state === 'confirm'" class="vp-actions">
+          <VButton variant="secondary" @click="onOrbClick">{{ t('voiceRetry') }}</VButton>
+          <VButton variant="primary" @click="confirmSend">{{ t('voiceSendAnyway') }}</VButton>
+        </div>
+        <p v-if="answer && state === 'idle'" class="vp-answer">{{ answer }}</p>
+
+        <div v-if="state === 'error'" class="vp-actions">
+          <VButton variant="secondary" @click="onOrbClick">{{ t('voiceRetry') }}</VButton>
+        </div>
       </div>
-      <p v-if="answer && state === 'idle'" class="vp-answer">{{ answer }}</p>
 
-      <button v-if="state === 'error'" class="vp-retry" @click="onOrbClick">{{ t('voiceRetry') }}</button>
+      <!-- Tanish tili: kichik belgi; to'liq izoh ekran o'quvchi uchun. -->
+      <p v-if="supported" class="vp-foot">
+        <Globe :size="14" :stroke-width="1.75" aria-hidden="true" />
+        <span aria-hidden="true">{{ langLabel }}</span>
+        <span class="sr-only">{{ t('voiceLangNote', { lang: langLabel }) }}</span>
+      </p>
     </div>
-
-    <p v-if="supported" class="vp-foot">{{ t('voiceLangNote', { lang: langLabel }) }}</p>
-  </div>
+  </Teleport>
 </template>
 
 <style scoped>
-/* ── Theme ─────────────────────────────────────────────────────────────── */
-/* Light is the default (matches :root); dark overrides below. Numeric `-k`
-   values scale glow/halo/wisp strength — light needs far less of all three. */
+/* Butun ekran, sahifa foni - hech qanday "sahna" rangi yo'q: mavzu tokenlardan. */
 .vp {
-  --vp-bg: var(--bg);
-  --vp-fg: var(--text);
-  --vp-fg-2: var(--text-muted);
-  --vp-fg-3: var(--text-secondary);
-  --vp-bad: var(--bad-fg);
-  --vp-link: #4f6de6;
-  --vp-btn-bg: rgba(20, 20, 20, 0.06);
-  --vp-btn-bg-hover: rgba(20, 20, 20, 0.12);
-  --vp-btn-fg: var(--text-muted);
-  --vp-btn-fg-hover: var(--text);
-  --vp-btn-border: rgba(20, 20, 20, 0.14);
-  --vp-orb-base: #f1f2ff;
-  --vp-blend: multiply;
-  --vp-rim: rgba(96, 88, 232, 0.85);
-  --vp-icon: var(--accent); /* the ✦ spark colour - the one mark that must read on the pale sphere */
-  --vp-glow: 118, 104, 255;
-  --vp-glow-k: 0.5;
-  --vp-halo-k: 0.45;
-  --vp-wisp-k: 0.55;
-  --accent-a: #7fd4f8; /* cyan    */
-  --accent-b: #6f9cf0; /* blue    */
-  --accent-c: #9b8cf0; /* violet  */
-  --accent-d: #d46ae6; /* magenta */
-}
-:root[data-theme='dark'] .vp {
-  --vp-bg: #040109;
-  --vp-fg: #f2f0fb;
-  --vp-fg-2: rgba(233, 230, 245, 0.62);
-  --vp-fg-3: rgba(233, 230, 245, 0.42);
-  --vp-bad: #ff8a80;
-  --vp-link: #9fb5ff;
-  --vp-btn-bg: rgba(255, 255, 255, 0.06);
-  --vp-btn-bg-hover: rgba(255, 255, 255, 0.14);
-  --vp-btn-fg: rgba(255, 255, 255, 0.72);
-  --vp-btn-fg-hover: #fff;
-  --vp-btn-border: rgba(255, 255, 255, 0.22);
-  --vp-orb-base: #0a0a2a;
-  --vp-blend: screen;
-  --vp-rim: rgba(255, 255, 255, 0.95);
-  --vp-icon: var(--accent);
-  --vp-glow: 150, 160, 255;
-  --vp-glow-k: 1;
-  --vp-halo-k: 1;
-  --vp-wisp-k: 1;
-  --accent-a: #90d7f8;
-  --accent-b: #2954b4;
-  --accent-c: #5a59be;
-  --accent-d: #c02fd6;
-}
-
-/* ── Stage ─────────────────────────────────────────────────────────────── */
-.vp {
-  position: absolute;
+  --orb: clamp(136px, 26vmin, 200px);
+  position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: var(--z-dialog);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 24px;
-  background: var(--vp-bg);
-  color: var(--vp-fg);
-  font-family: Figtree, sans-serif;
-  animation: fadeUp 0.32s ease both;
-  overflow: hidden;
-  --orb: clamp(180px, 34vmin, 260px);
+  gap: var(--s-6);
+  padding:
+    max(var(--s-16), env(safe-area-inset-top, 0px)) var(--s-6)
+    max(var(--s-16), calc(env(safe-area-inset-bottom, 0px) + var(--s-12)));
+  overflow-y: auto;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  animation: vp-in var(--dur-3) var(--ease-out) both;
 }
-.vp-close {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  border: none;
-  border-radius: 50%;
-  background: var(--vp-btn-bg);
-  color: var(--vp-btn-fg);
-  cursor: pointer;
-  transition: background 0.2s, color 0.2s;
+.vp:focus-visible {
+  outline: none;
 }
-.vp-close:hover {
-  background: var(--vp-btn-bg-hover);
-  color: var(--vp-btn-fg-hover);
+@keyframes vp-in {
+  from {
+    opacity: 0;
+  }
 }
 
+.vp-close {
+  position: absolute;
+  top: max(var(--s-4), env(safe-area-inset-top, 0px));
+  right: max(var(--s-4), env(safe-area-inset-right, 0px));
+}
+
+/* ── Shar ──────────────────────────────────────────────────────────────── */
+/* Sahna sharning nafasini ko'taradi (tinch holatda sekin, "o'ylayapti"da tezroq);
+   sharning o'zi esa ovoz balandligi (--lvl) bilan kattalashadi - ikki transform
+   bir elementda to'qnashmasin. */
 .vp-stage {
-  position: relative;
-  width: calc(var(--orb) * 2.4);
-  height: calc(var(--orb) * 2.4);
   display: grid;
   place-items: center;
   flex-shrink: 0;
+  width: calc(var(--orb) * 1.5);
+  height: calc(var(--orb) * 1.5);
+  animation: vp-breathe 6s ease-in-out infinite;
+}
+@keyframes vp-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.04);
+  }
 }
 
-/* ── Halo ──────────────────────────────────────────────────────────────── */
-.vp-halo {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    rgba(var(--vp-glow), calc((0.22 + var(--lvl) * 0.35) * var(--vp-halo-k))) 0%,
-    rgba(90, 60, 200, calc((0.12 + var(--lvl) * 0.2) * var(--vp-halo-k))) 32%,
-    transparent 68%
-  );
-  filter: blur(6px);
-  transform: scale(calc(0.92 + var(--lvl) * 0.28));
-  transition: transform 0.12s linear;
-}
-
-/* ── Wisps ─────────────────────────────────────────────────────────────── */
-.vp-wisp {
-  position: absolute;
-  border-radius: 50%;
-  border: 14px solid transparent;
-  filter: blur(14px);
-  opacity: calc((0.35 + var(--lvl) * 0.4) * var(--vp-wisp-k));
-  mix-blend-mode: var(--vp-blend);
-  pointer-events: none;
-}
-.vp-wisp-a {
-  width: calc(var(--orb) * 1.55);
-  height: calc(var(--orb) * 1.35);
-  border-color: rgba(120, 100, 235, 0.55) transparent rgba(70, 60, 170, 0.5) transparent;
-  animation: wispA 9s linear infinite;
-}
-.vp-wisp-b {
-  width: calc(var(--orb) * 1.9);
-  height: calc(var(--orb) * 1.6);
-  border-color: transparent rgba(95, 80, 215, 0.4) transparent rgba(140, 110, 255, 0.35);
-  animation: wispB 13s linear infinite reverse;
-}
-.vp-wisp-c {
-  width: calc(var(--orb) * 1.25);
-  height: calc(var(--orb) * 1.7);
-  border-color: rgba(60, 50, 160, 0.45) transparent transparent rgba(150, 120, 255, 0.3);
-  animation: wispC 7s ease-in-out infinite;
-}
-@keyframes wispA {
-  from { transform: translate(-6%, 3%) rotate(0deg); }
-  to   { transform: translate(-6%, 3%) rotate(360deg); }
-}
-@keyframes wispB {
-  from { transform: translate(5%, -4%) rotate(0deg); }
-  to   { transform: translate(5%, -4%) rotate(360deg); }
-}
-@keyframes wispC {
-  0%   { transform: translate(-3%, 5%) rotate(0deg) scale(1); }
-  50%  { transform: translate(4%, -3%) rotate(180deg) scale(1.08); }
-  100% { transform: translate(-3%, 5%) rotate(360deg) scale(1); }
-}
-
-/* ── Orb ───────────────────────────────────────────────────────────────── */
 .vp-orb {
   position: relative;
+  display: grid;
+  place-items: center;
   width: var(--orb);
   height: var(--orb);
-  border-radius: 50%;
-  border: none;
   padding: 0;
-  background: var(--vp-orb-base);
-  cursor: pointer;
-  overflow: hidden;
-  isolation: isolate;
-  transform: scale(calc(1 + var(--lvl) * 0.14));
-  transition: transform 0.1s linear;
+  border-radius: var(--r-full);
+  background:
+    radial-gradient(circle at 34% 28%, color-mix(in srgb, var(--brand-soft) 85%, transparent) 0%, transparent 36%),
+    radial-gradient(120% 120% at 30% 25%, var(--brand-2) 0%, var(--brand) 55%, var(--serious-text) 100%);
   box-shadow:
-    0 0 calc(20px + var(--lvl) * 40px) rgba(var(--vp-glow), calc((0.45 + var(--lvl) * 0.4) * var(--vp-glow-k))),
-    0 0 calc(60px + var(--lvl) * 60px) rgba(110, 90, 255, calc((0.25 + var(--lvl) * 0.3) * var(--vp-glow-k)));
+    0 0 0 calc(var(--lvl) * 20px) color-mix(in srgb, var(--brand) 12%, transparent),
+    0 calc(16px + var(--lvl) * 12px) calc(48px + var(--lvl) * 40px) -12px color-mix(in srgb, var(--brand) 55%, transparent);
+  transform: scale(calc(1 + var(--lvl) * 0.1));
+  transition:
+    transform 90ms linear,
+    box-shadow 90ms linear,
+    filter var(--dur-3) var(--ease-out),
+    opacity var(--dur-3) var(--ease-out);
 }
 .vp-orb:disabled {
   cursor: default;
 }
-.vp-sheets {
+.vp-orb:focus-visible {
+  outline-offset: 6px;
+}
+/* Tinglayotganda - ovozga ergashuvchi yupqa halqa: "sizni eshityapman". */
+.vp-orb::after {
+  content: '';
   position: absolute;
-  inset: -20%;
-  animation: sheetsSpin 22s linear infinite;
-}
-.vp-sheet {
-  position: absolute;
-  width: 78%;
-  height: 78%;
-  border-radius: 46% 54% 52% 48% / 55% 45% 55% 45%;
-  filter: blur(6px);
-  mix-blend-mode: var(--vp-blend);
-  opacity: 0.92;
-}
-.vp-sheet-cyan    { top: -6%;  left: 22%; background: var(--accent-a); animation: sheetA 8s ease-in-out infinite; }
-.vp-sheet-blue    { top: 26%;  left: 30%; background: var(--accent-b); animation: sheetB 11s ease-in-out infinite; }
-.vp-sheet-violet  { top: 18%;  left: -4%; background: var(--accent-c); animation: sheetC 9.5s ease-in-out infinite; }
-.vp-sheet-magenta { top: 4%;   left: 2%;  background: var(--accent-d); width: 58%; height: 58%; opacity: 0.8; animation: sheetD 7s ease-in-out infinite; }
-@keyframes sheetsSpin { to { transform: rotate(360deg); } }
-@keyframes sheetA {
-  0%, 100% { transform: translate(0, 0) rotate(0deg) scale(1); }
-  50%      { transform: translate(-10%, 12%) rotate(40deg) scale(1.1); }
-}
-@keyframes sheetB {
-  0%, 100% { transform: translate(0, 0) rotate(0deg) scale(1.05); }
-  50%      { transform: translate(12%, -8%) rotate(-35deg) scale(0.95); }
-}
-@keyframes sheetC {
-  0%, 100% { transform: translate(0, 0) rotate(0deg); }
-  50%      { transform: translate(8%, 10%) rotate(55deg); }
-}
-@keyframes sheetD {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  50%      { transform: translate(14%, 6%) scale(1.25); }
-}
-
-/* Thin rim + bloom, drawn above the sheets. */
-.vp-rim {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  box-shadow:
-    inset 0 0 0 2px var(--vp-rim),
-    inset 0 0 calc(10px + var(--lvl) * 14px) rgba(var(--vp-glow), calc(0.9 * var(--vp-glow-k))),
-    inset 0 0 28px rgba(var(--vp-glow), calc(0.35 * var(--vp-glow-k)));
+  inset: -10px;
+  border: 1.5px solid color-mix(in srgb, var(--brand) 40%, transparent);
+  border-radius: inherit;
+  opacity: 0;
+  transform: scale(calc(1 + var(--lvl) * 0.22));
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform 90ms linear;
   pointer-events: none;
 }
-/* The travelling highlight: a conic gradient masked down to the rim. */
-.vp-spark {
-  position: absolute;
-  inset: -2px;
-  border-radius: 50%;
-  background: conic-gradient(
-    from 0deg,
-    transparent 0deg,
-    rgba(255, 255, 255, 0) 250deg,
-    rgba(255, 255, 255, 0.95) 300deg,
-    rgba(var(--vp-glow), 0.8) 330deg,
-    transparent 360deg
-  );
-  -webkit-mask: radial-gradient(circle, transparent calc(50% - 6px), #000 calc(50% - 4px), #000 50%, transparent 51%);
-  mask: radial-gradient(circle, transparent calc(50% - 6px), #000 calc(50% - 4px), #000 50%, transparent 51%);
-  filter: blur(1.2px);
-  animation: sparkSpin 4s linear infinite;
-  pointer-events: none;
-}
-@keyframes sparkSpin { to { transform: rotate(360deg); } }
-
 .vp-icon {
-  position: relative;
-  z-index: 2;
   display: grid;
   place-items: center;
-  color: var(--vp-icon);
-  /* A faint light halo, not a dark one: the sphere interior is pale in both
-     themes, so a dark shadow would muddy the red instead of lifting it. */
-  filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.85));
-  transition: opacity 0.3s;
-}
-.vp-icon :deep(svg) {
-  width: 26px;
-  height: 26px;
+  color: var(--on-ink);
+  transition: opacity var(--dur-3) var(--ease-out);
 }
 
-/* ── State tuning ──────────────────────────────────────────────────────── */
-.vp[data-state='listening'] .vp-sheets { animation-duration: 9s; }
-.vp[data-state='listening'] .vp-spark  { animation-duration: 1.6s; }
-.vp[data-state='listening'] .vp-icon   { opacity: 0.35; }
-.vp[data-state='transcribing'] .vp-orb,
-.vp[data-state='thinking'] .vp-orb {
-  animation: breathe 1.6s ease-in-out infinite;
+/* ── Holatlar ──────────────────────────────────────────────────────────── */
+.vp[data-state='listening'] .vp-stage {
+  animation: none;
 }
-@keyframes breathe {
-  0%, 100% { transform: scale(1); }
-  50%      { transform: scale(1.06); }
+.vp[data-state='listening'] .vp-orb::after {
+  opacity: calc(0.35 + var(--lvl));
 }
-/* Error / unsupported: the colour drains out. */
-.vp[data-state='error'] .vp-sheet,
-.vp[data-state='unsupported'] .vp-sheet { filter: blur(6px) saturate(0.25); opacity: 0.5; }
-.vp[data-state='error'] .vp-rim,
-.vp[data-state='unsupported'] .vp-rim {
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--vp-rim) 50%, transparent);
+.vp[data-state='listening'] .vp-icon {
+  opacity: 0.4;
 }
-.vp[data-state='unsupported'] .vp-spark,
-.vp[data-state='unsupported'] .vp-wisp { animation-play-state: paused; opacity: 0.2; }
+.vp[data-state='transcribing'] .vp-stage,
+.vp[data-state='thinking'] .vp-stage {
+  animation-duration: 1.6s;
+}
+/* Tasdiq: shar kutadi, xiraroq - odam qaror qilguncha. */
+.vp[data-state='confirm'] .vp-orb {
+  opacity: 0.7;
+}
+/* Xato / qo'llab-quvvatlanmaydi: rang oqib ketadi. */
+.vp[data-state='error'] .vp-orb,
+.vp[data-state='unsupported'] .vp-orb {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+.vp[data-state='error'] .vp-stage,
+.vp[data-state='unsupported'] .vp-stage {
+  animation: none;
+}
 
-/* ── Text ──────────────────────────────────────────────────────────────── */
+/* ── Matn ──────────────────────────────────────────────────────────────── */
 .vp-text {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  max-width: 460px;
+  gap: var(--s-2);
+  width: 100%;
+  max-width: 440px;
   text-align: center;
-  z-index: 1;
 }
 .vp-status {
-  margin: 0;
-  font-size: 17px;
+  color: var(--text);
+  font-size: var(--fs-title-3);
+  line-height: var(--lh-title-3);
   font-weight: 600;
-  color: var(--vp-fg);
-  letter-spacing: 0.01em;
+  letter-spacing: -0.011em;
 }
 .vp-status--bad {
-  color: var(--vp-bad);
+  color: var(--crit-text);
 }
 .vp-sub {
-  margin: 0;
-  font-size: 13.5px;
-  line-height: 1.55;
-  color: var(--vp-fg-2);
+  color: var(--text-3);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+  text-wrap: pretty;
 }
 .vp-link {
-  color: var(--vp-link);
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
   word-break: break-all;
 }
 .vp-heard {
-  margin: 6px 0 0;
-  font-size: 15px;
-  line-height: 1.5;
-  color: var(--vp-fg);
+  margin-top: var(--s-2);
+  color: var(--text);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
 }
 .vp-heard-label {
   display: block;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--vp-fg-3);
   margin-bottom: 2px;
-}
-.vp-answer {
-  margin: 4px 0 0;
-  font-size: 14px;
-  line-height: 1.55;
-  color: var(--vp-fg-2);
-  max-height: 120px;
-  overflow-y: auto;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
 }
 .vp-note {
-  margin: 0;
-  font-size: 12.5px;
-  color: var(--vp-fg-3);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
-.vp-confirm {
-  display: flex;
-  gap: 10px;
-  margin-top: 8px;
-}
-/* Ovoz chiqayotgani. Belgi va matn bir qatorda, mavzu aksentida - jimgina
-   sekin puls, chunki bu holat bir necha soniya turadi. */
 .vp-speaking {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  margin: 2px 0 0;
-  font-size: 12.5px;
-  color: var(--vp-icon);
-  animation: vp-speak-pulse 1.6s ease-in-out infinite;
+  gap: var(--s-1_5);
+  color: var(--text-2);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+  animation: vp-speak 1.6s ease-in-out infinite;
 }
-@keyframes vp-speak-pulse {
-  0%, 100% { opacity: 0.62; }
-  50%      { opacity: 1; }
+@keyframes vp-speak {
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
 }
-@media (prefers-reduced-motion: reduce) {
-  .vp-speaking { animation: none; opacity: 1; }
+.vp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
 }
-/* Qayta tinglash tugmasi - belgi bilan. */
-.vp-btn { display: inline-flex; align-items: center; gap: 7px; }
-.vp-btn {
-  border: 1px solid var(--vp-btn-border);
-  background: var(--vp-btn-bg);
-  color: var(--vp-fg);
-  border-radius: 999px;
-  padding: 8px 18px;
-  font-size: 13.5px;
-  font-family: inherit;
-  cursor: pointer;
-}
-.vp-btn:hover { background: var(--vp-btn-bg-hover); }
-.vp-btn--primary {
-  border-color: transparent;
-  background: var(--voice);
-  color: #fff;
-}
-.vp-btn--primary:hover { filter: brightness(1.1); background: var(--voice); }
-/* Confirm: the sphere waits, dimmer, until the person decides. */
-.vp[data-state='confirm'] .vp-sheet { opacity: 0.55; }
-.vp[data-state='confirm'] .vp-spark { animation-duration: 8s; }
-.vp-retry {
-  margin-top: 6px;
-  border: 1px solid var(--vp-btn-border);
-  background: var(--vp-btn-bg);
-  color: var(--vp-fg);
-  border-radius: 999px;
-  padding: 7px 18px;
-  font-size: 13.5px;
-  cursor: pointer;
-}
-.vp-retry:hover {
-  background: var(--vp-btn-bg-hover);
+.vp-answer {
+  max-height: 120px;
+  margin-top: var(--s-2);
+  overflow-y: auto;
+  color: var(--text-2);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+  text-align: start;
 }
 .vp-foot {
   position: absolute;
-  bottom: 18px;
-  margin: 0;
-  font-size: 12px;
-  color: var(--vp-fg-3);
+  bottom: max(var(--s-5), env(safe-area-inset-bottom, 0px));
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1_5);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .vp-sheets, .vp-sheet, .vp-spark, .vp-wisp { animation-duration: 60s; }
-  .vp-orb { transition: none; }
+  .vp,
+  .vp-stage,
+  .vp-speaking {
+    animation: none;
+  }
+  /* Ovoz darajasi baribir ko'rinadi (halqa), lekin shar o'zi silkinmaydi. */
+  .vp-orb,
+  .vp-orb::after {
+    transform: none;
+    transition: none;
+  }
 }
 </style>

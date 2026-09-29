@@ -1,26 +1,27 @@
 <script setup lang="ts">
 /**
- * Proof under an answer: cited documents and platform lookups (HRM, CRM).
+ * Javob ostidagi dalil: tayyorlangan fayl, iqtibos qilingan hujjatlar va jonli
+ * so'rovlar (HRM, CRM).
  *
- * WHY THIS EXISTS AT ALL. In a bank an answer without a source is an opinion.
- * The assistant marks documents as [1], [2] and HRM lookups as [T1], [T2] in
- * the text; this turns those markers into the actual document and names the
- * lookup, so someone who does not believe the answer can check it instead of
- * arguing with it.
+ * NEGA KERAK. Bankda manbasiz javob - bu fikr. Yordamchi matnda hujjatni [1], [2],
+ * so'rovni [T1] deb belgilaydi; bu yerda o'sha belgilar haqiqiy hujjat va so'rovga
+ * aylanadi - javobga ishonmagan odam bahslashish o'rniga tekshira oladi.
  *
- * The two kinds are shown differently on purpose. A document can be OPENED —
- * it renders in the viewer panel beside the chat (`DocViewer.vue`), at the
- * cited page, exactly as the PDF is; its bytes come through our own proxy,
- * since it lives on a host the browser cannot reach. A lookup has nothing to
- * open: it is a call that happened at a moment in time, so it is named, not
- * linked, and the digest says what it returned.
+ * Ko'rinish jim: fayl - alohida karta (odam aynan shuni so'ragan), manbalar esa bitta
+ * yig'iq qator ("3 manba"), bosilsa ro'yxat ochiladi. Hujjat OCHILADI (chat yonidagi
+ * ko'ruvchida, iqtibos sahifasida); so'rovda ochiladigan narsa yo'q - u vaqtning bir
+ * lahzasidagi chaqiruv, shuning uchun nomi va qisqa natijasi ko'rsatiladi.
  */
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ChevronDown, CircleAlert, Download, FileText } from 'lucide-vue-next'
 import { localizeApiError } from '../api/errors'
 import type { AnswerArtifact, AnswerSource } from '../types'
 import { downloadFile } from '../api/chat.api'
 import { useDocViewer } from '../composables/useDocViewer'
+import VButton from '../ui/VButton.vue'
+import { useId } from '../ui/composables/useId'
+import { isLookup, lookupLabel, lookupMarker } from './chat/sources'
 
 const props = defineProps<{
   sources?: AnswerSource[]
@@ -28,18 +29,14 @@ const props = defineProps<{
 }>()
 const { t } = useI18n({ useScope: 'global' })
 const { open: openDoc } = useDocViewer()
+const listId = useId('answer-sources')
 
-/** Kinds that are a LIVE LOOKUP rather than a document. `crm` joined `hrm`
- *  on 2026-09-14; before that a CRM source fell into the document list and
- *  was rendered as an openable file that does not exist. A new platform
- *  needs one entry here. */
-const LOOKUP_KINDS = new Set(['hrm', 'crm'])
+const docs = computed(() => (props.sources ?? []).filter((s) => !isLookup(s)))
+const calls = computed(() => (props.sources ?? []).filter(isLookup))
+const count = computed(() => docs.value.length + calls.value.length)
 
-const docs = computed(() => (props.sources ?? []).filter((s) => !LOOKUP_KINDS.has(String(s.kind))))
-const calls = computed(() => (props.sources ?? []).filter((s) => LOOKUP_KINDS.has(String(s.kind))))
-
-/** Files the artifact actually has. A missing one is `null` — our backend
- *  removes links it could not rewrite rather than showing a dead one. */
+/** Fayl havolalari. Backend qayta yoza olmagan havola `null` bo'lib keladi - o'lik
+ *  tugma ko'rsatilmaydi. */
 const files = computed(() => {
   const a = props.artifact
   if (!a) return []
@@ -49,180 +46,334 @@ const files = computed(() => {
   ].filter((f): f is { kind: 'docx' | 'pdf'; url: string; label: string } => !!f.url)
 })
 
-const anything = computed(() => docs.value.length || calls.value.length || files.value.length)
+/** Yig'iq qatordagi kichik raqamlar - birinchi uchtasi. */
+const preview = computed(() => [
+  ...docs.value.map((s, i) => String(s.citation_index ?? i + 1)),
+  ...calls.value.map((s, i) => lookupMarker(s, i)),
+].slice(0, 3))
 
-function label(source: AnswerSource): string {
-  const marker = source.citation_index != null ? `[${source.citation_index}] ` : ''
-  const name = source.title?.trim() || source.doc_id || t('sourceDocument')
-  return `${marker}${name}${source.page ? `, ${t('sourcePage', { n: source.page })}` : ''}`
+const open = ref(false)
+
+function docName(source: AnswerSource): string {
+  return source.title?.trim() || source.doc_id || t('sourceDocument')
+}
+function docMeta(source: AnswerSource): string {
+  return [source.page ? t('sourcePage', { n: source.page }) : '', source.section?.trim() ?? '']
+    .filter(Boolean)
+    .join(' · ')
+}
+/** Parcha matni - xizmat yuborsa (hozircha ixtiyoriy maydon). */
+function snippet(source: AnswerSource): string {
+  const raw = (source as AnswerSource & { snippet?: unknown; text?: unknown }).snippet
+    ?? (source as AnswerSource & { text?: unknown }).text
+  return typeof raw === 'string' ? raw.trim() : ''
 }
 
-/** Downloads run through fetch (the session token), so a failure has to be
- *  shown here — a rejected promise nobody reads would look like a dead
- *  button. */
+/** Yuklab olish sessiya tokeni bilan (fetch) - xato shu yerda ko'rinishi shart,
+ *  aks holda tugma "o'lik" bo'lib tuyuladi. */
 const failed = ref<string | null>(null)
+const busy = ref<string | null>(null)
 
-async function take(url: string, filename: string) {
+async function take(kind: string, url: string) {
   failed.value = null
+  busy.value = kind
+  const name = `${(props.artifact?.title || 'ariza').replace(/[^\w.\- ]+/g, '_')}.${kind}`
   try {
-    await downloadFile(url, filename)
+    await downloadFile(url, name)
   } catch (err) {
     failed.value = localizeApiError(err, t)
+  } finally {
+    busy.value = null
   }
 }
-
-/** The marker as it appears IN THE ANSWER TEXT. The service sends it bare
- *  ("T1") while the answer cites it as "[T1]", so the brackets are added
- *  when they are missing - otherwise the reader has to guess that the "T1"
- *  in the list is the "[T1]" in the sentence above it. */
-function marker(call: AnswerSource, index: number): string {
-  const raw = call.marker?.trim() || `T${index + 1}`
-  return raw.startsWith('[') ? raw : `[${raw}]`
-}
-
 </script>
 
 <template>
-  <div v-if="anything" class="proof">
-    <p v-if="failed" class="proof__bad" role="alert">{{ failed }}</p>
-    <!-- The application file first: it is the thing the person asked for,
-         and a download they might miss under a list of citations. -->
-    <div v-if="files.length" class="proof__files">
-      <span class="proof__title">{{ artifact?.title?.trim() || t('artifactReady') }}</span>
-      <!-- A button, not an <a>: the file needs the session token, which a
-           plain link cannot send. -->
+  <div v-if="count || files.length || failed" class="proof">
+    <p v-if="failed" class="proof__error" role="alert">
+      <CircleAlert :size="16" :stroke-width="1.75" aria-hidden="true" />
+      <span>{{ failed }}</span>
+    </p>
+
+    <!-- Fayl birinchi: odam aynan shuni so'ragan, iqtiboslar ostida yo'qolib qolmasin. -->
+    <div v-if="files.length" class="proof__file">
+      <span class="proof__file-icon" aria-hidden="true"><FileText :size="18" :stroke-width="1.75" /></span>
+      <span class="proof__file-title">{{ artifact?.title?.trim() || t('artifactReady') }}</span>
+      <span class="proof__file-actions">
+        <!-- Tugma, havola emas: faylga sessiya tokeni kerak, oddiy <a> uni yubora olmaydi. -->
+        <VButton
+          v-for="file in files"
+          :key="file.kind"
+          size="sm"
+          variant="secondary"
+          :icon="Download"
+          :loading="busy === file.kind"
+          :aria-label="t('artifactDownload', { format: file.label })"
+          @click="take(file.kind, file.url)"
+        >
+          {{ file.label }}
+        </VButton>
+      </span>
+    </div>
+
+    <template v-if="count">
       <button
-        v-for="file in files"
-        :key="file.kind"
         type="button"
-        class="proof__file"
-        @click="take(file.url, `${(artifact?.title || 'ariza').replace(/[^\w.\- ]+/g, '_')}.${file.kind}`)"
+        class="proof__toggle"
+        :aria-expanded="open ? 'true' : 'false'"
+        :aria-controls="listId"
+        @click="open = !open"
       >
-        {{ t('artifactDownload', { format: file.label }) }}
+        <span class="proof__stack" aria-hidden="true">
+          <span v-for="m in preview" :key="m" class="proof__mini">{{ m }}</span>
+        </span>
+        <span>{{ t('chat.sourceCount', { n: count }, count) }}</span>
+        <ChevronDown class="proof__chev" :class="{ 'is-open': open }" :size="16" :stroke-width="1.75" aria-hidden="true" />
       </button>
-    </div>
 
-    <div v-if="docs.length" class="proof__group">
-      <span class="proof__title">{{ t('sourcesDocuments') }}</span>
-      <ul class="proof__list">
-        <li v-for="(source, i) in docs" :key="source.doc_id || i">
-          <!-- Opens the viewer at the cited page; the download lives in the
-               viewer's toolbar. -->
-          <button
-            v-if="source.docUrl"
-            type="button"
-            class="proof__link"
-            :title="t('sourceOpen')"
-            @click="openDoc(source)"
-          >
-            {{ label(source) }}
-          </button>
-          <span v-else>{{ label(source) }}</span>
-          <span v-if="source.section" class="proof__muted"> · {{ source.section }}</span>
-        </li>
-      </ul>
-    </div>
-
-    <div v-if="calls.length" class="proof__group">
-      <span class="proof__title">{{ t('sourcesLookups') }}</span>
-      <ul class="proof__list">
-        <li v-for="(call, i) in calls" :key="(call.marker || '') + i">
-          <span class="proof__marker">{{ marker(call, i) }}</span>
-          <code class="proof__tool">{{ call.tool }}</code>
-          <span v-if="call.status && call.status !== 'ok'" class="proof__bad"> · {{ call.status }}</span>
-          <span v-else-if="call.digest" class="proof__muted"> · {{ call.digest }}</span>
-        </li>
-      </ul>
-    </div>
+      <div v-show="open" :id="listId" class="proof__panel">
+        <ul v-if="docs.length" class="proof__list" :aria-label="t('sourcesDocuments')">
+          <li v-for="(source, i) in docs" :key="`${source.doc_id ?? ''}-${source.citation_index ?? i}`">
+            <!-- Ko'ruvchini iqtibos sahifasida ochadi; yuklab olish - ko'ruvchi panelida. -->
+            <button
+              v-if="source.docUrl"
+              type="button"
+              class="proof__item is-link"
+              :title="t('sourceOpen')"
+              @click="openDoc(source)"
+            >
+              <span class="proof__num">{{ source.citation_index ?? i + 1 }}</span>
+              <span class="proof__body">
+                <span class="proof__name">{{ docName(source) }}</span>
+                <span v-if="docMeta(source)" class="proof__meta">{{ docMeta(source) }}</span>
+                <span v-if="snippet(source)" class="proof__snippet">{{ snippet(source) }}</span>
+              </span>
+            </button>
+            <div v-else class="proof__item">
+              <span class="proof__num">{{ source.citation_index ?? i + 1 }}</span>
+              <span class="proof__body">
+                <span class="proof__name">{{ docName(source) }}</span>
+                <span v-if="docMeta(source)" class="proof__meta">{{ docMeta(source) }}</span>
+                <span v-if="snippet(source)" class="proof__snippet">{{ snippet(source) }}</span>
+              </span>
+            </div>
+          </li>
+        </ul>
+        <ul v-if="calls.length" class="proof__list" :aria-label="t('sourcesLookups')">
+          <li v-for="(call, i) in calls" :key="lookupMarker(call, i)">
+            <div class="proof__item">
+              <span class="proof__num">{{ lookupMarker(call, i) }}</span>
+              <span class="proof__body">
+                <span class="proof__name">{{ lookupLabel(call) }}</span>
+                <span v-if="call.status && call.status !== 'ok'" class="proof__meta is-bad">
+                  <span class="proof__dot" aria-hidden="true" />{{ t('chat.lookupFailed') }} · {{ call.status }}
+                </span>
+                <span v-else-if="call.digest" class="proof__meta">{{ call.digest }}</span>
+              </span>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </template>
   </div>
 </template>
 
 <style scoped>
 .proof {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  font-size: 12.5px;
-  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-3);
+  margin-top: var(--s-4);
 }
-.proof__group,
-.proof__files {
-  margin-top: 8px;
+
+.proof__error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  color: var(--crit-text);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
 }
-.proof__files {
+.proof__error svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* Fayl kartasi */
+.proof__file {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--s-3);
+  width: 100%;
+  max-width: 480px;
+  padding: var(--s-3) var(--s-3) var(--s-3) var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
 }
-.proof__title {
-  display: block;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  margin-bottom: 3px;
+.proof__file-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--r-md);
+  background: var(--fill);
+  color: var(--text-2);
 }
-.proof__files .proof__title {
-  display: inline;
-  margin-bottom: 0;
-  text-transform: none;
-  font-size: 12.5px;
-  letter-spacing: normal;
-  color: var(--text);
+.proof__file-title {
+  flex: 1 1 140px;
+  min-width: 0;
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.proof__file-actions {
+  display: flex;
+  gap: var(--s-2);
+}
+
+/* Yig'iq manbalar qatori */
+.proof__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 32px;
+  padding: 0 var(--s-2) 0 var(--s-1_5);
+  margin-left: calc(var(--s-1_5) * -1);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+@media (hover: hover) {
+  .proof__toggle:hover {
+    background: var(--fill);
+    color: var(--text);
+  }
+}
+.proof__stack {
+  display: inline-flex;
+}
+.proof__mini {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  border: 2px solid var(--bg);
+  border-radius: var(--r-full);
+  background: var(--fill);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1;
+}
+.proof__mini + .proof__mini {
+  margin-left: -6px;
+}
+.proof__chev {
+  color: var(--text-3);
+  transition: transform var(--dur-2) var(--ease-out);
+}
+.proof__chev.is-open {
+  transform: rotate(180deg);
+}
+
+.proof__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  width: 100%;
 }
 .proof__list {
+  display: flex;
+  flex-direction: column;
   margin: 0;
-  padding-left: 0;
+  padding: 0;
   list-style: none;
 }
-.proof__list li {
-  color: var(--text-secondary);
-  padding: 1px 0;
-  word-break: break-word;
-}
-.proof__link {
-  font: inherit;
-  padding: 0;
-  cursor: pointer;
-  background: none;
-  border: none;
+.proof__item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  width: 100%;
+  padding: var(--s-2) var(--s-2);
+  margin-left: calc(var(--s-2) * -1);
+  border-radius: var(--r-md);
   text-align: left;
   color: var(--text);
-  text-decoration: underline;
-  text-decoration-color: var(--border-hover);
-  text-underline-offset: 2px;
 }
-.proof__link:hover {
-  text-decoration-color: currentColor;
-}
-.proof__marker {
-  font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-  margin-right: 5px;
-}
-.proof__tool {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11.5px;
-  color: var(--text);
-}
-.proof__muted {
-  color: var(--text-muted);
-}
-.proof__bad {
-  color: var(--bad-fg);
-}
-.proof__file {
-  font: inherit;
+.proof__item.is-link {
   cursor: pointer;
-  padding: 3px 10px;
-  border-radius: 999px;
-  color: var(--text);
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
+  transition: background-color var(--dur-1) var(--ease-out);
 }
-.proof__file:hover {
-  border-color: var(--border-hover);
+@media (hover: hover) {
+  .proof__item.is-link:hover {
+    background: var(--fill);
+  }
+}
+.proof__num {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  min-width: 22px;
+  height: 20px;
+  margin-top: 1px;
+  padding: 0 5px;
+  border-radius: var(--r-xs);
+  background: var(--fill);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+}
+.proof__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.proof__name {
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.proof__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1_5);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  overflow-wrap: anywhere;
+}
+.proof__meta.is-bad {
+  color: var(--crit-text);
+}
+.proof__dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: var(--r-full);
+  background: var(--crit);
+}
+.proof__snippet {
+  display: -webkit-box;
+  margin-top: 2px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  line-height: 18px;
 }
 </style>

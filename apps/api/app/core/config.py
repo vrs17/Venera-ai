@@ -453,6 +453,37 @@ class Settings(BaseSettings):
     #: va ko'rish - har qanday kirgan foydalanuvchiga ochiq.
     contacts_editor_roles: list[str] = ["ADMIN"]
 
+    # --- Analitika va admin panel ---
+    #: Har savol-javob izi, tashqi chaqiruvlar hisobi, shikoyatlar va admin
+    #: o'zgarishlari - BITTA SQLite faylda (`services/analytics/`). Faylda
+    #: savollar va javoblar turadi, ya'ni SHAXSIY MA'LUMOT: `data/`
+    #: gitignore'da, papka 700, fayl 600.
+    analytics_db_file: Path = BASE_DIR / "data" / "analytics" / "venera.db"
+    #: O'chirilsa YANGI yozuvlar to'xtaydi, chat esa odatdagidek ishlaydi -
+    #: yozib olish ikkinchi darajali. Admin panel eski yozuvlarni ko'rsataveradi.
+    analytics_enabled: bool = True
+    #: Shuncha kundan eski savollar, chaqiruvlar va kirish urinishlari har
+    #: 6 soatda o'chiriladi. Shikoyatlar va admin auditi SAQLANADI - ular
+    #: statistika emas, hujjat. 0 - hech narsa o'chirilmaydi.
+    analytics_retention_days: int = 180
+    #: Vergul bilan loginlar/emaillar (harf registriga qaramaydi) - ular
+    #: HAR DOIM ADMIN, admin paneldan ham olib bo'lmaydi. Birinchi
+    #: administratorni tayinlash va "hamma adminlar o'zini bloklab qo'ydi"
+    #: holatidan chiqish yo'li shu: rolni faylda emas, `.env` da berish.
+    #: SSO hisobi FAQAT LOGINI bilan (`y.mamajonov`) tanlanadi - emailini
+    #: Keycloak'da odam o'zi o'zgartira oladi; email faqat `users.yaml` dagi
+    #: zahira hisob uchun ishlaydi (`services/admin_users.is_bootstrap`).
+    admin_logins: str = ""
+    #: Keycloak'dan kelgan qaysi IMTIYOZLI rollarga (ADMIN, RAG_ADMIN)
+    #: ishoniladi - vergul bilan. Default BO'SH: SSO rollari Keycloak'dan
+    #: qanday bo'lsa shunday ko'chiriladi, va realm'da yoki boshqa client'da
+    #: tasodifan `ADMIN` degan rol bo'lsa, u Venera ADMIN ini (hammaning
+    #: suhbat yozuvlarini o'qish) berib yuborardi. Imtiyoz faqat
+    #: `admin_logins`, `users.yaml` va admin panel orqali keladi; Keycloak
+    #: rollari Venera uchun ATAYLAB boshqarilsagina shu yerga yoziladi
+    #: (`services/admin_users._effective_roles`).
+    sso_trusted_roles: str = ""
+
     # --- CORS ---
     #: Bo'sh bo'lsa CORS o'chirilgan: frontend nginx orqali BIR XIL originda
     #: turadi (`/api` proxy), ya'ni CORS umuman kerak emas. Faqat frontend

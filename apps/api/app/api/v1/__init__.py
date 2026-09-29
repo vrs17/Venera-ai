@@ -11,6 +11,8 @@ davom etadi.
 from fastapi import APIRouter
 
 from . import actions, auth, chat, chats, connectors, pro, stt, telegram, tts
+from . import admin_users, reports
+from . import admin
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(auth.router)
@@ -22,5 +24,8 @@ router.include_router(pro.router)
 router.include_router(stt.router)
 router.include_router(tts.router)
 router.include_router(telegram.router)
+router.include_router(reports.router)
+router.include_router(admin_users.router)
+router.include_router(admin.router)
 
 __all__ = ["router"]

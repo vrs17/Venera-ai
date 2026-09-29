@@ -44,6 +44,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from socket import timeout as socket_timeout
 
+from .analytics.meter import begin, metered
 from .speech_text import for_speech
 
 log = logging.getLogger(__name__)
@@ -283,7 +284,10 @@ class TtsClient:
         body = json.dumps(
             {"client_id": self.client_id, "client_secret": self.client_secret}
         ).encode("utf-8")
-        payload = self._json_request("/api/v1/auth/token", body=body, authorized=False)
+        # Hisobda alohida amal: sir noto'g'ri bo'lsa (401) aynan shu qatorda
+        # ko'rinadi, ovoz so'rovlarining xatosi ichida yo'qolib ketmaydi.
+        with metered("tts", "token"):
+            payload = self._json_request("/api/v1/auth/token", body=body, authorized=False)
         token = str(payload.get("access_token") or "")
         if not token:
             raise TtsError("TTS tokeni bo'sh keldi", status=502)
@@ -361,6 +365,9 @@ class TtsClient:
             )
 
         slot = _Slot(self._slots)
+        # Hisob: ochilishdan oqim oxirigacha. Birliklar - belgi (so'ralgan
+        # matn), bayt va audio soniyasi (oqim tugaganda ma'lum bo'ladi).
+        call = begin("tts", "speak", units={"chars": len(clean)})
         try:
             try:
                 response = self._open_stream(clean, voice, speed, normalize_numbers, chunk_sec)
@@ -377,9 +384,11 @@ class TtsClient:
                             "normalizatsiyasiz qayta yuborildi", exc)
                 normalize_numbers = False
                 response = self._open_stream(clean, voice, speed, False, chunk_sec)
-        except BaseException:
+        except BaseException as exc:
             slot.release()
+            call.end("error", http_status=_upstream_status(exc), error=exc)
             raise
+        call.http_status = 200
 
         def headers_of(name: str, default: str = "") -> str:
             # Sim ustida sarlavhalar KICHIK harfda keladi; `http.client`
@@ -395,6 +404,8 @@ class TtsClient:
         slot.stream_id = stream_id
 
         def pump() -> Iterator[bytes]:
+            sent = 0
+            failure: BaseException | None = None
             try:
                 while True:
                     # Kichik bo'lak: bufer katta bo'lsa TTFB afzalligi
@@ -402,18 +413,31 @@ class TtsClient:
                     part = response.read(_READ_SIZE)
                     if not part:
                         return
+                    sent += len(part)
                     yield part
             except (TimeoutError, socket_timeout) as exc:
-                raise TtsError("TTS oqimi to'xtab qoldi (timeout)", status=504) from exc
+                failure = TtsError("TTS oqimi to'xtab qoldi (timeout)", status=504)
+                raise failure from exc
             except (http.client.HTTPException, OSError) as exc:
                 # Oqim O'RTASIDA nosozlik: server ulanishni ATAYLAB uzadi,
                 # chunki 200 yuborilgandan keyin statusni o'zgartirib
                 # bo'lmaydi. Sabab server log'ida, `x-stream-id` bo'yicha.
-                raise TtsError(f"TTS oqimi uzildi ({stream_id}): {exc}", status=502) from exc
+                failure = TtsError(f"TTS oqimi uzildi ({stream_id}): {exc}", status=502)
+                raise failure from exc
+            except BaseException as exc:
+                failure = exc
+                raise
             finally:
                 with contextlib.suppress(Exception):
                     response.close()
                 slot.release()
+                # L16 mono: 2 bayt = 1 namuna. Klient uzilsa (`GeneratorExit`)
+                # bu xato emas - xizmat o'z ishini qilgan.
+                units = {"bytes": sent, "audioSec": round(sent / (2.0 * max(1, sample_rate)), 2)}
+                if failure is None or isinstance(failure, GeneratorExit):
+                    call.end("ok", units=units, error=failure)
+                else:
+                    call.end("error", units=units, error=failure)
 
         speech = SpeechStream(
             sample_rate=sample_rate,
@@ -428,6 +452,9 @@ class TtsClient:
         # `close()` ni chaqiradigan hech kim yo'q. `slot.release` obyektga
         # havola SAQLAMAYDI, shuning uchun bu yig'ilishga to'sqinlik qilmaydi.
         weakref.finalize(speech, slot.release)
+        # Xuddi shu sabab bilan hisob ham: boshlanmagan oqimning `finally` si
+        # ishlamaydi, chaqiruv esa hisobdan tushib qolmasin.
+        weakref.finalize(speech, call.end)
         return speech
 
     def busy(self) -> int:
@@ -598,6 +625,14 @@ def _mapped_errors(secret: str):
         raise TtsError("TTS javob bermadi (timeout)", status=504) from exc
     except (http.client.HTTPException, OSError) as exc:
         raise TtsError(f"TTS ulanishi uzildi: {exc}", status=503, retryable=True) from exc
+
+
+def _upstream_status(exc: BaseException) -> int | None:
+    """Xizmatning HAQIQIY HTTP statusi (`HTTPError.code`). `TtsError.status`
+    esa foydalanuvchiga ko'rsatiladigani - 500 u yerda 502. HTTP javobi
+    bo'lmagan bo'lsa (`None`) hisob `TtsError.status` ni oladi."""
+    cause = exc.__cause__
+    return cause.code if isinstance(cause, urllib.error.HTTPError) else None
 
 
 def _int_or(value: str, fallback: int) -> int:

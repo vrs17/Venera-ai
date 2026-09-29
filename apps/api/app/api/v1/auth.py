@@ -26,12 +26,15 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from ...core.channels import channel_of
 from ...core.config import settings
 from ...core.errors import error_status, unauthorized
 from ...core.security import create_token
 from ...schemas.auth import AuthUser, LoginRequest, LoginResponse, LogoutResponse
+from ...services import admin_users
+from ...services.analytics import bind, record_auth_event
 from ...services.identities import Identity, IdentityStore
 from ...services.integrations.connectors import ConnectorError
 from ...services.sso import KeycloakSso, SsoError, SsoLogin
@@ -45,6 +48,9 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 #: Xabar ATAYLAB UMUMIY (Keycloak ham, zahira ham): qaysi biri xato
 #: ekanini aytsak, qaysi loginlar borligini aniqlash mumkin bo'lardi.
 _MSG_BAD_LOGIN = "Login yoki parol noto'g'ri"
+#: Admin panelda bloklangan hisob (`services/admin_users.py`). Parol to'g'ri
+#: bo'lgandagina aytiladi.
+_MSG_BLOCKED = "Hisob bloklangan. Administratorga murojaat qiling."
 
 
 def _sso() -> KeycloakSso:
@@ -79,9 +85,32 @@ def _auto_connect(identity: Identity, username: str, password: str, login: SsoLo
         log.warning("HRM avto-ulanish (%s): %s", identity.username, exc)
 
 
+def _admit(user: AuthUser, login: str | None, *, attempt: str, method: str, channel: str,
+           sso_login: SsoLogin | None = None) -> admin_users.Access:
+    """Parol TO'G'RI chiqqandan keyin: admin bloklaganmi? -> `Access` yoki 403.
+
+    Tekshiruv parol tasdiqlangandan KEYIN, ataylab: aks holda "bloklangan"
+    javobi parolni bilmagan odamga ham hisob borligini aytib qo'yardi.
+
+    Bloklangan odamning Keycloak sessiyasi (hozirgina ochilgan) darhol
+    yopiladi va ulanishlarga YOZILMAYDI - aks holda har urinish CRM da yangi
+    doimiy `refresh_token` qoldirardi.
+    """
+    verdict = admin_users.access(user, login=login)
+    if not verdict.blocked:
+        return verdict
+    if sso_login is not None and sso_login.refresh_token and _connectors.hub.crm.configured:
+        _connectors.hub.crm.logout(sso_login.refresh_token)
+    record_auth_event(attempt, False, method=method, channel=channel, reason="blocked",
+                      actor_id=user.actorId)
+    log.info("Kirish rad etildi - hisob bloklangan: actor_id %s", user.actorId)
+    raise error_status(status.HTTP_403_FORBIDDEN, _MSG_BLOCKED)
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(
     data: LoginRequest,
+    request: Request,
     store: UserStore = Depends(get_user_store),
     identities: IdentityStore = Depends(get_identity_store),
 ) -> LoginResponse:
@@ -89,7 +118,13 @@ def login(
 
     `async def` EMAS: Keycloak va HRM ga `urllib` bilan boriladi
     (bloklaydi), FastAPI oddiy `def` ni threadpool'da bajaradi.
+
+    Token odamning JORIY sessiya versiyasi bilan beriladi (`ver`) va javobdagi
+    `user` - admin qarorlari qo'yilgan (samarali rollar). Har urinish
+    `auth_events` ga yoziladi: natija, yo'l (sso/local), sabab kodi -
+    PAROL HECH QACHON.
     """
+    channel = channel_of(request)
     sso = _sso()
     sso_error: SsoError | None = None
     if sso.configured:
@@ -98,38 +133,61 @@ def login(
         except SsoError as exc:
             sso_error = exc
         else:
+            known = identities.by_subject(result.profile.subject)
+            if known is not None:
+                # Ma'lum odam - blokni `identities.json` ga TEGMASDAN tekshiramiz:
+                # bloklangan urinish "oxirgi kirish" bo'lib ko'rinmasin.
+                _admit(known.to_public(), known.username, attempt=data.username, method="sso",
+                       channel=channel, sso_login=result)
             identity = identities.upsert(result.profile, legacy=store)
-            _auto_connect(identity, data.username, data.password, result)
-            token, expires = create_token(identity.subject)
+            # Birinchi kirishda `actor_id` eski (`users.yaml`) hisobdan kelishi
+            # mumkin - u bloklangan bo'lsa ham shu yerda to'xtaydi.
+            verdict = _admit(identity.to_public(), identity.username, attempt=data.username,
+                             method="sso", channel=channel, sso_login=result)
+            # Hisob: HRM ulanishi (tashqi chaqiruv) endi ma'lum odamniki.
+            with bind(actor_id=identity.actor_id):
+                _auto_connect(identity, data.username, data.password, result)
+            token, expires = create_token(identity.subject, version=verdict.token_version)
+            record_auth_event(data.username, True, method="sso", channel=channel,
+                              actor_id=identity.actor_id)
             log.info("Kirish (SSO): %s (actor_id %s)", identity.username, identity.actor_id)
             return LoginResponse(
                 token=token,
                 tokenType="Bearer",
                 expiresAt=expires.isoformat(),
                 passwordChangeRequired=False,
-                user=identity.to_public(),
+                user=verdict.user,
             )
 
     # Zahira. `authenticate` topilmagan hisob uchun ham xeshni tekshiradi -
     # javob vaqti bo'yicha hisob borligini aniqlab bo'lmaydi.
     user = store.authenticate(data.username, data.password) if settings.local_login_enabled else None
     if user is not None:
-        token, expires = create_token(user.email)
+        verdict = _admit(user.to_public(), None, attempt=data.username, method="local",
+                         channel=channel)
+        token, expires = create_token(user.email, version=verdict.token_version)
+        record_auth_event(data.username, True, method="local", channel=channel,
+                          actor_id=user.actor_id)
         log.info("Kirish (zahira): %s", user.email)
         return LoginResponse(
             token=token,
             tokenType="Bearer",
             expiresAt=expires.isoformat(),
             passwordChangeRequired=user.password_change_required,
-            user=user.to_public(),
+            user=verdict.user,
         )
 
+    method = "sso" if sso.configured else "local"
     if sso_error is not None and not sso_error.bad_credentials:
         # Keycloak javob bermadi yoki hisobni (parolni emas) rad etdi -
         # sababi odamga AYTILADI, u parolini emas, boshqa narsani tekshiradi.
         log.warning("SSO kirish (%s): %s", data.username, sso_error)
+        record_auth_event(data.username, False, method=method, channel=channel,
+                          reason=f"sso:{sso_error.code or sso_error.status}")
         raise error_status(sso_error.status, str(sso_error))
     log.info("Muvaffaqiyatsiz kirish: %s", data.username)
+    reason = "bad_credentials" if (sso.configured or settings.local_login_enabled) else "no_login_path"
+    record_auth_event(data.username, False, method=method, channel=channel, reason=reason)
     raise unauthorized(_MSG_BAD_LOGIN)
 
 
@@ -157,8 +215,9 @@ def logout(user: AuthUser = Depends(current_user)) -> LogoutResponse:
     uchun turardi, va "chiqdim" degan odam ortidan hech narsa qolmasligi
     kerak. Keyingi kirishda u qaytadan olinadi (`_auto_connect`).
 
-    Haqiqiy bekor qilish kerak bo'lsa: Redis'da qora ro'yxat va
-    `core/security.verify_token` da tekshiruv. Demo uchun ortiqcha.
+    Bitta tokenni bekor qilish YO'Q (buning uchun qora ro'yxat kerak). Odamning
+    HAMMA sessiyasini esa admin tugata oladi: `POST /admin/users/{id}/signout`
+    sessiya versiyasini oshiradi va eski tokenlar 401 oladi (`api/deps.py`).
     """
     _connectors.hub.forget_password(str(user.actorId))
     log.info("Chiqish: %s", user.email)

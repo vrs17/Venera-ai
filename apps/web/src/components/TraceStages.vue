@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { CSSProperties } from 'vue'
+import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { ChevronDown } from 'lucide-vue-next'
 import type {
   AccessStage,
   GuardStage,
@@ -9,10 +10,16 @@ import type {
   PipelineResponse,
   RetrievalStage,
 } from '../types'
-import { ChevronDownIcon } from '../icons'
+import { useId } from '../ui/composables/useId'
 import StageFields from './StageFields.vue'
 import RetrievalList from './RetrievalList.vue'
 
+/**
+ * Dasturchi rejimi: pipeline izi (Guard, Intent, Orchestrator, Access, Retrieval) -
+ * bittadan ochiladigan ro'yxat. Faqat `/ask` javobida bor (oqim yo'lida iz yo'q);
+ * to'liq iz endi admin panelning "Savol izi" sahifasida. Bosqich nomlari - texnik
+ * atamalar, tarjima qilinmaydi.
+ */
 type FieldsEntry = {
   key: string
   title: string
@@ -37,15 +44,18 @@ type StageEntry = FieldsEntry | RetrievalEntry
 const props = withDefaults(
   defineProps<{
     response: PipelineResponse
-    /** When true, expand the first trace stage by default (RAG_ADMIN view). */
+    /** Birinchi bosqich ochiq turib ochilsin. */
     defaultOpen?: boolean
   }>(),
   { defaultOpen: false },
 )
 
+const { t } = useI18n({ useScope: 'global' })
+const baseId = useId('trace')
+
 function fmtSeconds(s: number | null): string {
   if (s == null) return '—'
-  return `${s.toFixed(2)}s`
+  return `${s.toFixed(2)} s`
 }
 
 const entries = computed<StageEntry[]>(() => {
@@ -105,7 +115,7 @@ const entries = computed<StageEntry[]>(() => {
     list.push({
       key: 'retrieval',
       title: 'Retrieval',
-      summary: ret.error ? `Error · ${ret.error}` : `${n} chunk${n === 1 ? '' : 's'} from ${ret.collection ?? '—'}`,
+      summary: ret.error ? `Error · ${ret.error}` : `${n} · ${ret.collection ?? '—'}`,
       ok: !ret.error,
       seconds: ret.seconds ?? null,
       kind: 'retrieval',
@@ -120,119 +130,109 @@ const openKey = ref<string | null>(props.defaultOpen && entries.value[0] ? entri
 function toggle(key: string) {
   openKey.value = openKey.value === key ? null : key
 }
-
-// Dots start dim and "ignite" in sequence once the trace mounts.
-const lit = ref(false)
-let rafId = 0
-onMounted(() => {
-  rafId = requestAnimationFrame(() => {
-    lit.value = true
-  })
-})
-onBeforeUnmount(() => cancelAnimationFrame(rafId))
-
-const rowButtonStyle: CSSProperties = {
-  width: '100%',
-  display: 'flex',
-  alignItems: 'center',
-  gap: '12px',
-  background: 'transparent',
-  border: 'none',
-  padding: '12px 16px',
-  cursor: 'pointer',
-  textAlign: 'left',
-  transition: 'background 0.15s',
-}
-
-function dotStyle(ok: boolean, i: number): CSSProperties {
-  const color = ok ? 'var(--ok-fg)' : 'var(--bad-fg)'
-  return {
-    width: '8px',
-    height: '8px',
-    borderRadius: '50%',
-    flexShrink: 0,
-    background: lit.value ? color : 'var(--border-hover)',
-    boxShadow: lit.value ? `0 0 6px ${color}` : 'none',
-    transition: `background 0.3s ease ${i * 0.12}s, box-shadow 0.3s ease ${i * 0.12}s`,
-  }
-}
 </script>
 
 <template>
-  <div
-    v-if="entries.length === 0"
-    :style="{ fontSize: '13px', color: 'var(--text-secondary)', padding: '4px 2px' }"
-  >
-    No pipeline trace returned.
-  </div>
+  <p v-if="entries.length === 0" class="trace__empty">{{ t('chat.traceEmpty') }}</p>
 
-  <div
-    v-else
-    :style="{
-      position: 'relative',
-      background: 'var(--surface-sunken)',
-      border: '1px solid var(--border)',
-      borderRadius: '14px',
-      overflow: 'hidden',
-    }"
-  >
-    <!-- The spine: a faint connector threading every stage dot at x≈20px. -->
-    <div
-      aria-hidden="true"
-      :style="{
-        position: 'absolute',
-        left: '19px',
-        top: '14px',
-        bottom: '14px',
-        width: '2px',
-        background: 'var(--border)',
-        borderRadius: '2px',
-        zIndex: 0,
-      }"
-    />
-    <div
-      v-for="(e, i) in entries"
-      :key="e.key"
-      :style="{ position: 'relative', zIndex: 1, borderTop: i === 0 ? 'none' : '1px solid var(--border-faint)' }"
-    >
-      <button class="stage-row" :style="rowButtonStyle" @click="toggle(e.key)">
-        <span :style="dotStyle(e.ok, i)" />
-        <span :style="{ fontSize: '13.5px', fontWeight: 600, color: 'var(--text)', width: '110px', flexShrink: 0 }">{{
-          e.title
-        }}</span>
-        <span
-          :title="e.summary"
-          :style="{
-            fontSize: '13px',
-            color: 'var(--text-secondary)',
-            flex: 1,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }"
-          >{{ e.summary }}</span
-        >
-        <span
-          :style="{ fontSize: '12px', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }"
-          >{{ fmtSeconds(e.seconds) }}</span
-        >
-        <ChevronDownIcon :style="{ transform: openKey === e.key ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }" />
-      </button>
-      <!-- Spring height-morph: grid 0fr->1fr animates the body open/closed. -->
-      <div
-        :style="{
-          display: 'grid',
-          gridTemplateRows: openKey === e.key ? '1fr' : '0fr',
-          transition: 'grid-template-rows 0.38s var(--spring)',
-        }"
+  <div v-else class="trace">
+    <div v-for="e in entries" :key="e.key" class="trace__row">
+      <button
+        :id="`${baseId}-${e.key}`"
+        type="button"
+        class="trace__head"
+        :aria-expanded="openKey === e.key ? 'true' : 'false'"
+        :aria-controls="`${baseId}-${e.key}-body`"
+        @click="toggle(e.key)"
       >
-        <div :style="{ overflow: 'hidden' }">
-          <div :style="{ padding: '4px 16px 16px', background: 'var(--surface-inset)' }">
-            <StageFields v-if="e.kind === 'fields'" :stage="e.stage" :highlight="e.highlight" />
-            <RetrievalList v-if="e.kind === 'retrieval'" :retrieval="e.retrieval" />
-          </div>
-        </div>
+        <span class="trace__dot" :class="e.ok ? 'is-ok' : 'is-bad'" aria-hidden="true" />
+        <span class="trace__title">{{ e.title }}</span>
+        <span class="trace__summary" :title="e.summary">{{ e.summary }}</span>
+        <span class="trace__sec">{{ fmtSeconds(e.seconds) }}</span>
+        <ChevronDown class="trace__chev" :class="{ 'is-open': openKey === e.key }" :size="16" :stroke-width="1.75" aria-hidden="true" />
+      </button>
+      <div
+        v-show="openKey === e.key"
+        :id="`${baseId}-${e.key}-body`"
+        class="trace__body"
+        role="region"
+        :aria-labelledby="`${baseId}-${e.key}`"
+      >
+        <StageFields v-if="e.kind === 'fields'" :stage="e.stage" :highlight="e.highlight" />
+        <RetrievalList v-if="e.kind === 'retrieval'" :retrieval="e.retrieval" />
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.trace__empty {
+  color: var(--text-3);
+  font-size: var(--fs-body-sm);
+}
+.trace {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.trace__row + .trace__row {
+  border-top: 1px solid var(--line);
+}
+.trace__head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  min-height: 44px;
+  padding: 0 var(--s-4);
+  text-align: left;
+  transition: background-color var(--dur-1) var(--ease-out);
+}
+@media (hover: hover) {
+  .trace__head:hover {
+    background: var(--fill);
+  }
+}
+.trace__dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: var(--r-full);
+}
+.trace__dot.is-ok { background: var(--good); }
+.trace__dot.is-bad { background: var(--crit); }
+.trace__title {
+  width: 100px;
+  flex-shrink: 0;
+  font-size: var(--fs-body-sm);
+  font-weight: 600;
+}
+.trace__summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-body-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trace__sec {
+  flex-shrink: 0;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-variant-numeric: tabular-nums;
+}
+.trace__chev {
+  flex-shrink: 0;
+  color: var(--text-3);
+  transition: transform var(--dur-2) var(--ease-out);
+}
+.trace__chev.is-open {
+  transform: rotate(180deg);
+}
+.trace__body {
+  padding: var(--s-1) var(--s-4) var(--s-4);
+  background: var(--bg-subtle);
+}
+</style>

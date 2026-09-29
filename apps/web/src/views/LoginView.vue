@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
-import { localizeApiError } from '../api/errors'
-import { LockIcon, LoginIcon, UserIcon } from '../icons'
+import { authErrorKind, localizeAuthError } from '../api/errors'
+import { redirectTarget } from '../router'
 import AuthShell from '../components/AuthShell.vue'
 import AuthField from '../components/AuthField.vue'
 import AuthButton from '../components/AuthButton.vue'
@@ -12,15 +12,23 @@ import AuthError from '../components/AuthError.vue'
 
 const { t } = useI18n({ useScope: 'global' })
 const router = useRouter()
+const route = useRoute()
 const { login } = useAuth()
 
 const username = ref('')
 const password = ref('')
 const busy = ref(false)
-const shell = ref<{ ignite: () => void } | null>(null)
 
 const submitted = ref(false)
 const formError = ref('')
+// Keycloak "hisob to'liq sozlanmagan": parol to'g'ri, odam CRM saytiga bir marta
+// brauzerda kirishi kerak. Havola manzili build vaqtida beriladi (VITE_CRM_URL);
+// berilmasa ko'rsatma havolasiz chiqadi.
+const setupHelp = ref(false)
+const crmUrl = ((import.meta.env.VITE_CRM_URL as string | undefined) ?? '').trim()
+
+const loginField = ref<InstanceType<typeof AuthField> | null>(null)
+const passwordField = ref<InstanceType<typeof AuthField> | null>(null)
 
 // Login - HRM/CRM (Keycloak) hisobi, masalan `y.mamajonov`; email emas.
 // Zahira hisob (users.yaml) uchun email ham shu maydonga yoziladi.
@@ -30,105 +38,93 @@ const valid = computed(() => username.value.trim().length > 0 && password.value.
 const usernameError = computed(() => (!submitted.value ? '' : username.value.trim() ? '' : t('required')))
 const passwordError = computed(() => (!submitted.value ? '' : password.value ? '' : t('required')))
 
+// Server xatosi eskirmasin: odam maydonni tuzata boshlashi bilan yo'qoladi.
+watch([username, password], () => {
+  formError.value = ''
+  setupHelp.value = false
+})
+
+onMounted(() => {
+  // Faqat sichqonchali qurilmada: telefonda klaviatura o'zi ochilib, sahifani yopmasin.
+  if (window.matchMedia('(pointer: fine)').matches) loginField.value?.focus()
+})
+
 async function submit() {
   submitted.value = true
   formError.value = ''
-  if (busy.value || !valid.value) return
+  setupHelp.value = false
+  if (busy.value) return
+  if (!valid.value) {
+    // Birinchi bo'sh maydonga - odam nimani to'ldirishini qidirib o'tirmasin.
+    ;(username.value.trim() ? passwordField : loginField).value?.focus()
+    return
+  }
   busy.value = true
-  shell.value?.ignite()
   try {
     const res = await login(username.value.trim(), password.value)
+    const back = redirectTarget(route.query)
     // First login returns passwordChangeRequired; the guard would bounce us
     // there anyway, but routing explicitly avoids a flash of the chat page.
-    router.push(res.passwordChangeRequired ? { name: 'change-password' } : '/')
+    if (res.passwordChangeRequired) {
+      router.push({ name: 'change-password', query: back ? { redirect: back } : undefined })
+    } else {
+      router.push(back ?? '/')
+    }
   } catch (err) {
-    formError.value = localizeApiError(err, t)
+    formError.value = localizeAuthError(err, t)
+    setupHelp.value = authErrorKind(err) === 'accountSetup'
     busy.value = false
   }
 }
 </script>
 
 <template>
-  <AuthShell ref="shell" :hero-title="t('authWelcomeBack')" :hero-sub="t('authLoginSub')">
-    <form class="auth-body" novalidate @submit.prevent="submit">
-      <div class="auth-head rise">
-        <span class="auth-head__icon" aria-hidden="true"><LoginIcon :size="18" /></span>
-        <h2 class="auth-head__title">{{ t('signIn') }}</h2>
+  <AuthShell :title="t('signIn')" :caption="t('shell.auth.caption')">
+    <form class="auth-form" novalidate @submit.prevent="submit">
+      <div class="auth-form__fields">
+        <AuthField
+          ref="loginField"
+          v-model="username"
+          :label="t('loginName')"
+          type="text"
+          name="username"
+          autocomplete="username"
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
+          :error="usernameError"
+        />
+        <AuthField
+          ref="passwordField"
+          v-model="password"
+          :label="t('password')"
+          type="password"
+          name="password"
+          autocomplete="current-password"
+          :error="passwordError"
+        />
       </div>
 
-      <AuthError :message="formError" />
+      <AuthButton :label="t('signIn')" :busy="busy" />
 
-      <AuthField
-        v-model="username"
-        :label="t('loginName')"
-        type="text"
-        autocomplete="username"
-        :icon="UserIcon"
-        placeholder="y.mamajonov"
-        :error="usernameError"
-        reveal-delay="0.06s"
-      />
-      <AuthField
-        v-model="password"
-        :label="t('password')"
-        type="password"
-        autocomplete="current-password"
-        :icon="LockIcon"
-        :error="passwordError"
-        reveal-delay="0.12s"
-      />
-
-      <div class="rise" style="animation-delay: 0.2s">
-        <AuthButton :label="t('signIn')" :valid="valid" :busy="busy" />
-      </div>
-
-      <p class="auth-foot rise" style="animation-delay: 0.24s">
-        {{ t('noAccount') }}
-        <RouterLink to="/register" class="auth-link auth-link--strong">{{ t('createAccount') }}</RouterLink>
-      </p>
+      <AuthError :message="formError">
+        <a v-if="setupHelp && crmUrl" :href="crmUrl" target="_blank" rel="noopener noreferrer">
+          {{ t('shell.auth.openCrm') }}
+        </a>
+      </AuthError>
     </form>
   </AuthShell>
 </template>
 
 <style scoped>
-.auth-body {
+.auth-form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--s-6);
 }
-.auth-head {
+.auth-form__fields {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-.auth-head__title {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.3px;
-  color: var(--text);
-}
-.auth-right {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: -4px;
-}
-.auth-link {
-  font-size: 13px;
-  color: var(--link);
-  text-decoration: underline;
-}
-.auth-link:hover {
-  filter: brightness(1.12);
-}
-.auth-link--strong {
-  font-weight: 600;
-}
-.auth-foot {
-  margin: 6px 0 0;
-  text-align: center;
-  font-size: 13.5px;
-  color: var(--text-secondary);
+  flex-direction: column;
+  gap: var(--s-5);
 }
 </style>

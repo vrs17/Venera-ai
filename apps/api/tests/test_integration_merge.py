@@ -204,9 +204,21 @@ def test_sso_odam_kontakt_tahriri_sozlangan_rol_bilan(client, hub, net, people, 
     assert people.find("Nazarova Dilnoza")[0][0].phone == "+998901234567"
 
 
-def test_keycloak_admin_roli_kontakt_tahririga_yetadi(client, hub, net, people, monkeypatch):
+def test_keycloak_admin_roli_faqat_ishonilganda_kontakt_tahririga_yetadi(
+    client, hub, net, people, monkeypatch,
+):
+    """venera-admin-redesign (49f9e5b) dan keyin: Keycloak'dan kelgan IMTIYOZLI rol
+    (`ADMIN`) `SSO_TRUSTED_ROLES` siz O'TMAYDI - realm'dagi tasodifiy `ADMIN` roli
+    Venera ADMIN ini (hamma suhbat yozuvlari) berib yubormasin. Kontakt tahriri shu
+    samarali rollarga qaraydi (`contacts_editor_roles` semantikasi o'zgarmagan)."""
     monkeypatch.setattr(chat_api._assistant, "stream", _no_assistant)
     net.roles = net.roles + ["ADMIN"]
+    _, headers = _sso_login(client)
+    r = client.post("/api/v1/chat/stream", headers=headers, json={"question": EDIT_Q})
+    assert "faqat administrator" in r.text and '"proposal"' not in r.text
+
+    # Keycloak rollari Venera uchun ATAYLAB boshqarilsa - ishoniladi.
+    monkeypatch.setattr(settings, "sso_trusted_roles", "ADMIN")
     _, headers = _sso_login(client)
     r = client.post("/api/v1/chat/stream", headers=headers, json={"question": EDIT_Q})
     assert '"proposal"' in r.text and "faqat administrator" not in r.text

@@ -16,11 +16,15 @@ from functools import lru_cache
 
 from fastapi import Depends, Request, status
 from fastapi import HTTPException
+from starlette.concurrency import run_in_threadpool
 
+from ..core.channels import channel_of
 from ..core.config import settings
-from ..core.errors import unauthorized
-from ..core.security import verify_token
+from ..core.errors import error_status, unauthorized
+from ..core.security import verify_claims
 from ..schemas.auth import AuthUser
+from ..services import admin_users
+from ..services.analytics import bind as _meter_bind
 from ..services.identities import Directory, IdentityStore
 from ..services.users import UserStore
 
@@ -56,11 +60,31 @@ def bearer_token(request: Request) -> str:
     return token.strip()
 
 
-def current_user(
+async def current_user(
+    request: Request,
     token: str = Depends(bearer_token),
     store: UserStore = Depends(get_user_store),
     identities: IdentityStore = Depends(get_identity_store),
 ) -> AuthUser:
+    """Token'dan foydalanuvchini tiklaydi va HISOB kontekstini qo'yadi.
+
+    NEGA `async def`. Tekshiruvning o'zi (fayllar, ombor) bloklaydi - u
+    avvalgidek threadpool'da (`_resolve_user`). Lekin "kim, qaysi kanaldan"
+    (`analytics.bind`) SO'ROV kontekstiga qo'yilishi kerak: sinxron
+    bog'liqlik threadpool'da kontekstning NUSXASIDA ishlaydi va u yerda
+    qo'yilgan qiymat endpointga yetib bormaydi (`analytics/meter.py`,
+    2-tuzoq). Async bog'liqlik esa so'rov vazifasining o'zida ishlaydi -
+    endpoint, uning oqimi va ichidagi har tashqi chaqiruv (TTS, STT, HRM,
+    Assistant) hisobda shu odam va kanal bilan yoziladi, hech bir imzo
+    o'zgarmasdan. Qiymat so'rov vazifasi bilan birga yo'qoladi - qaytarish
+    shart emas.
+    """
+    user = await run_in_threadpool(_resolve_user, token, store, identities)
+    _meter_bind(user.actorId, channel_of(request))
+    return user
+
+
+def _resolve_user(token: str, store: UserStore, identities: IdentityStore) -> AuthUser:
     """Token'dan foydalanuvchini tiklaydi.
 
     MUHIM: shaxs FAQAT shu yerdan keladi. Endpoint'lar so'rov tanasidagi
@@ -70,20 +94,56 @@ def current_user(
     Tokenning `sub` i ikki xil: SSO bilan kirganda Keycloak `sub` (UUID,
     `identities.json` da), zahira hisobda email (`users.yaml` da). UUID
     ichida `@` bo'lmaydi, shuning uchun ikkisi aralashmaydi.
+
+    ADMIN QARORLARI SHU YERDA qo'yiladi (`services/admin_users.access`):
+    bloklangan hisob 401 "Hisob bloklangan" (veb ilova shu bilan chiqib
+    ketadi), versiyasi eskirgan token 401 "Sessiya yakunlangan" ("hamma
+    joydan chiqarish"), rollar esa admin qo'ygan/`admin_logins` bo'yicha.
+    Tartib muhim: bloklangan odam avval SABABNI ko'rsin.
     """
-    subject = verify_token(token)
-    if not subject:
+    claims = verify_claims(token)
+    if claims is None:
         raise unauthorized("Token yaroqsiz yoki muddati tugagan")
 
-    identity = identities.by_subject(subject)
+    identity = identities.by_subject(claims.subject)
     if identity is not None:
-        return identity.to_public()
-    user = store.by_email(subject)
-    if user is None:
-        # Token haqiqiy, lekin foydalanuvchi o'chirilgan - 401 beramiz,
-        # 403 emas: sessiya endi yaroqsiz va qayta kirish kerak.
-        raise unauthorized("Foydalanuvchi topilmadi")
-    return user.to_public()
+        user, login = identity.to_public(), identity.username
+    else:
+        stored = store.by_email(claims.subject)
+        if stored is None:
+            # Token haqiqiy, lekin foydalanuvchi o'chirilgan - 401 beramiz,
+            # 403 emas: sessiya endi yaroqsiz va qayta kirish kerak.
+            raise unauthorized("Foydalanuvchi topilmadi")
+        user, login = stored.to_public(), None
+
+    verdict = admin_users.access(user, login=login)
+    if verdict.blocked:
+        raise unauthorized("Hisob bloklangan")
+    if verdict.loaded and claims.version != verdict.token_version:
+        raise unauthorized("Sessiya yakunlangan")
+    return verdict.user
+
+
+def require_roles(*roles: str):
+    """Bog'liqlik yasaydi: foydalanuvchida `roles` dan BIRORTASI bo'lsa - u
+    qaytadi, aks holda 403.
+
+        admin_only = require_roles("ADMIN")
+        @router.get(..., dependencies=[Depends(admin_only)])
+
+    Rollar SAMARALI (admin qo'ygan, `admin_logins`) - `current_user` dan.
+    Solishtirish REGISTRGA SEZGIR: Keycloak'dagi boshqa ilovaning `admin`
+    roli Venera ADMIN ini bermasligi kerak.
+    """
+    wanted = frozenset(roles)
+
+    def dependency(user: AuthUser = Depends(current_user)) -> AuthUser:
+        if not wanted.intersection(user.roles):
+            raise error_status(status.HTTP_403_FORBIDDEN, "Bu bo'lim uchun ruxsat yo'q")
+        return user
+
+    dependency.__name__ = "require_" + "_or_".join(r.lower() for r in roles)
+    return dependency
 
 
 def _basic_challenge(message: str) -> HTTPException:

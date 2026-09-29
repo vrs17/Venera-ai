@@ -1,202 +1,290 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed } from 'vue'
+import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ChevronsUpDown, Code, Ear, Globe, LogOut, Monitor, MonitorDown, Moon, Shield, Sun, SunMoon } from 'lucide-vue-next'
 import type { AuthUser } from '../types'
-import { ChevronDownIcon, LogOutIcon } from '../icons'
+import type { ThemePreference } from '../theme'
+import { LOCALES, setLocale } from '../i18n'
+import type { Locale } from '../i18n'
+import VAvatar from '../ui/VAvatar.vue'
+import VIconButton from '../ui/VIconButton.vue'
+import VMenu from '../ui/VMenu.vue'
+import VMenuItem from '../ui/VMenuItem.vue'
+import VTooltip from '../ui/VTooltip.vue'
 
-// Read-only account widget for the sidebar. Identity comes from the auth session
-// (no client-side editing — the backend owns it), so this just shows who's
-// signed in and offers Log out. Opens an upward dropdown with a few details.
-defineProps<{ user: AuthUser | null }>()
-const emit = defineEmits<{ logout: [] }>()
+/**
+ * Hisob va sozlamalar - yon panel pastidagi YAGONA kirish nuqtasi (yig'iq panelda -
+ * avatar). Menyu: kim kirgan (faqat o'qish - kimlik sessiyadan, bu yerda hech narsa
+ * tahrirlanmaydi), mavzu va til (segmentli tanlov), dasturchi rejimi va "Salom Venera",
+ * admin panel (faqat ADMIN), desktop ilova, chiqish.
+ *
+ * VMenu ustida: klaviatura (↑ ↓, harf, Enter), Esc - preventDefault bilan (ChatView
+ * yon panelni yig'ib yubormaydi), fokus trigger'ga qaytadi. Mavzu/til/kalitlar
+ * tanlanganda menyu ochiq qoladi - natija shu yerning o'zida ko'rinsin.
+ */
+const props = withDefaults(
+  defineProps<{
+    user: AuthUser | null
+    /** Yig'iq panel: faqat avatar. */
+    compact?: boolean
+    /** Saqlangan tanlov (yorug' / qorong'i / tizim), yechilgan mavzu emas. */
+    theme: ThemePreference
+    devMode: boolean
+    wake: boolean
+    wakeSupported: boolean
+    wakeDistorted?: boolean
+    wakeBlocked?: boolean
+    isAdmin?: boolean
+  }>(),
+  { compact: false, wakeDistorted: false, wakeBlocked: false, isAdmin: false },
+)
+const emit = defineEmits<{
+  setTheme: [theme: ThemePreference]
+  toggleDevMode: []
+  toggleWake: []
+  openDesktop: []
+  logout: []
+}>()
 
-const { t } = useI18n({ useScope: 'global' })
-const open = ref(false)
-const wrapRef = ref<HTMLDivElement | null>(null)
+const { t, locale } = useI18n({ useScope: 'global' })
 
-function onDocDown(e: MouseEvent) {
-  if (wrapRef.value && !wrapRef.value.contains(e.target as Node)) open.value = false
-}
-watch(open, (isOpen) => {
-  if (isOpen) document.addEventListener('mousedown', onDocDown)
-  else document.removeEventListener('mousedown', onDocDown)
-})
-onBeforeUnmount(() => document.removeEventListener('mousedown', onDocDown))
+const name = computed(() => props.user?.fullName?.trim() || props.user?.email || '—')
 
-function onLogout() {
-  open.value = false
-  emit('logout')
-}
+// 'system' - OS mavzusiga ergashadi (theme.ts OS o'zgarishini o'zi kuzatadi).
+const themeOptions = computed<{ value: ThemePreference; label: string; icon: Component }[]>(() => [
+  { value: 'light', label: t('ui.light'), icon: Sun },
+  { value: 'dark', label: t('ui.dark'), icon: Moon },
+  { value: 'system', label: t('ui.system'), icon: Monitor },
+])
+
+/** Til segmentidagi qisqa yozuv; to'liq nom - tooltip va ekran o'quvchida. */
+const SHORT: Record<Locale, string> = { uz: 'Oʻz', 'uz-Cyrl': 'Ўз', ru: 'Ру', en: 'En' }
 </script>
 
 <template>
-  <div ref="wrapRef" class="sb-id-wrap" @keydown.esc="open = false">
-    <button
-      class="sb-id"
-      :title="user?.email || ''"
-      :aria-expanded="open"
-      aria-haspopup="menu"
-      @click="open = !open"
-    >
-      <span class="sb-id__avatar">{{ (user?.email?.[0] || '?').toUpperCase() }}</span>
-      <span class="sb-id__text">
-        <span class="sb-id__email">{{ user?.fullName || user?.email || '—' }}</span>
-        <span v-if="user?.actorType" class="sb-id__actor">{{ user.actorType }}</span>
-      </span>
-      <ChevronDownIcon
-        :size="12"
-        :style="{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', marginLeft: 'auto', flexShrink: 0 }"
-      />
-    </button>
-
-    <div v-if="open" class="glass sb-id__menu">
-      <div class="sb-id__head">
-        <span class="sb-id__head-name">{{ user?.fullName || '—' }}</span>
-        <span class="sb-id__head-email">{{ user?.email }}</span>
-      </div>
-      <dl v-if="user?.actorType || user?.department" class="sb-id__details">
-        <div v-if="user?.actorType" class="sb-id__detail">
-          <dt>{{ t('actorType') }}</dt>
-          <dd>{{ user.actorType }}</dd>
-        </div>
-        <div v-if="user?.department" class="sb-id__detail">
-          <dt>{{ t('department') }}</dt>
-          <dd>{{ user.department }}</dd>
-        </div>
-      </dl>
-      <button type="button" class="id-logout" @click="onLogout">
-        <LogOutIcon :size="15" />
-        <span>{{ t('logout') }}</span>
+  <VMenu
+    :placement="compact ? 'right-end' : 'top-start'"
+    :min-width="compact ? 264 : 248"
+    :aria-label="t('chat.account')"
+  >
+    <template #trigger>
+      <VIconButton v-if="compact" size="lg" :label="name" tooltip-placement="right">
+        <VAvatar :name="name" :size="28" />
+      </VIconButton>
+      <button v-else type="button" class="acct">
+        <VAvatar :name="name" :size="28" />
+        <span class="acct__name">{{ name }}</span>
+        <ChevronsUpDown class="acct__chev" :size="16" :stroke-width="1.75" aria-hidden="true" />
       </button>
+    </template>
+
+    <div class="acct-head" role="presentation">
+      <VAvatar :name="name" :size="32" />
+      <div class="acct-head__text">
+        <p class="acct-head__name">{{ name }}</p>
+        <p v-if="user?.email && user.email !== name" class="acct-head__sub">{{ user.email }}</p>
+        <p v-if="user?.department" class="acct-head__sub">{{ user.department }}</p>
+      </div>
     </div>
-  </div>
+    <VMenuItem kind="separator" />
+
+    <div class="acct-seg-row" role="presentation">
+      <span class="acct-seg-row__label">
+        <SunMoon :size="16" :stroke-width="1.75" aria-hidden="true" />{{ t('ui.theme') }}
+      </span>
+      <div class="acct-seg" role="group" :aria-label="t('ui.theme')">
+        <VTooltip v-for="opt in themeOptions" :key="opt.value" :text="opt.label" :describe="false">
+          <VMenuItem
+            kind="radio"
+            :icon="opt.icon"
+            :checked="theme === opt.value"
+            :text-value="opt.label"
+            :close-on-select="false"
+            @select="emit('setTheme', opt.value)"
+          >
+            <span class="sr-only">{{ opt.label }}</span>
+          </VMenuItem>
+        </VTooltip>
+      </div>
+    </div>
+    <div class="acct-seg-row" role="presentation">
+      <span class="acct-seg-row__label">
+        <Globe :size="16" :stroke-width="1.75" aria-hidden="true" />{{ t('ui.language') }}
+      </span>
+      <div class="acct-seg" role="group" :aria-label="t('ui.language')">
+        <VTooltip v-for="l in LOCALES" :key="l.code" :text="l.label" :describe="false">
+          <VMenuItem
+            kind="radio"
+            :checked="locale === l.code"
+            :text-value="l.label"
+            :lang="l.htmlLang"
+            :close-on-select="false"
+            @select="setLocale(l.code)"
+          >
+            <span aria-hidden="true">{{ SHORT[l.code] }}</span>
+            <span class="sr-only">{{ l.label }}</span>
+          </VMenuItem>
+        </VTooltip>
+      </div>
+    </div>
+    <VMenuItem kind="separator" />
+
+    <VMenuItem kind="checkbox" :icon="Code" :checked="devMode" @select="emit('toggleDevMode')">
+      {{ t('developerMode') }}
+    </VMenuItem>
+    <!-- "Salom Venera" faqat uyg'otish so'zi bor tillarda: boshqasida kalit hech narsa qilmasdi. -->
+    <VMenuItem v-if="wakeSupported" kind="checkbox" :icon="Ear" :checked="wake" @select="emit('toggleWake')">
+      {{ t('wakeWord') }}
+    </VMenuItem>
+    <!-- Mikrofon muammosini faqat foydalanuvchi tuzata oladi - jim turmaymiz. -->
+    <p v-if="wakeSupported && wake && wakeBlocked" class="acct-note" role="status">{{ t('chat.micBlocked') }}</p>
+    <p v-else-if="wakeSupported && wake && wakeDistorted" class="acct-note" role="status">{{ t('wakeWordDistorted') }}</p>
+    <VMenuItem kind="separator" />
+
+    <VMenuItem v-if="isAdmin" :icon="Shield" to="/admin">{{ t('chat.adminPanel') }}</VMenuItem>
+    <VMenuItem :icon="MonitorDown" @select="emit('openDesktop')">{{ t('chat.desktopApp') }}</VMenuItem>
+    <VMenuItem kind="separator" />
+    <VMenuItem :icon="LogOut" @select="emit('logout')">{{ t('logout') }}</VMenuItem>
+  </VMenu>
 </template>
 
 <style scoped>
-.sb-id-wrap {
-  position: relative;
-}
-.sb-id {
+.acct {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--s-2);
   width: 100%;
-  padding: 8px 10px;
-  border-radius: 12px;
-  background: transparent;
-  border: 1px solid transparent;
-  cursor: pointer;
+  height: 48px;
+  padding: 0 var(--s-2);
+  border-radius: var(--r-md);
   text-align: left;
-  font-family: 'Figtree', sans-serif;
+  transition: background-color var(--dur-1) var(--ease-out);
+}
+@media (hover: hover) {
+  .acct:hover {
+    background: var(--fill);
+  }
+}
+.acct[aria-expanded='true'] {
+  background: var(--fill);
+}
+.acct__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text);
-  transition: background 0.15s, border-color 0.15s;
+  font-size: var(--fs-body-sm);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.sb-id:hover {
-  background: var(--surface-hover);
-}
-.sb-id__avatar {
-  width: 30px;
-  height: 30px;
+.acct__chev {
   flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--avatar-bg);
-  color: var(--avatar-fg);
-  font-size: 12px;
-  font-weight: 700;
+  color: var(--text-3);
+}
+
+.acct-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-2) var(--s-2);
+}
+.acct-head__text {
+  min-width: 0;
+}
+.acct-head__name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-head__sub {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Mavzu / til: menyu ichidagi segmentli tanlov. Har segment - haqiqiy menuitemradio
+   (↑ ↓ bilan yetiladi), ko'rinishi - VSegmented kabi: tanlangani siyohda. */
+.acct-seg-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  min-height: 36px;
+  padding: var(--s-0_5) 0 var(--s-0_5) var(--s-2);
+}
+.acct-seg-row__label {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-}
-.sb-id__text {
-  display: flex;
-  flex-direction: column;
+  gap: var(--s-2);
   min-width: 0;
-  line-height: 1.25;
-}
-.sb-id__email {
-  font-size: 13px;
-  font-weight: 600;
   color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
   white-space: nowrap;
 }
-.sb-id__actor {
-  font-size: 11px;
-  color: var(--text-secondary);
+.acct-seg-row__label svg {
+  flex-shrink: 0;
+  color: var(--text-2);
 }
-/* Upward dropdown (the account row sits at the bottom of the sidebar). */
-.sb-id__menu {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  right: 0;
-  padding: 14px;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: 16px;
-  box-shadow: var(--menu-shadow);
-  z-index: 40;
-  animation: fadeUp 0.2s ease both;
-}
-.sb-id__head {
-  display: flex;
-  flex-direction: column;
+.acct-seg {
+  display: inline-flex;
+  flex-shrink: 0;
   gap: 2px;
-  margin-bottom: 10px;
+  padding: 2px;
+  border-radius: var(--r-sm);
+  background: var(--fill);
 }
-.sb-id__head-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-.sb-id__head-email {
-  font-size: 12.5px;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.sb-id__details {
-  margin: 0 0 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.sb-id__detail {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 12.5px;
-}
-.sb-id__detail dt {
-  color: var(--text-muted);
-  margin: 0;
-}
-.sb-id__detail dd {
-  color: var(--text);
-  margin: 0;
+.acct-seg :deep(.v-menu-item.v-menu-item) {
+  justify-content: center;
+  gap: 0;
+  min-width: 32px;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 var(--s-2);
+  border-radius: var(--r-xs);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
   font-weight: 500;
-  text-align: right;
 }
-.id-logout {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  margin-top: 12px;
-  padding: 12px 2px 0;
-  border: none;
-  border-top: 1px solid var(--border);
-  background: none;
-  color: var(--text-secondary);
-  font-family: 'Figtree', sans-serif;
-  font-size: 13.5px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: color 0.15s;
+.acct-seg :deep(.v-menu-item .v-menu-item__label) {
+  flex: 0 0 auto;
 }
-.id-logout:hover {
+.acct-seg :deep(.v-menu-item .v-menu-item__check) {
+  display: none;
+}
+.acct-seg :deep(.v-menu-item .v-menu-item__icon) {
+  color: inherit;
+}
+.acct-seg :deep(.v-menu-item.v-menu-item:focus) {
+  background: var(--fill-hover);
   color: var(--text);
+}
+.acct-seg :deep(.v-menu-item.v-menu-item[aria-checked='true']) {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.acct-seg :deep(.v-menu-item.v-menu-item[aria-checked='true']:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.acct-note {
+  margin: 0 var(--s-2) var(--s-1);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-sm);
+  background: var(--warn-soft);
+  color: var(--warn-text);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  max-width: 280px;
 }
 </style>

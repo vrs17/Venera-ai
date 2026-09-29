@@ -53,6 +53,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from ..analytics.meter import begin
+
 log = logging.getLogger(__name__)
 
 #: `access_token` ning muddati shundan kam qolganda yangilanadi.
@@ -349,7 +351,27 @@ class CrmAuth:
 
 
 def post_json(url: str, body: dict[str, str], timeout: float) -> dict[str, Any]:
-    """CRM ga JSON POST. `data` o'ramini ochadi, xatoni `CrmAuthError` ga o'giradi."""
+    """CRM ga JSON POST. `data` o'ramini ochadi, xatoni `CrmAuthError` ga o'giradi.
+
+    Hisobda (`api_calls`) amal nomi yo'lning oxiri: `login`, `refresh`,
+    `logout`. Agent sessiyasi ham, foydalanuvchi ulanishi ham shu yerdan
+    o'tadi - kim uchun ekanini kontekst aytadi (`analytics.bind`).
+    """
+    call = begin("crm", url.rstrip("/").rsplit("/", 1)[-1] or "auth")
+    try:
+        result = _post_json(url, body, timeout)
+    except CrmAuthError as exc:
+        # Matnda token yo'q (`_safe`) - faqat CRM kodi va xabari.
+        call.end("error", http_status=exc.status or None, error=f"{exc.code or 'CRM'}: {exc}")
+        raise
+    except BaseException as exc:
+        call.end("error", error=exc)
+        raise
+    call.end("ok", http_status=200)
+    return result
+
+
+def _post_json(url: str, body: dict[str, str], timeout: float) -> dict[str, Any]:
     request = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),

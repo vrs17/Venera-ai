@@ -1,16 +1,26 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { CheckIcon, CopyIcon } from '../icons'
+import { Check, Copy } from 'lucide-vue-next'
 import { copyText } from '../clipboard'
+import VIconButton from '../ui/VIconButton.vue'
 
 /**
- * Reusable copy control. Used both in the answer action bar (with a text label)
- * and on the user's prompt bubble (icon-only). Shows a brief check + "Copied"
- * confirmation, then reverts. `ariaLabel` is the accessible name when no visible
- * label is rendered.
+ * Nusxa olish tugmasi - javob amallarida va savol pufakchasi ostida.
+ *
+ * Belgi 1.6 s ga ✓ ga aylanadi - FAQAT nusxa haqiqatan olinganda (buferga yozish rad
+ * etilsa, jim qoladi). "Nusxa olindi" ekran o'quvchiga yashirin `status` orqali
+ * aytiladi: tugmaning o'zgargan aria-label'i har doim ham o'qilmaydi.
  */
-const props = defineProps<{ text: string; label?: string; ariaLabel?: string; size?: number }>()
+const props = withDefaults(
+  defineProps<{
+    text: string
+    /** Tooltip va aria-label; bo'lmasa "Nusxalash". */
+    ariaLabel?: string
+    size?: 'sm' | 'md'
+  }>(),
+  { size: 'sm' },
+)
 
 const { t } = useI18n({ useScope: 'global' })
 const copied = ref(false)
@@ -27,16 +37,20 @@ onBeforeUnmount(() => clearTimeout(timer))
 </script>
 
 <template>
-  <button
-    type="button"
-    class="msg-action"
-    :class="{ 'is-copied': copied }"
-    :title="copied ? t('copied') : ariaLabel ?? label ?? t('copy')"
-    :aria-label="copied ? t('copied') : ariaLabel ?? label ?? t('copy')"
-    @click="onCopy"
-  >
-    <CheckIcon v-if="copied" :size="size ?? 15" stroke="currentColor" />
-    <CopyIcon v-else :size="size ?? 15" />
-    <span v-if="label">{{ copied ? t('copied') : label }}</span>
-  </button>
+  <span class="copy-btn">
+    <VIconButton
+      :label="copied ? t('copied') : (ariaLabel ?? t('copy'))"
+      :icon="copied ? Check : Copy"
+      :size="size"
+      @click="onCopy"
+    />
+    <span class="sr-only" role="status">{{ copied ? t('copied') : '' }}</span>
+  </span>
 </template>
+
+<style scoped>
+.copy-btn {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+</style>

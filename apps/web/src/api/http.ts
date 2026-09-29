@@ -73,6 +73,9 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
   const headers: Record<string, string> = {
     Accept: 'application/json',
     'Accept-Language': acceptLanguage(),
+    // Kanal: backend analitikasi so'rovni shu sarlavha bo'yicha "web" deb yozadi
+    // (Mini App `miniapp` yuboradi). Chaqiruvchi o'z qiymatini berishi mumkin.
+    'X-Venera-Client': 'web',
     ...((options.headers as Record<string, string>) || {}),
   }
   if (options.body && !(options.body instanceof FormData)) {
