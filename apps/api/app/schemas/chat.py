@@ -142,6 +142,18 @@ class StreamRequest(BaseModel):
     #: buni klient aytadi, va default `false`: kadr QO'SHILGANI bilan
     #: eski klientlarning xatti-harakati o'zgarmaydi.
     voice: bool = False
+    #: Savol QANDAY kiritilgan: `voice` - mikrofondan (STT), `text` - yozib.
+    #: FAQAT savol izi uchun (admin panel: "ovozli" belgisi va ulushi).
+    #: Berilmasa `voice` dan olinadi - web'da ovoz paneli ochiq bo'lsa savol
+    #: gapirilgan, ya'ni ikkalasi bir narsa.
+    #:
+    #: NEGA ALOHIDA MAYDON. `voice` - "klient ovozli REJIMDA" (javob ovoz
+    #: chiqarib o'qiladi, kutish gaplari shunga qarab yuboriladi), savol qanday
+    #: kiritilgani emas. Mini App'da javobni o'qish default YOQIQ, ya'ni YOZIB
+    #: berilgan savol ham `voice: true` bilan keladi - izda hamma Mini App
+    #: savoli "ovozli" bo'lib ko'rinardi. Eski Mini App build'i bu maydonni
+    #: yubormaydi - u uchun avvalgi xulq.
+    input: Literal["text", "voice"] | None = None
     #: Interfeys tili - kutish gapi shu tilda bo'ladi.
     #: `uz-Cyrl` uchun gap lotin yozuvida keladi: u ESHITILADI, va TTS
     #: lotin yozuvida ishlaydi.

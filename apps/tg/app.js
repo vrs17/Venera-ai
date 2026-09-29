@@ -726,7 +726,7 @@
    *  Oldindan kesish aniqroq xabar beradi. */
   const MAX_QUESTION_CHARS = 2000;
 
-  async function streamAsk(question, onFrame, signal) {
+  async function streamAsk(question, onFrame, signal, spoken) {
     const text = (question || '').trim().slice(0, MAX_QUESTION_CHARS);
     if (!text) throw new ApiError('Savol bo\'sh');
     const response = await fetch('/api/v1/chat/stream', {
@@ -736,7 +736,13 @@
       // `voice` - OVOZLI rejimdami. Server buni o'zi bilmaydi, shuning
       // uchun klient aytadi: faqat shunda kutish gaplari (`hold` kadrlari)
       // yuboriladi. Matnli rejimda ular shovqin bo'lardi.
-      body: JSON.stringify({ question: text, chatId: chatId(), voice: voiceOn, locale: 'uz' }),
+      // `input` - savol QANDAY kiritilgani (mikrofon yoki yozib), faqat
+      // admin paneldagi savol izi uchun: ovozli rejim default yoqiq, ya'ni
+      // `voice` yozilgan savolni ham "ovozli" qilib ko'rsatardi.
+      body: JSON.stringify({
+        question: text, chatId: chatId(), voice: voiceOn, locale: 'uz',
+        input: spoken ? 'voice' : 'text',
+      }),
     });
     if (!response.ok) throw await apiError(response);
 
@@ -1208,7 +1214,7 @@
         setState('confirm');
         return;
       }
-      ask(text, turn);
+      ask(text, turn, true);
     } catch (err) {
       if (err && err.name === 'AbortError') return;
       if (turn !== turnId) return;
@@ -1274,7 +1280,8 @@
     el.appendChild(src);
   }
 
-  async function ask(question, turn) {
+  /** `spoken` - savol mikrofondan kelgan (STT), yozilmagan. */
+  async function ask(question, turn, spoken) {
     setState('thinking');
     // Kalit SHU YERDA olinadi: manbalar javob kelgan suhbat ostida eslab
     // qolinadi, javob kelguncha ekranda boshqa suhbat ochilgan bo'lsa ham.
@@ -1363,7 +1370,7 @@
     };
 
     try {
-      await streamAsk(question, onFrame, aborter ? aborter.signal : undefined);
+      await streamAsk(question, onFrame, aborter ? aborter.signal : undefined, spoken);
     } catch (err) {
       if (err && err.name === 'AbortError') { cursor.remove(); return; }
       if (turn !== turnId) return;
@@ -2268,7 +2275,7 @@
     aborter = new AbortController();
     const turn = ++turnId;
     addMsg('you', text);
-    ask(text, turn);
+    ask(text, turn, false);
     return true;
   }
 
@@ -2319,7 +2326,7 @@
   confirmYes.addEventListener('click', () => {
     if (state !== 'confirm' || !pendingQuestion) return;
     setNote('');
-    ask(pendingQuestion, turnId);
+    ask(pendingQuestion, turnId, true);
     pendingQuestion = '';
   });
   confirmNo.addEventListener('click', () => {

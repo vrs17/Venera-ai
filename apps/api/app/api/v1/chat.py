@@ -534,7 +534,10 @@ def stream(body: StreamRequest, request: Request,
     Iz yozish faqat navbatga qo'yadi - disk kutilmaydi, kadrlar kechikmaydi.
     """
     rec = TurnRecorder(user, channel_of(request), "chat", body.question,
-                       chat_id=body.chatId, locale=body.locale, input_mode=body.voice)
+                       chat_id=body.chatId, locale=body.locale,
+                       # Qanday kiritilgani (`input`), bo'lmasa ovozli rejim -
+                       # `StreamRequest.input` izohiga qara.
+                       input_mode=body.input or body.voice)
     if body.mode == "pro":
         # "Pro" so'ralgani izda: yuqoridagi xizmat haqiqatan bergani va
         # byudjet qoldig'i esa `done` kadridagi `pro` blokidan (`pro` kadri).
