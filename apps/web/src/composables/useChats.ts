@@ -31,8 +31,8 @@ let inflight: Promise<void> | null = null
 let undoTimer: ReturnType<typeof setTimeout> | null = null
 const titleTimers = new Map<string, ReturnType<typeof setTimeout>[]>()
 
-/** "Bekor qilish" qancha turadi. */
-const UNDO_MS = 8000
+/** "Bekor qilish" qancha turadi (o'chirish toast'i ham shuncha turadi). */
+export const UNDO_MS = 8000
 /** Model nomini olish uchun qayta so'rash vaqtlari. Xizmat nomni FONDA
  *  yozadi (javobdan bir necha soniya keyin); hujjat "bitta kechiktirilgan
  *  so'rov yetadi, so'rab turmang" deydi. Ikkitasi: LLM navbatda bo'lsa
@@ -218,11 +218,15 @@ async function remove(id: string): Promise<void> {
   }, UNDO_MS)
 }
 
-/** "Bekor qilish": suhbat nomi va xabarlari bilan qaytadi. */
-async function undoDelete(): Promise<void> {
-  const row = lastDeleted.value
-  if (!row) return
-  dismissUndo()
+/** "Bekor qilish": suhbat nomi va xabarlari bilan qaytadi.
+ *
+ *  `target` - aynan qaysi suhbat. Toast sichqoncha ustida yoki yashirin tabda
+ *  to'xtab turadi (WCAG 2.2.1), bu yerdagi 8 s taymer esa yo'q: `target`siz kech
+ *  bosilgan "Bekor qilish" jimgina hech narsa qilmasdi. */
+async function undoDelete(target?: ChatSummary): Promise<void> {
+  const row = target ?? lastDeleted.value
+  if (!row || find(row.chat_id)) return
+  if (lastDeleted.value?.chat_id === row.chat_id) dismissUndo()
   try {
     upsert(await restoreChat(row.chat_id))
   } catch (err) {

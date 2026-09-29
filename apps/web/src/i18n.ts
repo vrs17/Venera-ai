@@ -9,6 +9,14 @@
 
 import { createI18n } from 'vue-i18n'
 import type { ActorType } from './types'
+// Yangi bo'limlar alohida modullarda, har biri o'z nom maydoni ostida (`ui.*`,
+// `admin.*`, `report.*`). Ular ham xuddi shu qoidaga bo'ysunadi: `en` - manba,
+// qolgan tillar `Mirror<typeof en>` - bitta kalit yetishmasa ham kompilyatsiya xatosi.
+import { ui } from './i18n/ui'
+import { report } from './i18n/report'
+import { chat } from './i18n/chat'
+import { composer } from './i18n/composer'
+import { shell } from './i18n/shell'
 
 export type Locale = 'uz' | 'uz-Cyrl' | 'ru' | 'en'
 
@@ -139,7 +147,7 @@ const en = {
   networkError: 'Network error',
   headlineUnsafe: 'Sorry, this request doesn’t comply with the safety policy.',
   headlineAccessDenied: 'You don’t have sufficient permission to view this information.',
-  headlinePending: 'Pipeline allowed the request. Retrieval / answer generation pending backend wiring.',
+  headlinePending: 'No answer this time. Try again.',
   // Auth — hero
   authWelcomeBack: 'Welcome back',
   authCreateAccount: 'Create your account',
@@ -275,7 +283,7 @@ const en = {
   wakeWord: 'Wake word',
   wakeWordHint: 'Say "Salom Venera" to open the voice panel. The microphone stays on while this is enabled.',
   wakeWordActive: 'Listening for "Salom Venera"',
-  wakeWordDistorted: 'The microphone signal arrives with gaps cut into the speech, so "Salom Venera" cannot be recognised. Turn off microphone "audio enhancements" (noise suppression / noise gate) in Windows sound settings or your headset software, or speak closer to the microphone.',
+  wakeWordDistorted: 'The microphone cuts gaps into speech, so "Salom Venera" is not recognised. Turn off noise suppression in your sound or headset settings.',
   chatNotConnected: 'This question needs live data, and that system is not connected to your account here yet. Questions about rules and documents work.',
   chatFailed: 'The answer could not be completed.',
   sourcesDocuments: 'Sources',
@@ -401,7 +409,7 @@ const uz: Dict = {
   networkError: 'Tarmoq xatosi',
   headlineUnsafe: 'Kechirasiz, ushbu soʻrov xavfsizlik siyosatiga mos kelmaydi.',
   headlineAccessDenied: 'Sizda ushbu maʼlumotni koʻrish uchun yetarli ruxsat mavjud emas.',
-  headlinePending: 'Pipeline soʻrovga ruxsat berdi. Maʼlumot izlash / javob yaratish backend ulanishini kutmoqda.',
+  headlinePending: 'Bu safar javob kelmadi. Qayta urinib koʻring.',
   authWelcomeBack: 'Xush kelibsiz',
   authCreateAccount: 'Hisob yarating',
   authRecover: 'Parolni tiklash',
@@ -521,14 +529,14 @@ const uz: Dict = {
   voiceUnsure: 'To\u02bbg\u02bbri eshitganimga ishonchim komil emas.',
   voiceSendAnyway: 'Baribir yuborish',
   voiceTruncatedNote: 'Yozuv juda uzun edi, oxiri kesildi.',
-  wakeWord: 'Uyg`otish so`zi',
+  wakeWord: 'Uygʻotish soʻzi',
   wakeWordHint: '"Salom Venera" desangiz ovoz paneli ochiladi. Yoqilgan paytda mikrofon ochiq turadi.',
   wakeWordActive: '"Salom Venera" kutilmoqda',
-  wakeWordDistorted: 'Mikrofon signali nutq ichida bo`shliqlar bilan kelyapti, shuning uchun "Salom Venera" tanilmaydi. Windows ovoz sozlamalarida mikrofon uchun "Audio enhancements" (shovqin bostirish / shovqin darvozasi) ni yoki garnitura dasturidagi shu funksiyani o`chiring, yoki mikrofonga yaqinroq gapiring.',
-  chatNotConnected: 'Bu savol uchun jonli ma`lumot kerak, o`sha tizim esa hisobingizga bu yerda hali ulanmagan. Qoidalar va hujjatlar bo`yicha savollar ishlaydi.',
-  chatFailed: 'Javobni tugatib bo`lmadi.',
+  wakeWordDistorted: 'Mikrofon nutqni uzib yuboryapti, shuning uchun "Salom Venera" tanilmaydi. Ovoz yoki garnitura sozlamalarida shovqin bostirishni oʻchiring.',
+  chatNotConnected: 'Bu savol uchun jonli maʼlumot kerak, oʻsha tizim esa hisobingizga bu yerda hali ulanmagan. Qoidalar va hujjatlar boʻyicha savollar ishlaydi.',
+  chatFailed: 'Javobni tugatib boʻlmadi.',
   sourcesDocuments: 'Manbalar',
-  sourcesLookups: 'Tizim so`rovlari',
+  sourcesLookups: 'Tizim soʻrovlari',
   sourceDocument: 'Hujjat',
   sourcePage: '{n}-bet',
   artifactReady: 'Ariza tayyorlandi',
@@ -647,7 +655,7 @@ const uzCyrl: Dict = {
   networkError: 'Тармоқ хатоси',
   headlineUnsafe: 'Кечирасиз, ушбу сўров хавфсизлик сиёсатига мос келмайди.',
   headlineAccessDenied: 'Сизда ушбу маълумотни кўриш учун етарли рухсат мавжуд эмас.',
-  headlinePending: 'Pipeline сўровга рухсат берди. Маълумот излаш / жавоб яратиш backend уланишини кутмоқда.',
+  headlinePending: 'Бу сафар жавоб келмади. Қайта уриниб кўринг.',
   authWelcomeBack: 'Хуш келибсиз',
   authCreateAccount: 'Ҳисоб яратинг',
   authRecover: 'Паролни тиклаш',
@@ -770,7 +778,7 @@ const uzCyrl: Dict = {
   wakeWord: 'Уйғотиш сўзи',
   wakeWordHint: '"Салом Венера" десангиз овоз панели очилади. Ёқилган пайтда микрофон очиқ туради.',
   wakeWordActive: '"Салом Венера" кутилмоқда',
-  wakeWordDistorted: 'Микрофон сигнали нутқ ичида бўшлиқлар билан келяпти, шунинг учун "Салом Венера" танилмайди. Windows овоз созламаларида микрофон учун "Audio enhancements" (шовқин бостириш / шовқин дарвозаси) ни ёки гарнитура дастуридаги шу функцияни ўчиринг, ёки микрофонга яқинроқ гапиринг.',
+  wakeWordDistorted: 'Микрофон нутқни узиб юборяпти, шунинг учун "Салом Венера" танилмайди. Овоз ёки гарнитура созламаларида шовқин бостиришни ўчиринг.',
   chatNotConnected: 'Бу савол учун жонли маълумот керак, ўша тизим эса ҳисобингизга бу ерда ҳали уланмаган. Қоидалар ва ҳужжатлар бўйича саволлар ишлайди.',
   chatFailed: 'Жавобни тугатиб бўлмади.',
   sourcesDocuments: 'Манбалар',
@@ -893,7 +901,7 @@ const ru: Dict = {
   networkError: 'Ошибка сети',
   headlineUnsafe: 'Извините, этот запрос не соответствует политике безопасности.',
   headlineAccessDenied: 'У вас недостаточно прав для просмотра этой информации.',
-  headlinePending: 'Pipeline разрешил запрос. Поиск и генерация ответа ожидают подключения бэкенда.',
+  headlinePending: 'Ответа нет. Попробуйте ещё раз.',
   authWelcomeBack: 'С возвращением',
   authCreateAccount: 'Создайте аккаунт',
   authRecover: 'Сброс пароля',
@@ -1016,7 +1024,7 @@ const ru: Dict = {
   wakeWord: 'Слово-активатор',
   wakeWordHint: 'Скажите "Salom Venera", чтобы открыть голосовую панель. Пока включено, микрофон остаётся активным.',
   wakeWordActive: 'Ожидание "Salom Venera"',
-  wakeWordDistorted: 'Сигнал микрофона приходит с вырезанными паузами внутри речи, поэтому "Salom Venera" не распознаётся. Отключите для микрофона "улучшения звука" (шумоподавление / шумовой гейт) в настройках звука Windows или в программе гарнитуры, либо говорите ближе к микрофону.',
+  wakeWordDistorted: 'Микрофон обрезает речь, поэтому "Salom Venera" не распознаётся. Отключите шумоподавление в настройках звука или гарнитуры.',
   chatNotConnected: 'Для этого вопроса нужны актуальные данные, а нужная система пока не подключена к вашей учётной записи здесь. Вопросы по правилам и документам работают.',
   chatFailed: 'Не удалось завершить ответ.',
   sourcesDocuments: 'Источники',
@@ -1060,8 +1068,30 @@ export const i18n = createI18n({
   locale: getInitialLocale(),
   fallbackLocale: 'en',
   // Named interpolation uses {name} / {n} — identical to the original dicts.
-  messages: { uz, 'uz-Cyrl': uzCyrl, ru, en },
+  messages: {
+    uz: { ...uz, ui: ui.uz, report: report.uz, chat: chat.uz, composer: composer.uz, shell: shell.uz },
+    'uz-Cyrl': { ...uzCyrl, ui: ui['uz-Cyrl'], report: report['uz-Cyrl'], chat: chat['uz-Cyrl'], composer: composer['uz-Cyrl'], shell: shell['uz-Cyrl'] },
+    ru: { ...ru, ui: ui.ru, report: report.ru, chat: chat.ru, composer: composer.ru, shell: shell.ru },
+    en: { ...en, ui: ui.en, report: report.en, chat: chat.en, composer: composer.en, shell: shell.en },
+  },
 })
+
+// `admin.*` matnlari (4 til, ~55 kB) faqat admin panelida kerak: chat foydalanuvchisi
+// ularni yuklamasin. Admin marshruti ochilishidan OLDIN qo'shiladi (router), ya'ni
+// panel hech qachon kalit nomlari bilan chizilmaydi. Yuklanmasa - keyingi urinishda qayta.
+let adminMessages: Promise<void> | null = null
+export function loadAdminMessages(): Promise<void> {
+  adminMessages ??= import('./i18n/admin').then(
+    ({ admin }) => {
+      for (const { code } of LOCALES) i18n.global.mergeLocaleMessage(code, { admin: admin[code] })
+    },
+    (err: unknown) => {
+      adminMessages = null
+      throw err
+    },
+  )
+  return adminMessages
+}
 
 // Make the app the authoritative source of <html lang> + persisted locale on
 // startup (index.html only sets a pre-paint default). Mirrors the mount-time

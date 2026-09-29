@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { CSSProperties } from 'vue'
 import type { AccessStage, GuardStage, IntentStage, OrchestratorStage } from '../types'
 
+/**
+ * Bitta pipeline bosqichining kalit/qiymat jadvali (dasturchi izi). Avval tanlangan
+ * kalitlar, oxirida DOIM model, adapter va xom javob (mono). Istalgan turdagi qiymat
+ * xavfsiz satrga aylanadi.
+ */
 const props = defineProps<{
   stage: GuardStage | IntentStage | OrchestratorStage | AccessStage
   highlight: string[]
@@ -30,26 +34,44 @@ function formatValue(v: unknown): string {
     return String(v)
   }
 }
-
-function keyStyle(row: Row): CSSProperties {
-  return { color: row.muted ? 'var(--text-muted)' : 'var(--text-secondary)', fontWeight: 500, fontSize: '12px' }
-}
-
-function valStyle(row: Row): CSSProperties {
-  return {
-    color: row.muted ? 'var(--text-secondary)' : 'var(--text)',
-    wordBreak: 'break-word',
-    fontFamily: row.code ? 'ui-monospace, Consolas, monospace' : undefined,
-    fontSize: row.code ? '12px' : '13px',
-  }
-}
 </script>
 
 <template>
-  <div :style="{ display: 'grid', gridTemplateColumns: '120px 1fr', rowGap: '6px', columnGap: '12px', fontSize: '13px' }">
+  <dl class="fields">
     <template v-for="row in rows" :key="row.k">
-      <div :style="keyStyle(row)">{{ row.k }}</div>
-      <div :style="valStyle(row)">{{ formatValue(row.v) }}</div>
+      <dt :class="{ 'is-muted': row.muted }">{{ row.k }}</dt>
+      <dd :class="{ 'is-muted': row.muted, 'is-code': row.code }">{{ formatValue(row.v) }}</dd>
     </template>
-  </div>
+  </dl>
 </template>
+
+<style scoped>
+.fields {
+  display: grid;
+  grid-template-columns: minmax(96px, 120px) 1fr;
+  gap: var(--s-1_5) var(--s-3);
+  margin: 0;
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+}
+.fields dt {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+}
+.fields dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.fields .is-muted {
+  color: var(--text-3);
+}
+.fields dd.is-code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+  white-space: pre-wrap;
+}
+</style>

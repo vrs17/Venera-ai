@@ -1,121 +1,73 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Globe } from 'lucide-vue-next'
 import { LOCALES, setLocale } from '../i18n'
 import type { Locale } from '../i18n'
-import { ChevronDownIcon, GlobeIcon } from '../icons'
+import VButton from '../ui/VButton.vue'
+import VMenu from '../ui/VMenu.vue'
+import VMenuItem from '../ui/VMenuItem.vue'
+import VTooltip from '../ui/VTooltip.vue'
 
 /**
- * Compact language picker for the header. Mirrors IdentityBar's glass-pill +
- * dropdown pattern (click-outside to close); selecting a locale flips the whole
- * UI via the i18n locale.
+ * Til tanlash: yuqori paneldagi kichik tugma (globus + qisqa kod) va menyu.
+ * Menyu VMenu'da - Esc, strelkalar, harf bilan qidirish va fokusni qaytarish tayyor;
+ * joriy til `menuitemradio` + `aria-checked` bilan e'lon qilinadi.
+ * Tanlash butun ilovani o'giradi (setLocale: i18n + <html lang> + localStorage).
  */
 const { locale, t } = useI18n({ useScope: 'global' })
-const open = ref(false)
-const wrapRef = ref<HTMLDivElement | null>(null)
+
+// Qisqa kodlar tarjima qilinmaydi - har til o'z yozuvida.
+const SHORT: Record<Locale, string> = { uz: 'UZ', 'uz-Cyrl': 'ЎЗ', ru: 'RU', en: 'EN' }
 
 const current = computed(() => LOCALES.find((l) => l.code === (locale.value as Locale)) ?? LOCALES[0])
 
-function onDocDown(e: MouseEvent) {
-  if (wrapRef.value && !wrapRef.value.contains(e.target as Node)) open.value = false
-}
-watch(open, (isOpen) => {
-  if (isOpen) document.addEventListener('mousedown', onDocDown)
-  else document.removeEventListener('mousedown', onDocDown)
-})
-onBeforeUnmount(() => document.removeEventListener('mousedown', onDocDown))
-
 function choose(code: Locale) {
-  setLocale(code)
-  open.value = false
+  if (code !== locale.value) setLocale(code)
 }
 </script>
 
 <template>
-  <div ref="wrapRef" :style="{ position: 'relative' }">
-    <button
-      class="glass glass-hover"
-      :title="t('language')"
-      :aria-label="t('language')"
-      :style="{
-        fontFamily: 'Figtree, sans-serif',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '7px',
-        height: '36px',
-        fontSize: '13.5px',
-        fontWeight: 600,
-        color: 'var(--text)',
-        background: 'var(--glass-bg)',
-        border: '1px solid var(--glass-border)',
-        borderRadius: '999px',
-        padding: '0 12px',
-        cursor: 'pointer',
-        boxShadow: 'var(--glass-shadow)',
-        transition: 'border-color 0.2s, background 0.2s',
-      }"
-      @click="open = !open"
+  <VMenu placement="bottom-end" :min-width="168" :aria-label="t('language')">
+    <template #trigger>
+      <VTooltip :text="t('language')" placement="bottom" :describe="false">
+        <VButton
+          variant="ghost"
+          :icon="Globe"
+          class="lang-btn"
+          :aria-label="`${t('language')}: ${current.label}`"
+        >
+          <span :lang="current.htmlLang">{{ SHORT[current.code] }}</span>
+        </VButton>
+      </VTooltip>
+    </template>
+    <VMenuItem
+      v-for="l in LOCALES"
+      :key="l.code"
+      kind="radio"
+      :checked="l.code === current.code"
+      :text-value="l.label"
+      @select="choose(l.code)"
     >
-      <span :style="{ color: 'var(--text-secondary)', display: 'inline-flex' }">
-        <GlobeIcon />
-      </span>
-      <span>{{ current.label }}</span>
-      <ChevronDownIcon :style="{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }" />
-    </button>
-
-    <div
-      v-if="open"
-      class="glass"
-      :style="{
-        position: 'absolute',
-        top: '44px',
-        right: 0,
-        minWidth: '150px',
-        background: 'var(--glass-bg)',
-        border: '1px solid var(--glass-border)',
-        borderRadius: '14px',
-        padding: '6px',
-        boxShadow: 'var(--menu-shadow)',
-        zIndex: 40,
-        animation: 'fadeUp 0.2s ease both',
-      }"
-    >
-      <button
-        v-for="l in LOCALES"
-        :key="l.code"
-        class="menu-item"
-        :style="{
-          width: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '12px',
-          fontFamily: 'Figtree, sans-serif',
-          fontSize: '13.5px',
-          fontWeight: l.code === locale ? 700 : 500,
-          color: l.code === locale ? 'var(--text)' : 'var(--text-secondary)',
-          background: 'transparent',
-          border: 'none',
-          borderRadius: '9px',
-          padding: '8px 10px',
-          cursor: 'pointer',
-          textAlign: 'left',
-        }"
-        @click="choose(l.code)"
-      >
-        {{ l.label }}
-        <span
-          v-if="l.code === locale"
-          aria-hidden="true"
-          :style="{
-            width: '6px',
-            height: '6px',
-            borderRadius: '50%',
-            background: 'var(--ink)',
-            flexShrink: 0,
-          }"
-        />
-      </button>
-    </div>
-  </div>
+      <span :lang="l.htmlLang">{{ l.label }}</span>
+    </VMenuItem>
+  </VMenu>
 </template>
+
+<style scoped>
+/* Sinf ikki marta: VButton'ning o'z o'lcham/variant o'zgaruvchilaridan ustun tursin. */
+.lang-btn.lang-btn {
+  --btn-px: 10px;
+  --btn-fg: var(--text-2);
+  letter-spacing: 0.02em;
+}
+.lang-btn.lang-btn[aria-expanded='true'] {
+  --btn-fg: var(--text);
+  background: var(--fill);
+}
+@media (hover: hover) {
+  .lang-btn.lang-btn:hover {
+    --btn-fg: var(--text);
+  }
+}
+</style>

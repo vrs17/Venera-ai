@@ -2,58 +2,101 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-const props = defineProps<{ password: string }>()
+/**
+ * Yangi parol ostidagi ingichka 4 bo'lakli chiziq + bitta izoh (spec §4.1).
+ *
+ * Baholash backend QOIDALARIGA bog'langan (≥8 belgi, harf va raqam, joriy paroldan
+ * farqli - ChangePasswordView bilan bir xil). Qoida bajarilmaguncha chiziq qizil va
+ * bitta bo'lak, izoh esa AYNAN yetishmayotgan qoidani aytadi - avvalgidek "O'rtacha"
+ * deb turib, keyin rad etilmaydi. Qoidalar bajarilgach 12+ belgi va katta-kichik
+ * harf / belgi "kuchli" tomonga suradi.
+ *
+ * Izoh `aria-live=polite`: ekran o'quvchi yozish davomida holatni eshitadi. Maydon
+ * xatosi ko'rinib turganda (`quiet`) izoh yashiriladi - bir gap ikki marta chiqmasin.
+ */
+const props = defineProps<{
+  password: string
+  /** Joriy parol - "farqli bo'lsin" qoidasi uchun. */
+  current?: string
+  /** Izoh elementi id si - maydonning `aria-describedby` si uchun. */
+  id?: string
+  quiet?: boolean
+}>()
+
 const { t } = useI18n({ useScope: 'global' })
 
-// 0–4 score from length + character variety.
-const score = computed(() => {
+const missing = computed<string | null>(() => {
   const p = props.password
-  if (!p) return 0
+  if (p.length < 8) return t('passwordTooShort')
+  if (!/[A-Za-z]/.test(p) || !/\d/.test(p)) return t('passwordNeedsLetterDigit')
+  if (props.current && p === props.current) return t('mustDifferFromCurrent')
+  return null
+})
+
+const bonus = computed(() => {
+  const p = props.password
   let s = 0
-  if (p.length >= 8) s++
-  if (/[a-z]/.test(p) && /[A-Z]/.test(p)) s++
-  if (/\d/.test(p)) s++
-  if (/[^A-Za-z0-9]/.test(p)) s++
+  if (p.length >= 12) s++
+  if (/[^A-Za-z0-9]/.test(p) || (/[a-z]/.test(p) && /[A-Z]/.test(p))) s++
   return s
 })
 
-const pct = computed(() => `${(score.value / 4) * 100}%`)
-const label = computed(() => (score.value <= 1 ? t('passwordWeak') : score.value <= 3 ? t('passwordMedium') : t('passwordStrong')))
-const labelColor = computed(() => (score.value <= 1 ? 'var(--bad-fg)' : score.value <= 3 ? 'var(--warn-fg)' : 'var(--ok-fg)'))
+const level = computed<'weak' | 'medium' | 'strong'>(() =>
+  missing.value ? 'weak' : bonus.value > 0 ? 'strong' : 'medium',
+)
+// Qoidalar bajarilsa - kamida 2 bo'lak, har bir qo'shimcha +1.
+const filled = computed(() => (missing.value ? 1 : 2 + bonus.value))
+const caption = computed(
+  () => missing.value ?? (level.value === 'strong' ? t('passwordStrong') : t('passwordMedium')),
+)
 </script>
 
 <template>
-  <div v-if="password" class="pw">
-    <div class="pw__track">
-      <div class="pw__bar" :style="{ width: pct }" />
+  <div v-if="password" class="pw" :class="`pw--${level}`">
+    <div class="pw__bar" aria-hidden="true">
+      <span v-for="i in 4" :key="i" class="pw__seg" :class="{ 'is-on': i <= filled }" />
     </div>
-    <span class="pw__label" :style="{ color: labelColor }">{{ label }}</span>
+    <p v-if="!quiet" :id="id" class="pw__caption" aria-live="polite">{{ caption }}</p>
   </div>
 </template>
 
 <style scoped>
 .pw {
+  --pw-color: var(--crit);
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
+  flex-direction: column;
+  gap: var(--s-1_5);
 }
-.pw__track {
-  flex: 1;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--surface-hover);
-  overflow: hidden;
+.pw--medium {
+  --pw-color: var(--warn);
+}
+.pw--strong {
+  --pw-color: var(--good);
 }
 .pw__bar {
-  height: 100%;
-  border-radius: 999px;
-  background: var(--ink);
-  transition: width 0.3s var(--spring);
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--s-1);
 }
-.pw__label {
-  font-size: 11.5px;
-  font-weight: 600;
-  flex-shrink: 0;
+.pw__seg {
+  height: 3px;
+  border-radius: var(--r-full);
+  background: var(--fill-hover);
+  transition: background-color var(--dur-2) var(--ease-out);
+}
+.pw__seg.is-on {
+  background: var(--pw-color);
+}
+.pw__caption {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.pw--medium .pw__caption {
+  color: var(--warn-text);
+}
+.pw--strong .pw__caption {
+  color: var(--good-text);
 }
 </style>

@@ -91,6 +91,9 @@ export async function speakStream(
    *  start the instant the clip ends instead of ~1.1 s (measured TTS time to
    *  first audio) after it. */
   after?: Promise<unknown>,
+  /** O'qilayotgan javobning savol kaliti (`X-Venera-Turn`) - admin izida ovoz shu
+   *  savolga bog'lanadi. Yo'q bo'lsa server alohida yozuv ochadi. */
+  turnId?: string | null,
 ): Promise<Playback> {
   const token = getToken()
   const response = await fetch(`${BASE_URL}/api/v1/tts/speak`, {
@@ -99,6 +102,9 @@ export async function speakStream(
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       Accept: 'audio/L16, */*',
+      // Kanal statistikasi: sarlavhasiz so'rovni server "API" deb hisoblaydi.
+      'X-Venera-Client': 'web',
+      ...(turnId ? { 'X-Venera-Turn': turnId } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({ text, language }),
@@ -351,7 +357,7 @@ export async function holdClip(clip: string, signal?: AbortSignal): Promise<Blob
   const token = getToken()
   try {
     const response = await fetch(`${BASE_URL}/api/v1/tts/hold/${encodeURIComponent(clip)}.wav`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: { 'X-Venera-Client': 'web', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       signal,
       // The clip never changes (the text is in the source), so let the
       // browser keep it: after the first wait it plays from disk.

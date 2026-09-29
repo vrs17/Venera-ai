@@ -16,7 +16,8 @@ BGE-M3, Qdrant, or reranker services (per the API contract).
 - **Vite 8** (dev server + build)
 - **vue-router**, **vue-i18n** (uz / uz-Cyrl / ru / en)
 - **markdown-it** + **DOMPurify** (answer rendering)
-- No CSS framework — styling is scoped SFC CSS + a token-driven `index.css`
+- No CSS framework — styling is scoped SFC CSS + design tokens in `src/styles/tokens.css`
+  (base/reset/typography in `src/styles/base.css`, components in `src/ui/`)
 
 ---
 
@@ -109,10 +110,8 @@ when the contract changes.
 
 - **Light / dark theme** — toggle in the header (sun/moon), persisted to
   `localStorage`, defaults to the OS preference, set before first paint to avoid
-  a flash. Driven entirely by CSS variables in `index.css`.
-- **Frosted-glass surfaces** — the answer box, suggestion chips, identity pill,
-  dropdown, and user bubbles use `backdrop-filter`; dense data panels stay solid.
-- **Ambient glow** — a static warm backdrop pooled behind the answer box.
+  a flash. Light / dark / system; driven entirely by CSS variables in
+  `src/styles/tokens.css`.
 - **Demo identity** — the actor fields (`actorType`, `actorId`, `email`, `roles`,
   `department`) are edited via the header pill and cached in `localStorage`. In
   production these should come from an auth token, not manual input.
@@ -132,7 +131,7 @@ src/
 ├── types.ts            # Request/response types (mirror the contract)
 ├── theme.ts            # Theme read/apply/persist
 ├── icons.tsx           # Inline SVG icons
-├── index.css           # Theme tokens (light/dark), glass utilities, keyframes
+├── styles/             # tokens.css (design tokens, light/dark) + base.css
 └── components/
     ├── AmbientBackground.tsx   # Static glow
     ├── Header.tsx              # Title + theme toggle + identity

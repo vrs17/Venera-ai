@@ -85,3 +85,13 @@ export function forgetSources(chatId: string) {
     save(store)
   }
 }
+
+/** Chiqishda: manbalar ro'yxatida HRM/CRM qisqa javoblari (xodim ma'lumoti) bo'lishi
+ *  mumkin - keyingi odam shu brauzerda ularni ko'rmasin. */
+export function clearSources() {
+  try {
+    localStorage.removeItem(KEY)
+  } catch {
+    /* localStorage yo'q - tozalaydigan narsa ham yo'q */
+  }
+}

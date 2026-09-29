@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Splash sahifasidagi desktop yuklab olish bloki: Windows va macOS.
+// Desktop ilovani yuklab olish: Windows va macOS.
 //
 // Versiya, hajm va fayl nomi /download/version.json dan olinadi — desktop
 // ilovaning auto-update manifestidan. Shu sababli yangi .exe/.dmg serverga
@@ -10,10 +10,16 @@
 // qo'shilganda (masalan Linux) faqat PLATFORMS ro'yxatiga bir qator qo'shiladi.
 //
 // Manifest o'qilmasa yoki platforma uchun fayl bo'lmasa — o'sha karta
-// o'chirilgan holatda qoladi va sabab yoziladi. Splash baribir ochilaveradi.
+// o'chirilgan holatda qoladi va sabab yoziladi. Sahifa baribir ochilaveradi.
+//
+// Ikki ko'rinish, ma'lumot bitta:
+//   full    - sarlavha, izoh va kartalar ro'yxati (chatdagi "Desktop ilova" oynasi);
+//   compact - xush kelibsiz sahifasi ostidagi jim qator: yorliq + ikki kichik plitka.
 
-import { onMounted, onUnmounted, ref, computed } from 'vue'
+import { onMounted, onUnmounted, ref, computed, useId } from 'vue'
+import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Download } from 'lucide-vue-next'
 import {
   assetFor,
   detectPlatform,
@@ -24,9 +30,14 @@ import {
   type DesktopSetup,
   type PlatformKey,
 } from '../api/download.api'
-import { AppleIcon, DownloadIcon, WindowsIcon } from '../icons'
+// Brend belgilari lucide'da yo'q - eski to'plamdan.
+import { AppleIcon, WindowsIcon } from '../icons'
+import VTooltip from '../ui/VTooltip.vue'
+
+withDefaults(defineProps<{ variant?: 'full' | 'compact' }>(), { variant: 'full' })
 
 const { t, locale } = useI18n({ useScope: 'global' })
+const titleId = useId()
 
 const release = ref<DesktopRelease | null>(null)
 const loading = ref(true)
@@ -39,7 +50,7 @@ onMounted(async () => {
 // Foydalanuvchi manifest kelgunicha sahifadan ketsa, so'rovni bekor qilamiz.
 onUnmounted(() => controller.abort())
 
-const PLATFORMS: { key: PlatformKey; name: string; icon: unknown; reqKey: string }[] = [
+const PLATFORMS: { key: PlatformKey; name: string; icon: Component; reqKey: string }[] = [
   { key: 'windows', name: 'Windows', icon: WindowsIcon, reqKey: 'downloadWindowsReq' },
   { key: 'macos', name: 'macOS', icon: AppleIcon, reqKey: 'downloadMacReq' },
 ]
@@ -51,7 +62,7 @@ const detected = detectPlatform()
 interface Card {
   key: PlatformKey
   name: string
-  icon: unknown
+  icon: Component
   req: string
   asset: DesktopSetup | null
   href: string | undefined
@@ -87,19 +98,51 @@ const cards = computed<Card[]>(() => {
   if (!detected) return built
   return [...built].sort((a, b) => Number(b.key === detected) - Number(a.key === detected))
 })
+
+// Uch xil sabab, uch xil matn: hali tekshirilmoqda / manifest o'qilmadi /
+// manifest keldi-yu bu platforma unda yo'q.
+const offStatus = computed(() =>
+  loading.value ? t('downloadChecking') : release.value ? t('comingSoon') : t('downloadUnavailable'),
+)
 </script>
 
 <template>
-  <section class="dl" :aria-label="t('downloadTitle')">
-    <h2 class="dl__title">{{ t('downloadTitle') }}</h2>
+  <!-- Fayli bor platforma: haqiqiy <a download>. Havolani ATAYLAB <a> sifatida
+       qoldiramiz - o'ng tugma "Save link as" ishlaydi va yuklanish JS'ga bog'liq
+       bo'lmaydi. Fayli yo'q platforma: <button> emas, <div aria-disabled> -
+       bosiladigan narsaga o'xshamasligi kerak. -->
+  <section v-if="variant === 'compact'" class="dlc" :aria-labelledby="titleId">
+    <h2 :id="titleId" class="dlc__label">{{ t('shell.desktop.title') }}</h2>
+    <div class="dlc__tiles">
+      <template v-for="card in cards" :key="card.key">
+        <VTooltip :text="card.req" placement="top">
+          <a
+            v-if="card.href"
+            class="dlc__tile"
+            :href="card.href"
+            download
+            :aria-label="`${t('downloadCta')} — ${card.name}, ${card.meta}`"
+          >
+            <component :is="card.icon" class="dlc__os" :size="15" aria-hidden="true" />
+            <span class="dlc__name">{{ card.name }}</span>
+            <span class="dlc__meta">{{ card.meta }}</span>
+            <Download class="dlc__dl" :size="14" :stroke-width="1.75" aria-hidden="true" />
+          </a>
+          <div v-else class="dlc__tile dlc__tile--off" aria-disabled="true">
+            <component :is="card.icon" class="dlc__os" :size="15" aria-hidden="true" />
+            <span class="dlc__name">{{ card.name }}</span>
+            <span class="dlc__meta">{{ offStatus }}</span>
+          </div>
+        </VTooltip>
+      </template>
+    </div>
+  </section>
+
+  <section v-else class="dl" :aria-labelledby="titleId">
+    <h2 :id="titleId" class="dl__title">{{ t('downloadTitle') }}</h2>
     <p class="dl__sub">{{ t('downloadSub') }}</p>
 
     <div class="dl__cards">
-      <!-- Fayli bor platforma: haqiqiy <a download>. Havolani ATAYLAB <a>
-           sifatida qoldiramiz - o'ng tugma "Save link as" ishlaydi va yuklanish
-           JS'ga bog'liq bo'lmaydi.
-           Fayli yo'q platforma: <button> emas, <div aria-disabled> - bosiladigan
-           narsaga o'xshamasligi kerak. -->
       <template v-for="card in cards" :key="card.key">
         <a
           v-if="card.href"
@@ -108,34 +151,24 @@ const cards = computed<Card[]>(() => {
           download
           :aria-label="`${t('downloadCta')} — ${card.name}, ${card.meta}`"
         >
-          <span class="dl__os"><component :is="card.icon" :size="card.key === 'macos' ? 19 : 20" /></span>
+          <span class="dl__os"><component :is="card.icon" :size="card.key === 'macos' ? 17 : 18" /></span>
           <span class="dl__body">
             <span class="dl__name">{{ card.name }}</span>
             <span class="dl__req">{{ card.req }}</span>
           </span>
           <span class="dl__action">
-            <DownloadIcon :size="16" />
             <span class="dl__meta">{{ card.meta }}</span>
+            <Download :size="16" :stroke-width="1.75" aria-hidden="true" />
           </span>
         </a>
 
         <div v-else class="dl__card dl__card--off" aria-disabled="true">
-          <span class="dl__os"><component :is="card.icon" :size="card.key === 'macos' ? 19 : 20" /></span>
+          <span class="dl__os"><component :is="card.icon" :size="card.key === 'macos' ? 17 : 18" /></span>
           <span class="dl__body">
             <span class="dl__name">{{ card.name }}</span>
             <span class="dl__req">{{ card.req }}</span>
           </span>
-          <span class="dl__action dl__action--muted">
-            <!-- Uch xil sabab, uch xil matn: hali tekshirilmoqda / manifest
-                 o'qilmadi / manifest keldi-yu bu platforma unda yo'q. -->
-            {{
-              loading
-                ? t('downloadChecking')
-                : release
-                  ? t('comingSoon')
-                  : t('downloadUnavailable')
-            }}
-          </span>
+          <span class="dl__action dl__action--muted">{{ offStatus }}</span>
         </div>
       </template>
     </div>
@@ -143,128 +176,196 @@ const cards = computed<Card[]>(() => {
 </template>
 
 <style scoped>
+/* ---------- compact: xush kelibsiz sahifasi ostidagi jim qator ---------- */
+.dlc {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2) var(--s-4);
+  min-width: 0;
+}
+.dlc__label {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.dlc__tiles {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+.dlc__tile {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  height: 36px;
+  padding: 0 var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-decoration: none;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out);
+}
+@media (hover: hover) {
+  a.dlc__tile:hover {
+    background: var(--fill);
+    border-color: var(--line-strong);
+  }
+}
+a.dlc__tile:active {
+  background: var(--fill-hover);
+}
+.dlc__os {
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+.dlc__meta {
+  color: var(--text-3);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.dlc__dl {
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+.dlc__tile--off {
+  color: var(--text-3);
+  cursor: default;
+}
+.dlc__tile--off .dlc__os {
+  color: var(--text-4);
+}
+/* Telefon/planshetda desktop o'rnatuvchisi befoyda - qator ko'rsatilmaydi. */
+@media (max-width: 1119.98px) and (pointer: coarse) {
+  .dlc {
+    display: none;
+  }
+}
+
+/* ---------- full: chatdagi "Desktop ilova" oynasi ---------- */
 .dl {
-  /* Ota element (.splash__content) pointer-events:none - galaktikani kursorga
-     javob beradigan qoldirish uchun. Kartalar bosilishi kerak, qaytaramiz. */
-  pointer-events: auto;
-  margin-top: 42px;
   width: 100%;
-  max-width: 480px;
-  margin-inline: auto;
+  min-width: 0;
 }
 .dl__title {
-  margin: 0 0 4px;
-  font-size: 14px;
-  font-weight: 600;
   color: var(--text);
+  font-size: var(--fs-title-3);
+  line-height: var(--lh-title-3);
+  font-weight: 600;
+  letter-spacing: -0.011em;
 }
 .dl__sub {
-  margin: 0 0 16px;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--text-secondary);
+  margin-top: var(--s-1);
+  color: var(--text-3);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
 }
 .dl__cards {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--s-2);
+  margin-top: var(--s-5);
 }
 .dl__card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface);
+  gap: var(--s-3);
+  min-height: 60px;
+  padding: var(--s-3) var(--s-4) var(--s-3) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  color: var(--text);
   text-align: left;
   text-decoration: none;
 }
 .dl__card--ready {
-  color: var(--text);
-  cursor: pointer;
-  transition: border-color 0.2s ease, background 0.2s ease, transform 0.1s ease;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out);
 }
-.dl__card--ready:hover {
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  background: var(--surface-hover);
+@media (hover: hover) {
+  .dl__card--ready:hover {
+    background: var(--fill);
+    border-color: var(--line-strong);
+  }
 }
 .dl__card--ready:active {
-  transform: scale(0.995);
-}
-.dl__card--ready:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
-}
-/* O'chirilgan karta: bor, lekin bosilmaydi. Kontrast pasaytiriladi, yo'qotilmaydi -
-   "yaqinda" ni o'qib bo'lishi kerak. */
-.dl__card--off {
-  color: var(--text-secondary);
-  background: var(--surface-sunken);
-  border-style: dashed;
+  background: var(--fill-hover);
 }
 .dl__os {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
+  display: grid;
+  place-items: center;
   flex: none;
-  border-radius: 10px;
-  background: var(--surface-inset);
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-md);
+  background: var(--fill);
   color: var(--text);
-}
-.dl__card--off .dl__os {
-  color: var(--icon-muted);
 }
 .dl__body {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-width: 0;
   flex: 1;
+  min-width: 0;
 }
 .dl__name {
-  font-size: 14px;
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
   font-weight: 600;
-  color: var(--text);
-}
-.dl__card--off .dl__name {
-  color: var(--text-secondary);
 }
 .dl__req {
-  font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
 .dl__action {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--s-2);
   flex: none;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--accent);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
   white-space: nowrap;
 }
-.dl__action--muted {
-  color: var(--text-muted);
-  font-weight: 500;
-}
 .dl__meta {
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
-@media (max-width: 520px) {
-  .dl {
-    margin-top: 32px;
-  }
+/* O'chirilgan karta: bor, lekin bosilmaydi. Kontrast pasaytiriladi, yo'qotilmaydi -
+   "yaqinda" ni o'qib bo'lishi kerak. */
+.dl__card--off {
+  color: var(--text-3);
+}
+.dl__card--off .dl__os {
+  color: var(--text-4);
+}
+.dl__card--off .dl__name {
+  color: var(--text-2);
+}
+.dl__action--muted {
+  color: var(--text-3);
+  font-weight: 400;
+}
+@media (max-width: 519.98px) {
   /* Tor ekranda hajm/versiya matni nomni siqib qo'ymasligi uchun pastga tushadi. */
   .dl__card {
     flex-wrap: wrap;
   }
   .dl__action {
     width: 100%;
-    padding-left: 46px;
+    padding-left: calc(36px + var(--s-3));
   }
 }
 </style>

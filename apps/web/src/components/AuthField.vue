@@ -1,9 +1,22 @@
 <script setup lang="ts">
-import { computed, ref, useId } from 'vue'
-import { useI18n } from 'vue-i18n'
+import { computed, ref } from 'vue'
 import type { Component } from 'vue'
-import { EyeIcon, EyeOffIcon } from '../icons'
-import Field from './Field.vue'
+import { useI18n } from 'vue-i18n'
+import { Eye, EyeOff } from 'lucide-vue-next'
+import VInput from '../ui/VInput.vue'
+import VIconButton from '../ui/VIconButton.vue'
+
+/**
+ * Kirish shakllari maydoni: VInput (lg, 44px) + parol uchun ko'rsatish/yashirish.
+ * Prop'lar eskisi bilan bir xil (label, v-model, type, autocomplete, error, icon) -
+ * chaqiruvchilarni buzmaslik uchun. Qolgan atributlar (`name`, `autocapitalize`,
+ * `spellcheck`, `aria-describedby`...) VInput orqali to'g'ridan-to'g'ri <input> ga
+ * tushadi.
+ *
+ * Xato matni oddiy <p> (role=alert EMAS): yuborishda bir nechta maydon birdan
+ * "baqirmasin" - e'lonni shakl darajasidagi AuthError qiladi.
+ */
+defineOptions({ inheritAttrs: false })
 
 const props = withDefaults(
   defineProps<{
@@ -14,117 +27,47 @@ const props = withDefaults(
     autocomplete?: string
     error?: string
     icon?: Component
+    /** @deprecated Eski kirish animatsiyasi kechikishi - endi e'tiborsiz. */
     revealDelay?: string
   }>(),
-  { type: 'text', revealDelay: '0s' },
+  { type: 'text' },
 )
-defineEmits<{ 'update:modelValue': [value: string] }>()
+const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
 const { t } = useI18n({ useScope: 'global' })
 const revealed = ref(false)
-const errorId = useId()
+const input = ref<InstanceType<typeof VInput> | null>(null)
 const actualType = computed(() => (props.type === 'password' && revealed.value ? 'text' : props.type))
+
+function onUpdate(v: string | number | null) {
+  emit('update:modelValue', v == null ? '' : String(v))
+}
+
+defineExpose({ focus: () => input.value?.focus() })
 </script>
 
 <template>
-  <Field :label="label" class="field-enter" :style="{ animationDelay: revealDelay }">
-    <div class="auth-field" :class="{ 'has-icon': !!icon, 'is-password': type === 'password', 'has-error': !!error }">
-      <span v-if="icon" class="auth-field__icon"><component :is="icon" :size="16" /></span>
-      <input
-        :type="actualType"
-        :value="modelValue"
-        :placeholder="placeholder"
-        :autocomplete="autocomplete"
-        :aria-invalid="error ? 'true' : undefined"
-        :aria-describedby="error ? errorId : undefined"
-        class="input-focus auth-field__input"
-        @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
-      />
-      <button
-        v-if="type === 'password'"
-        type="button"
-        class="auth-field__toggle"
-        :title="revealed ? t('hidePassword') : t('showPassword')"
-        :aria-label="revealed ? t('hidePassword') : t('showPassword')"
+  <VInput
+    ref="input"
+    v-bind="$attrs"
+    :model-value="modelValue"
+    :label="label"
+    :type="actualType"
+    :placeholder="placeholder"
+    :autocomplete="autocomplete"
+    :error="error || undefined"
+    :icon="icon"
+    size="lg"
+    @update:model-value="onUpdate"
+  >
+    <template v-if="type === 'password'" #trailing>
+      <!-- type=button (VIconButton standarti) - shaklni hech qachon yubormaydi. -->
+      <VIconButton
+        size="sm"
+        :icon="revealed ? EyeOff : Eye"
+        :label="revealed ? t('hidePassword') : t('showPassword')"
         @click="revealed = !revealed"
-      >
-        <EyeOffIcon v-if="revealed" :size="16" />
-        <EyeIcon v-else :size="16" />
-      </button>
-    </div>
-    <div v-if="error" :id="errorId" role="alert" class="auth-field__error">{{ error }}</div>
-  </Field>
+      />
+    </template>
+  </VInput>
 </template>
-
-<style scoped>
-.auth-field {
-  position: relative;
-}
-.auth-field__input {
-  width: 100%;
-  font-size: 14.5px;
-  font-family: 'Figtree', sans-serif;
-  color: var(--text);
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 11px 12px;
-  outline: none;
-  box-sizing: border-box;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-.auth-field.has-icon .auth-field__input {
-  padding-left: 40px;
-}
-.auth-field.is-password .auth-field__input {
-  padding-right: 42px;
-}
-.auth-field.has-error .auth-field__input {
-  border-color: var(--bad-bd);
-}
-.auth-field__icon {
-  position: absolute;
-  left: 13px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: inline-flex;
-  color: var(--icon-muted);
-  pointer-events: none;
-}
-.auth-field__toggle {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--icon-muted);
-  cursor: pointer;
-  border-radius: 8px;
-  transition: color 0.15s, background 0.15s;
-}
-.auth-field__toggle:hover {
-  color: var(--text-secondary);
-  background: var(--surface-hover);
-}
-.auth-field__error {
-  margin-top: 5px;
-  font-size: 12px;
-  color: var(--bad-fg);
-}
-/* Non-clip-path entrance so the input's focus ring is never sheared (clip-path
-   reveals leave a persistent clip box that would crop the 3px brand halo). */
-.field-enter {
-  animation: fadeUp 0.45s var(--spring) both;
-}
-@media (prefers-reduced-motion: reduce) {
-  .field-enter {
-    animation: none !important;
-  }
-}
-</style>

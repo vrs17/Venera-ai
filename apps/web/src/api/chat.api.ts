@@ -13,7 +13,7 @@
 // ReadableStream reads the same kind of stream over POST, with the token in a
 // header where it belongs.
 
-import { ApiError, apiFetch, BASE_URL, getToken } from './http'
+import { ApiError, BASE_URL, getToken } from './http'
 import type { ApiErrorResponse, ChatFrame, PipelineResponse, RetrievalStage } from '../types'
 
 // `/ask` nests the router trace under `pipeline.*` and ships `chunks` instead of
@@ -48,13 +48,48 @@ function normalizeAskResponse(raw: Record<string, unknown>): PipelineResponse {
   }
 }
 
-export async function askAi(question: string, signal?: AbortSignal): Promise<PipelineResponse> {
-  const raw = await apiFetch<Record<string, unknown>>('/api/v1/chat/ask', {
+/** `/ask` natijasi va backend bergan savol kaliti (`X-Venera-Turn`). */
+export type AskResult = PipelineResponse & { turnId: string | null }
+
+export async function askAi(question: string, signal?: AbortSignal): Promise<AskResult> {
+  // apiFetch emas: u javob sarlavhalarini bermaydi, bizga esa `X-Venera-Turn` kerak.
+  const token = getToken()
+  const response = await fetch(`${BASE_URL}/api/v1/chat/ask`, {
     method: 'POST',
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      Accept: 'application/json',
+      [CLIENT_HEADER]: 'web',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify({ question }),
     signal,
   })
-  return normalizeAskResponse(raw)
+  if (!response.ok) throw await errorOf(response, 'Request failed')
+  const raw = (await response.json()) as Record<string, unknown>
+  return { ...normalizeAskResponse(raw), turnId: turnOf(response) }
+}
+
+/** Backend analitikasi so'rovni shu sarlavha bo'yicha "web" kanaliga yozadi (apiFetch
+ *  ham yuboradi). Bu fayldagi to'g'ridan-to'g'ri fetch'lar ham yubormasa, web chat
+ *  admin panelda "API" bo'lib ko'rinardi. */
+const CLIENT_HEADER = 'X-Venera-Client'
+/** Javob sarlavhasi: backend shu savolga bergan kalit (`turns.id`). */
+const TURN_HEADER = 'X-Venera-Turn'
+
+function turnOf(response: Response): string | null {
+  return response.headers.get(TURN_HEADER)?.trim() || null
+}
+
+/** Xato konverti (JSON) -> ApiError; tana JSON bo'lmasa - holat kodi bilan. */
+async function errorOf(response: Response, fallback: string): Promise<ApiError> {
+  let body: ApiErrorResponse | undefined
+  try {
+    body = (await response.json()) as ApiErrorResponse
+  } catch {
+    /* non-JSON error body */
+  }
+  return new ApiError(body?.message || `${fallback} (${response.status})`, body)
 }
 
 
@@ -70,6 +105,14 @@ export interface StreamOptions {
    *  memory, so follow-up questions ("va o'tgan oyda?") work. */
   chatId?: string | null
   signal?: AbortSignal
+  /** Sarlavhalar kelishi bilan (birinchi kadrdan OLDIN): backend bergan savol
+   *  kaliti. Javob tugamasdan "Xabar berish" ham shu kalitni bilsin. */
+  onTurn?: (turnId: string) => void
+}
+
+/** `streamAsk` natijasi: backend bergan savol kaliti (sarlavha bo'lmasa null). */
+export interface StreamResult {
+  turnId: string | null
 }
 
 /**
@@ -83,13 +126,14 @@ export async function streamAsk(
   question: string,
   onFrame: (frame: ChatFrame) => void,
   options: StreamOptions = {},
-): Promise<void> {
+): Promise<StreamResult> {
   const token = getToken()
   const response = await fetch(`${BASE_URL}/api/v1/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       Accept: 'application/x-ndjson',
+      [CLIENT_HEADER]: 'web',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({
@@ -105,18 +149,13 @@ export async function streamAsk(
     signal: options.signal,
   })
 
-  if (!response.ok) {
-    // The error envelope is JSON even here, so the same ApiError the rest of
-    // the app throws comes out of this path too and localizeApiError works.
-    let body: ApiErrorResponse | undefined
-    try {
-      body = (await response.json()) as ApiErrorResponse
-    } catch {
-      /* non-JSON error body */
-    }
-    throw new ApiError(body?.message || `Request failed (${response.status})`, body)
-  }
+  // The error envelope is JSON even here, so the same ApiError the rest of
+  // the app throws comes out of this path too and localizeApiError works.
+  if (!response.ok) throw await errorOf(response, 'Request failed')
   if (!response.body) throw new ApiError('Streaming unsupported')
+
+  const turnId = turnOf(response)
+  if (turnId) options.onTurn?.(turnId)
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -142,6 +181,7 @@ export async function streamAsk(
     // garbage collector, which would hold a slot on the assistant's queue.
     void reader.cancel().catch(() => {})
   }
+  return { turnId }
 }
 
 function emit(line: string, onFrame: (frame: ChatFrame) => void): void {
@@ -178,17 +218,9 @@ function emit(line: string, onFrame: (frame: ChatFrame) => void): void {
 export async function downloadFile(url: string, filename: string): Promise<void> {
   const token = getToken()
   const response = await fetch(`${BASE_URL}${url}`, {
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), Accept: '*/*' },
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), Accept: '*/*', [CLIENT_HEADER]: 'web' },
   })
-  if (!response.ok) {
-    let body: ApiErrorResponse | undefined
-    try {
-      body = (await response.json()) as ApiErrorResponse
-    } catch {
-      /* non-JSON error body */
-    }
-    throw new ApiError(body?.message || `Download failed (${response.status})`, body)
-  }
+  if (!response.ok) throw await errorOf(response, 'Download failed')
   const blob = await response.blob()
   const objectUrl = URL.createObjectURL(blob)
   try {

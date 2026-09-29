@@ -10,8 +10,9 @@
 // Menyu ochilganda `load()` chaqiriladi - HRM tokeni 10 soatda tugaydi, ya'ni
 // holat sahifa ochilgandan beri o'zgargan bo'lishi mumkin.
 
-import { reactive, readonly, ref } from 'vue'
+import { reactive, readonly, ref, watch } from 'vue'
 import { connectConnector, disconnectConnector, listConnectors, updateConnector } from '../api/connectors.api'
+import { useAuth } from './useAuth'
 import type { ConnectorId, ConnectorStatus } from '../types'
 
 export type { ConnectorId, ConnectorStatus }
@@ -27,6 +28,9 @@ const loading = ref(false)
 const loaded = ref(false)
 const loadFailed = ref(false)
 let inflight: Promise<void> | null = null
+/** Sessiya avlodi: chiqish/boshqa odam kirganda oshadi - eski sessiyaning kech
+ *  kelgan javobi yangi odamning ro'yxatiga yozilmaydi. */
+let generation = 0
 
 function apply(status: ConnectorStatus) {
   const i = connectors.findIndex((c) => c.id === status.id)
@@ -38,23 +42,47 @@ function apply(status: ConnectorStatus) {
 function load(): Promise<void> {
   if (inflight) return inflight
   loading.value = true
+  const gen = generation
   inflight = (async () => {
     try {
       const { connectors: list } = await listConnectors()
+      if (gen !== generation) return
       list.forEach(apply)
       loaded.value = true
       loadFailed.value = false
     } catch {
       // Ro'yxat baribir ko'rinadi (eski/placeholder holat bilan); qatorlar
       // ostida "holat yuklanmadi" chiqadi.
-      loadFailed.value = true
+      if (gen === generation) loadFailed.value = true
     } finally {
-      loading.value = false
-      inflight = null
+      if (gen === generation) {
+        loading.value = false
+        inflight = null
+      }
     }
   })()
   return inflight
 }
+
+/** Boshlang'ich holat. Holat modul darajasida yashaydi, ya'ni chiqib boshqa
+ *  hisob bilan kirilsa (yoki boshqa tabda chiqilsa) oldingi odamning logini
+ *  birinchi yuklash tugaguncha menyuda ko'rinib turardi. */
+export function resetConnectors(): void {
+  generation++
+  inflight = null
+  loading.value = false
+  loaded.value = false
+  loadFailed.value = false
+  connectors.splice(0, connectors.length, placeholder('hrm', 'HRM'), placeholder('crm', 'CRM'))
+}
+
+// Kim kirgani o'zgarsa (chiqish, boshqa tabda chiqish, boshqa hisob) - tozalanadi.
+watch(
+  () => useAuth().user.value?.actorId ?? null,
+  (now, before) => {
+    if (now !== before) resetConnectors()
+  },
+)
 
 export function useConnectors() {
   /** Login/parol bilan ulanish. Xato bo'lsa reject qiladi (ApiError) - oyna
@@ -67,16 +95,20 @@ export function useConnectors() {
     apply(await disconnectConnector(id))
   }
 
-  /** Kalit: darhol ko'rinadi (optimistik), server rad etsa qaytariladi. */
-  async function toggle(id: ConnectorId): Promise<void> {
+  /** Kalit: darhol ko'rinadi (optimistik), server rad etsa qaytariladi.
+   *  `false` - rad etildi: chaqiruvchi xabar ko'rsatadi (kalit jimgina orqaga
+   *  qaytsa, odam bosgani "yutilib ketdi" deb o'ylaydi). */
+  async function toggle(id: ConnectorId): Promise<boolean> {
     const c = connectors.find((x) => x.id === id)
-    if (!c || c.state !== 'connected') return
+    if (!c || c.state !== 'connected') return false
     const wanted = !c.enabled
     c.enabled = wanted
     try {
       apply(await updateConnector(id, { enabled: wanted }))
+      return true
     } catch {
       c.enabled = !wanted
+      return false
     }
   }
 
