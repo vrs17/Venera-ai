@@ -262,12 +262,16 @@ def test_keycloak_ochgan_zahira_yoq_sabab_aytiladi(client, hub, net):
     assert "javob bermadi" in response.json()["message"]
 
 
-def test_hisob_sozlanmagan_bolsa_aytiladi(client, hub, net):
-    """Keycloak "Account is not fully set up" - bu parol emas, hisob; odamga aytiladi."""
+def test_hisob_sozlanmagan_bolsa_nima_qilishni_aytadi(client, hub, net):
+    """Keycloak "Account is not fully set up" - parol TO'G'RI, hisobda tugallanmagan
+    amal bor (2026-09-29 da jonli: B.Boqiyev). Xom matn o'rniga nima qilish aytiladi,
+    zahira hisob esa SINALMAYDI (bu parol xatosi emas)."""
     net.idp_error = (400, {"error": "invalid_grant", "error_description": "Account is not fully set up"})
     response = client.post("/api/v1/auth/login", json=LOGIN)
     assert response.status_code == 400
-    assert "Account is not fully set up" in response.json()["message"]
+    message = response.json()["message"]
+    assert "tugallanmagan amal" in message and "brauzer" in message
+    assert "not fully set up" not in message
 
 
 def test_boshqa_realm_tokeni_rad_etiladi(client, hub, net):

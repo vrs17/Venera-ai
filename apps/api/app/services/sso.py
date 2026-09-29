@@ -38,6 +38,23 @@ log = logging.getLogger(__name__)
 _NOISE_ROLES = {"offline_access", "uma_authorization"}
 _NOISE_PREFIX = "default-roles-"
 
+#: Keycloak `invalid_grant: "Account is not fully set up"` - PAROL TO'G'RI,
+#: lekin hisobda TUGALLANMAGAN AMAL bor (parolni yangilash, emailni
+#: tasdiqlash, profilni to'ldirish, OTP). Brauzer orqali kirganda Keycloak
+#: o'sha qadamni ko'rsatardi; parol granti (API) buni qila olmaydi va rad
+#: etadi. Odam BIR MARTA brauzer orqali CRM saytiga kirsa amal bajariladi
+#: va shu kirish ishlaydi (Keycloak'ning o'z hisob sahifasi bu realm'da
+#: o'chiq - "Client not found", 2026-09-29). Yoki Keycloak administratori
+#: amalni olib tashlaydi. Xom matn odamga hech narsa demaydi - shuning
+#: uchun aytiladi. Agent hisobida ham aynan shu bo'lgan (`crm_auth.py`).
+_NOT_SET_UP = "not fully set up"
+MSG_ACCOUNT_SETUP = (
+    "Parol to'g'ri, lekin Keycloak hisobingizda tugallanmagan amal bor "
+    "(parolni yangilash, emailni tasdiqlash yoki profilni to'ldirish). "
+    "Bir marta CRM saytiga brauzer orqali kiring, so'ralgan qadamni "
+    "bajaring va shu yerda qaytadan urinib ko'ring."
+)
+
 
 class SsoError(Exception):
     """Kirish rad etildi yoki Keycloak javob bermadi. Matn foydalanuvchiga
@@ -87,7 +104,10 @@ class KeycloakSso:
         try:
             access, refresh, ttl = self.idp.login(username, password)
         except ConnectorError as exc:
-            raise SsoError(str(exc), status=exc.status, code=exc.code) from None
+            message = str(exc)
+            if exc.code == "invalid_grant" and _NOT_SET_UP in message.lower():
+                message = MSG_ACCOUNT_SETUP
+            raise SsoError(message, status=exc.status, code=exc.code) from None
         claims = self._claims(access)
         subject = str(claims.get("sub") or "").strip()
         if not subject:
