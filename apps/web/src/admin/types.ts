@@ -28,8 +28,9 @@ export type TurnStatus = (typeof TURN_STATUSES)[number]
 export type TurnKind = 'chat' | 'ask' | 'bot'
 export type InputMode = 'text' | 'voice'
 
-/** Qaysi tomon javob berdi (yuqoridagi yordamchining `done.route`). `none` - faqat filtrda. */
-export const ROUTES = ['rules', 'hrm', 'crm', 'live', 'both', 'clarify'] as const
+/** Qaysi tomon javob berdi (yuqoridagi yordamchining `done.route`). `none` - faqat filtrda.
+ *  `contacts` - yordamchi EMAS, xodimlar ma'lumotnomasi javob bergan (`services/contacts_chat.py`). */
+export const ROUTES = ['rules', 'hrm', 'crm', 'live', 'both', 'clarify', 'contacts'] as const
 export type Route = (typeof ROUTES)[number]
 
 export type ProposalStatus = 'pending' | 'executed' | 'cancelled' | 'failed' | 'expired'

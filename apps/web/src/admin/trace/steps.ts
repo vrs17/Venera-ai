@@ -59,6 +59,11 @@ const LABEL_KEYS: Record<string, string> = {
   error: 'error',
   artifact: 'artifact',
   proposal: 'proposal',
+  // Prod'dan: xodimlar ma'lumotnomasi (`open_stream` dagi birinchi oraliq) va
+  // "Pro" rejimi (`pro.requested` nuqtasi, `done.pro` dan `pro` kadri).
+  contacts: 'contacts',
+  'pro.requested': 'pro.requested',
+  pro: 'pro.result',
 }
 
 type Translate = (key: string, named?: Record<string, unknown>) => string
@@ -113,7 +118,7 @@ function isFailure(e: TurnEvent): boolean {
   return p.ok === false
 }
 
-function subOf(e: TurnEvent, routeLabel: (r: string) => string): string | undefined {
+function subOf(e: TurnEvent, routeLabel: (r: string) => string, t: Translate): string | undefined {
   const p = obj(e.payload)
   if (typeof p.error === 'string' && p.error) return text(p.error) ?? undefined
   switch (e.name) {
@@ -146,6 +151,22 @@ function subOf(e: TurnEvent, routeLabel: (r: string) => string): string | undefi
       return joined([p.status, p.error])
     case 'pipeline.result':
       return joined([p.finalStatus, p.domain, p.intent])
+    case 'contacts':
+      // Har savolda o'lchanadi: javob berdimi yoki savol yordamchiga o'tdimi.
+      return typeof p.answered === 'boolean'
+        ? t(p.answered ? 'admin.trace.contactsHit' : 'admin.trace.contactsMiss')
+        : undefined
+    case 'pro': {
+      // Chatdagi belgining o'sha uch holati (`pro.*`): byudjet faqat birinchisida yeyiladi.
+      if (p.used === true) return t('pro.used')
+      if (typeof p.reason === 'string' && p.reason) {
+        const why = p.reason === 'limit' ? t('pro.reasonLimit')
+          : p.reason === 'no user' ? t('pro.reasonNoUser')
+            : p.reason
+        return t('pro.denied', { why })
+      }
+      return p.requested ? t('pro.notNeeded') : undefined
+    }
     default:
       return joined([p.model, p.provider, p.engine, p.source])
   }
@@ -204,7 +225,7 @@ export function buildSteps(turn: TurnDetail, { t, te, routeLabel }: BuildOptions
     rows.push({
       id: `e${e.seq}`,
       label: stepLabel(e.name, t, te),
-      sub: subOf(e, routeLabel),
+      sub: subOf(e, routeLabel, t),
       startMs: Math.max(0, e.tMs),
       durMs: isSpan ? e.durMs : null,
       kind: kindOf(e),

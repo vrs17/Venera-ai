@@ -126,7 +126,7 @@ def turn_filter(
     q: str | None = _SEARCH,
     actor_id: int | None = Query(None, alias="actorId", description="Faqat shu odam"),
     route: str | None = Query(None, max_length=64,
-                              description="rules | hrm | crm | live | both | clarify | none"),
+                              description="rules | hrm | crm | live | both | clarify | contacts | none"),
     status: str | None = Query(None, pattern=_STATUS_PATTERN),
     reported: bool | None = Query(None, description="true - faqat xabar berilganlar"),
     min_ms: int | None = Query(None, alias="minMs", ge=0, description="To'liq vaqt kamida (ms)"),

@@ -49,7 +49,8 @@ class TurnSummary(BaseModel):
     chatId: str | None = None
     #: Birinchi 240 belgi (to'liq matn - `TurnDetail`).
     question: str
-    #: Qaysi tomon javob berdi: rules | hrm | crm | live | both | clarify.
+    #: Qaysi tomon javob berdi: rules | hrm | crm | live | both | clarify, yoki
+    #: `contacts` - xodimlar ma'lumotnomasi (yordamchiga bormagan savol).
     route: str | None = None
     #: running | ok | error | cancelled
     status: str
