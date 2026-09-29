@@ -12,6 +12,8 @@ import MessageActions from './MessageActions.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
 import AnswerSources from './AnswerSources.vue'
 import ActionCard from './ActionCard.vue'
+import VBadge from '../ui/VBadge.vue'
+import VTooltip from '../ui/VTooltip.vue'
 
 /**
  * Bitta yordamchi javobi - barcha holatlarda. Ustuvorlik o'zgarmaydi:
@@ -88,6 +90,24 @@ const answer = computed(() => props.exchange.response?.answer ?? '')
 
 // Nusxa: javob matni, bo'lmasa - holat jumlasi.
 const copyText = computed(() => answer.value || headline.value || null)
+
+// "Pro" belgisi: rejim so'ralgan turlarda amallar qatorida kichik "Pro", tafsiloti
+// tooltip'da. UCH HOLAT, farqi MUHIM: "ishlatildi" byudjetdan yegan, "kerak
+// bo'lmadi" va "berilmadi" esa yemagan (ikkinchisida javob standart rejimda va
+// SABABI aytiladi). Blok faqat yordamchi javobida keladi: xodimlar ma'lumotnomasi
+// javob bergan bo'lsa belgi yo'q - byudjet ham yeyilmagan.
+const proBadge = computed<{ text: string; tone: 'neutral' | 'warn'; idle: boolean } | null>(() => {
+  const info = props.exchange.pro
+  if (!info) return null
+  if (info.used) return { text: t('pro.used'), tone: 'neutral', idle: false }
+  if (info.reason) {
+    const why = info.reason === 'limit' ? t('pro.reasonLimit')
+      : info.reason === 'no user' ? t('pro.reasonNoUser')
+      : info.reason
+    return { text: t('pro.denied', { why }), tone: 'warn', idle: false }
+  }
+  return { text: t('pro.notNeeded'), tone: 'neutral', idle: true }
+})
 
 const finished = computed(() => !!props.exchange.response && !props.streaming)
 const canReport = computed(() => finished.value && !!(answer.value || props.exchange.proposal))
@@ -173,7 +193,14 @@ const devMeta = computed(() => {
         :trace-id="traceId"
         @regenerate="emit('regenerate')"
         @report="emit('report')"
-      />
+      >
+        <!-- tabindex: klaviatura bilan ham tafsilot (tooltip) ko'rinsin. -->
+        <VTooltip v-if="proBadge" :text="proBadge.text">
+          <VBadge class="res__pro" :class="{ 'is-idle': proBadge.idle }" size="sm" :tone="proBadge.tone" tabindex="0">
+            {{ t('pro.label') }}
+          </VBadge>
+        </VTooltip>
+      </MessageActions>
 
       <!-- Dasturchi rejimi: to'liq iz (faqat /ask yo'lida bor) yoki bitta mono qator. -->
       <div v-if="devMode && exchange.response.guard" class="res__trace">
@@ -226,6 +253,19 @@ const devMeta = computed(() => {
 }
 .res__trace {
   margin-top: var(--s-4);
+}
+.res__pro {
+  margin-left: var(--s-1);
+  cursor: default;
+}
+/* "Kerak bo'lmadi" - eng jim holat: byudjet yeyilmagan, e'tibor talab qilmaydi. */
+.res__pro.is-idle {
+  --badge-fg: var(--text-3);
+  --badge-bg: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.res__pro:focus-visible {
+  border-radius: var(--r-xs);
 }
 .res__dev {
   display: flex;

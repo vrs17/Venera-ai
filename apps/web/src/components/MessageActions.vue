@@ -91,6 +91,8 @@ async function onRead() {
       :to="{ name: 'admin-turn', params: { id: traceId } }"
       target="_blank"
     />
+    <!-- Javobga oid kichik belgilar (masalan "Pro") - vaqtdan oldin. -->
+    <slot />
     <VTooltip v-if="at" :text="full">
       <time class="acts__time" :datetime="new Date(at).toISOString()">{{ when }}</time>
     </VTooltip>
