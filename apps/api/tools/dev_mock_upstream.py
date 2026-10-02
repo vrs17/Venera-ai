@@ -1794,6 +1794,11 @@ class Handler(BaseHTTPRequestHandler):
                   engine=engine or "v1")
         plan = build_plan(ctx, scenario)
         self._note = f"  [{engine or '-'} {plan.scenario}{' pro' if pro else ''}]"
+        if body.get("mode") == "pro" and not pro:
+            # Venera v2 bo'lmagan dvigatelga "pro" ni YUBORMASLIGI kerak
+            # (`core/engines.py`). Kelib qolsa jurnalda ko'rinsin - e2e
+            # tekshiruvi aynan shu belgini qidiradi.
+            self._note += " [mode=pro v2 emas!]"
         if plan.http_error:
             _pause(0.2, 0.5)
             self._json(*plan.http_error)
