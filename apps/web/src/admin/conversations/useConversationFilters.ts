@@ -1,5 +1,5 @@
 // "Suhbatlar" sahifasining o'z filtrlari - global filtr (sana, kanal) ustiga:
-//   ?q=ta'til&actor=12&route=hrm&status=error&reported=1&minMs=3000&chat=<id>&view=chats
+//   ?q=ta'til&actor=12&route=hrm&engine=v2&status=error&reported=1&minMs=3000&chat=<id>&view=chats
 //
 // YAGONA MANBA - URL, xuddi `useAdminFilters` kabi: havola ulashilsa hamkasb aynan shu
 // ro'yxatni ochadi, savol izidan "Orqaga" esa filtrlar bilan qaytadi. Umumiy
@@ -14,8 +14,8 @@ import { computed, shallowRef } from 'vue'
 import type { ComputedRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { LocationQuery, LocationQueryRaw, LocationQueryValue } from 'vue-router'
-import { CHANNELS, ROUTES, TURN_STATUSES } from '../types'
-import type { Channel, ChannelFilter, RangeParams, TurnQuery, TurnStatus } from '../types'
+import { CHANNELS, ENGINES, ROUTES, TURN_STATUSES } from '../types'
+import type { Channel, ChannelFilter, Engine, RangeParams, TurnQuery, TurnStatus } from '../types'
 
 export type ConversationView = 'turns' | 'chats'
 
@@ -25,6 +25,8 @@ export interface ConversationFilterState {
   actor: number | null
   /** `ROUTES` yoki `none` (yo'nalishsiz). */
   route: string | null
+  /** Yordamchi dvigateli (v1 | v2). */
+  engine: Engine | null
   status: TurnStatus | null
   reported: boolean
   /** To'liq javob vaqti kamida, ms. */
@@ -36,12 +38,12 @@ export interface ConversationFilterState {
 }
 
 /** Faqat shu sahifaning kalitlari (global filtr kalitlari - `useAdminFilters` da). */
-export const CONVERSATION_KEYS = ['q', 'actor', 'route', 'status', 'reported', 'minMs', 'chat', 'view'] as const
+export const CONVERSATION_KEYS = ['q', 'actor', 'route', 'engine', 'status', 'reported', 'minMs', 'chat', 'view'] as const
 type Key = (typeof CONVERSATION_KEYS)[number] | 'channel'
 
 /** Ro'yxatni aniqlaydigan HAMMA kalitlar (ko'rinishdan tashqari) - oldingi/keyingi
  *  savol navigatsiyasi shu kalitlar bir xil bo'lgandagina ishlaydi. */
-export const LIST_KEYS = ['from', 'to', 'preset', 'channel', 'q', 'actor', 'route', 'status', 'reported', 'minMs', 'chat'] as const
+export const LIST_KEYS = ['from', 'to', 'preset', 'channel', 'q', 'actor', 'route', 'engine', 'status', 'reported', 'minMs', 'chat'] as const
 
 const ROUTE_RE = /^[a-z_]{1,32}$/
 
@@ -57,6 +59,7 @@ function positiveInt(v: string | null): number | null {
 
 function parse(query: LocationQuery): ConversationFilterState {
   const route = first(query.route)
+  const engine = first(query.engine)
   const status = first(query.status)
   const chat = first(query.chat)?.trim() ?? ''
   const channel = first(query.channel)
@@ -66,6 +69,8 @@ function parse(query: LocationQuery): ConversationFilterState {
     // Noma'lum, lekin "toza" yo'nalish ham o'tadi: server yangi yo'nalish qo'shsa,
     // umumiy ko'rinishdagi havola bo'sh ro'yxatga emas, to'g'ri filtrga olib kelsin.
     route: route && ((ROUTES as readonly string[]).includes(route) || route === 'none' || ROUTE_RE.test(route)) ? route : null,
+    // Faqat ma'lum qiymat: notanish `?engine=` serverga ketsa 422 bo'lardi.
+    engine: engine && (ENGINES as readonly string[]).includes(engine) ? (engine as Engine) : null,
     status: status && (TURN_STATUSES as readonly string[]).includes(status) ? (status as TurnStatus) : null,
     reported: ['1', 'true'].includes(first(query.reported) ?? ''),
     minMs: positiveInt(first(query.minMs)),
@@ -143,7 +148,7 @@ export function useConversationFilters(): ConversationFilters {
 
   const hasFilters = computed(() => {
     const s = state.value
-    return !!(s.q.trim() || s.actor || s.route || s.status || s.reported || s.minMs || s.chat || s.channel !== 'all')
+    return !!(s.q.trim() || s.actor || s.route || s.engine || s.status || s.reported || s.minMs || s.chat || s.channel !== 'all')
   })
 
   const listQuery = computed<LocationQueryRaw>(() => {
@@ -162,6 +167,7 @@ export function useConversationFilters(): ConversationFilters {
     if (q) out.q = q
     if (s.actor) out.actorId = s.actor
     if (s.route) out.route = s.route
+    if (s.engine) out.engine = s.engine
     if (s.status) out.status = s.status
     if (s.reported) out.reported = true
     if (s.minMs) out.minMs = s.minMs

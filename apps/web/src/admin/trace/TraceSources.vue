@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { BookOpen, FileSearch } from 'lucide-vue-next'
-import { lookupLabel } from '../../components/chat/sources'
+import { BookOpen, ExternalLink, FileSearch, Scale } from 'lucide-vue-next'
+import { lawSite, lookupLabel } from '../../components/chat/sources'
 import { useDocViewer } from '../../composables/useDocViewer'
 import VEmpty from '../../ui/VEmpty.vue'
 import VIconButton from '../../ui/VIconButton.vue'
@@ -10,12 +10,15 @@ import VMeter from '../../ui/charts/VMeter.vue'
 import { fmtNumber } from '../../ui/format'
 import type { TurnSource } from '../types'
 import StatusDot from '../components/StatusDot.vue'
-import { fromTurnSource, isToolSource } from './answerSources'
+import { fromTurnSource, isLawSource, isToolSource, turnLawUrl } from './answerSources'
 
 /**
  * "Manbalar" yorlig'i: topilgan hujjat parchalari (nom, kalit, sahifa, moslik bali,
  * parcha matni, hujjatni ochish) va platforma chaqiruvlari (vosita, holat, natija).
  * Tartib - javobdagi `[n]` tartibi (server `idx` bo'yicha beradi).
+ *
+ * Qonun moddasi (`kind: "law"`, v2) hujjatlar qatorida (raqamlash umumiy), lekin
+ * ko'ruvchida emas - LEX.UZ da yangi oynada ochiladi; havola faqat `https://` bo'lsa.
  */
 const props = defineProps<{ sources: TurnSource[] }>()
 
@@ -44,6 +47,12 @@ function openDoc(s: TurnSource) {
 
 const toolName = (s: TurnSource) => lookupLabel(fromTurnSource(s), s.ref ?? '')
 
+/** Qonun qatori uchun: havola (yoki null) va "LEX.UZ · qonunchilik" izohi. */
+function law(s: TurnSource): { url: string | null; caption: string } {
+  const url = turnLawUrl(s)
+  return { url, caption: t('chat.lawCaption', { site: lawSite(url) }) }
+}
+
 // Vosita holati ba'zan so'z (`ok`/`error`), ba'zan HTTP kodi (`200`, `502`) bo'lib keladi.
 function toolStatus(s: TurnSource): { status: string; label?: string } | null {
   const raw = s.status?.trim()
@@ -66,7 +75,14 @@ function toolStatus(s: TurnSource): { status: string; label?: string } | null {
           <span class="ts-cite" aria-hidden="true">{{ s.citation ?? s.idx + 1 }}</span>
           <div class="ts-main">
             <p class="ts-title">{{ s.title || s.ref || t('sourceDocument') }}</p>
-            <p v-if="s.ref || s.page" class="ts-meta">
+            <template v-if="isLawSource(s.kind)">
+              <p class="ts-meta ts-law">
+                <Scale :size="13" :stroke-width="1.75" aria-hidden="true" />
+                <span>{{ law(s).caption }}</span>
+              </p>
+              <p v-if="s.ref" class="ts-meta t-mono">{{ s.ref }}</p>
+            </template>
+            <p v-else-if="s.ref || s.page" class="ts-meta">
               <span v-if="s.ref" class="t-mono">{{ s.ref }}</span>
               <span v-if="s.ref && s.page" aria-hidden="true"> · </span>
               <span v-if="s.page">{{ t('sourcePage', { n: s.page }) }}</span>
@@ -95,8 +111,18 @@ function toolStatus(s: TurnSource): { status: string; label?: string } | null {
               </button>
             </template>
           </div>
+          <!-- Qonun: LEX.UZ (yangi oyna, rel=noopener noreferrer - VIconButton qo'yadi). -->
           <VIconButton
-            v-if="s.ref"
+            v-if="isLawSource(s.kind) && law(s).url"
+            class="ts-open"
+            :icon="ExternalLink"
+            size="sm"
+            :href="law(s).url ?? undefined"
+            target="_blank"
+            :label="t('chat.lawOpen')"
+          />
+          <VIconButton
+            v-else-if="s.ref && !isLawSource(s.kind)"
             class="ts-open"
             :icon="BookOpen"
             size="sm"
@@ -203,6 +229,14 @@ function toolStatus(s: TurnSource): { status: string; label?: string } | null {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   overflow-wrap: anywhere;
+}
+.ts-law {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1_5);
+}
+.ts-law svg {
+  flex-shrink: 0;
 }
 .ts-score {
   display: flex;

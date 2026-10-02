@@ -10,16 +10,17 @@ import VSegmented from '../../ui/VSegmented.vue'
 import type { SegmentedOption } from '../../ui/VSegmented.vue'
 import { fmtMs } from '../../ui/format'
 import { searchAdmin } from '../api'
-import { CHANNELS, ROUTES, TURN_STATUSES } from '../types'
-import type { Channel, TurnStatus } from '../types'
+import { CHANNELS, ENGINES, ROUTES, TURN_STATUSES } from '../types'
+import type { Channel, Engine, TurnStatus } from '../types'
 import { chatTitle, personName, rememberPerson } from './people'
 import type { Person } from './people'
 import { useConversationFilters } from './useConversationFilters'
 import type { ConversationView } from './useConversationFilters'
 
 /**
- * Suhbatlar filtri (spec §4.5.2): qidiruv, foydalanuvchi, kanal, yo'nalish, holat,
- * "faqat xabar berilganlar", minimal javob vaqti va (suhbatdan kelganda) suhbat.
+ * Suhbatlar filtri (spec §4.5.2): qidiruv, foydalanuvchi, kanal, yo'nalish, dvigatel
+ * (v1/v2), holat, "faqat xabar berilganlar", minimal javob vaqti va (suhbatdan kelganda)
+ * suhbat.
  * O'ng chetda "Savollar | Suhbatlar" ko'rinishi. Hamma qiymat URL'da.
  *
  * Props:
@@ -95,6 +96,13 @@ const routeOptions = computed<FilterOption<string>[]>(() => {
   return list.map((r) => ({ value: r, label: te(`admin.route.${r}`) ? t(`admin.route.${r}`) : r }))
 })
 
+// Dvigatel: v1 (barqaror) / v2 (yangi) - ikkalasini solishtirish uchun. Yorliq boshida
+// qiymatning o'zi ("v2 · yangi"): admin uni yordamchi jamoasining hujjatidan va savol
+// izidan shu nom bilan biladi.
+const engineOptions = computed<FilterOption<Engine>[]>(() =>
+  ENGINES.map((v) => ({ value: v, label: `${v} · ${t(`admin.engine.${v}`)}` })),
+)
+
 const statusOptions = computed<FilterOption<TurnStatus>[]>(() =>
   TURN_STATUSES.map((v) => ({ value: v, label: t(`admin.status.${v}`) })),
 )
@@ -163,6 +171,12 @@ const pick = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? (v[0] ?? n
       :options="routeOptions"
       :model-value="s.route"
       @update:model-value="(v) => filters.set({ route: pick(v) })"
+    />
+    <VFilterChip
+      :label="t('admin.filter.engine')"
+      :options="engineOptions"
+      :model-value="s.engine"
+      @update:model-value="(v) => filters.set({ engine: pick(v) })"
     />
     <VFilterChip
       :label="t('admin.filter.status')"

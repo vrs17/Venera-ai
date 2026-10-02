@@ -113,7 +113,9 @@ const turnColumns = computed<DataTableColumn<TurnSummary>[]>(() => {
   }
   const question: DataTableColumn<TurnSummary> = { key: 'question', label: t('admin.col.question') }
   // 140: eng uzun yo'nalish nomi - uz-Cyrl "Жонли маълумот" - 132 da kesilib qolardi.
-  const route: DataTableColumn<TurnSummary> = { key: 'route', label: t('admin.col.route'), width: 140 }
+  // +28: yonida dvigatel chipi ("v2", ~22px + oraliq). Alohida ustun 1280 da savol matnini
+  // ~56px ga siqardi; dvigatel yo'nalishning "qaysi yordamchi" qismi - bir katakda o'qiladi.
+  const route: DataTableColumn<TurnSummary> = { key: 'route', label: t('admin.col.route'), width: 168 }
   const sources: DataTableColumn<TurnSummary> = { key: 'sources', label: t('admin.col.sources'), width: 88, align: 'end' }
   // 148: sekin javobda ikki qiymat ham uzun bo'ladi - "36 s / 1 min 18 s" ~110px, 124 lik
   // ustunda (100px matn) oxirgi "s" kesilardi. Endi ~124px matn: "1 min 5 s / 2 min 3 s" ham sig'adi.
@@ -179,7 +181,7 @@ const emptyTitle = computed(() => {
 })
 
 function clearFilters() {
-  conv.set({ q: '', actor: null, route: null, status: null, reported: false, minMs: null, chat: null, channel: 'all' })
+  conv.set({ q: '', actor: null, route: null, engine: null, status: null, reported: false, minMs: null, chat: null, channel: 'all' })
 }
 </script>
 
@@ -276,7 +278,16 @@ function clearFilters() {
               </span>
             </template>
             <template #cell-route="{ row }">
-              <RouteBadge :route="row.route" size="sm" />
+              <span class="cv-route">
+                <RouteBadge :route="row.route" size="sm" />
+                <!-- Dvigatel (v1/v2): ixcham mono chip; to'liq nomi tooltip'da va ekran o'quvchida. -->
+                <VTooltip v-if="row.engine" :text="t('admin.engine.meta', { v: row.engine })">
+                  <span class="cv-engine">
+                    <span aria-hidden="true">{{ row.engine }}</span>
+                    <span class="sr-only">{{ t('admin.engine.meta', { v: row.engine }) }}</span>
+                  </span>
+                </VTooltip>
+              </span>
             </template>
             <template #cell-sources="{ row }">
               <span class="cv-num" :class="{ 'cv-dim': !row.sourcesCount }">{{ num(row.sourcesCount) }}</span>
@@ -447,6 +458,30 @@ function clearFilters() {
 
 .cv-num {
   font-variant-numeric: tabular-nums;
+}
+.cv-route {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1_5);
+  max-width: 100%;
+  white-space: nowrap;
+}
+/* Dvigatel chipi - javobdagi iqtibos chipi o'lchamida: jim, mono, --fill ustida.
+   Holat emas - rang ma'no tashimaydi, v1 va v2 faqat matnda farq qiladi. */
+.cv-engine {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: var(--r-xs);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
 }
 .cv-plus {
   margin-left: var(--s-1);

@@ -14,6 +14,7 @@
 // bilan chizadi). Nomlar `admin.trace.span.*` dan; notanish nom - o'zi, o'qiladigan qilib.
 
 import type { WaterfallRow } from '../../ui/VWaterfall.vue'
+import { proBadge } from '../../components/chat/pro'
 import type { TurnDetail, TurnEvent } from '../types'
 
 export interface TraceStep extends WaterfallRow {
@@ -66,7 +67,7 @@ const LABEL_KEYS: Record<string, string> = {
   pro: 'pro.result',
 }
 
-type Translate = (key: string, named?: Record<string, unknown>) => string
+type Translate = (key: string, named?: Record<string, unknown>, plural?: number) => string
 type Exists = (key: string) => boolean
 
 export function stepLabel(name: string, t: Translate, te: Exists): string {
@@ -132,7 +133,8 @@ function subOf(e: TurnEvent, routeLabel: (r: string) => string, t: Translate): s
       return count > 2 ? `${head} +${count - 2}` : head
     }
     case 'done':
-      return typeof p.route === 'string' && p.route ? routeLabel(p.route) : undefined
+      // Yo'nalish va (versiyali yo'lda) dvigatel: "Hujjatlar · v2".
+      return joined([typeof p.route === 'string' && p.route ? routeLabel(p.route) : null, p.engine])
     case 'error':
       return joined([p.code, p.text])
     case 'hold':
@@ -156,17 +158,11 @@ function subOf(e: TurnEvent, routeLabel: (r: string) => string, t: Translate): s
       return typeof p.answered === 'boolean'
         ? t(p.answered ? 'admin.trace.contactsHit' : 'admin.trace.contactsMiss')
         : undefined
-    case 'pro': {
-      // Chatdagi belgining o'sha uch holati (`pro.*`): byudjet faqat birinchisida yeyiladi.
-      if (p.used === true) return t('pro.used')
-      if (typeof p.reason === 'string' && p.reason) {
-        const why = p.reason === 'limit' ? t('pro.reasonLimit')
-          : p.reason === 'no user' ? t('pro.reasonNoUser')
-            : p.reason
-        return t('pro.denied', { why })
-      }
-      return p.requested ? t('pro.notNeeded') : undefined
-    }
+    case 'pro':
+      // Chatdagi belgining AYNAN o'zi (`chat/pro.ts`): byudjet faqat "ishlatildi" da
+      // yeyiladi; "berilmadi" sababi bilan (limit, foydalanuvchi yo'q, dvigatel v2 emas).
+      // "Ishlatildi" - qisqasi (murojaatlar soni bilan), qolgani - to'liq gap.
+      return ((b) => (b?.state === 'used' ? b.text : b?.detail))(proBadge(p, t))
     default:
       return joined([p.model, p.provider, p.engine, p.source])
   }

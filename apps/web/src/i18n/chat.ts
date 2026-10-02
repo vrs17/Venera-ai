@@ -36,6 +36,10 @@ const en = {
   thread: 'Conversation',
   traceEmpty: 'No pipeline trace returned.',
   noChunks: 'No chunks returned.',
+  // Qonun moddasi (v2): `{site}` - odatda LEX.UZ.
+  lawCaption: '{site} · legislation',
+  lawOpen: 'Open in a new tab',
+  engine: 'engine {v}',
 }
 
 const uz: Mirror<typeof en> = {
@@ -67,6 +71,9 @@ const uz: Mirror<typeof en> = {
   thread: 'Suhbat',
   traceEmpty: 'Pipeline izi qaytmadi.',
   noChunks: 'Parchalar qaytmadi.',
+  lawCaption: '{site} · qonunchilik',
+  lawOpen: 'Yangi oynada ochish',
+  engine: 'versiya {v}',
 }
 
 const uzCyrl: Mirror<typeof en> = {
@@ -98,6 +105,9 @@ const uzCyrl: Mirror<typeof en> = {
   thread: 'Суҳбат',
   traceEmpty: 'Pipeline изи қайтмади.',
   noChunks: 'Парчалар қайтмади.',
+  lawCaption: '{site} · қонунчилик',
+  lawOpen: 'Янги ойнада очиш',
+  engine: 'версия {v}',
 }
 
 const ru: Mirror<typeof en> = {
@@ -129,6 +139,9 @@ const ru: Mirror<typeof en> = {
   thread: 'Диалог',
   traceEmpty: 'Трасса не получена.',
   noChunks: 'Фрагменты не получены.',
+  lawCaption: '{site} · законодательство',
+  lawOpen: 'Открыть в новой вкладке',
+  engine: 'движок {v}',
 }
 
 export const chat = { en, uz, 'uz-Cyrl': uzCyrl, ru }

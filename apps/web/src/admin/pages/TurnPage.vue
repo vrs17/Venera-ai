@@ -167,6 +167,7 @@ const stepPayload = computed<unknown>(() => {
       locale: d.locale,
       kind: d.kind,
       inputMode: d.inputMode,
+      engine: d.engine,
     }
   }
   return null
@@ -337,6 +338,11 @@ const statusLabel = computed(() => {
           <div class="tp-meta">
             <StatusDot :status="turn.status" :label="statusLabel" />
             <RouteBadge :route="turn.route" size="sm" />
+            <!-- "Dvigatel v2": qaysi yordamchi javob berdi (v1 barqaror / v2 yangi). -->
+            <span v-if="turn.engine" class="tp-fact">
+              <span class="tp-k">{{ t('admin.filter.engine') }}</span>
+              <span class="t-mono">{{ turn.engine }}</span>
+            </span>
             <span class="tp-fact">
               <span class="tp-k">{{ t('admin.trace.ttft') }}</span>
               <DurationText :ms="turn.ttftMs" />

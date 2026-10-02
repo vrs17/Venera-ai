@@ -10,18 +10,19 @@
  * Ko'rinish jim: fayl - alohida karta (odam aynan shuni so'ragan), manbalar esa bitta
  * yig'iq qator ("3 manba"), bosilsa ro'yxat ochiladi. Hujjat OCHILADI (chat yonidagi
  * ko'ruvchida, iqtibos sahifasida); so'rovda ochiladigan narsa yo'q - u vaqtning bir
- * lahzasidagi chaqiruv, shuning uchun nomi va qisqa natijasi ko'rsatiladi.
+ * lahzasidagi chaqiruv, shuning uchun nomi va qisqa natijasi ko'rsatiladi. Qonun
+ * moddasi (v2, `kind: "law"`) - LEX.UZ ga tashqi havola, yangi oynada.
  */
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, CircleAlert, Download, FileText } from 'lucide-vue-next'
+import { ArrowUpRight, ChevronDown, CircleAlert, Download, FileText, Scale } from 'lucide-vue-next'
 import { localizeApiError } from '../api/errors'
 import type { AnswerArtifact, AnswerSource } from '../types'
 import { downloadFile } from '../api/chat.api'
 import { useDocViewer } from '../composables/useDocViewer'
 import VButton from '../ui/VButton.vue'
 import { useId } from '../ui/composables/useId'
-import { isLookup, lookupLabel, lookupMarker } from './chat/sources'
+import { isLaw, isLookup, lawSite, lawTitle, lawUrl, lookupLabel, lookupMarker } from './chat/sources'
 
 const props = defineProps<{
   sources?: AnswerSource[]
@@ -31,6 +32,8 @@ const { t } = useI18n({ useScope: 'global' })
 const { open: openDoc } = useDocViewer()
 const listId = useId('answer-sources')
 
+// Hujjatlar va qonun moddalari BITTA ro'yxatda: ular matnda bitta raqamlashni
+// bo'lishadi (`[1]` - ichki qoida, `[2]` - Mehnat kodeksi moddasi).
 const docs = computed(() => (props.sources ?? []).filter((s) => !isLookup(s)))
 const calls = computed(() => (props.sources ?? []).filter(isLookup))
 const count = computed(() => docs.value.length + calls.value.length)
@@ -62,6 +65,12 @@ function docMeta(source: AnswerSource): string {
     .filter(Boolean)
     .join(' · ')
 }
+/** Qonun moddasi qatori: havola (faqat `https://`) va izoh ("LEX.UZ · qonunchilik"). */
+function lawRow(source: AnswerSource): { url: string | null; caption: string } {
+  const url = lawUrl(source)
+  return { url, caption: t('chat.lawCaption', { site: lawSite(url) }) }
+}
+
 /** Parcha matni - xizmat yuborsa (hozircha ixtiyoriy maydon). */
 function snippet(source: AnswerSource): string {
   const raw = (source as AnswerSource & { snippet?: unknown; text?: unknown }).snippet
@@ -133,10 +142,41 @@ async function take(kind: string, url: string) {
 
       <div v-show="open" :id="listId" class="proof__panel">
         <ul v-if="docs.length" class="proof__list" :aria-label="t('sourcesDocuments')">
-          <li v-for="(source, i) in docs" :key="`${source.doc_id ?? ''}-${source.citation_index ?? i}`">
+          <li v-for="(source, i) in docs" :key="`${source.doc_id ?? source.url ?? ''}-${source.citation_index ?? i}`">
+            <!-- Qonun moddasi: ko'ruvchida EMAS, LEX.UZ da (yangi oynada) - `/doc/...` faqat
+                 `doc_id` uchun. Havola faqat `https://` bo'lsa; aks holda oddiy matn. -->
+            <template v-if="isLaw(source)">
+              <a
+                v-if="lawRow(source).url"
+                class="proof__item is-link"
+                :href="lawRow(source).url ?? undefined"
+                target="_blank"
+                rel="noopener noreferrer"
+                :title="t('chat.lawOpen')"
+              >
+                <span class="proof__num">{{ source.citation_index ?? i + 1 }}</span>
+                <span class="proof__body">
+                  <span class="proof__name">{{ lawTitle(source, t('sourceDocument')) }}</span>
+                  <span class="proof__meta">
+                    <Scale class="proof__law-icon" :size="13" :stroke-width="1.75" aria-hidden="true" />{{ lawRow(source).caption }}
+                  </span>
+                </span>
+                <ArrowUpRight class="proof__ext" :size="16" :stroke-width="1.75" aria-hidden="true" />
+                <span class="sr-only">({{ t('chat.lawOpen') }})</span>
+              </a>
+              <div v-else class="proof__item">
+                <span class="proof__num">{{ source.citation_index ?? i + 1 }}</span>
+                <span class="proof__body">
+                  <span class="proof__name">{{ lawTitle(source, t('sourceDocument')) }}</span>
+                  <span class="proof__meta">
+                    <Scale class="proof__law-icon" :size="13" :stroke-width="1.75" aria-hidden="true" />{{ lawRow(source).caption }}
+                  </span>
+                </span>
+              </div>
+            </template>
             <!-- Ko'ruvchini iqtibos sahifasida ochadi; yuklab olish - ko'ruvchi panelida. -->
             <button
-              v-if="source.docUrl"
+              v-else-if="source.docUrl"
               type="button"
               class="proof__item is-link"
               :title="t('sourceOpen')"
@@ -357,6 +397,16 @@ async function take(kind: string, url: string) {
 }
 .proof__meta.is-bad {
   color: var(--crit-text);
+}
+/* Qonun: tarozi belgisi izoh boshida, tashqi havola belgisi qator oxirida (yangi oyna). */
+.proof__law-icon {
+  flex-shrink: 0;
+}
+.proof__ext {
+  flex-shrink: 0;
+  margin-left: auto;
+  margin-top: 2px;
+  color: var(--text-3);
 }
 .proof__dot {
   width: 6px;

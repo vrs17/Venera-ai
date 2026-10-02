@@ -2,7 +2,7 @@
 import { useI18n } from 'vue-i18n'
 import { Flag, MessageSquareOff, Waypoints } from 'lucide-vue-next'
 import MarkdownMessage from '../../components/MarkdownMessage.vue'
-import { lookupLabel } from '../../components/chat/sources'
+import { lawSite, lawTitle, lawUrl, lookupLabel } from '../../components/chat/sources'
 import type { AnswerSource } from '../../types'
 import VEmpty from '../../ui/VEmpty.vue'
 import VIconButton from '../../ui/VIconButton.vue'
@@ -11,7 +11,7 @@ import { fmtDateTime } from '../../ui/format'
 import type { ReportMessage } from '../types'
 import { useAdminFilters } from '../useAdminFilters'
 import StatusDot from '../components/StatusDot.vue'
-import { fromSnapshotSources, isToolSource } from '../trace/answerSources'
+import { fromSnapshotSources, isLawSource, isToolSource } from '../trace/answerSources'
 
 /**
  * Xabar berilgan paytdagi suhbat nusxasi - chatdagidek: savol o'ngda pufakchada, javob
@@ -37,6 +37,8 @@ const traceTo = (turnId: string) => withFilters(`/admin/turns/${encodeURICompone
 
 function sourceText(s: AnswerSource, i: number): string {
   if (isToolSource(s.kind)) return lookupLabel(s, `T${i + 1}`)
+  // Qonun moddasi (v2): nomi va "LEX.UZ · qonunchilik" - hujjat emasligi ko'rinsin.
+  if (isLawSource(s.kind)) return `${lawTitle(s, t('sourceDocument'))} · ${t('chat.lawCaption', { site: lawSite(lawUrl(s)) })}`
   const name = s.title?.trim() || s.doc_id || t('sourceDocument')
   return s.page ? `${name}, ${t('sourcePage', { n: s.page })}` : name
 }

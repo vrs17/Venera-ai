@@ -487,7 +487,13 @@ function runPipeline(id: string, question: string, mode: 'standard' | 'pro' = 's
         if (frame.request_id) patch(id, { requestId: frame.request_id })
         break
       case 'done':
-        patch(id, { route: frame.route ?? null, stage: null, ...(frame.request_id ? { requestId: frame.request_id } : {}) })
+        patch(id, {
+          route: frame.route ?? null,
+          stage: null,
+          ...(frame.request_id ? { requestId: frame.request_id } : {}),
+          // Qaysi dvigatel (v1/v2) javob berdi - dasturchi qatorida.
+          ...(frame.engine ? { engine: String(frame.engine) } : {}),
+        })
         // "Pro" natijasi: ishlatildimi, nechta qoldi, berilmagan bo'lsa
         // sababi. Blok FAQAT shu rejim so'ralgan turlarda keladi.
         if (frame.pro) {
@@ -564,8 +570,10 @@ function send(text: string): boolean {
   ]
   // Rejim SHU YERDA qotiriladi: odam javob kelguncha kalitni bossa ham,
   // bu tur o'zi yuborilgan rejimda qolishi kerak - aks holda javob ostidagi
-  // belgi boshqa narsani ko'rsatardi.
-  const mode = pro.enabled.value ? 'pro' : 'standard'
+  // belgi boshqa narsani ko'rsatardi. `active`, `enabled` emas: kalit
+  // ko'rinmasa (v1 kanali) yoki byudjet tugagan bo'lsa, eslab qolingan
+  // "yoqiq" tanlov savolni "pro" qilib yubormasin.
+  const mode = pro.active.value ? 'pro' : 'standard'
   patch(id, { proRequested: mode === 'pro' })
   runPipeline(id, trimmed, mode)
   return true
@@ -591,12 +599,14 @@ function regenerate(id: string) {
   patch(id, {
     response: null, error: null, cancelled: false, stopped: false, durationMs: null, stage: null,
     sources: [], artifact: null, proposal: null, warning: null, route: null, answeredAt: null,
-    turnId: null, requestId: null, pro: null,
+    turnId: null, requestId: null, pro: null, engine: null,
   })
   // Qayta yaratish O'SHA rejimda: "pro" savolni standart rejimda qayta
   // so'rash boshqa javob berardi, teskarisi esa odam so'ramagan holda
-  // byudjetdan yeyardi.
-  runPipeline(id, ex.question, ex.proRequested ? 'pro' : 'standard')
+  // byudjetdan yeyardi. Bu - odamning O'Z bosishi (hujjat faqat AVTOMATIK
+  // qayta urinishni taqiqlaydi; bunday yo'l chatda yo'q). Lekin "Pro" endi
+  // yo'q bo'lsa (dvigatel o'zgargan) - standart: backend baribir yubormasdi.
+  runPipeline(id, ex.question, ex.proRequested && pro.available.value ? 'pro' : 'standard')
 }
 
 // The newest answer, for the voice panel to read back after a spoken turn.

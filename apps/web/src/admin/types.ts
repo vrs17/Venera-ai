@@ -33,6 +33,11 @@ export type InputMode = 'text' | 'voice'
 export const ROUTES = ['rules', 'hrm', 'crm', 'live', 'both', 'clarify', 'contacts'] as const
 export type Route = (typeof ROUTES)[number]
 
+/** Yordamchi dvigateli (2026-10-02): `v1` - barqaror, `v2` - yangi (qonun, "Pro").
+ *  Filtrda faqat shu ikkitasi; `null` (eski yozuvlar, versiyasiz yo'l) - filtrsiz. */
+export const ENGINES = ['v1', 'v2'] as const
+export type Engine = (typeof ENGINES)[number]
+
 export type ProposalStatus = 'pending' | 'executed' | 'cancelled' | 'failed' | 'expired'
 
 export const REPORT_STATUSES = ['new', 'reviewing', 'resolved', 'dismissed'] as const
@@ -81,6 +86,9 @@ export interface TurnSummary {
   /** Birinchi 240 belgi (to'liq matn - `TurnDetail.question`). */
   question: string
   route: Route | (string & {}) | null
+  /** Qaysi dvigatel javob berdi (`done.engine`, bo'lmasa so'ralgani). `null` - migratsiyadan
+   *  oldingi yozuv yoki dvigatel aytilmagan. */
+  engine: Engine | (string & {}) | null
   status: TurnStatus | (string & {})
   errorCode: string | null
   /** Birinchi so'zgacha. */
@@ -327,6 +335,16 @@ export interface ToolStat {
   errors: number
 }
 
+/** types.ts: EngineStat - dvigatel bo'yicha savollar. `engine: "default"` - dvigateli
+ *  yozilmagan savollar (eski yozuvlar, versiyasiz yo'l). */
+export interface EngineStat {
+  engine: Engine | 'default' | (string & {})
+  turns: number
+  errors: number
+  /** Birinchi so'zgacha, mediana (ms). */
+  medianTtftMs: number | null
+}
+
 /** types.ts: AdminOverview - `GET /admin/overview`. */
 export interface AdminOverview {
   range: OverviewRange
@@ -339,6 +357,7 @@ export interface AdminOverview {
   tools: ToolStat[]
   recentReports: ReportSummary[]
   slowTurns: TurnSummary[]
+  engines: EngineStat[]
 }
 
 /* ------------------------------------------------------------------ foydalanish */
@@ -568,6 +587,8 @@ export interface TurnQuery extends RangeParams {
   actorId?: number
   /** `none` - yo'nalishsiz savollar. */
   route?: Route | 'none' | (string & {})
+  /** Faqat shu dvigatel javob bergan savollar (`/admin/turns` va `/admin/chats`). */
+  engine?: Engine
   status?: TurnStatus
   /** true - faqat xabar berilganlar. */
   reported?: boolean

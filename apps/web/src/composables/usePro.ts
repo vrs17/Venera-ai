@@ -7,6 +7,12 @@
 // hujjat aniq aytadi: ularni qotirmang, `/api/v1/pro/quota` dan o'qing.
 // Javob kelgach `pro.remaining` bilan yangilanadi - shunda hisoblagich
 // har savoldan keyin qayta so'ramasdan to'g'ri turadi.
+//
+// "PRO" FAQAT v2 DVIGATELDA (2026-10-02). Qaysi dvigatel ishlashini backend
+// kanal bo'yicha tanlaydi va shu so'rovda aytadi (`engine`, `available`).
+// `available !== true` - kalit umuman YO'Q: bosilsa ham backend "pro" ni
+// v1 ga yubormasdi, odam esa "Pro so'radim" deb o'ylab qolardi. So'rov
+// yiqilsa ham yashirin: dvigatelni bilmasdan "bor" deyish - taxmin.
 
 import { computed, readonly, ref, watch } from 'vue'
 import { proQuota } from '../api/pro.api'
@@ -17,6 +23,8 @@ import type { ProInfo, ProQuota, ProWindows } from '../types'
  *  Faqat ochiq '1' yoqadi. */
 const KEY = 'venera_pro_mode'
 
+// Odamning tanlovi eslab qolinadi, lekin yuborishda HAL QILUVCHI emas (`active`):
+// kalit ko'rinmasa yoki byudjet tugagan bo'lsa savol standart rejimda ketadi.
 const enabled = ref(read() === '1')
 const quota = ref<ProQuota | null>(null)
 const loading = ref(false)
@@ -44,12 +52,20 @@ function lowest(w: ProWindows | undefined): number {
   return Math.min(w.day ?? 0, w.week ?? 0, w.month ?? 0)
 }
 
+/** Shu kanalda "Pro" bormi (v2 va byudjet o'qildi). Faqat ochiq `true`. */
+const available = computed(() => quota.value?.available === true)
+
 /** Eng tor oynada nechta qolgan - hisoblagichda shu ko'rsatiladi. Oy
  *  bo'yicha 400 qolgani kunlik 0 ni yumshatmaydi. */
-const remaining = computed(() => (quota.value ? lowest(quota.value.remaining) : null))
+const remaining = computed(() => (available.value && quota.value ? lowest(quota.value.remaining) : null))
 
-/** Birorta oyna tugagan - kalit bosilmaydi. */
+/** Birorta oyna tugagan - kalit bosilmaydi. "Pro" yo'q kanalda (v1) bu
+ *  "tugagan" EMAS: u yerda backend nollarni qaytaradi, va odamning saqlangan
+ *  tanlovi bekorga o'chib qolmasin. */
 const exhausted = computed(() => remaining.value !== null && remaining.value <= 0)
+
+/** SHU savol "pro" bo'lib ketadimi: kalit yoqiq, rejim bor, byudjet bor. */
+const active = computed(() => enabled.value && available.value && !exhausted.value)
 
 // Byudjet tugagan bo'lsa kalit o'zi o'chadi: yoqiq turgan kalit bilan
 // yuborilgan savol baribir standart rejimda javob berilardi, va odam
@@ -66,9 +82,9 @@ function load(): Promise<void> {
       quota.value = await proQuota()
       loadFailed.value = false
     } catch {
-      // Hisoblagich ko'rinmaydi, lekin kalit ISHLAYDI: byudjetni
-      // yuqoridagi xizmat baribir o'zi tekshiradi va bermasa sababini
-      // javob bilan qaytaradi.
+      // Kalit KO'RINMAYDI (`available` - faqat ochiq `true`): qaysi dvigatel
+      // ishlashini bilmasdan "Pro bor" deyish - taxmin, v1 da esa "pro"
+      // baribir yuborilmasdi. Keyingi ochilishda qayta so'raladi.
       loadFailed.value = true
     } finally {
       loading.value = false
@@ -78,15 +94,30 @@ function load(): Promise<void> {
   return inflight
 }
 
-/** Javob keldi: xizmat aytgan qoldiqni olamiz (qayta so'ramasdan). */
+/** Javob keldi: xizmat aytgan qoldiqni olamiz (qayta so'ramasdan).
+ *  `engine`/`available` SAQLANADI - aks holda birinchi "pro" javobdan keyin
+ *  kalit yo'qolib qolardi. */
 function noteAnswer(pro: ProInfo | null | undefined): void {
   if (!pro) return
-  if (pro.remaining) {
-    quota.value = {
-      remaining: pro.remaining,
-      limits: pro.limits ?? quota.value?.limits ?? pro.remaining,
-      used: quota.value?.used ?? { day: 0, week: 0, month: 0 },
-    }
+  const prev = quota.value
+  // Server "bu dvigatelda pro yo'q" dedi (sozlama o'zgargan) - kalit yashirinadi.
+  if (pro.reason === 'engine') {
+    if (prev) quota.value = { ...prev, available: false }
+    return
+  }
+  if (!pro.remaining) return
+  const limits = pro.limits ?? prev?.limits ?? pro.remaining
+  quota.value = {
+    // `remaining` bor `pro` bloki - v2 javobi: so'rov yiqilgan bo'lsa ham endi aniq.
+    engine: prev?.engine ?? 'v2',
+    available: prev?.available ?? true,
+    remaining: pro.remaining,
+    limits,
+    used: {
+      day: Math.max(0, limits.day - pro.remaining.day),
+      week: Math.max(0, limits.week - pro.remaining.week),
+      month: Math.max(0, limits.month - pro.remaining.month),
+    },
   }
 }
 
@@ -97,5 +128,5 @@ function reset(): void {
 }
 
 export function usePro() {
-  return { enabled, quota: readonly(quota), remaining, exhausted, loading, loadFailed, load, noteAnswer, reset }
+  return { enabled, quota: readonly(quota), available, active, remaining, exhausted, loading, loadFailed, load, noteAnswer, reset }
 }

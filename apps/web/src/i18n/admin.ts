@@ -71,6 +71,14 @@ const en = {
     none: 'No route',
     unknown: 'Unknown',
   },
+  // Yordamchi dvigateli: `v1`/`v2` - nomi o'zi ("v2"), bu yerda faqat tavsifi ("yangi");
+  // `default` - dvigateli yozilmagan savollar; `meta` - chip tooltip'i ("Engine v2").
+  engine: {
+    v1: 'stable',
+    v2: 'new',
+    default: 'Unversioned',
+    meta: 'Engine {v}',
+  },
   status: {
     ok: 'OK',
     error: 'Error',
@@ -128,6 +136,7 @@ const en = {
     period: 'Period',
     channel: 'Channel',
     route: 'Route',
+    engine: 'Engine',
     status: 'Status',
     role: 'Role',
     user: 'User',
@@ -152,6 +161,9 @@ const en = {
     slowTurns: 'Slow answers',
     viewAll: 'View all',
     latencyHint: 'Time to first word',
+    engines: 'Engines',
+    enginesHint: 'Questions, errors and median time to first word',
+    enginesDefault: 'Unversioned — no engine recorded (older questions or the server’s default path)',
   },
   conversations: {
     viewTurns: 'Questions',
@@ -514,6 +526,12 @@ const uz: Mirror<typeof en> = {
     none: 'Yoʻnalishsiz',
     unknown: 'Nomaʼlum',
   },
+  engine: {
+    v1: 'barqaror',
+    v2: 'yangi',
+    default: 'Versiyasiz',
+    meta: 'Versiya {v}',
+  },
   status: {
     ok: 'Bajarildi',
     error: 'Xato',
@@ -571,6 +589,7 @@ const uz: Mirror<typeof en> = {
     period: 'Davr',
     channel: 'Kanal',
     route: 'Yoʻnalish',
+    engine: 'Versiya',
     status: 'Holat',
     role: 'Rol',
     user: 'Foydalanuvchi',
@@ -595,6 +614,9 @@ const uz: Mirror<typeof en> = {
     slowTurns: 'Sekin javoblar',
     viewAll: 'Hammasini koʻrish',
     latencyHint: 'Birinchi soʻzgacha',
+    engines: 'Versiyalar',
+    enginesHint: 'Savollar, xatolar va birinchi soʻzgacha mediana',
+    enginesDefault: 'Versiyasiz — versiya yozilmagan savollar (eskilari yoki serverning standart yoʻli)',
   },
   conversations: {
     viewTurns: 'Savollar',
@@ -957,6 +979,12 @@ const uzCyrl: Mirror<typeof en> = {
     none: 'Йўналишсиз',
     unknown: 'Номаълум',
   },
+  engine: {
+    v1: 'барқарор',
+    v2: 'янги',
+    default: 'Версиясиз',
+    meta: 'Версия {v}',
+  },
   status: {
     ok: 'Бажарилди',
     error: 'Хато',
@@ -1014,6 +1042,7 @@ const uzCyrl: Mirror<typeof en> = {
     period: 'Давр',
     channel: 'Канал',
     route: 'Йўналиш',
+    engine: 'Версия',
     status: 'Ҳолат',
     role: 'Рол',
     user: 'Фойдаланувчи',
@@ -1038,6 +1067,9 @@ const uzCyrl: Mirror<typeof en> = {
     slowTurns: 'Секин жавоблар',
     viewAll: 'Ҳаммасини кўриш',
     latencyHint: 'Биринчи сўзгача',
+    engines: 'Версиялар',
+    enginesHint: 'Саволлар, хатолар ва биринчи сўзгача медиана',
+    enginesDefault: 'Версиясиз — версия ёзилмаган саволлар (эскилари ёки сервернинг стандарт йўли)',
   },
   conversations: {
     viewTurns: 'Саволлар',
@@ -1400,6 +1432,12 @@ const ru: Mirror<typeof en> = {
     none: 'Без маршрута',
     unknown: 'Неизвестно',
   },
+  engine: {
+    v1: 'стабильный',
+    v2: 'новый',
+    default: 'Без версии',
+    meta: 'Движок {v}',
+  },
   status: {
     ok: 'Успешно',
     error: 'Ошибка',
@@ -1457,6 +1495,7 @@ const ru: Mirror<typeof en> = {
     period: 'Период',
     channel: 'Канал',
     route: 'Маршрут',
+    engine: 'Движок',
     status: 'Статус',
     role: 'Роль',
     user: 'Пользователь',
@@ -1481,6 +1520,9 @@ const ru: Mirror<typeof en> = {
     slowTurns: 'Медленные ответы',
     viewAll: 'Смотреть все',
     latencyHint: 'До первого слова',
+    engines: 'Движки',
+    enginesHint: 'Вопросы, ошибки и медиана до первого слова',
+    enginesDefault: 'Без версии — движок не записан (старые вопросы или путь по умолчанию)',
   },
   conversations: {
     viewTurns: 'Вопросы',

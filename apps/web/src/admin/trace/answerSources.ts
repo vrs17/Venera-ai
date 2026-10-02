@@ -8,9 +8,23 @@
 //
 // `docUrl` - backend chatda qo'shadigan yo'lning o'zi (`/api/v1/chat/doc/<id>#page=n`):
 // chip bosilganda hujjat ko'ruvchisi aynan shu yo'l bilan ochiladi.
+//
+// QONUN MODDASI (`kind: "law"`, v2): hujjat emas - `docUrl` YO'Q, chip LEX.UZ ga havola.
+// Jurnal unda `doc_id` va `tool` bo'lmagani uchun manzilni `ref` ga yozadi; brauzer
+// nusxasida esa `url` maydoni bor. Ikkalasi ham faqat `https://` bo'lsa havola bo'ladi.
 
+import { safeHttps } from '../../components/chat/sources'
 import type { AnswerSource } from '../../types'
 import type { TurnSource } from '../types'
+
+export function isLawSource(kind: string | null | undefined): boolean {
+  return String(kind ?? '').toLowerCase() === 'law'
+}
+
+/** Savol izidagi qonun manbasining havolasi (faqat https) yoki `null`. */
+export function turnLawUrl(s: TurnSource): string | null {
+  return safeHttps(s.ref)
+}
 
 /** Hujjat emas, platforma chaqiruvi (HRM/CRM/boshqa vosita). */
 const TOOL_KINDS = new Set(['hrm', 'crm', 'tool'])
@@ -33,6 +47,16 @@ function toolKind(kind: string | null | undefined, tool: string | null | undefin
 }
 
 export function fromTurnSource(s: TurnSource): AnswerSource {
+  if (isLawSource(s.kind)) {
+    return {
+      kind: 'law',
+      title: s.title ?? undefined,
+      citation_index: s.citation ?? undefined,
+      url: turnLawUrl(s),
+      doc_id: null,
+      page: null,
+    }
+  }
   if (isToolSource(s.kind)) {
     return {
       kind: toolKind(s.kind, s.ref),
@@ -60,6 +84,16 @@ export function fromSnapshotSource(raw: unknown): AnswerSource | null {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
   const kind = str(o.kind)
+  if (isLawSource(kind)) {
+    return {
+      kind: 'law',
+      title: str(o.title),
+      citation_index: int(o.citation_index) ?? int(o.citation),
+      url: safeHttps(o.url) ?? safeHttps(o.ref),
+      doc_id: null,
+      page: null,
+    }
+  }
   const tool = str(o.tool) ?? (isToolSource(kind) ? str(o.ref) : undefined)
   if (tool || isToolSource(kind)) {
     const n = int(o.citation)

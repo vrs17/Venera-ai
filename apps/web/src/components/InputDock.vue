@@ -87,12 +87,17 @@ function onCardPointerDown(e: PointerEvent) {
 // "Pro" kaliti - SHU xabar uchun. Holat modul darajasida (`usePro`): javob kelganda
 // byudjetni ChatView yangilaydi, bu yerda faqat ko'rsatiladi. Qoldiq - tooltip'da
 // (kam so'z: panelda faqat "Pro" yozuvi).
-const { enabled: proOn, remaining: proLeft, exhausted: proSpent, loadFailed: proUnknown } = usePro()
+//
+// Kalit FAQAT `available` bo'lsa bor (backend: shu kanal v2 da va byudjet o'qildi).
+// v1 kanalida u umuman chizilmaydi - o'chiq tugma "nega bosilmaydi?" degan savol
+// tug'dirardi, javobi esa odamga kerak emas (sozlama).
+const { enabled: proOn, available: proAvailable, remaining: proLeft, exhausted: proSpent } = usePro()
 
-const proTip = computed(() => {
+// Tooltip = ekran o'quvchi tavsifi (VTooltip `aria-describedby` ni o'zi ulaydi).
+// Birinchi qator - xizmat jamoasi bergan izoh (`pro.hint`), ikkinchisi - holat.
+const proStatus = computed(() => {
   if (proSpent.value) return t('pro.exhausted')
-  const hint = t('pro.hint')
-  return !proUnknown.value && proLeft.value !== null ? `${hint} · ${t('pro.left', { n: proLeft.value })}` : hint
+  return proLeft.value !== null ? t('pro.left', { n: proLeft.value }) : ''
 })
 
 // Byudjet tugagan bo'lsa bosilmaydi: yoqiq kalit bilan yuborilgan savol baribir
@@ -125,7 +130,14 @@ defineExpose({ focus: () => taRef.value?.focus({ preventScroll: true }) })
       <div class="dock__bar">
         <ComposerMenu />
         <!-- pointerdown.prevent: kalit bosilganda fokus matnda qoladi (yuborish kabi). -->
-        <VTooltip :text="proTip">
+        <VTooltip v-if="proAvailable">
+          <template #content>
+            <span class="dock__tip">
+              <span>{{ t('pro.hint') }}</span>
+              <!-- Bo'shliq: ekran o'quvchi ikki gapni qo'shib o'qimasin (flex'da ko'rinmaydi). -->
+              {{ ' ' }}<span v-if="proStatus" class="dock__tip-status">{{ proStatus }}</span>
+            </span>
+          </template>
           <button
             type="button"
             class="dock__pro"
@@ -284,6 +296,15 @@ defineExpose({ focus: () => taRef.value?.focus({ preventScroll: true }) })
 .dock__pro[aria-disabled='true'] {
   color: var(--text-4);
   cursor: not-allowed;
+}
+/* Tooltip ichi: izoh, ostida holat (qoldiq yoki "limit tugadi") - xira. */
+.dock__tip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dock__tip-status {
+  opacity: 0.72;
 }
 /* Yuborish: 32px dumaloq siyoh tugma; bo'sh maydonda --fill (VIconButton primary disabled). */
 .dock__send {

@@ -114,16 +114,24 @@ export type Phase = 'idle' | 'sending'
  * added by our backend, so they are ours to name.
  */
 
-/** One proof item under an answer: a cited document, or one platform lookup
- *  (HRM or CRM — `crm` arrived 2026-09-14 and behaves exactly like `hrm`). */
+/** One proof item under an answer: a cited document, one platform lookup
+ *  (HRM or CRM — `crm` arrived 2026-09-14 and behaves exactly like `hrm`),
+ *  or a legislation article (`law`, v2 engine, 2026-10-02). */
 export interface AnswerSource {
-  kind?: 'doc' | 'hrm' | 'crm' | (string & {})
-  /** The [n] marker in the answer text (documents). */
+  kind?: 'doc' | 'law' | 'hrm' | 'crm' | (string & {})
+  /** The [n] marker in the answer text (documents AND law articles - they
+   *  share one numbering). */
   citation_index?: number
-  doc_id?: string
+  /** `law` manbalarida `null` - ular hujjat ko'ruvchisida ochilmaydi. */
+  doc_id?: string | null
   title?: string
   section?: string
-  page?: number
+  page?: number | null
+  preview_available?: boolean | null
+  /** `law` FAQAT: LEX.UZ dagi modda havolasi (`https://www.lex.uz/...#...`).
+   *  Yangi oynada ochiladi. Backend `https://` bo'lmaganini zararsizlantiradi,
+   *  brauzer ham baribir faqat `https://` ni havola qiladi (`chat/sources.ts`). */
+  url?: string | null
   /** The [Tn] marker in the answer text (platform lookups). */
   marker?: string
   /** Platform tool that was called, e.g. hrm_today_late, crm_my_issues.
@@ -165,12 +173,23 @@ export interface ProWindows {
   month: number
 }
 
+/** Yuqoridagi yordamchining "dvigateli" (2026-10-02): `v1` - barqaror (eski
+ *  ko'rinish), `v2` - yangi (qonun moddalari, "Pro"). `''` - versiyasiz
+ *  `/api/chat` yo'li (server default'i). Backend `.env` da kanal bo'yicha tanlaydi. */
+export type AssistantEngine = 'v1' | 'v2' | ''
+
 /** schemas/pro.py: ProQuota - `GET /api/v1/pro/quota`. Chegaralar rolga
  *  qarab o'zgaradi, shuning uchun ular QOTIRILMAYDI - shundan o'qiladi. */
 export interface ProQuota {
   remaining: ProWindows
   limits: ProWindows
   used: ProWindows
+  /** CHAQIRUVCHINING kanali (`X-Venera-Client`) uchun tanlangan dvigatel. */
+  engine: AssistantEngine | (string & {})
+  /** "Pro" shu kanalda bormi: FAQAT `engine === 'v2'` va xizmatning byudjeti
+   *  o'qilganda `true`. `false` bo'lsa kalit umuman ko'rsatilmaydi - backend
+   *  baribir `mode: 'pro'` ni v2 bo'lmagan dvigatelga yubormaydi. */
+  available: boolean
 }
 
 /** Javob bilan kelgan `pro` bloki (`done` kadrida). Faqat "pro" so'ralgan
@@ -184,10 +203,11 @@ export interface ProInfo {
   calls?: number
   remaining?: ProWindows
   limits?: ProWindows
-  /** FAQAT so'ralib, berilmaganda: `limit` (byudjet tugagan) yoki
-   *  `no user` (so'rovda `user_id` yo'q). Javobning o'zi baribir bor -
-   *  u standart rejimda tayyorlangan. */
-  reason?: 'limit' | 'no user' | (string & {})
+  /** FAQAT so'ralib, berilmaganda: `limit` (byudjet tugagan), `no user`
+   *  (so'rovda `user_id` yo'q) yoki `engine` (tanlangan dvigatel v2 emas -
+   *  backend "pro" ni yubormagan). Javobning o'zi baribir bor - u standart
+   *  rejimda tayyorlangan. */
+  reason?: 'limit' | 'no user' | 'engine' | (string & {})
 }
 
 export interface ChatFrame {
@@ -229,6 +249,8 @@ export interface ChatFrame {
   proposal?: ActionProposal
   /** done: which side answered. */
   route?: string | null
+  /** done: qaysi dvigatel javob berdi (`v1` | `v2`) - versiyali yo'llarda. */
+  engine?: string | null
   /** done: "Pro" natijasi, faqat shu rejim so'ralgan bo'lsa. */
   pro?: ProInfo
   /** error: machine-readable cause, e.g. auth_missing. */
@@ -261,6 +283,8 @@ export interface UIExchange {
   answeredAt?: number | null
   /** rules | hrm | crm | live | both | clarify — shown in developer mode. */
   route?: string | null
+  /** `done.engine` (v1 | v2) - dasturchi rejimidagi qatorda. */
+  engine?: string | null
   /** Audit key: the same value is in the assistant's own log. */
   requestId?: string | null
   /** "Pro" natijasi - javob ostidagi kichik belgi uchun. */

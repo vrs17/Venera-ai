@@ -91,7 +91,8 @@ async function onRead() {
       :to="{ name: 'admin-turn', params: { id: traceId } }"
       target="_blank"
     />
-    <!-- Javobga oid kichik belgilar (masalan "Pro") - vaqtdan oldin. -->
+    <!-- Javobga oid kichik belgilar - vaqtdan oldin. ("Pro" belgisi bu yerdan javob
+         ostiga ko'chdi: eski javoblarda amallar faqat hover'da ko'rinadi.) -->
     <slot />
     <VTooltip v-if="at" :text="full">
       <time class="acts__time" :datetime="new Date(at).toISOString()">{{ when }}</time>

@@ -31,8 +31,9 @@ import { channelColor } from '../components/channel'
 import { useAdminQuery } from '../components/useAdminQuery'
 
 // "Umumiy" (spec §4.5.1): 5 ta KPI, faollik kanallar bo'yicha, kanallar ulushi,
-// yo'nalishlar, javob vaqti, ko'p iqtibos qilingan hujjatlar, so'nggi xabarlar va eng
-// sekin javoblar. Hammasi global filtr (davr + kanal) bo'yicha BITTA so'rov.
+// yo'nalishlar, javob vaqti, ko'p iqtibos qilingan hujjatlar, so'nggi xabarlar, eng
+// sekin javoblar va yordamchi dvigatellari (v1 / v2). Hammasi global filtr (davr +
+// kanal) bo'yicha BITTA so'rov.
 const { t, te, locale } = useI18n({ useScope: 'global' })
 const { withFilters, isDefault, reset } = useAdminFilters()
 const q = useAdminQuery(getOverview)
@@ -177,6 +178,42 @@ const latencySeries = computed<ChartSeries[]>(() => {
 
 const docs = computed(() => (ov.value?.topDocs ?? []).slice(0, 8))
 const docMax = computed(() => Math.max(1, ...docs.value.map((d) => d.citations)))
+
+/* ---- dvigatellar (v1 / v2) ----
+   v1 dan v2 ga o'tish paytida eng ko'p beriladigan savol: "yangisi qanday ishlayapti?".
+   Shuning uchun uchta raqam yonma-yon - savollar, xatolar, birinchi so'zgacha mediana.
+
+   RANG. Dvigatel - toifa, lekin toifa ranglari (--viz-1, --viz-2 ...) shu sahifada
+   KANALLARGA band (web ko'k, mini app to'q sariq): v2 ni ko'k qilsak, "web" bilan adashadi.
+   Shuning uchun bitta (ketma-ket) shkalaning ikki pog'onasi - v1 --viz-seq-3, v2
+   --viz-seq-5 - va yozilmagani jim kulrang (--text-4), yo'nalishsiz savollar kabi. Rang
+   yolg'iz ma'no tashimaydi: har qatorda nomi va raqami MATN bo'lib turadi. */
+const ENGINE_COLOR: Record<string, string> = { v1: '--viz-seq-3', v2: '--viz-seq-5' }
+const ENGINE_ORDER: Record<string, number> = { v1: 0, v2: 1 }
+
+const engineRows = computed(() =>
+  [...(ov.value?.engines ?? [])]
+    .filter((e) => e.turns > 0)
+    .sort((a, b) => (ENGINE_ORDER[a.engine] ?? 9) - (ENGINE_ORDER[b.engine] ?? 9) || b.turns - a.turns)
+    .map((e) => {
+      const known = e.engine in ENGINE_COLOR
+      return {
+        ...e,
+        known,
+        // `v1`/`v2` - nomi o'zi, yonida tavsifi ("yangi"); yozilmagani - "Versiyasiz".
+        name: known ? e.engine : te(`admin.engine.${e.engine}`) ? t(`admin.engine.${e.engine}`) : e.engine,
+        desc: known ? t(`admin.engine.${e.engine}`) : '',
+        color: ENGINE_COLOR[e.engine] ?? '--text-4',
+        // Qator - shu dvigatel javob bergan savollar (davr saqlanadi). Yozilmaganini
+        // filtrlab bo'lmaydi - havola yo'q.
+        to: known ? withFilters('/admin/conversations', { engine: e.engine }) : null,
+      }
+    }),
+)
+const engineMax = computed(() => Math.max(1, ...engineRows.value.map((e) => e.turns)))
+/** Eski backend `engines` bermaydi - karta umuman chizilmaydi (bo'sh karta emas). */
+const showEngines = computed(() => Array.isArray(ov.value?.engines))
+const hasUnversioned = computed(() => engineRows.value.some((e) => !e.known))
 
 /* ---- ro'yxatlar ---- */
 
@@ -392,6 +429,58 @@ function reasonLabel(reason: string | null): string {
             <p v-else class="ov-none">{{ t('ui.noData') }}</p>
           </VCard>
         </div>
+
+        <!-- yordamchi dvigatellari: v1 / v2 (to'liq en - 1/3 kartada 4 ustun ru tilida sig'masdi) -->
+        <VCard
+          v-if="showEngines"
+          :title="t('admin.overview.engines')"
+          :description="t('admin.overview.enginesHint')"
+          :heading-level="2"
+        >
+          <div v-if="engineRows.length" class="ov-engines" :class="{ 'is-busy': busy }">
+            <table class="ov-table ov-eng">
+              <thead>
+                <tr>
+                  <th scope="col">{{ t('admin.filter.engine') }}</th>
+                  <th scope="col" class="ov-eng__turns-h">{{ t('admin.col.turns') }}</th>
+                  <th scope="col" class="is-num">{{ t('admin.col.errors') }}</th>
+                  <th scope="col" class="is-num">{{ t('admin.kpi.medianTtft') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in engineRows" :key="row.engine">
+                  <th scope="row">
+                    <component :is="row.to ? RouterLink : 'span'" :to="row.to ?? undefined" class="ov-eng__name">
+                      <span :class="{ 't-mono': row.known }">{{ row.name }}</span>
+                      <span v-if="row.desc" class="ov-eng__desc"> · {{ row.desc }}</span>
+                    </component>
+                  </th>
+                  <td class="ov-eng__turns">
+                    <span class="ov-eng__bar">
+                      <VMeter
+                        class="ov-eng__meter"
+                        :value="row.turns"
+                        :max="engineMax"
+                        :color="row.color"
+                        size="sm"
+                        :label="row.known ? t('admin.engine.meta', { v: row.name }) : row.name"
+                        :value-text="num(row.turns)"
+                      />
+                      <span class="ov-eng__n">{{ num(row.turns) }}</span>
+                    </span>
+                  </td>
+                  <td class="is-num" :class="{ 'is-zero': row.errors === 0 }">{{ num(row.errors) }}</td>
+                  <td class="is-num">
+                    <template v-if="row.medianTtftMs !== null">{{ ms(row.medianTtftMs) }}</template>
+                    <span v-else class="is-zero">—</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-if="hasUnversioned" class="ov-caption">{{ t('admin.overview.enginesDefault') }}</p>
+          </div>
+          <p v-else class="ov-none">{{ t('ui.noData') }}</p>
+        </VCard>
       </div>
     </template>
   </section>
@@ -522,6 +611,54 @@ function reasonLabel(reason: string | null): string {
    eng uzun til (uz-Cyrl, ~347px) sig'adigan chegara. Telefonda karta ham tor - o'sha qoida. */
 @container (max-width: 359.98px) {
   .ov-hide-narrow {
+    display: none;
+  }
+}
+
+/* ---- dvigatellar ---- */
+.ov-engines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  container-type: inline-size;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+/* Savollar ustuni - qolgan hamma joy: tasma (uzunlik = savollar soni) va raqam. */
+.ov-eng .ov-eng__turns-h,
+.ov-eng .ov-eng__turns {
+  width: 100%;
+}
+.ov-eng__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+.ov-eng__meter {
+  flex: 1 1 auto;
+}
+/* Raqam tasmadan keyin, o'ngga tekislangan - "Xatolar" va "Javob vaqti" bilan bir guruh. */
+.ov-eng__n {
+  flex: none;
+  min-width: 6ch;
+  text-align: end;
+}
+.ov-eng__name {
+  color: var(--text);
+  font-weight: 500;
+}
+a.ov-eng__name:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+}
+.ov-eng__desc {
+  color: var(--text-3);
+  font-weight: 400;
+}
+/* Tor kartada (telefon) tasma va tavsif tushib qoladi: raqamlar va nom sig'sin. */
+@container (max-width: 419.98px) {
+  .ov-eng__meter,
+  .ov-eng__desc {
     display: none;
   }
 }

@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { useDocViewer } from '../composables/useDocViewer'
 import type { AnswerSource } from '../types'
 import VTooltip from '../ui/VTooltip.vue'
-import { lookupLabel } from './chat/sources'
+import { isLaw, lawTitle, lawUrl, lookupLabel } from './chat/sources'
 
 /**
  * Markdown javobni xavfsiz HTML ga aylantiradi. Javob matni backenddan keladi:
@@ -19,6 +19,10 @@ import { lookupLabel } from './chat/sources'
  * aylantiriladi: ustiga kelsa - hujjat nomi va sahifa (tooltip), bosilsa - hujjat o'sha
  * sahifada ochiladi. Kod bloklari va havolalar ichiga tegilmaydi. Matnda bor, lekin
  * manbalar ro'yxatida yo'q raqam o'zgarishsiz qoladi - u iqtibos emas.
+ *
+ * QONUN MODDASI (`kind: "law"`, v2) ham `[n]` bilan keladi, lekin ko'ruvchida EMAS,
+ * LEX.UZ da ochiladi: chip - haqiqiy `<a target="_blank">` (o'rta tugma, "havolani
+ * nusxalash" ham ishlaydi). Havola FAQAT `https://` bo'lsa; aks holda chip jim.
  *
  * `streaming` - javob hali yozilmoqda: oxirida 2px kursor, qayta chizish esa kadrga
  * bir marta (har token'da butun markdown'ni qayta tahlil qilish uzun javobda og'ir).
@@ -97,12 +101,21 @@ function chipify(doc: Document) {
       const source = isTool ? lookups.value.get(id) : docs.value.get(Number(id))
       if (!source) continue
       frag.appendChild(doc.createTextNode(value.slice(last, m.index)))
-      const chip = doc.createElement('span')
-      chip.className = isTool ? 'vmd-cite vmd-cite--tool' : 'vmd-cite'
+      const law = !isTool && isLaw(source)
+      const href = law ? lawUrl(source) : null
+      // Qonun havolasi - DOMPurify'dan KEYIN qo'yiladi, shuning uchun manzil shu yerda
+      // tekshirilgan (`lawUrl`: faqat https) bo'lishi shart.
+      const chip = href ? doc.createElement('a') : doc.createElement('span')
+      chip.className = isTool ? 'vmd-cite vmd-cite--tool' : law ? 'vmd-cite vmd-cite--law' : 'vmd-cite'
       chip.textContent = id
-      const tip = isTool ? lookupLabel(source, id) : docTip(source)
+      const tip = isTool ? lookupLabel(source, id) : law ? lawTitle(source, t('sourceDocument')) : docTip(source)
       chip.setAttribute('data-tip', tip)
-      if (!isTool && source.docUrl) {
+      if (href) {
+        chip.setAttribute('href', href)
+        chip.setAttribute('target', '_blank')
+        chip.setAttribute('rel', 'noopener noreferrer')
+        chip.setAttribute('aria-label', `${tip} - ${t('chat.lawOpen')}`)
+      } else if (!isTool && !law && source.docUrl) {
         chip.setAttribute('data-cite', id)
         chip.setAttribute('role', 'button')
         chip.setAttribute('tabindex', '0')
@@ -341,7 +354,13 @@ watch(
     background-color var(--dur-1) var(--ease-out),
     color var(--dur-1) var(--ease-out);
 }
-.vmd :deep(.vmd-cite[data-cite]) { cursor: pointer; }
+.vmd :deep(.vmd-cite[data-cite]),
+.vmd :deep(a.vmd-cite) { cursor: pointer; }
+/* Qonun chipi - havola, lekin ko'rinishi boshqa chiplar bilan bir xil (raqamlash umumiy). */
+.vmd :deep(a.vmd-cite) {
+  color: var(--text-2);
+  text-decoration: none;
+}
 @media (hover: hover) {
   .vmd :deep(.vmd-cite:hover) {
     background: var(--fill-hover);
