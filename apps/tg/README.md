@@ -172,6 +172,20 @@ tashlab, o'sha ma'lumotni pastda qayta ko'rsatish ma'nosiz bo'lardi.
 `crm` `hrm` ga 2026-09-14 da qo'shildi; undan oldin CRM manbasi hujjatlar
 ro'yxatiga tushib, mavjud bo'lmagan fayl kabi ko'rsatilardi.
 
+**Qonunchilik manbasi** (yordamchining v2 dvigateli, 2026-10-02): `kind:
+"law"` - LEX.UZ dagi modda, `url` bor, `doc_id` yo'q. Ro'yxatda "[2] LEX.UZ ·
+qonunchilik: Mehnat kodeksi, 160-modda — ..." bo'lib chiqadi, modda nomi -
+HAVOLA. Bosilsa `Telegram.WebApp.openLink` bilan Telegram'ning tashqi
+brauzerida ochiladi (Mini App yopilmaydi); Telegram'dan tashqarida -
+`window.open(..., 'noopener')`. Hujjat ko'ruvchisiga (`/chat/doc/...`) HECH
+QACHON yuborilmaydi. Havola faqat `https://` va login-parolsiz bo'lsa
+(`lawUrl`): server ham tekshiradi, lekin manbalar `localStorage` dan ham
+qayta chiqadi. Qaysi dvigatel ishlatilishi serverda (`HRM_ASSISTANT_ENGINE`,
+`HRM_ASSISTANT_ENGINE_BY_CHANNEL=miniapp=...`) - Mini App buni bilmaydi.
+
+**"Pro" Mini App'da YO'Q** (tugma ham, `mode` maydoni ham): u faqat web
+ilovada. Mini App `mode` yubormaydi, ya'ni har savol standart rejimda.
+
 ### Xato kadri: xizmatning O'Z matni yutadi
 
 `error` kadrida HAR QANDAY kod uchun `frame.text` ko'rsatiladi -

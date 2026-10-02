@@ -13,7 +13,9 @@ brauzer) ustida ko'rilgan narsalar:
     javob berildi / ma'lumotnoma savoli emas" deb ko'rsatadi;
   * soxta yuqori xizmat (`tools/dev_mock_upstream.py`) "Pro" ni jonli xizmat
     shaklida beradi: `GET /api/pro/quota` va `done.pro` (ishlatildi / kerak
-    bo'lmadi / limit).
+    bo'lmadi / limit);
+  * soxta xizmatning ikki dvigateli (2026-10-02 xati): `/api/{v1,v2}/chat/stream`
+    va versiyasiz yo'l, `done.engine`, v2 dagi LEX.UZ manbasi, "Pro" faqat v2 da.
 """
 
 from __future__ import annotations
@@ -146,13 +148,18 @@ def _call(port: int, method: str, path: str, body: dict | None = None) -> tuple[
     return resp.status, data
 
 
-def _done(port: int, question: str, **extra) -> dict:
-    status, text = _call(port, "POST", "/api/chat/stream",
-                         {"question": question, "user_id": "venera:7", **extra})
+def _frames(port: int, question: str, *, path: str = "/api/v2/chat/stream",
+            **extra) -> list[dict]:
+    status, text = _call(port, "POST", path, {"question": question, "user_id": "venera:7", **extra})
     assert status == 200, text
     frames = [json.loads(line) for line in text.splitlines() if line.strip()]
     assert frames[-1]["type"] == "done"
-    return frames[-1]
+    return frames
+
+
+def _done(port: int, question: str, **extra) -> dict:
+    """`done` kadri. Default yo'l - v2: "Pro" faqat shu dvigatelda."""
+    return _frames(port, question, **extra)[-1]
 
 
 def test_soxta_xizmat_pro_shakli_jonli_xizmatdek(mock_upstream):
@@ -179,3 +186,53 @@ def test_soxta_xizmat_pro_shakli_jonli_xizmatdek(mock_upstream):
     # Boshqa odamning byudjeti alohida.
     status, text = _call(mock_upstream, "GET", "/api/pro/quota?user_id=venera:8")
     assert json.loads(text)["remaining"]["day"] == 2
+
+
+# --- soxta yuqori xizmat: ikki dvigatel (2026-10-02 xati) -------------------------------
+
+LABOUR_Q = "Sinov muddati eng ko'pi bilan qancha?"
+
+
+@pytest.mark.parametrize(("path", "engine"), [
+    ("/api/v2/chat/stream", "v2"), ("/api/v1/chat/stream", "v1"),
+    # Versiyasiz yo'l - xizmat default'i (v1), `done` da `engine` YO'Q.
+    ("/api/chat/stream", None),
+])
+def test_soxta_xizmat_dvigatel_yollari(mock_upstream, path, engine):
+    done = _done(mock_upstream, ASSIST_Q, path=path)
+    assert done.get("engine") == engine
+
+
+def test_soxta_xizmat_v2_mehnat_kodeksi_lex_uz_manbasi_bilan(mock_upstream):
+    frames = _frames(mock_upstream, LABOUR_Q)
+    [sources] = [f for f in frames if f["type"] == "sources"]
+    kinds = [item["kind"] for item in sources["items"]]
+    assert kinds == ["doc", "law"]
+    law = sources["items"][1]
+    assert law["url"].startswith("https://www.lex.uz/") and law["doc_id"] is None
+    assert law["title"].startswith("Mehnat kodeksi, 130-modda")
+    assert law["citation_index"] == 2 and law["page"] is None
+    answer = "".join(f["text"] for f in frames if f["type"] == "token")
+    assert "130-modda" in answer and "[2]" in answer
+    # Shartnomani bekor qilish - 160-modda, xatdagi AYNAN havola.
+    frames = _frames(mock_upstream, "Mehnat shartnomasini bekor qilmoqchiman")
+    [sources] = [f for f in frames if f["type"] == "sources"]
+    assert sources["items"][-1]["url"] == "https://www.lex.uz/uz/docs/6257288#6261538"
+
+
+def test_soxta_xizmat_v1_da_qonun_manbasi_va_pro_yoq(mock_upstream):
+    frames = _frames(mock_upstream, LABOUR_Q, path="/api/v1/chat/stream", mode="pro")
+    [sources] = [f for f in frames if f["type"] == "sources"]
+    assert [item["kind"] for item in sources["items"]] == ["doc"]
+    assert "pro" not in frames[-1], "Pro faqat v2 da"
+    # Versiyasiz yo'lda ham.
+    assert "pro" not in _done(mock_upstream, ASSIST_Q, path="/api/chat/stream", mode="pro")
+    status, text = _call(mock_upstream, "GET", "/api/pro/quota?user_id=venera:7")
+    assert json.loads(text)["used"]["day"] == 0
+
+
+def test_soxta_xizmat_mehnat_kodeksi_pro_byudjet_yemaydi(mock_upstream):
+    """Xat, 7-bo'lim: Mehnat kodeksi xizmatda lokal - "Pro" yoqilgan bo'lsa ham
+    `used: false`, byudjet joyida."""
+    pro = _done(mock_upstream, LABOUR_Q, mode="pro")["pro"]
+    assert (pro["requested"], pro["used"], pro["remaining"]["day"]) == (True, False, 2)

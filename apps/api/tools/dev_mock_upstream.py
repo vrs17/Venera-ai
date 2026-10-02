@@ -12,7 +12,10 @@ HAQIQIY kodi bilan ishlaydi, faqat `.env` dagi manzillar shu yerga qaraydi.
 SHAKLLAR TAXMIN EMAS. Har bir maydon Venera'da uni O'QIYDIGAN joydan olingan:
 
   * `app/services/integrations/assistant.py` - NDJSON kadrlari, `X-Request-Id`,
-    `/api/chats`, `/api/actions/{token}`, `/api/hr/artifacts/...`, `/doc/...`;
+    `/api/{v1,v2}/chat/stream`, `/api/chats`, `/api/actions/{token}`,
+    `/api/hr/artifacts/...`, `/doc/...`;
+  * yuqoridagi jamoaning o'zgarishlar xati (2026-10-02) - dvigatellar,
+    `done.engine`, `kind: "law"` manbasi va "Pro" faqat v2 da;
   * `apps/web/src/types.ts`, `views/ChatView.vue`, `AnswerSources.vue`,
     `MarkdownMessage.vue`, `ActionCard.vue` - brauzer o'qiydigan maydonlar;
   * `app/services/stt.py`, `tts.py`, `upstream.py` - STT/TTS javoblari, `/health`;
@@ -58,6 +61,7 @@ MUHIM, yuqoridagisi ustun: "ta'til arizasi" - ariza, "ta'tilim qoldimi" - HRM.
     crm        crm, vazifalarim, mijoz, клиент, задачи, task  sources, token..            crm
     hrm        qoldi, maosh, oylik, зарплата, осталось, salary  sources, token..          hrm|both
     rag        ta'til, qoida, safar, ish vaqti, kasal, отпуск  sources, token..           rules
+               sinov muddati, shartnomani bekor qilish     (+ v2: `law` manbasi)
     clarify    hisobot, отчёт, report                        token..                     clarify
     smalltalk  qolgan hamma narsa (salom, rahmat, ...)        token..                     rules
 
@@ -78,11 +82,28 @@ tashqari nosozlik holatlari:
     fail      oqim ochilmasdan 500
     slow      birinchi so'zdan oldin ~9 s jimlik - kutish ovozini (hold) sinash uchun
 
-"PRO" REJIMI. `mode: "pro"` bilan kelgan savolning `done` kadrida `pro` bloki
-bo'ladi (`types.ts: ProInfo`): hujjat/HRM/CRM savoli byudjetdan bittani yeydi
-(`used: true`), kichik gap va aniqlashtirish yemaydi (`used: false`), byudjet
-tugagan bo'lsa javob baribir keladi, blokda esa `reason: "limit"`. Qolgani
-`GET /api/pro/quota?user_id=` da; kunlik chegara `--pro-day` (default 5).
+IKKI DVIGATEL (yuqoridagi jamoa xati, 2026-10-02). Oqim uch yo'lda:
+
+    POST /api/v1/chat/stream   v1 - `done` da `"engine": "v1"`
+    POST /api/v2/chat/stream   v2 - `done` da `"engine": "v2"`, LEX.UZ manbalari, "Pro"
+    POST /api/chat/stream      versiyasiz = v1, lekin `done` da `engine` YO'Q
+
+  Venera qaysi yo'lga borishini `HRM_ASSISTANT_ENGINE` /
+  `HRM_ASSISTANT_ENGINE_BY_CHANNEL` hal qiladi (`app/core/engines.py`). Mehnat
+  kodeksi savoli ("sinov muddati", "mehnat shartnomasini bekor qilish") - `rag`
+  ichida: ichki qoida HAR DOIM, v2 da yonida `kind: "law"` manbasi (`url` -
+  LEX.UZ, `doc_id: null`, sarlavha "Mehnat kodeksi, 130-modda — ..."). Jonli
+  v2 dagi kabi "Pro" bunday savolda byudjet YEMAYDI (`used: false`). Oddiy
+  (oqimsiz) `/api/{v1,v2}/chat` yo'q - Venera ishlatmaydi, `/api/chat` esa
+  shu portda Ollama taqlidi.
+
+"PRO" REJIMI - FAQAT v2 da. `mode: "pro"` bilan kelgan savolning `done`
+kadrida `pro` bloki bo'ladi (`types.ts: ProInfo`): hujjat/HRM/CRM savoli
+byudjetdan bittani yeydi (`used: true`), kichik gap, aniqlashtirish va Mehnat
+kodeksi savoli yemaydi (`used: false`), byudjet tugagan bo'lsa javob baribir
+keladi, blokda esa `reason: "limit"`. v1 va versiyasiz yo'lda `mode`
+e'tiborsiz va blok yo'q. Qolgani `GET /api/pro/quota?user_id=` da (versiyasiz);
+kunlik chegara `--pro-day` (default 5).
 
 HOLAT XOTIRADA: suhbatlar `(user_id, chat_id)` bo'yicha, takliflar (15 daqiqa),
 ariza fayllari, "Pro" byudjeti va TTS tokenlari. Qayta ishga tushsa hammasi yo'qoladi - TTS
@@ -343,6 +364,14 @@ PASSAGES: dict[str, Passage] = {
     "late": Passage("HR_045", 9, "4.3", "Kechikish va davomat",
                     "Ish vaqtining boshlanishiga 15 daqiqadan ortiq kechikish mehnat intizomining "
                     "buzilishi hisoblanadi va bo'lim rahbariga bildiriladi."),
+    "probation": Passage("HR_045", 4, "3.4", "Sinov muddati",
+                         "Ishga qabul qilishda xodim bilan kelishilgan holda sinov muddati "
+                         "belgilanishi mumkin; u uch oydan oshmaydi va mehnat shartnomasida "
+                         "ko'rsatiladi."),
+    "termination": Passage("HR_045", 6, "5.2", "Mehnat shartnomasini bekor qilish",
+                           "Xodim mehnat shartnomasini o'z tashabbusi bilan bekor qilmoqchi "
+                           "bo'lsa, bo'lim rahbari va Kadrlar bo'limini yozma ariza bilan "
+                           "oldindan ogohlantiradi; hisob-kitob oxirgi ish kunida qilinadi."),
     "final": Passage("HR_045", 22, "70", "Yakuniy qoidalar",
                      "Ushbu qoidalarga o'zgartirishlar kasaba uyushmasi qo'mitasi bilan kelishilgan "
                      "holda Bosh direktor buyrug'i bilan kiritiladi."),
@@ -371,6 +400,18 @@ PASSAGES: dict[str, Passage] = {
     "sick_pay": Passage("HR_019", 3, "3.2", "Nafaqa miqdori",
                         "Vaqtincha mehnatga layoqatsizlik nafaqasi ish stajiga qarab o'rtacha ish "
                         "haqining 60 foizidan 100 foizigacha miqdorda to'lanadi."),
+}
+
+#: Qonunchilik manbalari (v2, `kind: "law"`) - yuqoridagi jamoa xatidagi shakl
+#: (2026-10-02, 4-bo'lim). 160-modda havolasi xatdagi AYNAN o'zi; 130-modda
+#: uchun modda langari bizda yo'q - kodeksning o'zi (taxmin qilingan langar
+#: odamni boshqa moddaga olib borardi).
+LAW_ARTICLES: dict[str, dict[str, str]] = {
+    "probation": {"title": "Mehnat kodeksi, 130-modda — Dastlabki sinov",
+                  "url": "https://www.lex.uz/uz/docs/6257288"},
+    "termination": {"title": "Mehnat kodeksi, 160-modda — Mehnat shartnomasini xodimning "
+                             "tashabbusiga ko‘ra bekor qilish",
+                    "url": "https://www.lex.uz/uz/docs/6257288#6261538"},
 }
 
 _FILLER_HEADINGS = ("Umumiy qoidalar", "Asosiy tushunchalar", "Tomonlarning huquq va majburiyatlari",
@@ -954,6 +995,8 @@ class Ctx:
     tokens: dict[str, str]
     base: str               # soxtaning o'z manzili - "ichki" havolalar uchun
     request_id: str
+    #: Dvigatel: `v1` (versiyasiz yo'l ham) yoki `v2` - LEX.UZ manbalari faqat v2 da.
+    engine: str = "v1"
 
 
 @dataclass
@@ -965,6 +1008,9 @@ class Plan:
     answer: str = ""
     store: bool = True
     http_error: tuple[int, dict[str, Any]] | None = None
+    #: "Pro" bu savolga tashqi modelni chaqirarmidi. Mehnat kodeksi xizmatda
+    #: LOKAL - "Pro" yoqilgan bo'lsa ham byudjet yeyilmaydi (xat, 7-bo'lim).
+    pro_needed: bool = True
 
     def stage(self, name: str, text: str, lo: float = 0.2, hi: float = 0.6) -> "Plan":
         """Bosqich kadri. Oldingi bosqichdan beri o'tgan kutish HISOBGA olinadi:
@@ -1016,6 +1062,14 @@ def _call(kind: str, n: int, tool: str, digest: str, args: dict[str, Any] | None
             "args": args or {}}
 
 
+def _law(key: str, n: int) -> dict[str, Any]:
+    """Qonunchilik manbasi - jonli v2 shakli: `doc_id`, `page`, `preview_available`
+    yo'q (`null`), `url` LEX.UZ dagi moddaga."""
+    article = LAW_ARTICLES[key]
+    return {"kind": "law", "citation_index": n, "title": article["title"], "url": article["url"],
+            "doc_id": None, "page": None, "preview_available": None}
+
+
 def _routing(plan: Plan) -> Plan:
     plan.steps.append(("wait", 0.15, 0.35))
     return plan.stage("routing", "Savol tahlil qilinmoqda", 0.05, 0.15)
@@ -1031,6 +1085,29 @@ def plan_rag(ctx: Ctx) -> Plan:
     q = ctx.q
     plan = _routing(Plan("rag")).stage("retrieval", "Hujjatlar qidirilmoqda")
     plan.stage("rerank", "Eng mos bo'limlar saralanmoqda")
+    labour = _LABOUR.search(q)
+    if labour:
+        # Mehnat kodeksi savoli: ichki qoida HAR DOIM; v2 da yonida qonun moddasi
+        # (LEX.UZ havolasi bilan) - xatdagi "Quick test" javobi shu shaklda.
+        key = "termination" if re.search(r"bekor|bo'?shat|увольн|расторж|ketmoqchi", q) else "probation"
+        v2 = ctx.engine == "v2"
+        plan.pro_needed = False
+        plan.sources([_doc(key, 1, 0.92)] + ([_law(key, 2)] if v2 else []))
+        law = f" [2]" if v2 else ""
+        if key == "probation":
+            plan.write(
+                "Ichki mehnat tartibi qoidalariga ko'ra sinov muddati **uch oydan oshmaydi** va "
+                "mehnat shartnomasida ko'rsatiladi [1]."
+                + (f"\n\nQonunchilikda: *Mehnat kodeksi, 130-modda* — dastlabki sinov{law}."
+                   if v2 else ""))
+        else:
+            plan.write(
+                "Mehnat shartnomasini o'z tashabbusingiz bilan bekor qilmoqchi bo'lsangiz, bo'lim "
+                "rahbari va Kadrlar bo'limini **yozma ariza** bilan oldindan ogohlantirasiz; "
+                "hisob-kitob oxirgi ish kunida qilinadi [1]."
+                + (f"\n\nQonunchilikda: *Mehnat kodeksi, 160-modda* — ogohlantirish muddati va "
+                   f"tartibi{law}." if v2 else ""))
+        return plan.done("rules")
     if re.search(r"safar|komandirov|командиров|\btrip|travel|сафар", q):
         plan.sources([_doc("trip_order", 1, 0.93), _doc("trip_advance", 2, 0.88),
                       _doc("per_diem", 3, 0.74)])
@@ -1388,6 +1465,11 @@ def plan_cut(ctx: Ctx, *, mid_frame: bool = False) -> Plan:
 
 _DIRECTIVE = re.compile(r"\bmock:([a-z]+)\b", re.IGNORECASE)
 
+#: Mehnat kodeksi savoli (sinov muddati, shartnomani bekor qilish) - `rag`
+#: ichida alohida tarmoq: v2 da LEX.UZ manbasi qo'shiladi.
+_LABOUR = re.compile(r"sinov\s*muddat|испытательн|mehnat\s*shartnoma|shartnoma\w*\s+bekor|"
+                     r"ishdan\s+bo'?shat|увольн|трудов\w*\s+договор|расторж")
+
 #: (ssenariy, naqsh) - TARTIB bilan, birinchi mos kelgani tanlanadi.
 _RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("error", re.compile(r"kechikdim|kechikkanmi|davomatim|\bxato\b|\berror\b|ошибк|опоздал|"
@@ -1401,7 +1483,8 @@ _RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("hrm", re.compile(r"qoldi|qoldig|balans|balance|остал|остат|maosh|oylik(?!\s+hisobot)|ish\s*haq|"
                        r"salary|pay\s*day|payslip|зарплат|avans|аванс|маош|ойлик|қолди|\bleft\b|"
                        r"remaining")),
-    ("rag", re.compile(r"ta'?til|отпуск|vacation|\bleave\b|qoida|nizom|tartib|policy|\brule|"
+    ("rag", re.compile(r"sinov\s*muddat|испытательн|shartnoma|ishdan\s+bo'?shat|увольн|расторж|"
+                       r"ta'?til|отпуск|vacation|\bleave\b|qoida|nizom|tartib|policy|\brule|"
                        r"правил|положени|kodeks|mehnat|safar|komandirov|командиров|\btrip|"
                        r"travel|ish\s*vaqt|soat\s*nech|tushlik|working\s*hours|график|режим|"
                        r"dress|kiyin|дресс|kasal|больнич|\bsick|dekret|kechikish|таътил|қоида|"
@@ -1672,7 +1755,18 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- HR Assistant: savol -> oqim -----------------------------------------------
 
-    def chat_stream(self) -> None:
+    def chat_stream_v1(self) -> None:
+        self.chat_stream("v1")
+
+    def chat_stream_v2(self) -> None:
+        self.chat_stream("v2")
+
+    def chat_stream_default(self) -> None:
+        # Versiyasiz yo'l - xizmat default'i, bugun = v1 (xat, 1-bo'lim), lekin
+        # `done` da `engine` YO'Q: u faqat versiyalangan yo'lda keladi.
+        self.chat_stream(None)
+
+    def chat_stream(self, engine: str | None) -> None:
         if not self._client_ok():
             return
         body = self._json_body()
@@ -1690,13 +1784,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         chat_id = body.get("chat_id") if isinstance(body.get("chat_id"), str) else None
         tokens = body.get("tokens") if isinstance(body.get("tokens"), dict) else {}
-        pro = body.get("mode") == "pro"
+        # "Pro" FAQAT v2 da (xat, 3-bo'lim): boshqa yo'lda `mode` e'tiborsiz,
+        # `done` da `pro` bloki ham yo'q.
+        pro = body.get("mode") == "pro" and engine == "v2"
         scenario, q = choose(question)
         ctx = Ctx(question=question, q=q, user_id=user_id, chat_id=chat_id or None,
                   tokens={k: str(v) for k, v in tokens.items() if v},
-                  base=f"http://{self.headers.get('Host') or '127.0.0.1'}", request_id=self._rid)
+                  base=f"http://{self.headers.get('Host') or '127.0.0.1'}", request_id=self._rid,
+                  engine=engine or "v1")
         plan = build_plan(ctx, scenario)
-        self._note = f"  [{plan.scenario}{' pro' if pro else ''}]"
+        self._note = f"  [{engine or '-'} {plan.scenario}{' pro' if pro else ''}]"
         if plan.http_error:
             _pause(0.2, 0.5)
             self._json(*plan.http_error)
@@ -1723,9 +1820,13 @@ class Handler(BaseHTTPRequestHandler):
                     _pause(0.025, 0.04)
             elif kind == "done":
                 done = {"type": "done", "route": step[1], "request_id": self._rid}
+                if engine:
+                    # Versiyalangan yo'lda - qaysi dvigatel javob bergani.
+                    done["engine"] = engine
                 if pro:
                     # Blok faqat "pro" so'ralganda keladi (standart javobda yo'q).
-                    done["pro"] = PRO.answer(user_id, needed=plan.scenario not in ("smalltalk", "clarify"))
+                    done["pro"] = PRO.answer(user_id, needed=plan.pro_needed and plan.scenario
+                                             not in ("smalltalk", "clarify"))
                 send(done)
             elif kind == "cut":
                 if step[1]:
@@ -2020,7 +2121,9 @@ ROUTES: list[tuple[str, re.Pattern[str], Callable[..., None]]] = [
         ("GET", r"/api/health", Handler.assistant_health),
         ("GET", r"/_mock", Handler.mock_state),
         # HR Assistant
-        ("POST", r"/api/chat/stream", Handler.chat_stream),
+        ("POST", r"/api/chat/stream", Handler.chat_stream_default),
+        ("POST", r"/api/v1/chat/stream", Handler.chat_stream_v1),
+        ("POST", r"/api/v2/chat/stream", Handler.chat_stream_v2),
         ("GET", r"/api/pro/quota", Handler.pro_quota),
         ("GET", r"/api/chats", Handler.chats_list),
         ("GET", r"/api/chats/([^/]+)", Handler.chat_get),
@@ -2069,7 +2172,8 @@ def main() -> int:
     signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start())
     print(f"Venera dev mock: http://{args.host}:{args.port}  (speed={OPTS.speed}, "
           f"strict_tokens={OPTS.strict_tokens})\n"
-          "  HR Assistant  POST /api/chat/stream · /api/chats · /api/actions · /api/hr/artifacts · /doc\n"
+          "  HR Assistant  POST /api/{v1,v2}/chat/stream (va versiyasiz /api/chat/stream = v1)\n"
+          "                /api/chats · /api/actions · /api/hr/artifacts · /doc\n"
           "                GET /api/pro/quota   (\"Pro\": done.pro, kunlik chegara --pro-day)\n"
           "  STT Router    POST /transcribe            TTS  POST /api/v1/auth/token · /api/v1/tts/stream\n"
           "  GAPI STT      POST /v1/transcribe         Ollama  POST /api/chat        holat  GET /health\n"

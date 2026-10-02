@@ -142,8 +142,11 @@ def _isolated_identities(tmp_path, monkeypatch):
 #: turdagi tuzoq: `LOCAL_LOGIN_ENABLED=false` bo'lsa deyarli hamma test
 #: kira olmaydi, `ADMIN_LOGINS` / `SSO_TRUSTED_ROLES` esa rollarni
 #: o'zgartiradi. O'zgacha qiymat kerak bo'lgan test uni o'zi qo'yadi.
+#: Yordamchi dvigateli ham: `.env` dagi `HRM_ASSISTANT_ENGINE=v1` yoki kanal
+#: istisnosi oqim yo'lini va "Pro" ni o'zgartirib, testni mashinaga bog'lardi.
 _CODE_DEFAULTS = ("hold_enabled", "wake_log_enabled", "local_login_enabled",
-                  "admin_logins", "sso_trusted_roles")
+                  "admin_logins", "sso_trusted_roles", "hrm_assistant_engine",
+                  "hrm_assistant_engine_by_channel", "hrm_assistant_max_stream_seconds")
 
 
 @pytest.fixture(autouse=True)

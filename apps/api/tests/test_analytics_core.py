@@ -72,18 +72,20 @@ SPEC_TABLES = {"turns", "turn_events", "turn_sources", "api_calls", "auth_events
                "user_admin", "audit_log"}
 SPEC_INDEXES = {"turns_started", "turns_actor", "turns_channel", "turns_chat",
                 "turn_sources_ref", "api_calls_ts", "api_calls_service", "api_calls_turn",
-                "auth_events_ts", "reports_status"}
+                "auth_events_ts", "reports_status", "turns_engine"}
 TURN_COLUMNS = [
     "id", "started_at", "ended_at", "actor_id", "user_name", "user_login", "channel", "kind",
     "input_mode", "locale", "chat_id", "request_id", "question", "answer", "route", "status",
     "error_code", "error_text", "http_status", "ttft_ms", "total_ms", "frames",
     "sources_count", "tool_calls", "has_artifact", "has_proposal", "proposal_token",
     "proposal_status", "answer_chars",
+    # Sxema v2 (2026-10-02): yordamchi dvigateli.
+    "engine",
 ]
 
 
 def test_sxema_spetsifikatsiya_boyicha(adb):
-    assert adb.version() == SCHEMA_VERSION == 1
+    assert adb.version() == SCHEMA_VERSION == 2
     tables = {r["name"] for r in adb.rows(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
     assert tables == SPEC_TABLES
@@ -110,8 +112,8 @@ def test_migratsiya_takrorlansa_hech_narsa_buzilmaydi(adb):
     # Xuddi shu fayl - yangi obyekt (qayta ishga tushish) va to'g'ridan-to'g'ri
     # qayta chaqiruv: ikkalasi ham jim o'tadi, ma'lumot joyida.
     again = Database(adb.path)
-    assert again.version() == 1
-    assert _migrate(again.connect()) == 1
+    assert again.version() == 2
+    assert _migrate(again.connect()) == 2
     assert again.scalar("SELECT COUNT(*) FROM reports") == 1
     again.close_all()
 
@@ -124,7 +126,7 @@ def test_bir_vaqtda_ochilgan_ikki_jarayon(tmp_path):
     def open_it() -> None:
         try:
             database = Database(path)
-            assert database.version() == 1
+            assert database.version() == 2
             database.close_all()
         except BaseException as exc:                        # noqa: BLE001
             errors.append(exc)
@@ -135,6 +137,60 @@ def test_bir_vaqtda_ochilgan_ikki_jarayon(tmp_path):
     for thread in threads:
         thread.join()
     assert errors == []
+
+
+def test_v1_ombor_v2_ga_otadi_malumot_joyida(tmp_path):
+    """Prod fayli (sxema v1, ma'lumot bilan) yangi kod bilan ochilsa: `engine`
+    ustuni va indeksi qo'shiladi, eski qatorlar joyida va `engine` - NULL
+    ("default"), yangi savol esa dvigateli bilan yoziladi."""
+    from app.services.analytics.db import MIGRATIONS
+
+    path = tmp_path / "prod" / "venera.db"
+    path.parent.mkdir()
+    old = sqlite3.connect(str(path), isolation_level=None)
+    for statement in MIGRATIONS[0]:
+        old.execute(statement)
+    old.execute("PRAGMA user_version = 1")
+    old.execute("INSERT INTO turns (id, started_at, channel, question, status, route) "
+                "VALUES ('a' || hex(randomblob(15)), 1.0, 'web', 'eski savol', 'ok', 'rules')")
+    old.close()
+
+    database = Database(path)
+    assert database.version() == 2
+    columns = [r["name"] for r in database.rows("PRAGMA table_info(turns)")]
+    assert columns == TURN_COLUMNS
+    assert "turns_engine" in {r["name"] for r in database.rows(
+        "SELECT name FROM sqlite_master WHERE type='index'")}
+    [row] = database.rows("SELECT question, route, engine FROM turns")
+    assert (row["question"], row["route"], row["engine"]) == ("eski savol", "rules", None)
+    # Jadval sxemasi o'qiladigan holda (ALTER matni `CREATE TABLE` ga qo'shiladi).
+    database.execute("INSERT INTO turns (id, started_at, channel, question, engine) "
+                     "VALUES ('b', 2.0, 'web', 'yangi', 'v2')")
+    assert database.scalar("SELECT engine FROM turns WHERE id='b'") == "v2"
+    database.close_all()
+
+
+def test_eski_kod_yangi_omborni_ochsa_ishlaydi(tmp_path):
+    """Deploy orqaga qaytarilsa: v1 kod (`MIGRATIONS` bitta qadam) v2 faylni
+    ochadi - ogohlantiradi, lekin ishlaydi; o'z ustunlarini nomlab yozadi."""
+    from app.services.analytics import db as db_module
+
+    path = tmp_path / "venera.db"
+    fresh = Database(path)
+    assert fresh.version() == 2
+    fresh.close_all()
+    conn = sqlite3.connect(str(path), isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    original = db_module.SCHEMA_VERSION
+    try:
+        db_module.SCHEMA_VERSION = 1
+        assert db_module._migrate(conn) == 2
+    finally:
+        db_module.SCHEMA_VERSION = original
+    conn.execute("INSERT INTO turns (id, started_at, channel, question, status) "
+                 "VALUES ('x', 1.0, 'web', 'savol', 'ok')")
+    assert conn.execute("SELECT engine FROM turns").fetchone()[0] is None
+    conn.close()
 
 
 def test_papka_700_fayl_600(tmp_path):

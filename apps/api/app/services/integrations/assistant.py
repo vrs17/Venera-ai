@@ -5,6 +5,13 @@ o'z ichida hujjatlar bo'yicha RAG va HRM connector'ini birlashtiradi, ya'ni
 Venera uchun bu BITTA endpoint - savolni yuboramiz, javobni bo'lak-bo'lak
 olamiz.
 
+IKKI DVIGATEL (2026-10-02 dan, `core/engines.py`): `/api/v1/chat/stream`
+(barqaror) va `/api/v2/chat/stream` (yangi: Mehnat kodeksi moddalari LEX.UZ
+havolasi bilan, "Pro" rejimi). Versiyasiz `/api/chat/stream` - xizmat
+default'i (bugun = v1). So'rov va javob shakli bir xil; qaysi yo'lga borishni
+chaqiruvchi aytadi (`stream(engine=...)`), klient o'zi tanlamaydi. Tarix,
+amallar, fayllar va `/api/pro/quota` VERSIYASIZ.
+
 NEGA OQIM VA `/api/chat` EMAS. Bitta javob to'liq yozilishini kutish LLM
 uchun o'n soniyalar. Oqimda birinchi so'z darhol keladi va odam javob
 yozilayotganini KO'RADI. Hujjat ham shuni talab qiladi: "proxy it
@@ -29,8 +36,14 @@ KADRLAR (frames), hujjat bo'yicha shu tartibda:
     proposal  -> TAKLIF qilingan yozuv amali (bo'lishi shart emas): hech
                  narsa o'zgarmagan, odam tasdiqlasa `confirm_action` bajaradi
     token     -> javob matni bo'laklari, ko'p
-    done      -> yakun: `route`, `request_id`. MAJBURIY: usiz EOF - uzilish
+    done      -> yakun: `route`, `request_id`. MAJBURIY: usiz EOF - uzilish.
+                 Versiyalangan yo'lda `engine`, "Pro" so'ralganda `pro` bloki
     error     -> tokenlar O'RNIGA keladi, keyin `done`
+
+QONUNCHILIK MANBASI (v2): `sources` ichida `kind: "law"` - `url` LEX.UZ dagi
+moddaga olib boradi, `doc_id` yo'q. Havola brauzerga TO'G'RIDAN-TO'G'RI
+boradi, shuning uchun tekshiriladi (`safe_source_url`): faqat `https://`,
+`javascript:`/`data:`/`http:` va login-parolli manzil o'tmaydi.
 
 FAYL HAVOLALARI QAYTA YOZILADI. `artifact` kadridagi `docx_url` yuqoridagi
 serverning ICHKI manzilini ko'rsatadi - brauzer uni ocholmaydi. Shuning
@@ -47,7 +60,9 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import gc
 import http.client
+import itertools
 import json
 import logging
 import re
@@ -59,11 +74,12 @@ import urllib.request
 import uuid
 import weakref
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from socket import timeout as socket_timeout
 from typing import Any, Iterator
 
+from ...core.engines import ENGINES, PRO_ENGINE
 from ..analytics.meter import Call, begin
 
 log = logging.getLogger(__name__)
@@ -112,6 +128,24 @@ _MAX_FILE_BYTES = 25 * 1024 * 1024
 #: (512 KB) unga torlik qiladi; oqim chegarasi bilan bir xil.
 _MAX_JSON_BYTES = _MAX_STREAM_BYTES
 
+#: Qonunchilik manbasi havolasi shu domenlarda (xat: "LEX.UZ dagi moddaga
+#: olib boradi"). Boshqa `https` manzil ham O'TADI (xizmat keyin boshqa
+#: rasmiy manba qo'shishi mumkin), lekin jurnalga yoziladi - kutilmagan
+#: domen ko'rinsa, bilib turish kerak.
+LAW_HOSTS = ("lex.uz",)
+
+#: Manba havolasining eng katta uzunligi - undan uzuni nosozlik yoki hiyla.
+_MAX_URL_CHARS = 2048
+
+#: Navbat to'lganda yetib bo'lmaydigan oqimlarni yig'ish (`gc.collect`) shu
+#: soniyada ko'pi bilan bir marta: to'liq yig'ish barcha iplarni bir lahza
+#: to'xtatadi, to'lib turgan navbatda har savolda qayta-qayta qilinmasin.
+_GC_EVERY = 10.0
+
+#: Band joy "jim" (o'qilmayotgan) yoki "qari" deb topilishidan oldingi
+#: qo'shimcha zahira (soniya) - chegaraning o'zida tirik oqim kesilmasin.
+_LEASE_GRACE = 30.0
+
 
 class AssistantError(Exception):
     """Yuqoridagi xizmat bilan bog'liq xato.
@@ -119,12 +153,25 @@ class AssistantError(Exception):
     `status` - FOYDALANUVCHIGA ko'rsatiladigan HTTP status (HTTP qatlami
     uni xabarga o'giradi), yuqoridagi xizmatning statusi emas: 401 bizning
     sozlama xatomiz, foydalanuvchi sessiyasi esa joyida.
+
+    `reason` - ICHKI sabab, mashina o'qiydigan: foydalanuvchi uchun uchalasi
+    ham bir xil "xizmat band" (503), admin esa farqini ko'rishi kerak -
+    29-sentabrda aynan shu farq ko'rinmagani uchun bir soat davomida
+    "yordamchi band" deb o'ylandi, holbuki so'rov unga umuman bormagan edi:
+
+        queue_full            BIZNING navbat to'la - yuqoriga BORILMADI
+        upstream_unreachable  ulanib bo'lmadi (tarmoq, port yopiq, DNS)
+        upstream_busy         xizmatning O'ZI 503 qaytardi
+        upstream_timeout      javob kelmadi (vaqt tugadi)
+        upstream_http         xizmatning boshqa HTTP xatosi (401, 422, 500 ...)
     """
 
-    def __init__(self, message: str, *, status: int = 502, retryable: bool = False) -> None:
+    def __init__(self, message: str, *, status: int = 502, retryable: bool = False,
+                 reason: str | None = None) -> None:
         super().__init__(message)
         self.status = status
         self.retryable = retryable
+        self.reason = reason
 
 
 @dataclass
@@ -138,6 +185,11 @@ class AnswerStream:
     qaytaradi va o'z jurnaliga yozadi; biz ham log'ga yozamiz, shu tufayli
     "shu javob nega bunday bo'ldi" degan savolni ikki tizimda bir kalit
     bilan izlash mumkin.
+
+    YAKUN `close()` bilan - IDEMPOTENT va istalgan holatda: oxirigacha
+    o'qilgan, o'rtada tashlangan yoki UMUMAN BOSHLANMAGAN oqim. Oxirgisi
+    muhim: boshlanmagan generatorning `close()` i uning `finally` sini
+    ishlatmaydi, ya'ni slot faqat shu yerdan qaytadi.
     """
 
     request_id: str
@@ -145,6 +197,28 @@ class AnswerStream:
     #: Oqim o'qilgach to'ladi - shu sababli `field(default_factory=dict)`.
     #: `pump()` yakunda `route` va kadr sonini shu yerga yozadi.
     outcome: dict[str, Any] = field(default_factory=dict)
+    #: So'ralgan dvigatel (`v1` | `v2` | `""`). Yordamchiga bormagan javob
+    #: (xodimlar ma'lumotnomasi) - `None`. Javobning `done.engine` i bo'lsa
+    #: haqiqatda qaysi dvigatel javob bergani - o'sha (`outcome["engine"]`).
+    engine: str | None = None
+    #: Slot va ulanishni qaytaradigan yakun (`_StreamEnd`) - faqat klient
+    #: ochgan oqimda; testlardagi soxta oqimlarda yo'q.
+    _end: Callable[[BaseException | None], None] | None = field(
+        default=None, repr=False, compare=False)
+
+    def close(self) -> None:
+        """Oqimni yopadi va slotni qaytaradi. Necha marta chaqirilsa ham bir xil."""
+        close = getattr(self.frames, "close", None)
+        if callable(close):
+            try:
+                close()
+            except ValueError:
+                # "generator already executing": oqimni HOZIR boshqa ip
+                # o'qiyapti (kutish ovozi ipi, `chat._with_hold`). Uni
+                # bu yerdan to'xtatib bo'lmaydi - u tugaganda o'zi yakunlaydi.
+                return
+        if self._end is not None:
+            self._end(_ABANDONED)
 
 
 class AssistantClient:
@@ -164,6 +238,8 @@ class AssistantClient:
         *,
         timeout: float = 120.0,
         max_concurrent: int = 4,
+        max_stream_seconds: float = 600.0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.client_id = client_id
@@ -173,10 +249,23 @@ class AssistantClient:
         #: JIMLIK - nosozlik.
         self.timeout = timeout
         self.max_concurrent = max(1, max_concurrent)
-        #: Yuqoridagi xizmatda bitta LLM turadi. Bu semafora - bizning
-        #: ulushimiz: oshsa xizmatga BORMASDAN 503 qaytaramiz, ya'ni
-        #: navbatni boshqa chaqiruvchilar uchun to'ldirib qo'ymaymiz.
-        self._slots = threading.BoundedSemaphore(self.max_concurrent)
+        #: Bitta javobning eng uzun umri - undan oshsa oqim uziladi (504).
+        #: Navbatning o'zini davolashi shu chegaraga tayanadi (`_SlotPool`).
+        self.max_stream_seconds = max(1.0, float(max_stream_seconds))
+        #: Monoton soat - oqim muddati va navbat shu bilan o'lchanadi (testda soxta).
+        self._clock = clock
+        #: Yuqoridagi xizmatda bitta LLM turadi. Bu - bizning ulushimiz:
+        #: oshsa xizmatga BORMASDAN 503 qaytaramiz, ya'ni navbatni boshqa
+        #: chaqiruvchilar uchun to'ldirib qo'ymaymiz.
+        #:
+        #: Jim band joy chegarasi - `timeout` (yuqoridan o'qish undan ortiq
+        #: kutmaydi); qari joy chegarasi - butun oqim umri + bitta o'qish.
+        self._slots = _SlotPool(
+            self.max_concurrent,
+            idle_after=float(timeout) + _LEASE_GRACE,
+            max_age=self.max_stream_seconds + float(timeout) + _LEASE_GRACE,
+            clock=clock,
+        )
 
     @property
     def configured(self) -> bool:
@@ -184,6 +273,15 @@ class AssistantClient:
         yuqoridagi xizmat 401 qaytarardi, va bu foydalanuvchiga
         "sessiyangiz tugadi" bo'lib ko'rinardi."""
         return bool(self.base_url and self.client_id and self.client_secret)
+
+    def busy(self) -> int:
+        """Hozir band joylar soni (ochiq oqimlar)."""
+        return self._slots.busy()
+
+    def slots_state(self) -> dict[str, Any]:
+        """`/api/health/detail` uchun: band / chegara, eng eski va eng jim
+        joy, qaytarib olinganlar soni (ishga tushgandan beri)."""
+        return self._slots.state()
 
     # --- savol -> oqim -------------------------------------------------------
 
@@ -197,6 +295,7 @@ class AssistantClient:
         hrm_employee: str | None = None,
         max_chars: int = 2000,
         mode: str = "standard",
+        engine: str = "",
     ) -> AnswerStream:
         """Savolni yuboradi va kadr generatorini qaytaradi.
 
@@ -204,7 +303,14 @@ class AssistantClient:
         kabi xatolar shunda ODDIY HTTP javobi bo'lib chiqadi. Generator
         ichida ochilsa, biz allaqachon 200 yuborib bo'lgan bo'lardik va
         xato brauzerga "uzilgan oqim" bo'lib ko'rinardi.
+
+        `engine` - `v1` | `v2` | `""` (versiyasiz, xizmat default'i). Default
+        `""`: klient o'zi tanlamaydi - qaysi dvigatel ekanini chaqiruvchi
+        (`chat.open_stream`, kanal bo'yicha) aytadi.
         """
+        if engine not in ENGINES:
+            # Dasturchi xatosi: `core/engines.py` faqat shu qiymatlarni beradi.
+            raise ValueError(f"noma'lum dvigatel: {engine!r}")
         if not self.configured:
             raise AssistantError("HR Assistant sozlanmagan", status=501)
         question = (question or "").strip()
@@ -242,29 +348,46 @@ class AssistantClient:
             payload["hrm_employee"] = hrm_employee
         # `standard` YUBORILMAYDI: u xizmatning o'z default'i, va uni
         # ochiq yozish eski nusxalar uchun ortiqcha maydon bo'lardi.
-        # `pro` esa faqat odam shu xabar uchun yoqqanda keladi.
-        if mode == "pro":
+        # `pro` esa faqat odam shu xabar uchun yoqqanda keladi - va FAQAT
+        # v2 ga: "Pro" boshqa dvigatelda yo'q (xat, 3-bo'lim). `chat.py`
+        # buni oldinroq hal qiladi va izga yozadi; bu yer - ikkinchi to'r,
+        # pulli rejim noto'g'ri yo'lga hech qachon ketmasin.
+        pro_sent = mode == "pro" and engine == PRO_ENGINE
+        if pro_sent:
             payload["mode"] = "pro"
+        elif mode == "pro":
+            log.info("Assistant: 'pro' tashlandi - dvigatel %s ('pro' faqat %s da)",
+                     engine or "versiyasiz", PRO_ENGINE)
 
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        path = stream_path(engine)
 
         # Slot oqim TUGAGANDA bo'shatiladi (`finally` ichida), javob
         # kelganda emas: oqim davomida yuqoridagi LLM hali band.
-        if not self._slots.acquire(blocking=False):
-            raise AssistantError("navbat to'la", status=503, retryable=True)
+        lease = self._slots.acquire()
+        if lease is None:
+            state = self._slots.state()
+            # ALOHIDA sabab bilan: foydalanuvchi "xizmat band" ko'radi, lekin
+            # bu BIZNING navbatimiz - yuqoridagi xizmatga umuman borilmagan.
+            log.warning("Assistant navbati to'la (%d/%d band, eng eskisi %s s, eng jimi %s s) - "
+                        "yuqoriga BORILMADI [queue_full]", state["busy"], state["limit"],
+                        state["oldestSec"], state["idlestSec"])
+            raise AssistantError("navbat to'la", status=503, retryable=True, reason="queue_full")
         # Hisob: chaqiruv ULANISHDAN boshlanadi va oqim TUGAGANDA yopiladi,
         # ya'ni davomiyligi - butun javob. Kim/qaysi savol - `begin` shu
         # paytdagi kontekstdan oladi (oqim keyin boshqa ipda o'qilsa ham).
-        end = _StreamEnd(begin("assistant", "stream"), self._slots)
+        end = _StreamEnd(begin("assistant", "stream"), lease)
         try:
             with _mapped_errors(self.client_secret):
-                response = self._open("/api/chat/stream", body, accept="application/x-ndjson",
+                response = self._open(path, body, accept="application/x-ndjson",
                                       request_id=request_id)
             end.response = response
             end.call.http_status = _http_status(response)
             # Xizmat o'z `X-Request-Id` ini qaytarsa - AUDIT kaliti o'shanikisi.
             served = (response.headers.get("X-Request-Id") or "").strip()
             outcome: dict[str, Any] = {}
+            opened_at = self._clock()
+            deadline = self.max_stream_seconds
 
             def pump() -> Iterator[bytes]:
                 total = 0
@@ -279,11 +402,15 @@ class AssistantClient:
                 failure: BaseException | None = None
                 try:
                     while True:
+                        # "Tirik" belgisi: oqim o'qilyapti. O'qilmay qolgan
+                        # (tashlab ketilgan) joyni navbat shu belgi bo'yicha
+                        # taniydi va qaytarib oladi (`_SlotPool`).
+                        lease.touch()
                         try:
                             line = response.readline(_MAX_LINE_BYTES + 1)
                         except (TimeoutError, socket_timeout) as exc:
                             raise AssistantError("javob to'xtab qoldi (timeout)",
-                                                 status=504) from exc
+                                                 status=504, reason="upstream_timeout") from exc
                         except (http.client.HTTPException, OSError) as exc:
                             # Ulanish javob O'RTASIDA uzildi. Buni AYNAN shu
                             # yerda tutish kerak: bu xato tipi chaqiruvchiga
@@ -292,8 +419,17 @@ class AssistantClient:
                             # uzilish bo'lib ko'rinardi.
                             raise AssistantError(f"javob oqimi uzildi: {exc}",
                                                  status=503, retryable=True) from exc
+                        lease.touch()
                         if not line:
                             break
+                        if not finished and self._clock() - opened_at > deadline:
+                            # Butun javob umri chegaradan oshdi. Chegarasiz oqim
+                            # slotni abadiy ushlab turardi - va navbatning o'zini
+                            # davolashi aynan shu chegaraga tayanadi.
+                            log.warning("Assistant oqimi %d s dan oshdi (%s) - uzildi",
+                                        int(deadline), served or request_id)
+                            raise AssistantError("javob juda uzoq cho'zildi (oqim muddati)",
+                                                 status=504, reason="stream_deadline")
                         if len(line) > _MAX_LINE_BYTES:
                             # Bitta kadr chegaradan katta: qolgan qismi
                             # keyingi o'qishda kelib, buzuq JSON bo'lib
@@ -320,6 +456,16 @@ class AssistantClient:
                         frames += 1
                         if out.get("type") == "done":
                             outcome["route"] = out.get("route")
+                            # Haqiqatda javob bergan dvigatel (versiyalangan yo'lda).
+                            if isinstance(out.get("engine"), str) and out["engine"]:
+                                outcome["engine"] = out["engine"]
+                            if not pro_sent:
+                                # "Pro" so'ralmagan (yoki bu dvigatelda yo'q) -
+                                # blok brauzerga O'TMAYDI: aks holda klient
+                                # "Pro ishlatildi" belgisini ko'rsatardi.
+                                out.pop("pro", None)
+                            elif isinstance(out.get("pro"), dict):
+                                outcome["pro"] = out["pro"]
                             finished = True
                         elif out.get("type") == "error":
                             outcome["error"] = out.get("code")
@@ -345,14 +491,21 @@ class AssistantClient:
             frames_iter = pump()
             # Generator HECH BOSHLANMAY tashlab ketilsa (brauzer sarlavhadan
             # keyin, tanadan oldin uzildi) uning `finally` si ishlamaydi -
-            # slot mangu band qolardi. Obyekt yig'ilganda yakun shu yerdan.
+            # slot mangu band qolardi. Yakun UCH YO'LDAN, qaysi biri birinchi:
+            # `pump` ning `finally` si, `AnswerStream.close()` va obyekt
+            # yig'ilganda `weakref.finalize`. Uchalasi ham tushmay qolsa
+            # (generator tsiklda yoki biror joyda abadiy ushlanib qolgan) -
+            # navbatning o'zi uni eskirgan deb qaytarib oladi (`_SlotPool`).
             weakref.finalize(frames_iter, end, _ABANDONED)
             return AnswerStream(request_id=served or request_id, frames=frames_iter,
-                                outcome=outcome)
+                                outcome=outcome, engine=engine, _end=end)
         except BaseException as exc:
             # Oqim ochilmadi - slotni DARHOL qaytaramiz, aks holda birinchi
             # nosozlik navbatni abadiy egallab qolardi.
             end(exc)
+            if isinstance(exc, AssistantError):
+                log.warning("Assistant oqimi ochilmadi [%s] (%s): %s",
+                            exc.reason or "?", path, exc)
             raise
 
     def ask(self, question: str, **kwargs) -> dict[str, Any]:
@@ -384,6 +537,9 @@ class AssistantClient:
         return {
             "requestId": stream.request_id,
             "route": stream.outcome.get("route"),
+            # Javob bergan dvigatel (`done.engine`), bo'lmasa so'ralgani.
+            "engine": stream.outcome.get("engine") or stream.engine or None,
+            "pro": stream.outcome.get("pro"),
             "answer": "".join(answer),
             "sources": sources,
             "artifact": artifact,
@@ -724,10 +880,17 @@ def _rewrite_artifact(frame: dict[str, Any], base_url: str) -> None:
 
 
 def _rewrite_sources(frame: dict[str, Any]) -> None:
-    """Iqtibos qilingan hujjatga Venera orqali havola qo'shadi.
+    """Iqtibos qilingan hujjatga Venera orqali havola qo'shadi va tashqi
+    havolalarni tekshiradi.
 
     Xizmatning o'z `doc_id` si saqlanadi (frontend uni ko'rsatadi), yoniga
     `docUrl` qo'shiladi - brauzer AYNAN shu yo'l bilan PDF'ni ocha oladi.
+
+    QONUNCHILIK (`kind: "law"`, v2) - `url` LEX.UZ dagi moddaga, `docUrl`
+    BERILMAYDI: hujjat ko'ruvchisi (`/doc/...`) faqat `doc_id` uchun, xat ham
+    "do not try to open it in the document viewer" deydi. `url` HAR QANDAY
+    manbada tekshiriladi (`safe_source_url`): u brauzerda havola bo'lib
+    ochiladi, ya'ni `javascript:` yoki `data:` o'tib ketsa - bu XSS.
     """
     for key in ("sources", "items"):
         items = frame.get(key)
@@ -736,6 +899,13 @@ def _rewrite_sources(frame: dict[str, Any]) -> None:
         for item in items:
             if not isinstance(item, dict):
                 continue
+            if "url" in item:
+                item["url"] = safe_source_url(item["url"])
+            if item.get("kind") == "law":
+                # Xizmat adashib `doc_id` yoki o'z `docUrl` ini qo'shsa ham -
+                # qonun moddasi hujjat ko'ruvchisiga yo'naltirilmaydi.
+                item.pop("docUrl", None)
+                continue
             doc_id = item.get("doc_id")
             if item.get("kind") == "doc" and isinstance(doc_id, str) and doc_id:
                 if _SAFE_KEY.fullmatch(doc_id):
@@ -743,6 +913,70 @@ def _rewrite_sources(frame: dict[str, Any]) -> None:
                 page = item.get("page")
                 if isinstance(page, int) and page > 0 and item.get("docUrl"):
                     item["docUrl"] = f"{item['docUrl']}#page={page}"
+
+
+def stream_path(engine: str) -> str:
+    """Dvigatel -> oqim yo'li: `v2` -> `/api/v2/chat/stream`, `""` -> `/api/chat/stream`."""
+    if engine not in ENGINES:
+        raise ValueError(f"noma'lum dvigatel: {engine!r}")
+    return f"/api/{engine}/chat/stream" if engine else "/api/chat/stream"
+
+
+def is_law_host(host: str) -> bool:
+    """`lex.uz` yoki uning quyi domeni (`www.lex.uz`)."""
+    host = (host or "").lower().rstrip(".")
+    return any(host == name or host.endswith("." + name) for name in LAW_HOSTS)
+
+
+def safe_source_url(value: Any) -> str | None:
+    """Manba havolasi brauzerga berilsa bo'ladimi: bo'lsa (tozalangan) manzil,
+    bo'lmasa `None` (havola ko'rsatilmaydi, manbaning o'zi qoladi).
+
+    QOIDA - FAQAT `https://`:
+      * `javascript:`, `data:`, `vbscript:`, `file:` va sxemasiz (`//...`)
+        manzil - YO'Q: brauzerda bosilganda kod bajarardi yoki noma'lum
+        joyga olib ketardi;
+      * `http://` - YO'Q, faqat LEX.UZ uchun `https://` ga ko'tariladi
+        (sayt https da ishlaydi, shifrsiz havola esa yo'lda almashtirilishi
+        mumkin);
+      * login-parolli manzil (`https://lex.uz@boshqa.sayt/`) - YO'Q: ko'zga
+        LEX.UZ bo'lib ko'rinadi, aslida boshqa saytga olib boradi;
+      * bo'shliq, boshqaruv belgilari yoki 2048 dan uzun - YO'Q.
+
+    LEX.UZ dan boshqa `https` domen O'TADI, lekin jurnalga yoziladi.
+    """
+    if not isinstance(value, str):
+        return None
+    url = value.strip()
+    if not url or len(url) > _MAX_URL_CHARS or any(
+            ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in url):
+        if url:
+            log.warning("Manba havolasi rad etildi (yaroqsiz belgilar yoki uzun)")
+        return None
+    try:
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname or ""
+        has_login = parts.username is not None or parts.password is not None
+        _ = parts.port                      # buzuq port ValueError beradi
+    except ValueError:
+        log.warning("Manba havolasi rad etildi (o'qilmadi)")
+        return None
+    scheme = parts.scheme.lower()
+    if not host or has_login:
+        log.warning("Manba havolasi rad etildi (%s: domen yo'q yoki login bilan)",
+                    scheme or "sxemasiz")
+        return None
+    if scheme == "http" and is_law_host(host):
+        url = "https" + url[len(parts.scheme):]
+        scheme = "https"
+    if scheme != "https":
+        # Sxemaning O'ZI yoziladi, manzil emas - u jurnalga hiyla matn
+        # olib kirishi mumkin.
+        log.warning("Manba havolasi rad etildi (sxema %s)", scheme[:16] or "yo'q")
+        return None
+    if not is_law_host(host):
+        log.warning("Manba havolasi LEX.UZ emas: %s - o'tkazildi", host[:100])
+    return url
 
 
 def _filename(disposition: str, path: str) -> str:
@@ -825,6 +1059,10 @@ def _mapped_errors(secret: str):
     noto'g'ri" degani, ya'ni SOZLAMA xatosi. Brauzerga 401 qaytarish
     "sessiyangiz tugadi" degan ma'no berardi va foydalanuvchi o'zining
     mutlaqo joyida bo'lgan sessiyasidan chiqib ketardi.
+
+    Har xatoga ICHKI sabab (`reason`) qo'yiladi: foydalanuvchi uchun
+    "ulanib bo'lmadi" ham, "xizmat 503 qaytardi" ham bir xil 503, admin esa
+    qaysi biri ekanini bilishi kerak (`AssistantError` izohi).
     """
     try:
         yield
@@ -832,15 +1070,17 @@ def _mapped_errors(secret: str):
         status = exc.code
         detail = _redact(_detail(exc), secret)
         mapped = status if status in (400, 404, 422, 503) else 502
-        raise AssistantError(f"Assistant {status}: {detail}", status=mapped) from exc
+        raise AssistantError(f"Assistant {status}: {detail}", status=mapped,
+                             reason="upstream_busy" if status == 503 else "upstream_http") from exc
     except urllib.error.URLError as exc:
         raise AssistantError(f"Assistant serveriga ulanib bo'lmadi: {exc.reason}",
-                             status=503, retryable=True) from exc
+                             status=503, retryable=True, reason="upstream_unreachable") from exc
     except (TimeoutError, socket_timeout) as exc:
-        raise AssistantError("Assistant javob bermadi (timeout)", status=504) from exc
+        raise AssistantError("Assistant javob bermadi (timeout)", status=504,
+                             reason="upstream_timeout") from exc
     except (http.client.HTTPException, OSError) as exc:
         raise AssistantError(f"Assistant ulanishi uzildi: {exc}",
-                             status=503, retryable=True) from exc
+                             status=503, retryable=True, reason="upstream_unreachable") from exc
 
 
 def _redact(text: str, secret: str) -> str:
@@ -875,20 +1115,162 @@ def _detail(exc: urllib.error.HTTPError) -> str:
 _ABANDONED = GeneratorExit("abandoned")
 
 
+class _Lease:
+    """Navbatdagi BITTA band joy. `release()` IDEMPOTENT: ikkinchi chaqiruv,
+    yoki navbat joyni allaqachon qaytarib olgandan keyingi kech chaqiruv,
+    hech narsa qilmaydi - boshqa birovning joyini bo'shatib yubormaydi."""
+
+    __slots__ = ("_pool", "id", "acquired", "seen")
+
+    def __init__(self, pool: "_SlotPool", lease_id: int, now: float) -> None:
+        self._pool = pool
+        self.id = lease_id
+        #: Qachon olingan va oxirgi marta qachon "tirik" bo'lgan (o'qilgan).
+        self.acquired = now
+        self.seen = now
+
+    def touch(self) -> None:
+        """Oqim o'qilyapti - joy tashlab ketilmagan."""
+        self.seen = self._pool.clock()
+
+    def release(self) -> bool:
+        """Joyni qaytaradi; `True` - haqiqatan qaytdi (birinchi chaqiruv)."""
+        return self._pool._release(self)
+
+
+class _SlotPool:
+    """Yuqoridagi xizmatga bir vaqtda ketadigan oqimlar ulushi - O'ZINI DAVOLAYDI.
+
+    NEGA ODDIY `BoundedSemaphore` EMAS. 29-sentabrda prod bir soatdan ko'p
+    har savolga 503 "Savol-javob xizmati band" qaytardi - yordamchiga BIRORTA
+    so'rov bormagan holda (yuqoridagi jamoa xati, 6-bo'lim). Semafora joyi
+    faqat oqim generatorining `finally` sida qaytardi; brauzer sarlavhadan
+    keyin, tanadan OLDIN uzilsa generator hech boshlanmaydi va joy abadiy
+    band qoladi - `max_concurrent` ta shunday hodisadan keyin navbat mangu
+    "to'la". Semafora kim qachon olganini bilmaydi, ya'ni buni o'zi
+    tuzata olmaydi.
+
+    BU YERDA HAR JOY - IJARA (`_Lease`): qachon olingani va oxirgi marta
+    qachon o'qilgani ma'lum. Navbat TO'LGANDA (faqat shunda - oddiy yo'l
+    arzon qoladi) ikki bosqich:
+
+      1. `gc.collect()` (`_GC_EVERY` da ko'pi bilan bir marta): tsiklda
+         qolgan, yetib bo'lmaydigan oqimlar yig'iladi va ularning
+         `weakref.finalize` / `finally` si joyni HALOL qaytaradi (ulanish
+         yopiladi, hisob yoziladi). Tsikl oson paydo bo'ladi: uzilgan klient
+         istisnosining traceback'i oqim generatorini ushlab turadi, to'liq
+         yig'ish esa jim serverda soatlab kelmasligi mumkin;
+      2. ESKIRGAN ijaralar majburan qaytarib olinadi, ERROR bilan: `idle_after`
+         dan ko'p o'qilmagan (tirik oqim yuqoridan o'qishda `timeout` dan ko'p
+         kutmaydi) yoki `max_age` dan qari (oqim umri chegaralangan,
+         `max_stream_seconds`). Bunday joy ANIQ tashlab ketilgan.
+
+    Qaytarib olingan ijaraning egasi keyinroq `release()` qilsa - hech narsa
+    bo'lmaydi (kalit bo'yicha), ya'ni hisob hech qachon manfiyga ketmaydi.
+    """
+
+    def __init__(self, size: int, *, idle_after: float, max_age: float,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self.size = max(1, int(size))
+        self.idle_after = float(idle_after)
+        self.max_age = float(max_age)
+        self.clock = clock
+        self._lock = threading.Lock()
+        self._leases: dict[int, _Lease] = {}
+        self._ids = itertools.count(1)
+        self._gc_at: float | None = None
+        #: Ishga tushgandan beri majburan qaytarib olingan joylar.
+        self.reclaimed = 0
+
+    def busy(self) -> int:
+        with self._lock:
+            return len(self._leases)
+
+    def state(self) -> dict[str, Any]:
+        now = self.clock()
+        with self._lock:
+            leases = list(self._leases.values())
+        return {
+            "busy": len(leases),
+            "limit": self.size,
+            "oldestSec": int(max((now - lease.acquired for lease in leases), default=0)),
+            "idlestSec": int(max((now - lease.seen for lease in leases), default=0)),
+            "reclaimed": self.reclaimed,
+        }
+
+    def acquire(self) -> _Lease | None:
+        """Bo'sh joy (ijara) yoki `None` - navbat haqiqatan to'la."""
+        lease = self._take()
+        if lease is not None:
+            return lease
+        if self._collect():
+            lease = self._take()
+            if lease is not None:
+                log.warning("Assistant navbati: yig'ishdan keyin joy bo'shadi - "
+                            "tashlab ketilgan oqim(lar) bor edi")
+                return lease
+        if self._reclaim():
+            return self._take()
+        return None
+
+    def _take(self) -> _Lease | None:
+        with self._lock:
+            if len(self._leases) >= self.size:
+                return None
+            lease = _Lease(self, next(self._ids), self.clock())
+            self._leases[lease.id] = lease
+            return lease
+
+    def _release(self, lease: _Lease) -> bool:
+        with self._lock:
+            return self._leases.pop(lease.id, None) is not None
+
+    def _collect(self) -> bool:
+        """`gc.collect()` - tez-tez emas. QULFSIZ: yig'ish paytida finalizer'lar
+        `_release` ni chaqiradi va o'sha qulfni oladi."""
+        now = self.clock()
+        with self._lock:
+            if self._gc_at is not None and now - self._gc_at < _GC_EVERY:
+                return False
+            self._gc_at = now
+        gc.collect()
+        return True
+
+    def _reclaim(self) -> int:
+        """Eskirgan ijaralarni qaytarib oladi; nechtasi qaytgani."""
+        now = self.clock()
+        with self._lock:
+            stale = [lease for lease in self._leases.values()
+                     if now - lease.seen > self.idle_after or now - lease.acquired > self.max_age]
+            for lease in stale:
+                del self._leases[lease.id]
+            self.reclaimed += len(stale)
+        if stale:
+            log.error(
+                "Assistant navbati: %d ta oqib ketgan joy qaytarib olindi (eng eskisi %d s, "
+                "eng uzoq o'qilmagani %d s; chegaralar %d / %d s). Oqim yopilmay tashlab "
+                "ketilgan - shu paytgacha klient uzilishlariga qarang",
+                len(stale), int(max(now - lease.acquired for lease in stale)),
+                int(max(now - lease.seen for lease in stale)), int(self.idle_after),
+                int(self.max_age))
+        return len(stale)
+
+
 class _StreamEnd:
     """Oqim yakuni - BIR MARTA: slot qaytadi, ulanish yopiladi, hisob yoziladi.
 
-    Uch yo'ldan chaqiriladi, qaysi biri birinchi bo'lsa o'sha ishlaydi:
+    To'rt yo'ldan chaqiriladi, qaysi biri birinchi bo'lsa o'sha ishlaydi:
     generatorning `finally` si (oddiy tugash va o'rtada uzilish), ochilish
-    xatosi, va `weakref.finalize` - generator HECH BOSHLANMAY tashlab
-    ketilganda. Oxirgisi bo'lmasa slot mangu band qolardi: TTS da aynan shu
-    jonli tizimda o'lchangan (`services/tts.py`, `_Slot`).
+    xatosi, `AnswerStream.close()` va `weakref.finalize` - generator HECH
+    BOSHLANMAY tashlab ketilganda. Oxirgilari bo'lmasa slot mangu band
+    qolardi: TTS da aynan shu jonli tizimda o'lchangan (`services/tts.py`,
+    `_Slot`), yordamchida esa 29-sentabr hodisasi (`_SlotPool`).
     """
 
-    def __init__(self, call: Call, slots: threading.BoundedSemaphore | None = None) -> None:
+    def __init__(self, call: Call, lease: _Lease | None = None) -> None:
         self.call = call
         self.response: Any = None
-        self._slots = slots
+        self._lease = lease
         self._lock = threading.Lock()
         self._done = False
 
@@ -897,8 +1279,8 @@ class _StreamEnd:
             if self._done:
                 return
             self._done = True
-        if self._slots is not None:
-            self._slots.release()
+        if self._lease is not None:
+            self._lease.release()
         if self.response is not None:
             with contextlib.suppress(Exception):
                 self.response.close()

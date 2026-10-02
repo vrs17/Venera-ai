@@ -71,6 +71,11 @@ MAX_RANGE = 731 * 86400.0
 NOTE_CAP = 2000
 
 TURN_STATUSES = ("running", "ok", "error", "cancelled")
+#: Dvigatel filtri (`?engine=`): `default` - ustun NULL (versiyasiz yo'l yoki
+#: yordamchiga bormagan javob), umumiy ko'rinishdagi `engines` bilan bir xil nom.
+TURN_ENGINES = ("v1", "v2", "default")
+#: NULL dvigatelning ko'rinadigan nomi (`engines[].engine`).
+DEFAULT_ENGINE = "default"
 REPORT_STATUSES = ("new", "reviewing", "resolved", "dismissed")
 REPORT_REASONS = ("wrong", "incomplete", "outdated", "unsafe", "other")
 #: Foydalanish sahifasidagi xizmatlar TARTIBI. Chaqiruvi bo'lmasa ham
@@ -378,6 +383,7 @@ class TurnFilter:
 
     `route="none"` - yo'nalishsiz savollar (xato yoki bekor qilingan).
     `reported`: `True` - faqat xabar berilganlar, `False` - faqat berilmaganlar.
+    `engine`: `v1` | `v2` | `default` (dvigatel yozilmagan - versiyasiz yo'l).
     """
 
     start: float | None = None
@@ -390,11 +396,18 @@ class TurnFilter:
     reported: bool | None = None
     min_ms: int | None = None
     chat_id: str | None = None
+    engine: str | None = None
 
     def where(self, alias: str = "t", *, chats: bool = False) -> tuple[list[str], list[Any]]:
         a = alias
         conds: list[str] = []
         params: list[Any] = []
+        if self.engine:
+            if self.engine == DEFAULT_ENGINE:
+                conds.append(f"{a}.engine IS NULL")
+            else:
+                conds.append(f"{a}.engine = ?")
+                params.append(self.engine)
         if self.start is not None:
             conds.append(f"{a}.started_at >= ?")
             params.append(self.start)
@@ -440,7 +453,7 @@ _SUMMARY_COLUMNS = (
     "t.id, t.started_at, t.actor_id, t.user_name, t.user_login, t.channel, t.kind, "
     "t.input_mode, t.chat_id, substr(t.question, 1, {n}) AS question, t.route, t.status, "
     "t.error_code, t.ttft_ms, t.total_ms, t.sources_count, t.tool_calls, t.has_proposal, "
-    "t.proposal_status, t.has_artifact"
+    "t.proposal_status, t.has_artifact, t.engine"
 ).format(n=QUESTION_PREVIEW)
 
 
@@ -468,6 +481,9 @@ def _turn_summary(row: Mapping[str, Any], reported: bool) -> dict[str, Any]:
         "proposalStatus": row["proposal_status"],
         "hasArtifact": bool(row["has_artifact"]),
         "reported": reported,
+        # `v1` | `v2`; `null` - versiyasiz yo'l yoki yordamchiga bormagan javob.
+        # `.keys()` orqali: ustunsiz qator (boshqa so'rovdan yig'ilgan) ham o'qilsin.
+        "engine": row["engine"] if "engine" in row.keys() else None,
     }
 
 
@@ -869,14 +885,14 @@ def _range_rows(db: Database, sql: str, params: Sequence[Any], what: str) -> lis
 
 
 def _turn_rows(db: Database, start: float, end: float, channel: str | None) -> list[sqlite3.Row]:
-    """(started_at, channel, actor_id, status, ttft_ms, route) - oraliqdagi savollar."""
+    """(started_at, channel, actor_id, status, ttft_ms, route, engine) - oraliqdagi savollar."""
     conds = ["started_at >= ?", "started_at < ?"]
     params: list[Any] = [start, end]
     if channel:
         conds.append("channel = ?")
         params.append(channel)
     return _range_rows(
-        db, f"SELECT started_at, channel, actor_id, status, ttft_ms, route FROM turns "
+        db, f"SELECT started_at, channel, actor_id, status, ttft_ms, route, engine FROM turns "
             f"{_where(conds)} ORDER BY started_at DESC", params, "overview")
 
 
@@ -889,7 +905,7 @@ def _kpi_values(rows: Iterable[Sequence[Any]]) -> tuple[int, int, int | None, fl
     turns = finished = errors = 0
     actors: set[int] = set()
     ttfts: list[int] = []
-    for _, _, actor, status, ttft, _ in rows:
+    for _, _, actor, status, ttft, _, _ in rows:
         turns += 1
         if actor is not None:
             actors.add(actor)
@@ -934,8 +950,18 @@ def overview(db: Database, *, start: float, end: float,
     bucket_ttft: list[list[int]] = [[] for _ in starts]
     per_channel: dict[str, dict[str, Any]] = {}
     per_route: dict[str | None, list[int]] = {}
+    per_engine: dict[str, dict[str, Any]] = {}
     for row in rows:
-        ts, chan, actor, status, ttft, route = row
+        ts, chan, actor, status, ttft, route, engine = row
+        # Dvigatel bo'yicha: savollar, xatolar, birinchi so'zgacha. NULL -
+        # "default" (versiyasiz yo'l yoki yordamchiga bormagan javob).
+        lane = per_engine.setdefault(engine or DEFAULT_ENGINE,
+                                     {"turns": 0, "errors": 0, "ttft": []})
+        lane["turns"] += 1
+        if status == "error":
+            lane["errors"] += 1
+        if ttft is not None:
+            lane["ttft"].append(ttft)
         seg_rows[_segment(ts, start, end)].append(row)
         index = int((floor_bucket(ts, bucket, origin) - first_bucket) // step)
         chan = chan if chan in CHANNELS else "api"
@@ -1000,6 +1026,12 @@ def overview(db: Database, *, start: float, end: float,
             {"route": route, "turns": n, "errors": e}
             for route, (n, e) in sorted(per_route.items(),
                                         key=lambda kv: (-kv[1][0], kv[0] or "~"))
+        ],
+        # v1 va v2 ni yonma-yon solishtirish (xat, 2-bo'lim: "compare").
+        "engines": [
+            {"engine": name, "turns": s["turns"], "errors": s["errors"],
+             "medianTtftMs": _ms(percentile(sorted(s["ttft"]), 0.5))}
+            for name, s in sorted(per_engine.items(), key=lambda kv: (-kv[1]["turns"], kv[0]))
         ],
         "latency": latency,
         "topDocs": top_docs,

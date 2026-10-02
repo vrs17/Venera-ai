@@ -12,6 +12,7 @@ from __future__ import annotations
 import http.client
 import io
 import json
+import re
 import urllib.error
 import urllib.request
 
@@ -28,6 +29,8 @@ from app.services.integrations.assistant import (
 
 BASE = "http://assistant.test"
 SECRET = "super-secret-value"
+#: Yordamchining oqim yo'li - versiyasiz yoki dvigatel bilan (`core/engines.py`).
+STREAM_PATH = re.compile(r"/api/(v[12]/)?chat/stream")
 
 
 def frame(**kw) -> bytes:
@@ -108,7 +111,9 @@ class FakeServer:
         if self.status:
             detail = f"body was {{'client_secret': '{SECRET}'}}" if self.echo_secret else "xato"
             raise _http_error(path, self.status, detail)
-        if path == "/api/chat/stream":
+        # Oqim yo'li dvigatelga bog'liq: `/api/chat/stream` (versiyasiz),
+        # `/api/v1/...` yoki `/api/v2/...` - endpoint kanalga qarab tanlaydi.
+        if STREAM_PATH.fullmatch(path):
             self.last = _NdjsonResponse(self.frames, self.response_headers,
                                         cut_after=self.cut_after,
                                         timeout_after=self.timeout_after)

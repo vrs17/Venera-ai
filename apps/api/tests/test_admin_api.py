@@ -38,7 +38,7 @@ def at(hours: float) -> str:
 TURN_SUMMARY = {
     "id", "startedAt", "actorId", "userName", "userLogin", "channel", "kind", "inputMode",
     "chatId", "question", "route", "status", "errorCode", "ttftMs", "totalMs", "sourcesCount",
-    "toolCalls", "hasProposal", "proposalStatus", "hasArtifact", "reported",
+    "toolCalls", "hasProposal", "proposalStatus", "hasArtifact", "reported", "engine",
 }
 TURN_DETAIL = TURN_SUMMARY | {
     "answer", "requestId", "locale", "endedAt", "httpStatus", "errorText", "events", "sources",
@@ -55,8 +55,9 @@ REPORT_SUMMARY = {"id", "createdAt", "actorId", "userName", "channel", "chatId",
 REPORT_DETAIL = REPORT_SUMMARY | {"comment", "snapshot", "adminNote", "updatedAt", "updatedBy"}
 ADMIN_CHAT = {"chatId", "actorId", "userName", "channel", "firstAt", "lastAt", "turns", "errors",
               "reported", "title"}
-OVERVIEW = {"range", "kpis", "activity", "channels", "routes", "latency", "topDocs", "tools",
-            "recentReports", "slowTurns"}
+OVERVIEW = {"range", "kpis", "activity", "channels", "routes", "engines", "latency", "topDocs",
+            "tools", "recentReports", "slowTurns"}
+ENGINE_STAT = {"engine", "turns", "errors", "medianTtftMs"}
 OVERVIEW_RANGE = {"from", "to", "prevFrom", "prevTo", "bucket"}
 KPIS = {"turns", "activeUsers", "medianTtftMs", "errorRate", "newReports"}
 KPI = {"value", "prev", "spark"}
@@ -78,7 +79,7 @@ _TURN_COLUMNS = (
     "input_mode", "locale", "chat_id", "request_id", "question", "answer", "route", "status",
     "error_code", "error_text", "http_status", "ttft_ms", "total_ms", "frames",
     "sources_count", "tool_calls", "has_artifact", "has_proposal", "proposal_token",
-    "proposal_status", "answer_chars",
+    "proposal_status", "answer_chars", "engine",
 )
 
 
@@ -88,6 +89,10 @@ def tid(letter: str) -> str:
 
 
 A, B, C, D, E, F, G, HH = (tid(x) for x in "ABCDEFGH")
+
+#: Dvigatel (sxema v2): A, B - v2; C, D - v1 (mini app eski dvigatelda); qolgani
+#: NULL - versiyasiz yo'l yoki eski yozuv ("default").
+ENGINE_OF = {A: "v2", B: "v2", C: "v1", D: "v1"}
 
 #: (kalit, soat, actor, ism, login, kanal, kind, input, chat, savol, javob, route, holat,
 #:  xato kodi, ttft, total, request_id)
@@ -157,6 +162,7 @@ def _seed(db) -> None:
                 "proposal_token": "tok-f" if key == F else None,
                 "proposal_status": "executed" if key == F else None,
                 "answer_chars": len(answer or ""),
+                "engine": ENGINE_OF.get(key),
             }
             conn.execute(
                 f"INSERT INTO turns ({', '.join(_TURN_COLUMNS)}) "
@@ -339,6 +345,14 @@ def test_overview_shakli_va_raqamlari(client, auth, adb):
         {"route": "hrm", "turns": 1, "errors": 0},
         {"route": None, "turns": 1, "errors": 0},
     ]
+    # Dvigatel bo'yicha (v1 va v2 ni solishtirish): NULL - "default" (E, F, G).
+    # TTFT mediana: default (2500, 3000) -> 2750; v1 (800) - D da TTFT yo'q.
+    assert body["engines"] == [
+        {"engine": "default", "turns": 3, "errors": 0, "medianTtftMs": 2750},
+        {"engine": "v1", "turns": 2, "errors": 1, "medianTtftMs": 800},
+        {"engine": "v2", "turns": 2, "errors": 0, "medianTtftMs": 1350},
+    ]
+    assert all(set(e) == ENGINE_STAT for e in body["engines"])
     # Bitta javobdagi ikki parcha - bitta iqtibos.
     assert body["topDocs"] == [
         {"ref": "tatil-nizom", "title": "Mehnat ta'tillari nizomi", "citations": 2},
@@ -413,6 +427,7 @@ def test_savollar_royxati_shakli_va_tartibi(client, auth, adb):
     assert first[D]["errorCode"] == "auth_missing" and first[D]["toolCalls"] == 1
     assert first[A]["sourcesCount"] == 2 and first[A]["startedAt"] == at(1)
     assert first[A]["userLogin"] == "a.karimova"
+    assert (first[A]["engine"], first[C]["engine"], first[E]["engine"]) == ("v2", "v1", None)
 
 
 def test_savollar_filtrlari(client, auth, adb):
@@ -428,6 +443,11 @@ def test_savollar_filtrlari(client, auth, adb):
     assert turns(client, auth, **{"from": at(2), "to": at(5)}) == [D, C, B]
     assert turns(client, auth, **{"from": "2026-09-21"}) == [HH, G]
     assert turns(client, auth, **{"to": "2026-09-20"}) == [F, E, D, C, B, A]
+    # Dvigatel: v1 / v2, `default` - yozilmagan (versiyasiz yo'l, eski qator).
+    assert turns(client, auth, engine="v2") == [B, A]
+    assert turns(client, auth, engine="v1") == [D, C]
+    assert turns(client, auth, engine="default") == [HH, G, F, E]
+    assert turns(client, auth, engine="v1", status="error") == [D]
 
 
 def test_xabar_berilganlar_filtri(client, auth, adb):
@@ -493,6 +513,7 @@ def test_savollar_notogri_parametr_422(client, auth, adb):
     for params in [
         {"cursor": "buzuq!"}, {"cursor": "WzEsMl0"}, {"status": "yaxshi"}, {"limit": 101},
         {"limit": 0}, {"minMs": -1}, {"channel": "pochta"}, {"from": "ertaga"},
+        {"engine": "v3"}, {"engine": "V2;--"},
     ]:
         assert client.get(f"{API}/turns", headers=auth, params=params).status_code == 422, params
         assert client.get(f"{API}/chats", headers=auth, params=params).status_code == 422, params
@@ -559,6 +580,10 @@ def test_suhbatlar_filtr_va_sahifalash(client, auth, adb):
     assert chats(reported="true") == ["c3", "c2", "c1"]
     assert chats(channel="bot") == ["c3"]
     assert chats(q="kechikdim") == ["c2"]
+    # Dvigatel filtri savollarga: c2 - mini app (v1), c1 - web (v2).
+    assert chats(engine="v1") == ["c2"]
+    assert chats(engine="v2") == ["c1"]
+    assert chats(engine="default") == ["c4", "c3"]
     first = client.get(f"{API}/chats", headers=auth, params={"limit": 2}).json()
     assert [c["chatId"] for c in first["items"]] == ["c4", "c3"]
     second = client.get(f"{API}/chats", headers=auth,
@@ -916,6 +941,9 @@ def test_seed_vositasi_toldiradi_va_takrorlanadi(tmp_path, capsys):
         overview = queries.overview(db, start=T0 - 3 * 86400, end=T0)
         assert overview["kpis"]["turns"]["value"] == first["turns"]
         assert overview["topDocs"] and overview["tools"]
+        # Dvigatel ustuni ham to'ladi (sxema v2) - "Dvigatellar" kartochkasi bo'sh qolmasin.
+        engines_seen = {e["engine"] for e in overview["engines"]}
+        assert "v2" in engines_seen and engines_seen <= {"v1", "v2"}
 
         # Ikkinchi marta - rad etadi (ma'lumot bor); `--reset` - xuddi shunday qaytadan.
         assert seed.main(args) == 1

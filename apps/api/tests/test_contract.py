@@ -39,8 +39,9 @@ BASE_STAGE_FIELDS = {"rawAnswer", "model", "adapter", "seconds"}
 # types.ts: Transcript
 TRANSCRIPT_FIELDS = {"text", "language", "durationSec", "lowConfidence", "truncated", "backend"}
 
-# types.ts: ProQuota / ProWindows
-PRO_QUOTA_FIELDS = {"remaining", "limits", "used"}
+# types.ts: ProQuota / ProWindows. `engine` va `available` - Venera'niki:
+# so'rovchi kanalining dvigateli va "Pro" shu kanalda bormi (faqat v2).
+PRO_QUOTA_FIELDS = {"remaining", "limits", "used", "engine", "available"}
 PRO_WINDOW_FIELDS = {"day", "week", "month"}
 
 # types.ts: ChatSummary / ChatDetail / ChatMessage / ChatList / ChatDeleted

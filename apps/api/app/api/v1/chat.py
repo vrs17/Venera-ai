@@ -10,6 +10,10 @@ hujjatlar bo'yicha RAG va HRM ma'lumotini birlashtiradi. `/ask` esa
 quvurning bosqichli ko'rinishini beradi va Assistant sozlanmagan muhitda
 (masalan lokal ishlab chiqishda) frontend to'liq ishlashi uchun qoladi.
 
+`/stream` yordamchining qaysi DVIGATELIGA borishi kanalga bog'liq
+(`core/engines.py`): web - `v2`, `.env` da boshqacha aytilgan kanal - o'sha.
+Kadrlar O'ZGARISHSIZ o'tadi; `done` da `engine` va (so'ralgan bo'lsa) `pro`.
+
 Mantiq bu faylda YO'Q: `services/integrations/assistant.py` da.
 """
 
@@ -31,6 +35,7 @@ import jwt
 from fastapi import APIRouter, Depends, Path, Request, Response
 from fastapi.responses import StreamingResponse
 
+from ...core import engines as _engines
 from ...core.channels import channel_of
 from ...core.config import ollama_key_now, platform_tokens, settings
 from ...core.errors import bad_request, error_status
@@ -80,7 +85,21 @@ _assistant = AssistantClient(
     settings.hrm_assistant_client_secret,
     timeout=settings.hrm_assistant_timeout,
     max_concurrent=settings.hrm_assistant_max_concurrent,
+    max_stream_seconds=settings.hrm_assistant_max_stream_seconds,
 )
+
+#: Ochilmagan oqimning ICHKI sababi -> savol izidagi `error_code`. Uchalasi
+#: ham foydalanuvchiga bir xil "xizmat band" (503), admin esa farqini
+#: ko'radi: BIZNING navbat to'la (yuqoriga borilmagan), xizmatga ulanib
+#: bo'lmadi, yoki xizmatning o'zi 503 qaytardi. Qolgan sabablar -
+#: avvalgidek umumiy `open_failed` (http statusi bilan).
+OPEN_ERROR_CODES = frozenset({"queue_full", "upstream_unreachable", "upstream_busy"})
+
+
+def open_error_code(exc: AssistantError) -> str:
+    """Ochilmagan oqim uchun izdagi xato kodi."""
+    reason = getattr(exc, "reason", None)
+    return reason if reason in OPEN_ERROR_CODES else "open_failed"
 
 #: Foydalanuvchiga ko'rinadigan xabarlar - status bo'yicha, ichki matnsiz.
 #: Ichki host (`10.10.50.x`) va `X-Client-Secret` bu xabarlarga HECH QACHON
@@ -428,20 +447,33 @@ def _live_tokens(user: AuthUser) -> dict[str, str]:
     return tokens
 
 
+def engine_for(channel: str | None) -> str:
+    """Kanal uchun yordamchi dvigateli (`core/engines.py`). Web, mini app,
+    bot va `/pro/quota` BITTA qoidadan foydalanadi."""
+    return _engines.engine_for(channel)
+
+
 def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
                 mode: str = "standard", recorder: TurnRecorder | None = None,
-                before_upstream: Callable[[], None] | None = None) -> AnswerStream:
+                before_upstream: Callable[[], None] | None = None,
+                channel: str | None = "api") -> AnswerStream:
     """Savol -> javob oqimi: web, mini app va Telegram bot BITTA yo'ldan.
 
     Avval xodimlar ma'lumotnomasi (`services/contacts_chat.py`): kontakt
     savoli yoki tahriri bo'lsa javob shu yerda tayyorlanadi va yuqoridagi
-    xizmatga BORMAYDI. Qolgan hamma savol - yordamchiga.
+    xizmatga BORMAYDI. Qolgan hamma savol - yordamchiga, KANALNING
+    dvigateliga (`engine_for`): web `v2`, `HRM_ASSISTANT_ENGINE_BY_CHANNEL`
+    da boshqacha aytilgan kanal - o'sha.
 
     Qo'shimchalar (hammasi ixtiyoriy - bot ularsiz chaqiradi):
 
+      * `channel` - so'rov kanali (web | miniapp | bot | desktop | api);
+        dvigatel shundan tanlanadi;
       * `mode` - "Pro" (`/chat/stream` da klient aytadi). Kontakt javobiga
         TEGMAYDI: ma'lumotnoma javobi byudjetdan yemaydi va `pro` bloki
-        bo'lmaydi;
+        bo'lmaydi. "Pro" FAQAT `v2` da: boshqa dvigatelda u JIMGINA
+        tashlanadi (yuqoriga yuborilmaydi) va izga "so'ralgan, berilmagan,
+        sabab `engine`" bo'lib yoziladi;
       * `recorder` - savol izi (admin panel): `contacts`, `tokens`,
         `assistant.open` oraliqlari shu yerda o'lchanadi;
       * `before_upstream` - savol yordamchiga ketishi ANIQ bo'lganda,
@@ -457,6 +489,23 @@ def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
         info["answered"] = local is not None
     if local is not None:
         return local
+    engine = engine_for(channel)
+    if mode == "pro" and not _engines.pro_available(engine):
+        # "Pro" bu dvigatelda yo'q: JIMGINA standart rejim. Klient buni
+        # oldindan biladi (`/pro/quota` -> `available: false`) va tugmani
+        # ko'rsatmaydi; bu yerga kelgani eski klient yoki qo'lda so'rov.
+        # Izda xuddi yuqoridagi xizmat "bermadi" degandek, sababi bilan -
+        # admin panel uni o'sha belgida ko'rsatadi.
+        log.info("Pro so'raldi, lekin dvigatel %s (%s) - standart rejim",
+                 engine or "versiyasiz", channel)
+        mode = "standard"
+        if recorder is not None:
+            recorder.pro_result({"requested": True, "used": False, "calls": 0,
+                                 "reason": "engine"})
+    if recorder is not None:
+        # So'ralgan dvigatel - javobning `done.engine` i kelsa o'sha ustun
+        # bo'ladi; ochilmay qolgan savolda ham qaysi yo'lga borilgani ko'rinsin.
+        recorder.update(engine=engine)
     if before_upstream is not None:
         before_upstream()
     # PLATFORMA TOKENLARI: avval odamning O'Z ulanishi ("+" menyusi,
@@ -485,8 +534,10 @@ def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
             # tegmaydi.
             mode=mode,
             max_chars=settings.hrm_assistant_max_question_chars,
+            engine=engine,
         )
         info["requestId"] = answer.request_id
+        info["engine"] = engine
     return answer
 
 
@@ -502,9 +553,14 @@ def _span(recorder: TurnRecorder | None, name: str) -> Iterator[dict]:
 
 def _fail(exc: AssistantError, user: AuthUser | str, what: str):
     """Xatoni log'ga yozadi va foydalanuvchiga xabarga o'giradi. `user` -
-    sessiya egasi yoki (tokensiz havolada) havola egasining `actorId` si."""
+    sessiya egasi yoki (tokensiz havolada) havola egasining `actorId` si.
+
+    Jurnalda ICHKI sabab ham (`[queue_full]`, `[upstream_busy]`, ...):
+    foydalanuvchi uchun hammasi "xizmat band", jurnal o'qiydigan odam esa
+    "bizning navbat to'la" va "xizmat 503 berdi" ni ajrata olishi kerak."""
     who = user if isinstance(user, str) else user.email
-    log.warning("Assistant %s (%s): %s", what, who, exc)
+    log.warning("Assistant %s (%s) [%s]: %s", what, who,
+                getattr(exc, "reason", None) or "-", exc)
     status = _user_status(exc)
     return error_status(status, _MESSAGES[status])
 
@@ -533,7 +589,8 @@ def stream(body: StreamRequest, request: Request,
     ochilmasa ham (501/503) savol "xato" bo'lib, statusi bilan ko'rinsin.
     Iz yozish faqat navbatga qo'yadi - disk kutilmaydi, kadrlar kechikmaydi.
     """
-    rec = TurnRecorder(user, channel_of(request), "chat", body.question,
+    channel = channel_of(request)
+    rec = TurnRecorder(user, channel, "chat", body.question,
                        chat_id=body.chatId, locale=body.locale,
                        # Qanday kiritilgani (`input`), bo'lmasa ovozli rejim -
                        # `StreamRequest.input` izohiga qara.
@@ -587,10 +644,15 @@ def stream(body: StreamRequest, request: Request,
             # shunda ODDIY HTTP javobi bo'lib chiqadi. Generator ichida
             # ochilsa, 200 allaqachon ketgan bo'lardi va xato brauzerga
             # "uzilgan oqim" bo'lib ko'rinardi.
+            #
+            # DVIGATEL kanaldan (`engine_for`): web - `v2`, boshqa kanal
+            # `.env` da alohida aytilgan bo'lsa - o'sha.
             answer = open_stream(body.question, user, body.chatId, mode=body.mode,
-                                 recorder=rec, before_upstream=start_hold)
+                                 recorder=rec, before_upstream=start_hold, channel=channel)
         except AssistantError as exc:
-            rec.error_code = "open_failed"
+            # Sabab bo'yicha kod: `queue_full` / `upstream_unreachable` /
+            # `upstream_busy`, qolgani `open_failed` (`open_error_code`).
+            rec.error_code = open_error_code(exc)
             rec.finish("error", http_status=_user_status(exc), error=exc)
             failure = _fail(exc, user, "savol")
             # Xato javobida ham savol kaliti: klient shikoyatga qo'sha oladi.
@@ -629,6 +691,12 @@ def stream(body: StreamRequest, request: Request,
                    + _json_text(_MESSAGES[status]) + b'}\n')
             yield b'{"type":"done","route":null}\n'
         finally:
+            # Slot va ulanish SHU YERDA ham qaytadi (idempotent): klient
+            # uzilib, ichki oqim hali BOSHLANMAGAN bo'lsa uning o'z `finally`
+            # si hech qachon ishlamaydi - `AnswerStream.close` izohi.
+            close = getattr(answer, "close", None)
+            if callable(close):
+                close()
             log.info("Assistant javobi (%s): request_id=%s natija=%s",
                      user.email, answer.request_id, answer.outcome or "-")
 

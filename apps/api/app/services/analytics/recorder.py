@@ -79,6 +79,8 @@ _TURN_COLUMNS = (
     "status", "error_code", "error_text", "http_status", "ttft_ms", "total_ms", "frames",
     "sources_count", "tool_calls", "has_artifact", "has_proposal", "proposal_token",
     "proposal_status", "answer_chars",
+    # Sxema v2: yordamchi dvigateli (`v1` | `v2`), versiyasiz yo'lda NULL.
+    "engine",
 )
 #: `finish` da o'zgarmaydigan ustunlar (qolganlari `excluded` dan olinadi).
 _FIXED = {"id", "started_at", "actor_id", "user_name", "user_login", "channel", "kind",
@@ -357,6 +359,9 @@ class TurnRecorder:
         self.has_proposal = False
         self.proposal_token: str | None = None
         self.answer_chars = 0
+        #: Yordamchi dvigateli: so'ralgani (`update(engine=)`), javobning
+        #: `done.engine` i kelsa - o'sha (haqiqatda javob bergani).
+        self.engine: str | None = None
 
         self._parts: list[str] = []
         self._stored = 0
@@ -407,11 +412,14 @@ class TurnRecorder:
 
     def update(self, **fields: Any) -> None:
         """Keyin ma'lum bo'lgan maydonlar: `request_id`, `chat_id`, `locale`,
-        `route`, `answer` (oqimsiz yo'l, masalan `/chat/ask`), `input_mode`."""
+        `route`, `answer` (oqimsiz yo'l, masalan `/chat/ask`), `input_mode`,
+        `engine` (bo'sh satr - versiyasiz yo'l, `NULL` bo'lib yoziladi)."""
         try:
             for name, value in fields.items():
                 if name == "request_id":
                     self.request_id = _str(value, 128)
+                elif name == "engine":
+                    self.engine = _str(value, 16)
                 elif name == "chat_id":
                     self.chat_id = _str(value, 64)
                 elif name == "locale":
@@ -603,16 +611,37 @@ class TurnRecorder:
         served = _str(frame.get("request_id"), 128)
         if served and not self.request_id:
             self.request_id = served
-        self._event("frame", "done", {"route": self.route, "request_id": served})
+        # Haqiqatda javob bergan dvigatel (versiyalangan yo'lda keladi) -
+        # so'ralganidan USTUN: xizmat yo'lni boshqasiga yo'naltirgan bo'lsa,
+        # izda aynan javob bergani turishi kerak.
+        engine = _str(frame.get("engine"), 16)
+        if engine:
+            self.engine = engine
+        self._event("frame", "done", {"route": self.route, "request_id": served,
+                                      **({"engine": engine} if engine else {})})
         pro = frame.get("pro")
         if isinstance(pro, Mapping):
-            # "Pro" rejimi (`mode=pro`): yuqoridagi xizmat tashqi modelni
-            # haqiqatan ishlatdimi, nechta chaqiruv, bermagan bo'lsa nega
-            # (`reason`) va byudjet qoldig'i - admin panel savol izida ko'radi.
-            # Sxema o'zgarmaydi: vaqt chizig'idagi alohida `pro` kadri.
-            self._event("frame", "pro", {key: pro.get(key) for key in (
-                "requested", "used", "calls", "reason", "remaining", "limits",
-            ) if pro.get(key) is not None})
+            self._pro_event("frame", pro)
+
+    def pro_result(self, pro: Mapping[str, Any]) -> None:
+        """"Pro" natijasi VENERA tomonidan: masalan dvigatel `v2` emas, va
+        "Pro" yuqoriga umuman yuborilmagan (`reason: "engine"`). Admin panel
+        uni yuqoridagi xizmatning `pro` bloki bilan BIR XIL belgida ko'rsatadi
+        - shakl bir xil, turi `note` (bu xizmatning kadri emas)."""
+        try:
+            self._pro_event("note", pro)
+        except Exception:                                   # noqa: BLE001
+            log_limited("recorder.pro", "Pro natijasi yozilmadi", exc_info=True)
+
+    def _pro_event(self, etype: str, pro: Mapping[str, Any]) -> None:
+        # "Pro" rejimi (`mode=pro`): yuqoridagi xizmat tashqi modelni
+        # haqiqatan ishlatdimi, nechta chaqiruv, bermagan bo'lsa nega
+        # (`reason`: limit | no user | engine) va byudjet qoldig'i - admin
+        # panel savol izida ko'radi. Sxema o'zgarmaydi: vaqt chizig'idagi
+        # alohida `pro` hodisasi.
+        self._event(etype, "pro", {key: pro.get(key) for key in (
+            "requested", "used", "calls", "reason", "remaining", "limits",
+        ) if pro.get(key) is not None})
 
     def _on_error(self, frame: Mapping[str, Any]) -> None:
         self.error_code = _str(frame.get("code"), 64) or self.error_code or "error"
@@ -748,6 +777,7 @@ class TurnRecorder:
             "proposal_token": self.proposal_token,
             "proposal_status": "pending" if self.has_proposal else None,
             "answer_chars": self.answer_chars,
+            "engine": self.engine,
         }
         return tuple(values[c] for c in _TURN_COLUMNS)
 

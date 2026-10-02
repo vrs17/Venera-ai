@@ -67,6 +67,9 @@ class TurnSummary(BaseModel):
     hasArtifact: bool = False
     #: Shu savolga (yoki `turnId` siz - butun suhbatiga) xabar berilgan.
     reported: bool = False
+    #: Yordamchi dvigateli: `v1` | `v2`; `null` - versiyasiz yo'l (xizmat
+    #: default'i) yoki yordamchiga bormagan javob (xodimlar ma'lumotnomasi).
+    engine: str | None = None
 
 
 class TurnEvent(BaseModel):
@@ -319,6 +322,19 @@ class RouteStat(BaseModel):
     errors: int = 0
 
 
+class EngineStat(BaseModel):
+    """types.ts: EngineStat - yordamchi dvigateli bo'yicha (v1 va v2 ni solishtirish).
+
+    `engine`: `v1` | `v2` | `default` (dvigatel yozilmagan: versiyasiz yo'l
+    yoki yordamchiga bormagan javob)."""
+
+    engine: str
+    turns: int = 0
+    errors: int = 0
+    #: Birinchi so'zgacha, mediana (ms); TTFT si bor savol bo'lmasa `null`.
+    medianTtftMs: int | None = None
+
+
 class LatencyPoint(BaseModel):
     """types.ts: LatencyPoint - birinchi so'zgacha, p50 va p95 (ms)."""
 
@@ -351,6 +367,8 @@ class AdminOverview(BaseModel):
     activity: list[ActivityPoint] = Field(default_factory=list)
     channels: list[ChannelStat] = Field(default_factory=list)
     routes: list[RouteStat] = Field(default_factory=list)
+    #: Dvigatel bo'yicha, eng ko'p savollisi birinchi.
+    engines: list[EngineStat] = Field(default_factory=list)
     latency: list[LatencyPoint] = Field(default_factory=list)
     topDocs: list[DocStat] = Field(default_factory=list)
     tools: list[ToolStat] = Field(default_factory=list)

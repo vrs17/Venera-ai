@@ -34,6 +34,8 @@ BASE = "http://assistant.test"
 SECRET = "capture-client-secret"
 HRM_TOKEN = "hrm-jwt-secret-value"
 TURN = re.compile(r"[0-9a-f]{32}")
+#: Yordamchining oqim yo'li - versiyasiz yoki dvigatel bilan.
+STREAM_PATH = re.compile(r"/api/(v[12]/)?chat/stream")
 
 
 def frame(**kw) -> bytes:
@@ -96,6 +98,8 @@ class Upstream:
         self.status: int | None = None
         self.json: dict[str, dict] = {}
         self.errors: dict[str, int] = {}
+        #: Qaysi oqim yo'llari ochildi - dvigatel tanlovini tekshirish uchun.
+        self.paths: list[str] = []
 
     def open(self, request, timeout=None):
         path = request.full_url.split(BASE, 1)[1].split("?", 1)[0]
@@ -103,7 +107,9 @@ class Upstream:
             raise _http_error(request.full_url, self.status)
         if path in self.errors:
             raise _http_error(request.full_url, self.errors[path])
-        if path == "/api/chat/stream":
+        # Oqim yo'li dvigatelga bog'liq (`core/engines.py`): versiyasiz yoki v1/v2.
+        if STREAM_PATH.fullmatch(path):
+            self.paths.append(path)
             return _Response(self.frames, {"X-Request-Id": "served-1"}, cut_after=self.cut_after)
         if path in self.json:
             return _Response([json.dumps(self.json[path]).encode()])
@@ -257,15 +263,17 @@ def test_oqim_ortasida_uzilsa_xato_bilan_yakunlanadi(client, auth, upstream, db)
     assert "uzildi" in call["error"]
 
 
-@pytest.mark.parametrize("upstream_status,user_status", [(503, 503), (401, 502), (422, 422)])
+@pytest.mark.parametrize("upstream_status,user_status,code", [
+    # Xizmatning O'ZI 503 bergani - alohida kod (bizning navbat to'lganidan farqli).
+    (503, 503, "upstream_busy"), (401, 502, "open_failed"), (422, 422, "open_failed")])
 def test_ochilmagan_oqim_statusi_bilan_yoziladi(client, auth, upstream, db,
-                                                upstream_status, user_status):
+                                                upstream_status, user_status, code):
     upstream.status = upstream_status
     response = ask_stream(client, auth)
     assert response.status_code == user_status
     [turn] = rows(db, "SELECT * FROM turns")
     assert (turn["status"], turn["http_status"], turn["error_code"]) == (
-        "error", user_status, "open_failed")
+        "error", user_status, code)
     assert turn["channel"] == "web" and turn["actor_id"] == 1
     # Xato javobida ham savol kaliti - shikoyatga qo'shish uchun.
     assert response.headers["x-venera-turn"] == turn["id"]
@@ -330,7 +338,7 @@ def test_klient_uzilsa_cancelled_va_slot_qaytadi(upstream, db, captured):
     [call] = rows(db, "SELECT * FROM api_calls WHERE service='assistant'")
     # Klient ketgani xizmatning xatosi EMAS.
     assert (call["status"], call["error"], call["turn_id"]) == ("ok", "cancelled", turn_id)
-    assert chat_module._assistant._slots._value == chat_module._assistant.max_concurrent
+    assert chat_module._assistant.busy() == 0
 
 
 def test_boshlanmagan_oqim_ham_yakunlanadi(upstream, db, captured):
@@ -347,7 +355,7 @@ def test_boshlanmagan_oqim_ham_yakunlanadi(upstream, db, captured):
     assert turn["status"] == "cancelled"
     [call] = rows(db, "SELECT status, error FROM api_calls WHERE service='assistant'")
     assert (call["status"], call["error"]) == ("ok", "cancelled")
-    assert chat_module._assistant._slots._value == chat_module._assistant.max_concurrent
+    assert chat_module._assistant.busy() == 0
 
 
 # --- kutish ovozi --------------------------------------------------------------

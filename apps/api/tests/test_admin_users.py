@@ -38,7 +38,7 @@ AUDIT_FIELDS = {"id", "createdAt", "adminActorId", "adminName", "action", "targe
 TURN_SUMMARY_FIELDS = {
     "id", "startedAt", "actorId", "userName", "userLogin", "channel", "kind", "inputMode",
     "chatId", "question", "route", "status", "errorCode", "ttftMs", "totalMs", "sourcesCount",
-    "toolCalls", "hasProposal", "proposalStatus", "hasArtifact", "reported",
+    "toolCalls", "hasProposal", "proposalStatus", "hasArtifact", "reported", "engine",
 }
 
 DEMO = AuthUser(actorId=2, email=USER["email"], fullName="Demo Foydalanuvchi", roles=["USER"])

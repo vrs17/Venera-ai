@@ -281,7 +281,8 @@ def test_pro_mini_appdan_va_ochilmagan_oqim_izda(api, auth, server, db):
     assert "pro.requested" in names and "pro" in names
 
     # Yuqoridagi xizmat ochilmadi (503): savol baribir izda - "Pro" so'ralgani,
-    # `open_failed` va savol kaliti javob sarlavhasida (shikoyat uchun).
+    # `upstream_busy` (xizmatning O'ZI band - bizning navbat emas) va savol
+    # kaliti javob sarlavhasida (shikoyat uchun).
     server.status = 503
     r = api.post("/api/v1/chat/stream", headers=miniapp,
                  json={"question": "Ikkinchi savol", "mode": "pro"})
@@ -290,7 +291,7 @@ def test_pro_mini_appdan_va_ochilmagan_oqim_izda(api, auth, server, db):
     assert TURN.fullmatch(failed)
     [turn] = rows(db, "SELECT * FROM turns WHERE id=?", (failed,))
     assert (turn["status"], turn["error_code"], turn["http_status"], turn["channel"]) == (
-        "error", "open_failed", 503, "miniapp")
+        "error", "upstream_busy", 503, "miniapp")
     names = event_names(db, failed)
     assert "pro.requested" in names and "pro" not in names
     assert server.calls[-1]["body"]["mode"] == "pro"

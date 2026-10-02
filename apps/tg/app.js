@@ -1253,12 +1253,46 @@
   //: shu yerga bitta qator qo'shiladi.
   const LOOKUP_KINDS = ['hrm', 'crm'];
 
+  //: QONUNCHILIK manbasi (yordamchining v2 dvigateli, 2026-10-02): LEX.UZ
+  //: dagi modda - `url` bor, `doc_id` yo'q. Hujjat EMAS: u hujjat
+  //: ko'ruvchisiga (`/doc/...`) hech qachon yuborilmaydi, Telegram'ning
+  //: tashqi brauzerida ochiladi. Yorliq - yuqoridagi jamoa xatidagi, web va
+  //: bot bilan bir xil.
+  const LAW_KIND = 'law';
+  const LAW_LABEL = 'LEX.UZ · qonunchilik';
+
+  /** Qonun manbasi havolasi ochilsa bo'ladimi: faqat `https://`, login-parolsiz.
+   *  Server ham tekshiradi (`safe_source_url`); bu yerda IKKINCHI marta, chunki
+   *  manbalar `localStorage` dan ham qayta chiqadi (manbalar xotirasi). */
+  function lawUrl(url) {
+    if (typeof url !== 'string' || !url) return null;
+    try {
+      const u = new URL(url);
+      if (u.protocol !== 'https:' || u.username || u.password || !u.hostname) return null;
+      return u.href;
+    } catch (e) { return null; }
+  }
+
+  /** Tashqi havola: Telegram ichida - `openLink` (tashqi brauzer, Mini App
+   *  yopilmaydi); oddiy brauzerda sinashda - yangi oyna, `noopener` bilan
+   *  (ochilgan sahifa bizning oynaga qo'l cho'za olmasin). */
+  function openExternal(url) {
+    if (tg && typeof tg.openLink === 'function') {
+      try {
+        tg.openLink(url);
+        return;
+      } catch (e) { /* pastdagi zaxiraga */ }
+    }
+    const opened = window.open(url, '_blank', 'noopener,noreferrer');
+    if (opened) opened.opener = null;
+  }
+
   /** Manba qatorining ko'rinadigan nomi.
    *
    *  Ikki tur ATAYLAB har xil: hujjatda nom bor va u `[1]` bilan belgilanadi;
    *  jonli so'rovda esa ochiladigan narsa yo'q - u ma'lum bir paytda
    *  bo'lib o'tgan chaqiruv, shuning uchun nomi va nima qaytargani (digest)
-   *  aytiladi. */
+   *  aytiladi. Qonun moddasi - "LEX.UZ · qonunchilik: <modda>". */
   function sourceLabel(s, index) {
     const lookup = LOOKUP_KINDS.indexOf(String(s.kind)) >= 0;
     const mark = s.marker || (lookup ? '[T' + (index + 1) + ']' : '[' + (s.citation_index || index + 1) + ']');
@@ -1266,17 +1300,47 @@
       const what = s.tool || s.kind;
       return mark + ' ' + what + (s.digest ? ' - ' + s.digest : '');
     }
+    if (String(s.kind) === LAW_KIND) {
+      return mark + ' ' + LAW_LABEL + (s.title ? ': ' + s.title : '');
+    }
     const name = s.title || s.doc_id || 'hujjat';
     return mark + ' ' + name + (s.page ? ', ' + s.page + '-bet' : '');
   }
 
   /** Javob ostidagi manbalar qatori. Ikki joyda kerak: javob kelganda va
-   *  suhbat tarixdan qayta ochilganda (12b-bo'lim, manbalar xotirasi). */
+   *  suhbat tarixdan qayta ochilganda (12b-bo'lim, manbalar xotirasi).
+   *
+   *  Matn tugunlari bilan (`innerHTML` EMAS): sarlavha xizmatdan keladi, va
+   *  qonun moddasi bosiladigan havola bo'lishi kerak. Hujjatlar - avvalgidek
+   *  oddiy matn. */
   function renderSources(el, docs) {
     if (!docs || !docs.length) return;
     const src = document.createElement('span');
     src.className = 'src';
-    src.textContent = 'Manbalar: ' + docs.map(sourceLabel).join('  ');
+    src.appendChild(document.createTextNode('Manbalar: '));
+    docs.forEach((s, index) => {
+      if (index) src.appendChild(document.createTextNode('  '));
+      const url = String(s.kind) === LAW_KIND ? lawUrl(s.url) : null;
+      if (!url) {
+        src.appendChild(document.createTextNode(sourceLabel(s, index)));
+        return;
+      }
+      const mark = s.marker || '[' + (s.citation_index || index + 1) + ']';
+      src.appendChild(document.createTextNode(mark + ' ' + LAW_LABEL + ': '));
+      const link = document.createElement('a');
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = s.title || LAW_LABEL;
+      // `.src` xira rangda - havola shu rangda, faqat tagiga chizilgan.
+      link.style.color = 'inherit';
+      link.style.textDecoration = 'underline';
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        openExternal(url);
+      });
+      src.appendChild(link);
+    });
     el.appendChild(src);
   }
 

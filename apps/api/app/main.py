@@ -68,6 +68,16 @@ def connector_hub():
     from .api.v1.connectors import hub
 
     return hub
+
+
+def assistant_state() -> dict:
+    """Yordamchi: dvigatel (umumiy va har kanalniki) va navbat - chat
+    endpointi ishlatayotgan AYNI klientdan. Sir yo'q - faqat versiya nomlari
+    va sonlar."""
+    from .api.v1.chat import _assistant
+    from .core.engines import config_state
+
+    return {"engine": config_state(), "slots": _assistant.slots_state()}
 from .services.users import example_password_hashes
 
 logging.basicConfig(
@@ -363,6 +373,24 @@ def _diagnostics() -> dict:
             "(.env: HRM_ASSISTANT_CLIENT_ID, HRM_ASSISTANT_CLIENT_SECRET)"
         )
 
+    # Yordamchi: qaysi DVIGATEL (kanal bo'yicha) va NAVBAT holati. Navbat
+    # 29-sentabrda jimgina "to'la" bo'lib qolgan: bir soat davomida har savol
+    # 503 olgan, yordamchiga esa birorta so'rov bormagan. Endi navbat o'zini
+    # davolaydi, lekin to'lgani va qaytarib olingan joylar SHU YERDA ko'rinadi.
+    assistant = assistant_state()
+    warnings.extend(assistant["engine"]["problems"])
+    slots = assistant["slots"]
+    if slots["busy"] >= slots["limit"]:
+        warnings.append(
+            f"Savol-javob navbati to'la ({slots['busy']}/{slots['limit']}, eng eskisi "
+            f"{slots['oldestSec']} s) - yangi savollar yordamchiga bormay 503 olyapti"
+        )
+    if slots["reclaimed"]:
+        warnings.append(
+            f"Savol-javob navbatidan {slots['reclaimed']} ta oqib ketgan joy qaytarib olingan "
+            "(ishga tushgandan beri) - jurnalda 'oqib ketgan joy' ERROR qatoriga qarang"
+        )
+
     # Umumiy HRM token'i - VAQTINCHALIK yechim, uni unutib qo'yish oson, va
     # muddati bir necha daqiqada tugaydi. Ikkalasi ham shu bir qatorda
     # aytiladi: aks holda "nega jonli savol ishlamayapti" degan savolga
@@ -483,6 +511,9 @@ def _diagnostics() -> dict:
         "version": settings.version,
         "users": len(store),
         "tts_slots": {"busy": tts_busy, "limit": settings.tts_max_concurrent},
+        # Yordamchi: dvigatel (umumiy va kanal bo'yicha) va navbat (band /
+        # chegara, eng eski joy, qaytarib olinganlar).
+        "assistant": assistant,
         "stt": stt_state,
         # Kutish gapi: yoqilganmi, model sozlanganmi, tayyor ovoz nechta.
         "hold": hold,

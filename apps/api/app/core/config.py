@@ -289,6 +289,22 @@ class Settings(BaseSettings):
     #: Undan uzun savol yuborilmaydi. Chegara xizmatda ham bor, lekin
     #: 100 KB matnni tarmoqqa chiqarib, keyin rad javobini olish ma'nosiz.
     hrm_assistant_max_question_chars: int = 2000
+    #: BITTA javobning eng uzun umri (soniya), kadrlar orasidagi tanaffus
+    #: emas. Xat bo'yicha v2 javobi 3-12 s, tashqi modelga borgan "Pro" 10-25 s
+    #: - 10 daqiqa katta zahira. Undan oshgan oqim uziladi (504), va shu
+    #: chegara navbatning O'ZINI DAVOLASHIGA asos: shundan (+ `timeout`)
+    #: eskiroq band joy aniq "oqib ketgan" - tirik oqim bunchalik yashamaydi
+    #: (`assistant._SlotPool`).
+    hrm_assistant_max_stream_seconds: int = 600
+    #: Yordamchi DVIGATELI (`core/engines.py`): `v1` (barqaror), `v2` (yangi:
+    #: LEX.UZ havolalari, "Pro") yoki bo'sh - versiyasiz `/api/chat/stream`
+    #: (xizmat default'i, bugun = v1; prod hozir shu yo'lda). Bu shox YANGI
+    #: ko'rinish, shuning uchun default `v2`. "Pro" faqat `v2` da ishlaydi.
+    hrm_assistant_engine: str = "v2"
+    #: Kanal bo'yicha istisno: `miniapp=v1,bot=v1` - ko'rsatilgan kanallar
+    #: shu dvigatelda, qolgani `hrm_assistant_engine` da. Kanal nomlari:
+    #: web | miniapp | bot | desktop | api. Bo'sh - hamma kanal umumiyda.
+    hrm_assistant_engine_by_channel: str = ""
 
     #: HRM sessiya token'i (JWT) - JONLI HRM ma'lumoti uchun.
     #:

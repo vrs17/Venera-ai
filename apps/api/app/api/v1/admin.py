@@ -1,7 +1,7 @@
 """Admin panel API - FAQAT ADMIN roli.
 
-    GET   /admin/overview         KPI, faollik, kanallar, yo'nalishlar, javob vaqti, ...
-    GET   /admin/turns            savollar: filtrlar, kursor bilan sahifalash
+    GET   /admin/overview         KPI, faollik, kanallar, yo'nalishlar, dvigatellar, javob vaqti, ...
+    GET   /admin/turns            savollar: filtrlar (`engine=v1|v2|default` ham), kursor bilan
     GET   /admin/turns/{id}       bitta savolning to'liq izi
     GET   /admin/chats            suhbatlar (`chat_id` bo'yicha guruhlangan)
     GET   /admin/reports          xabarlar (shikoyatlar) qutisi
@@ -58,6 +58,7 @@ admin_only = require_roles("ADMIN")
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(admin_only)])
 
 _STATUS_PATTERN = "^(" + "|".join(queries.TURN_STATUSES) + ")$"
+_ENGINE_PATTERN = "^(" + "|".join(queries.TURN_ENGINES) + ")$"
 _REPORT_PATTERN = "^(" + "|".join(queries.REPORT_STATUSES) + ")$"
 
 # Bir necha endpointda takrorlanadigan parametrlar (`chats.py` dagi `_CHAT_ID` kabi).
@@ -131,6 +132,9 @@ def turn_filter(
     reported: bool | None = Query(None, description="true - faqat xabar berilganlar"),
     min_ms: int | None = Query(None, alias="minMs", ge=0, description="To'liq vaqt kamida (ms)"),
     chat_id: str | None = Query(None, alias="chatId", max_length=128),
+    engine: str | None = Query(
+        None, pattern=_ENGINE_PATTERN,
+        description="Yordamchi dvigateli: v1 | v2 | default (yozilmagan - versiyasiz yo'l)"),
 ) -> TurnFilter:
     """Savollar va suhbatlar uchun umumiy filtr (`?from&to&channel&q&...`)."""
     with _checked():
@@ -138,7 +142,7 @@ def turn_filter(
         return TurnFilter(
             start=begin, end=stop, channel=_channel(channel), q=_text(q), actor_id=actor_id,
             route=_text(route), status=status, reported=reported, min_ms=min_ms,
-            chat_id=_text(chat_id),
+            chat_id=_text(chat_id), engine=engine,
         )
 
 

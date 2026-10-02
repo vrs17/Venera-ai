@@ -301,6 +301,16 @@ def lognormal_ms(rng: random.Random, median: float, sigma: float) -> int:
     return max(50, int(median * math.exp(rng.gauss(0.0, sigma))))
 
 
+def seed_engine(turn_id: str, channel: str) -> str:
+    """Yordamchi dvigateli (`turns.engine`, sxema v2): web - `v2`, mini app va
+    botning taxminan chorak savoli - `v1` (kanal istisnosi sinovda, `core/
+    engines.py`). Tasodif `rng` dan OLINMAYDI - kalitdan: aks holda qolgan
+    hamma qiymat (va takrorlanuvchanlik testi) siljib ketardi."""
+    if channel in ("miniapp", "bot") and int(turn_id[-1], 16) % 4 == 0:
+        return "v1"
+    return "v2"
+
+
 def hex_id(rng: random.Random) -> str:
     return uuid.UUID(int=rng.getrandbits(128), version=4).hex
 
@@ -561,6 +571,7 @@ class Builder:
             stt_ms + total, frames, docs_count, tools_count,
             1 if artifact and status == "ok" else 0, 1 if proposal_token else 0,
             proposal_token, proposal_status, len(answer_text),
+            seed_engine(turn_id, channel),
         ))
         data.chats.setdefault(chat_id, []).append(
             (started, question, answer_text, turn_id, snapshot_sources))
@@ -814,8 +825,8 @@ def write(db: Database, data: Data, *, reset: bool) -> None:
             "channel, kind, input_mode, locale, chat_id, request_id, question, answer, route, "
             "status, error_code, error_text, http_status, ttft_ms, total_ms, frames, "
             "sources_count, tool_calls, has_artifact, has_proposal, proposal_token, "
-            "proposal_status, answer_chars) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", data.turns)
+            "proposal_status, answer_chars, engine) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", data.turns)
         conn.executemany(
             "INSERT INTO turn_events (turn_id, seq, t_ms, dur_ms, type, name, payload) "
             "VALUES (?,?,?,?,?,?,?)", data.events)

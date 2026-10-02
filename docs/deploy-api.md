@@ -468,8 +468,9 @@ HRM connector'ini o'z ichida birlashtiradi, ya'ni Venera uchun bu BITTA
 endpoint.
 
 ```
-brauzer -> /api/v1/chat/stream (Venera)  ->  POST /api/chat/stream (Assistant)
+brauzer -> /api/v1/chat/stream (Venera)  ->  POST /api/{v1|v2}/chat/stream (Assistant)
                                               |-> hujjatlar (RAG, Qdrant)
+                                              |-> qonunchilik (LEX.UZ, v2)
                                               `-> HRM connector (hrm-mcp)
 ```
 
@@ -495,16 +496,83 @@ Bo'sh qolsa `/api/health` `degraded` bo'lib, "CHAT ISHLAMAYDI" deb aytadi va
 savol umuman yuborilmaydi - xizmat 401 qaytarardi va u foydalanuvchiga
 "sessiyangiz tugadi" bo'lib ko'rinardi.
 
+### Dvigatel: v1 / v2 (2026-10-02 dan)
+
+Xizmat ikki versiyali bo'ldi - so'rov va javob shakli bir xil, yo'l boshqa:
+
+| `HRM_ASSISTANT_ENGINE` | Yo'l | Nima |
+|---|---|---|
+| `v2` (default) | `/api/v2/chat/stream` | yangi: javobni model yozadi, Mehnat kodeksi moddalari LEX.UZ havolasi bilan, **"Pro"** |
+| `v1` | `/api/v1/chat/stream` | barqaror: 29-sentabrgacha bo'lgan javoblar |
+| bo'sh | `/api/chat/stream` | versiyasiz - xizmat default'i (bugun = v1). **Hozirgi prod shu yo'lda** |
+
+Kanal bo'yicha istisno: `HRM_ASSISTANT_ENGINE_BY_CHANNEL=miniapp=v1,bot=v1`
+(kanallar: `web`, `miniapp`, `bot`, `desktop`, `api`; kanal `X-Venera-Client`
+sarlavhasidan). Tarix (`/api/chats`), amallar, fayllar, hujjatlar va
+`/api/pro/quota` VERSIYASIZ - ikkala dvigatel uchun bitta. Noto'g'ri qiymat
+server'ni yiqitmaydi: `/api/health/detail` dagi `warnings` va
+`assistant.engine.problems` da ko'rinadi, o'rniga `v2` (yoki umumiy qiymat)
+ishlaydi. Qaysi kanal qaysi dvigatelda - `assistant.engine.byChannel`.
+
+**"Pro" faqat `v2` da.** Boshqa dvigatelda `mode: "pro"` yuqoriga
+YUBORILMAYDI (javob standart rejimda), `done` da `pro` bloki bo'lmaydi, savol
+izida esa "Pro: berilmadi, sabab `engine`". `GET /api/v1/pro/quota` javobida
+`engine` (so'rovchi kanalining dvigateli) va `available` (`v2` va byudjet
+o'qildi): `v2` bo'lmasa 200, `available: false`, yuqoriga borilmaydi.
+
+**Orqaga qaytarish:** `HRM_ASSISTANT_ENGINE=v1` (yoki bo'sh) va restart - kod
+o'zgarmaydi. Analitika omboridagi `turns.engine` ustuni (sxema v2) qoladi;
+eski kod uni e'tiborsiz qoldiradi.
+
 **Javob NDJSON oqimi**: har qatorda bitta kadr, kelishi bilan uzatiladi.
 
 | Kadr | Nima |
 |---|---|
 | `stage` | o'tkinchi holat ("Hujjatlar qidirilmoqda") - kutish paytida ko'rsatiladi |
-| `sources` | iqtiboslar (`[1]`) va HRM chaqiruvlari (`[T1]`). DIQQAT: jonli xizmat ro'yxatni `items` kalitida yuboradi, hujjatdagi bir martalik javobda esa `sources` - ikkalasi ham o'qiladi |
+| `sources` | iqtiboslar (`[1]`) va HRM chaqiruvlari (`[T1]`). DIQQAT: jonli xizmat ro'yxatni `items` kalitida yuboradi, hujjatdagi bir martalik javobda esa `sources` - ikkalasi ham o'qiladi. v2: `kind: "law"` - LEX.UZ dagi modda (`url`, `title`, `doc_id: null`) |
 | `artifact` | yaratilgan ariza fayli (DOCX/PDF) |
 | `token` | javob matni bo'laklari |
-| `done` | yakun: `route` (`rules`/`hrm`/`both`/`clarify`) |
+| `done` | yakun: `route` (`rules`/`hrm`/`both`/`clarify`); versiyalangan yo'lda `engine`, "Pro" so'ralganda `pro` |
 | `error` | tokenlar o'rniga: `code` va foydalanuvchiga xavfsiz `text` |
+
+**Qonunchilik havolasi tekshiriladi.** `kind: "law"` manbaning `url` i
+brauzerda havola bo'lib ochiladi, shuning uchun Venera FAQAT `https://` ni
+o'tkazadi: `javascript:`, `data:`, login-parolli va boshqa `http://` manzil
+`null` ga aylanadi (manbaning nomi qoladi), `http://lex.uz` esa `https` ga
+ko'tariladi. LEX.UZ dan boshqa `https` domen o'tadi, lekin jurnalga yoziladi
+("Manba havolasi LEX.UZ emas"). Qonun manbasi hujjat ko'ruvchisiga
+(`/api/v1/chat/doc/...`) HECH QACHON yo'naltirilmaydi.
+
+### Navbat: "Savol-javob xizmati band" (503)
+
+Venera yordamchiga bir vaqtda ko'pi bilan `HRM_ASSISTANT_MAX_CONCURRENT` ta
+oqim ochadi; oshsa savol yordamchiga BORMASDAN 503 oladi. 29-sentabrda prod
+shu navbat "oqib ketgani" sababli bir soatdan ko'p har savolga 503 berdi -
+yordamchiga birorta so'rov bormagan holda (klient tanadan oldin uzilsa oqim
+yopilmay, joy abadiy band qolardi). Endi:
+
+* joy oqim yopilganda, `AnswerStream.close()` da va oqim obyekti yig'ilganda
+  qaytadi (uchalasi ham idempotent);
+* navbat TO'LGANDA o'zini davolaydi: avval `gc.collect()` (yetib bo'lmaydigan
+  oqimlar halol yopiladi), keyin `HRM_ASSISTANT_TIMEOUT` + 30 s o'qilmagan
+  yoki `HRM_ASSISTANT_MAX_STREAM_SECONDS` + `TIMEOUT` + 30 s dan qari joylar
+  majburan qaytariladi - jurnalda ERROR: "N ta oqib ketgan joy qaytarib olindi";
+* bitta javob `HRM_ASSISTANT_MAX_STREAM_SECONDS` (600) dan uzoq yashamaydi (504).
+
+Sababi foydalanuvchiga bir xil ("xizmat band"), lekin jurnal va savol izida
+(`turns.error_code`) ALOHIDA:
+
+| `error_code` | Ma'nosi | Nima qilish |
+|---|---|---|
+| `queue_full` | BIZNING navbat to'la - yordamchiga borilmagan | `/api/health/detail` -> `assistant.slots` (band, eng eski joy, `reclaimed`) |
+| `upstream_unreachable` | yordamchiga ulanib bo'lmadi | tarmoq / `10.10.50.4:8080` / firewall |
+| `upstream_busy` | yordamchining O'ZI 503 qaytardi | yordamchi jamoasi |
+| `open_failed` | boshqa ochilish xatosi (401, 422, 5xx) | `http_status` va `error_text` ga qarang |
+
+Yordamchi holati uchun keshlangan "o'chiq" belgisi (circuit breaker) Venera'da
+YO'Q: har savol yordamchiga qayta urinadi, ya'ni u qaytishi bilan chat ham
+qaytadi. `UpstreamHealth` (STT/TTS) 30 s keshlanadi, lekin faqat tashxis
+uchun - so'rovlarni to'smaydi.
 
 `nginx` da alohida `location = /api/v1/chat/stream` bor: **buferlash va gzip
 o'chirilgan**. Aks holda nginx butun javobni yig'ib, oxirida bir yo'la

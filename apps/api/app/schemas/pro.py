@@ -7,7 +7,13 @@ o'zgartirilmasdan o'tkaziladi, `ActionResult` va suhbat tarixi kabi.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+#: Yuqoridagi xizmatdan O'ZGARISHSIZ olinadigan maydonlar. `engine` va
+#: `available` - Venera'niki, ular xizmat javobidan OLINMAYDI.
+UPSTREAM_QUOTA_FIELDS = ("remaining", "limits", "used")
 
 
 class ProWindows(BaseModel):
@@ -27,3 +33,10 @@ class ProQuota(BaseModel):
     limits: ProWindows = Field(default_factory=ProWindows)
     #: Shu oynada sarflangani.
     used: ProWindows = Field(default_factory=ProWindows)
+    #: So'rovchining KANALI uchun yordamchi dvigateli (`X-Venera-Client`):
+    #: `v1` | `v2` | `""` (versiyasiz). "Pro" faqat `v2` da.
+    engine: Literal["v1", "v2", ""] = ""
+    #: "Pro" shu kanalda ishlatsa bo'ladimi: dvigatel `v2` VA byudjet
+    #: yuqoridagi xizmatdan o'qildi. `false` bo'lsa klient "Pro" tugmasini
+    #: ko'rsatmaydi (oynalar shunda nollar - ular haqiqiy byudjet emas).
+    available: bool = False

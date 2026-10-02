@@ -31,7 +31,8 @@ PRO_BLOCK = {"requested": True, "used": True, "calls": 1,
              "limits": {"day": 100, "week": 200, "month": 500}}
 
 # types.ts: ProQuota / ProWindows
-QUOTA_FIELDS = {"remaining", "limits", "used"}
+QUOTA_FIELDS = {"remaining", "limits", "used", "engine", "available"}
+QUOTA_WINDOWS = ("remaining", "limits", "used")
 WINDOW_FIELDS = {"day", "week", "month"}
 
 
@@ -117,12 +118,23 @@ def test_standard_yuborilmaydi(assistant, server):
 
 
 def test_pro_yuboriladi(assistant, server):
-    _frames(assistant.stream("savol", user_id="venera:1", mode="pro"))
+    _frames(assistant.stream("savol", user_id="venera:1", mode="pro", engine="v2"))
     assert server.calls[0]["body"]["mode"] == "pro"
+    assert server.calls[0]["path"] == "/api/v2/chat/stream"
+
+
+@pytest.mark.parametrize("engine,path", [("v1", "/api/v1/chat/stream"),
+                                         ("", "/api/chat/stream")])
+def test_pro_v2_dan_boshqa_dvigatelga_yuborilmaydi(assistant, server, engine, path):
+    """Ikkinchi to'r: `chat.py` dan o'tib kelgan bo'lsa ham, pulli rejim
+    "Pro" yo'q dvigatelga hech qachon ketmaydi."""
+    _frames(assistant.stream("savol", user_id="venera:1", mode="pro", engine=engine))
+    assert server.calls[0]["path"] == path
+    assert "mode" not in server.calls[0]["body"]
 
 
 def test_pro_bloki_done_kadrida_ozgarishsiz_keladi(assistant, server):
-    frames = _frames(assistant.stream("savol", user_id="venera:1", mode="pro"))
+    frames = _frames(assistant.stream("savol", user_id="venera:1", mode="pro", engine="v2"))
     done = frames[-1]
     assert done["type"] == "done"
     assert done["pro"] == PRO_BLOCK, "blok o'zgarishsiz o'tishi kerak"
@@ -137,8 +149,24 @@ def test_berilmagan_pro_sababi_bilan_keladi(assistant, server):
     server.pro = {"requested": True, "used": False, "calls": 0, "reason": "limit",
                   "remaining": {"day": 0, "week": 10, "month": 90},
                   "limits": {"day": 100, "week": 200, "month": 500}}
-    done = _frames(assistant.stream("savol", user_id="venera:1", mode="pro"))[-1]
+    done = _frames(assistant.stream("savol", user_id="venera:1", mode="pro", engine="v2"))[-1]
     assert done["pro"]["used"] is False and done["pro"]["reason"] == "limit"
+
+
+def test_soralmagan_pro_bloki_otmaydi(assistant, server, monkeypatch):
+    """Xizmat "Pro" so'ralmagan javobga ham blok qo'shsa - brauzerga O'TMAYDI:
+    aks holda klient "Pro ishlatildi" belgisini ko'rsatardi."""
+    real = server.open
+
+    def always_pro(request, timeout=None):
+        response = real(request, timeout)
+        response._lines = [line.replace(b'"route": "rules"', b'"route": "rules", "pro": {"used": true}')
+                           if b'"done"' in line else line for line in response._lines]
+        return response
+
+    monkeypatch.setattr(server, "open", always_pro)
+    done = _frames(assistant.stream("savol", user_id="venera:1", mode="pro", engine="v1"))[-1]
+    assert done["type"] == "done" and "pro" not in done
 
 
 # --- API: mode klientdan, kimlik serverdan ------------------------------
@@ -181,9 +209,10 @@ def test_byudjet_kimlik_bilan_soraladi(assistant, server):
 def test_api_byudjet_types_ts_ga_mos(api, auth, server):
     body = api.get("/api/v1/pro/quota", headers=auth).json()
     assert set(body) == QUOTA_FIELDS
-    for window in QUOTA_FIELDS:
+    for window in QUOTA_WINDOWS:
         assert set(body[window]) == WINDOW_FIELDS
     assert body["limits"]["day"] == 100, "chegara xizmatdan keladi, qotirilmagan"
+    assert (body["engine"], body["available"]) == ("v2", True)
     assert server.calls[0]["query"] == {"user_id": "venera:1"}
 
 
@@ -196,3 +225,82 @@ def test_api_byudjet_xizmat_xatosi_502(api, auth, server):
     response = api.get("/api/v1/pro/quota", headers=auth)
     assert response.status_code == 502
     assert "assistant.test" not in response.text
+
+
+# --- "Pro" faqat v2 dvigatelida (kanal bo'yicha) ---------------------------
+
+
+def _engines(monkeypatch, default: str = "v2", by_channel: str = "") -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "hrm_assistant_engine", default)
+    monkeypatch.setattr(settings, "hrm_assistant_engine_by_channel", by_channel)
+
+
+def test_api_byudjet_v1_kanalda_mavjud_emas_va_xizmatga_bormaydi(api, auth, server, monkeypatch):
+    """Mini app `v1` da: byudjet so'ralmaydi (xizmatga BORILMAYDI), javob 200 va
+    `available: false` - klient "Pro" tugmasini ko'rsatmaydi."""
+    _engines(monkeypatch, by_channel="miniapp=v1")
+    body = api.get("/api/v1/pro/quota", headers={**auth, "X-Venera-Client": "miniapp"}).json()
+    assert set(body) == QUOTA_FIELDS
+    assert (body["engine"], body["available"]) == ("v1", False)
+    assert body["remaining"] == {"day": 0, "week": 0, "month": 0}
+    assert server.calls == [], "v1 kanal uchun xizmatga borilmaydi"
+    # Web shu paytda ham v2 da - byudjet xizmatdan.
+    web = api.get("/api/v1/pro/quota", headers={**auth, "X-Venera-Client": "web"}).json()
+    assert (web["engine"], web["available"]) == ("v2", True)
+    assert len(server.calls) == 1
+
+
+def test_api_byudjet_versiyasiz_dvigatelda_ham_mavjud_emas(api, auth, server, monkeypatch):
+    _engines(monkeypatch, default="")
+    body = api.get("/api/v1/pro/quota", headers=auth).json()
+    assert (body["engine"], body["available"]) == ("", False)
+    assert server.calls == []
+
+
+def test_api_v1_kanalda_pro_tashlanadi_va_izda_sababi_bilan(api, auth, server, monkeypatch):
+    """`mode=pro` v1 kanalda: yuqoriga YUBORILMAYDI, `done` da `pro` bloki yo'q,
+    savol izida esa "so'ralgan, berilmagan, sabab `engine`"."""
+    from app.services import analytics
+
+    _engines(monkeypatch, by_channel="miniapp=v1")
+    response = api.post("/api/v1/chat/stream", json={"question": "savol", "mode": "pro"},
+                        headers={**auth, "X-Venera-Client": "miniapp"})
+    assert response.status_code == 200, response.text
+    call = server.calls[0]
+    assert call["path"] == "/api/v1/chat/stream"
+    assert "mode" not in call["body"]
+    done = [json.loads(line) for line in response.text.splitlines() if line.strip()][-1]
+    assert done["type"] == "done" and "pro" not in done
+
+    assert analytics.flush(5.0)
+    db = analytics.get_db()
+    turn_id = response.headers["x-venera-turn"]
+    events = db.rows("SELECT type, name, payload FROM turn_events WHERE turn_id=? ORDER BY seq",
+                     (turn_id,))
+    [requested] = [e for e in events if e["name"] == "pro.requested"]
+    [pro] = [e for e in events if e["name"] == "pro"]
+    assert pro["type"] == "note"
+    assert json.loads(pro["payload"]) == {"requested": True, "used": False, "calls": 0,
+                                          "reason": "engine"}
+    assert db.row("SELECT engine FROM turns WHERE id=?", (turn_id,))["engine"] == "v1"
+    assert requested
+
+
+def test_api_v2_kanalda_pro_yuboriladi_va_engine_yoziladi(api, auth, server, monkeypatch):
+    from app.services import analytics
+
+    _engines(monkeypatch, by_channel="miniapp=v1")
+    response = api.post("/api/v1/chat/stream", json={"question": "savol", "mode": "pro"},
+                        headers={**auth, "X-Venera-Client": "web"})
+    assert response.status_code == 200
+    assert server.calls[0]["path"] == "/api/v2/chat/stream"
+    assert server.calls[0]["body"]["mode"] == "pro"
+    done = [json.loads(line) for line in response.text.splitlines() if line.strip()][-1]
+    assert done["pro"] == PRO_BLOCK
+    assert analytics.flush(5.0)
+    turn = analytics.get_db().row("SELECT engine FROM turns WHERE id=?",
+                                  (response.headers["x-venera-turn"],))
+    # `done` da `engine` yo'q - so'ralgani yoziladi.
+    assert turn["engine"] == "v2"

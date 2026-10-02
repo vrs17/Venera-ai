@@ -11,7 +11,11 @@ oddiy matn emas, Telegram HTML'i (`parse_mode=HTML`):
   * `[T1]` markerlari ham ketadi, hujjat iqtiboslari (`[1]`) QOLADI - ular
     pastdagi "Manbalar" ro'yxatiga ishora qiladi;
   * markdown: `**qalin**` -> <b>, sarlavha -> qalin qator, ro'yxat -> "•",
-    havola -> faqat matni (manzil ichki bo'lishi mumkin).
+    havola -> faqat matni (manzil ichki bo'lishi mumkin);
+  * qonunchilik manbasi (`kind: "law"`, v2) - "Manbalar" ichida "LEX.UZ ·
+    qonunchilik" yorlig'i bilan HAVOLA (`<a href>`): u tekshirilgan `https`
+    manzil va LEX.UZ dagi moddaga olib boradi. Hujjat ko'ruvchisiga (`d:`
+    tugmasi) HECH QACHON yo'naltirilmaydi - u faqat `doc_id` uchun.
 
 Telegram HTML'i QATTIQ: yopilmagan yoki kesishgan teg butun xabarni rad
 ettiradi. Shuning uchun har qator alohida o'giriladi va teglari tekshiriladi
@@ -26,6 +30,8 @@ import re
 
 from typing import Any
 
+from ..services.integrations.assistant import safe_source_url
+
 #: Telegram xabari 4096 belgigacha. HTML teglari bilan hisoblaymiz - ya'ni
 #: haqiqiy matn bundan ham qisqa, zaxira bilan.
 LIMIT = 4000
@@ -33,6 +39,12 @@ LIMIT = 4000
 #: Jonli so'rov manbalari - hujjat emas, ekranga chiqmaydi (mini app'dagi
 #: `LOOKUP_KINDS` bilan bir xil).
 LOOKUP_KINDS = ("hrm", "crm")
+
+#: Qonunchilik manbasi (v2): LEX.UZ dagi modda. Hujjat EMAS - PDF tugmasi
+#: yo'q, `/doc` ga yo'naltirilmaydi; havola Telegram'ning o'zida ochiladi.
+LAW_KIND = "law"
+#: Yorliq - yuqoridagi xizmat xati (4-bo'lim) bo'yicha, web va mini app'da ham shu.
+LAW_LABEL = "LEX.UZ · qonunchilik"
 
 #: Tugma `callback_data` si 64 BAYTGACHA.
 _CALLBACK_MAX = 64
@@ -44,6 +56,8 @@ SAFE_ARTIFACT = re.compile(r"[\w.~-]{1,256}")
 
 _TRACE_LINE = re.compile(r"^\s*\[[A-Za-z]{1,4}[_-]?\d{1,6}\]\s")
 _TAG = re.compile(r"<(/?)(b|i|s|code|pre)>")
+#: Faqat BIZ yasagan havola (`law_line`): manzil qo'shtirnoqsiz, escape qilingan.
+_LINK = re.compile(r'<a href="([^"<>]*)">(.*?)</a>')
 
 
 def esc(text: Any) -> str:
@@ -52,8 +66,12 @@ def esc(text: Any) -> str:
 
 
 def plain(markup: str) -> str:
-    """HTML -> oddiy matn (Telegram belgilashni rad etgandagi zaxira)."""
-    return html.unescape(_TAG.sub("", markup))
+    """HTML -> oddiy matn (Telegram belgilashni rad etgandagi zaxira).
+
+    Havola `matn (manzil)` bo'lib qoladi - teglarsiz xabarda ham odam
+    LEX.UZ dagi moddani ocha olsin."""
+    text = _LINK.sub(lambda m: f"{m.group(2)} ({m.group(1)})", markup)
+    return html.unescape(_TAG.sub("", text))
 
 
 # --- javob matni -------------------------------------------------------------
@@ -281,16 +299,39 @@ def source_label(source: dict[str, Any], index: int) -> str:
     return f"{mark} {name}" + (f", {page}-bet" if page else "")
 
 
+def law_line(source: dict[str, Any], index: int) -> str:
+    """Qonunchilik manbasi - Telegram HTML qatori:
+
+        [2] LEX.UZ · qonunchilik: <a href="https://www.lex.uz/...">Mehnat kodeksi, 160-modda …</a>
+
+    Havola faqat xavfsiz `https` manzil bo'lsa (`safe_source_url` - oqimda
+    tekshirilgan, bu yerda IKKINCHI marta: render boshqa manbadan ham
+    chaqirilishi mumkin). Aks holda nomi oddiy matn bo'lib qoladi - manba
+    yo'qolmaydi, faqat bosib bo'lmaydi.
+    """
+    mark = source.get("marker") or f"[{source.get('citation_index') or index + 1}]"
+    title = str(source.get("title") or "").strip()
+    url = safe_source_url(source.get("url"))
+    if url is None:
+        return esc(f"{mark} {LAW_LABEL}" + (f": {title}" if title else ""))
+    link = f'<a href="{html.escape(url, quote=True)}">{esc(title or LAW_LABEL)}</a>'
+    return f"{esc(mark)} {esc(LAW_LABEL)}: {link}" if title else f"{esc(mark)} {link}"
+
+
 def sources_block(docs: list[dict[str, Any]]) -> str:
-    lines = [esc(source_label(doc, i)) for i, doc in enumerate(docs)]
+    lines = [law_line(doc, i) if doc.get("kind") == LAW_KIND else esc(source_label(doc, i))
+             for i, doc in enumerate(docs)]
     return "📚 <b>Manbalar</b>\n" + "\n".join(lines)
 
 
 def doc_buttons(docs: list[dict[str, Any]], *, most: int = 9) -> dict[str, Any] | None:
-    """Har hujjat uchun tugma - bosilsa PDF'ning o'zi shu chatga keladi."""
+    """Har hujjat uchun tugma - bosilsa PDF'ning o'zi shu chatga keladi.
+    Qonunchilik manbasi tugma OLMAYDI: u PDF emas, havolasi matnning o'zida."""
     buttons: list[dict[str, str]] = []
     seen: set[str] = set()
     for index, doc in enumerate(docs):
+        if doc.get("kind") == LAW_KIND:
+            continue
         doc_id = doc.get("doc_id")
         if not isinstance(doc_id, str) or not SAFE_KEY.fullmatch(doc_id) or doc_id in seen:
             continue

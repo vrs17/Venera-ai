@@ -181,10 +181,28 @@ _V1: tuple[str, ...] = (
   target_type TEXT, target_id TEXT, detail TEXT)""",
 )
 
+#: 2-qadam (2026-10-02): yordamchining DVIGATELI. Xizmat ikki versiyali
+#: bo'ldi (`/api/v1/...`, `/api/v2/...`, `core/engines.py`), va "v2 javoblari
+#: tezroqmi, xatosi kamroqmi" degan savolga javob shu ustunsiz yo'q.
+#:
+#: Ustun NULL bo'la oladi va default'siz: eski qatorlar (versiyasiz yo'l,
+#: ma'lumotnoma javobi) NULL qoladi - admin panelda "default". Faqat
+#: QO'SHILADI: eski kod (`user_version` 1) bu faylni ochsa ham ishlaydi -
+#: u ustunni nomlab yozmaydi, `SELECT *` esa ortiqcha ustunni e'tiborsiz
+#: qoldiradi (deploy orqaga qaytarilsa ham).
+#:
+#: Ustun izohi SQL ichida EMAS: `ADD COLUMN` matni `CREATE TABLE` ning
+#: oxiriga yopishtiriladi va `--` izoh yopuvchi qavsni "yutib", jadvalni
+#: o'qib bo'lmaydigan qilib qo'yadi (SQLite: "incomplete input").
+_V2: tuple[str, ...] = (
+    "ALTER TABLE turns ADD COLUMN engine TEXT",
+    "CREATE INDEX turns_engine ON turns(engine, started_at)",
+)
+
 #: `MIGRATIONS[i]` fayl `user_version = i` dan `i + 1` ga o'tkazadi.
 #: FAQAT OXIRIGA QO'SHILADI - mavjud qadamni o'zgartirish uni allaqachon
 #: bajargan fayllarni sxemadan ajratib qo'yardi.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1,)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2)
 
 SCHEMA_VERSION = len(MIGRATIONS)
 

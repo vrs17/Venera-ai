@@ -172,7 +172,15 @@ class Backend:
         from ..api.v1 import chat as _chat
 
         # Web va mini app bilan BITTA yo'l: xodimlar ma'lumotnomasi, keyin yordamchi.
-        return _chat.open_stream(question, user, chat_id)
+        # Dvigatel `bot` kanaliniki (`HRM_ASSISTANT_ENGINE_BY_CHANNEL=bot=v1`
+        # bilan botni eski dvigatelda qoldirish mumkin). "Pro" botda yo'q.
+        return _chat.open_stream(question, user, chat_id, channel="bot")
+
+    def engine(self) -> str:
+        """Bot kanalining dvigateli - savol izi uchun (`_collect`)."""
+        from ..api.v1 import chat as _chat
+
+        return _chat.engine_for("bot")
 
     def action(self, verb: str, token: str, user: AuthUser) -> dict[str, Any]:
         from ..api.v1 import chat as _chat
@@ -210,6 +218,13 @@ def _chat_message(status: int) -> str:
     from ..api.v1 import chat as _chat
 
     return _chat._MESSAGES.get(status, _chat._MESSAGES[502])
+
+
+def _open_error_code(exc: AssistantError) -> str:
+    """Ochilmagan oqim uchun izdagi xato kodi - veb chatdagi qoida."""
+    from ..api.v1 import chat as _chat
+
+    return _chat.open_error_code(exc)
 
 
 def _stt_message(status: int) -> str:
@@ -813,11 +828,20 @@ class VeneraBot:
                 stream = self.backend.stream(question, user, chat)
                 info["requestId"] = stream.request_id
         except AssistantError as exc:
-            log.warning("Telegram savol (%s): %s", user.actorId, exc)
+            log.warning("Telegram savol (%s) [%s]: %s", user.actorId,
+                        getattr(exc, "reason", None) or "-", exc)
             answer.failure = _chat_message(exc.status)
-            rec.error_code, answer.error = "open_failed", exc
+            # Veb chatdagi AYNI kod: `queue_full` / `upstream_unreachable` /
+            # `upstream_busy`, qolgani `open_failed`.
+            rec.error_code, answer.error = _open_error_code(exc), exc
+            # Ochilmagan savolda ham qaysi dvigatelga borilgani izda tursin.
+            engine_of = getattr(self.backend, "engine", None)
+            if callable(engine_of):
+                rec.update(engine=engine_of())
             return answer
-        rec.update(request_id=stream.request_id)
+        # So'ralgan dvigatel (ma'lumotnoma javobida `None`); `done.engine`
+        # kelsa `rec.observe` uni haqiqatda javob bergani bilan almashtiradi.
+        rec.update(request_id=stream.request_id, engine=getattr(stream, "engine", None))
         frames = stream.frames
         stage_text, stage_at = "", 0.0
         try:
@@ -862,8 +886,10 @@ class VeneraBot:
             rec.error_code, answer.error = "stream_broken", exc
         finally:
             # Oqim OXIRIGACHA o'qilmagan bo'lsa ham yopiladi - yuqoridagi
-            # xizmat sloti faqat shunda bo'shaydi.
-            close = getattr(frames, "close", None)
+            # xizmat sloti faqat shunda bo'shaydi. `AnswerStream.close` -
+            # boshlanmagan oqimda ham slotni qaytaradi; u bo'lmasa (soxta
+            # oqim) - generatorning o'zi.
+            close = getattr(stream, "close", None) or getattr(frames, "close", None)
             if callable(close):
                 close()
             log.info("Telegram javob (%s): request_id=%s natija=%s", user.actorId,
