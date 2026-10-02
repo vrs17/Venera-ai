@@ -404,11 +404,11 @@ PASSAGES: dict[str, Passage] = {
 
 #: Qonunchilik manbalari (v2, `kind: "law"`) - yuqoridagi jamoa xatidagi shakl
 #: (2026-10-02, 4-bo'lim). 160-modda havolasi xatdagi AYNAN o'zi; 130-modda
-#: uchun modda langari bizda yo'q - kodeksning o'zi (taxmin qilingan langar
-#: odamni boshqa moddaga olib borardi).
+#: sarlavhasi va langari JONLI v2 javobidan olingan (2026-10-02, xatdagi
+#: "Sinov muddati eng ko'pi bilan qancha?" sinov savoli) - taxmin emas.
 LAW_ARTICLES: dict[str, dict[str, str]] = {
-    "probation": {"title": "Mehnat kodeksi, 130-modda — Dastlabki sinov",
-                  "url": "https://www.lex.uz/uz/docs/6257288"},
+    "probation": {"title": "Mehnat kodeksi, 130-modda — Dastlabki sinov muddati",
+                  "url": "https://www.lex.uz/uz/docs/6257288#6260649"},
     "termination": {"title": "Mehnat kodeksi, 160-modda — Mehnat shartnomasini xodimning "
                              "tashabbusiga ko‘ra bekor qilish",
                     "url": "https://www.lex.uz/uz/docs/6257288#6261538"},
