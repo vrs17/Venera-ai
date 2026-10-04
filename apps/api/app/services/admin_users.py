@@ -733,8 +733,18 @@ def user_detail(actor_id: int, identities: Any, users: Any, *, hub: Any, links: 
         "recentTurns": _turn_summaries(db, recent),
         "audit": audit_entries(target_type="user", target_id=actor_id, limit=20, db=db),
         "note": st.note,
+        # Import shu yerda: `engine_control` bu modulni (audit, katalog)
+        # import qiladi - modul boshida bo'lsa aylanma bo'lardi.
+        "engine": _engine_of(actor_id, db),
     })
     return item
+
+
+def _engine_of(actor_id: int, db: Database) -> dict[str, Any]:
+    """`AdminUserDetail.engine` - `services/engine_control.user_engine`."""
+    from . import engine_control
+
+    return engine_control.user_engine(actor_id, db=db)
 
 
 # --- o'zgartirish -----------------------------------------------------------------

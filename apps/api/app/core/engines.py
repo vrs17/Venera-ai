@@ -33,6 +33,12 @@ NOTO'G'RI QIYMAT server'ni yiqitmaydi: jurnalga (bir marta) va
 `/api/health/detail` ga yoziladi, o'rniga kod default'i (`v2`) yoki umumiy
 qiymat ishlaydi. Bitta harf xatosi tufayli chat butunlay to'xtashi
 dvigatelni noto'g'ri tanlashdan yomonroq.
+
+ADMIN PANEL USTUN (2026-10-04). `.env` - faqat BOSHLANG'ICH qiymat: admin
+panelda siyosat saqlangach (`engine_policy`) va odamga alohida versiya
+berilgach (`engine_access`) o'shalar ishlaydi -
+`services/engine_control.effective_engine`. Bu fayl faqat KATALOG (`ENGINES`)
+va `.env` o'qishini beradi: `core` analitika omboriga bog'lanmaydi.
 """
 
 from __future__ import annotations
@@ -45,8 +51,28 @@ from .config import settings
 
 log = logging.getLogger(__name__)
 
-#: Ruxsat etilgan dvigatellar. `""` - versiyasiz (xizmat default'i).
-ENGINES: tuple[str, ...] = ("v1", "v2", "")
+#: KATALOG - admin panelda tanlanadigan dvigatellar, tartibi ham shu.
+#:
+#: Faqat kalit va imkoniyatlar: nomi va tavsifi frontend tarjimalarida
+#: (`i18n`) - matn uch tilda, server esa tilni bilmaydi. `pro` - "Pro"
+#: rejimi bor, `law` - javobda LEX.UZ qonunchilik manbalari bor.
+#:
+#: Versiyasiz yo'l (`""`, `legacy`) bu yerda ATAYLAB YO'Q: u faqat `.env`
+#: orqali yoqiladigan favqulodda chiqish (xizmat versiyali yo'llarni
+#: buzsa). Admin panelda tanlansa, "qaysi versiya javob beradi" degan
+#: savolga javob xizmatning default'iga bog'lanib qolardi - u esa bizdan
+#: so'ramasdan o'zgarishi mumkin.
+ENGINES: tuple[dict[str, object], ...] = (
+    {"id": "v1", "pro": False, "law": False},
+    {"id": "v2", "pro": True, "law": True},
+)
+
+#: Katalogdagi kalitlar - admin va klient tanlovi faqat shulardan.
+CATALOG_IDS: tuple[str, ...] = tuple(str(item["id"]) for item in ENGINES)
+
+#: Yuqoriga ochiladigan YO'LLAR: katalog + versiyasiz (`""`, xizmat
+#: default'i). Klient (`assistant.py`) faqat shularni qabul qiladi.
+ROUTES: tuple[str, ...] = (*CATALOG_IDS, "")
 
 #: "Pro" rejimi faqat shu dvigatelda bor (xat, 3-bo'lim).
 PRO_ENGINE = "v2"
@@ -68,7 +94,22 @@ def normalize(value: object) -> str | None:
     text = str(value if value is not None else "").strip().lower()
     if text in _LEGACY_WORDS:
         return ""
-    return text if text in ENGINES else None
+    return text if text in ROUTES else None
+
+
+def catalog_id(value: object) -> str | None:
+    """Klient yoki admin tanlovi -> katalog kaliti (`" V2"` -> `"v2"`), aks
+    holda `None`. Versiyasiz yo'l (`legacy`, `""`) bu yerda TANILMAYDI -
+    u faqat `.env` orqali (`ENGINES` izohi)."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()[:16]
+    return text if text in CATALOG_IDS else None
+
+
+def catalog() -> list[dict[str, object]]:
+    """Katalog NUSXASI - javobga beriladi, asl ro'yxat o'zgarmasin."""
+    return [dict(item) for item in ENGINES]
 
 
 def _warn_once(message: str) -> None:
@@ -116,8 +157,12 @@ def channel_overrides() -> tuple[dict[str, str], list[str]]:
 
 
 def engine_for(channel: str | None) -> str:
-    """Shu kanal uchun dvigatel: kanalga alohida berilgan bo'lsa o'sha,
-    bo'lmasa umumiy (`HRM_ASSISTANT_ENGINE`)."""
+    """Shu kanal uchun `.env` dagi dvigatel: kanalga alohida berilgan bo'lsa
+    o'sha, bo'lmasa umumiy (`HRM_ASSISTANT_ENGINE`).
+
+    Bu - zanjirning OXIRGI bo'g'ini (admin hali siyosat saqlamagan yoki
+    ombor o'qilmadi). So'rov yo'llari buni emas,
+    `services/engine_control.effective_engine` ni chaqiradi."""
     overrides, problems = channel_overrides()
     for problem in problems:
         _warn_once(problem)

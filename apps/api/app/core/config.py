@@ -300,6 +300,9 @@ class Settings(BaseSettings):
     #: LEX.UZ havolalari, "Pro") yoki bo'sh - versiyasiz `/api/chat/stream`
     #: (xizmat default'i, bugun = v1; prod hozir shu yo'lda). Bu shox YANGI
     #: ko'rinish, shuning uchun default `v2`. "Pro" faqat `v2` da ishlaydi.
+    #: BOSHLANG'ICH qiymat: admin panel siyosati (`engine_policy`) va odamga
+    #: berilgan versiya (`engine_access`) undan ustun -
+    #: `services/engine_control.py`.
     hrm_assistant_engine: str = "v2"
     #: Kanal bo'yicha istisno: `miniapp=v1,bot=v1` - ko'rsatilgan kanallar
     #: shu dvigatelda, qolgani `hrm_assistant_engine` da. Kanal nomlari:

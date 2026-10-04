@@ -79,7 +79,7 @@ from dataclasses import dataclass, field
 from socket import timeout as socket_timeout
 from typing import Any, Iterator
 
-from ...core.engines import ENGINES, PRO_ENGINE
+from ...core.engines import PRO_ENGINE, ROUTES
 from ..analytics.meter import Call, begin
 
 log = logging.getLogger(__name__)
@@ -308,7 +308,7 @@ class AssistantClient:
         `""`: klient o'zi tanlamaydi - qaysi dvigatel ekanini chaqiruvchi
         (`chat.open_stream`, kanal bo'yicha) aytadi.
         """
-        if engine not in ENGINES:
+        if engine not in ROUTES:
             # Dasturchi xatosi: `core/engines.py` faqat shu qiymatlarni beradi.
             raise ValueError(f"noma'lum dvigatel: {engine!r}")
         if not self.configured:
@@ -917,7 +917,7 @@ def _rewrite_sources(frame: dict[str, Any]) -> None:
 
 def stream_path(engine: str) -> str:
     """Dvigatel -> oqim yo'li: `v2` -> `/api/v2/chat/stream`, `""` -> `/api/chat/stream`."""
-    if engine not in ENGINES:
+    if engine not in ROUTES:
         raise ValueError(f"noma'lum dvigatel: {engine!r}")
     return f"/api/{engine}/chat/stream" if engine else "/api/chat/stream"
 

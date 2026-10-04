@@ -12,7 +12,7 @@ from fastapi import APIRouter
 
 from . import actions, auth, chat, chats, connectors, pro, stt, telegram, tts
 from . import admin_users, reports
-from . import admin
+from . import admin, admin_engines
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(auth.router)
@@ -27,5 +27,6 @@ router.include_router(telegram.router)
 router.include_router(reports.router)
 router.include_router(admin_users.router)
 router.include_router(admin.router)
+router.include_router(admin_engines.router)
 
 __all__ = ["router"]

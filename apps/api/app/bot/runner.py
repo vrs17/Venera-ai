@@ -172,15 +172,18 @@ class Backend:
         from ..api.v1 import chat as _chat
 
         # Web va mini app bilan BITTA yo'l: xodimlar ma'lumotnomasi, keyin yordamchi.
-        # Dvigatel `bot` kanaliniki (`HRM_ASSISTANT_ENGINE_BY_CHANNEL=bot=v1`
-        # bilan botni eski dvigatelda qoldirish mumkin). "Pro" botda yo'q.
+        # Dvigatel - SHU ODAMNING `bot` kanalidagisi (`effective_engine`):
+        # admin unga alohida versiya bergan bo'lsa o'sha, bo'lmasa bot
+        # kanali siyosati, oxiri `.env`. Botda tanlov tugmasi yo'q - odam
+        # o'z default'ida. "Pro" botda yo'q.
         return _chat.open_stream(question, user, chat_id, channel="bot")
 
-    def engine(self) -> str:
-        """Bot kanalining dvigateli - savol izi uchun (`_collect`)."""
+    def engine(self, user: AuthUser | None = None) -> str:
+        """Bot kanalining dvigateli (shu odam uchun) - savol izi uchun
+        (`_collect`). Odamsiz - "hamma uchun" qiymat."""
         from ..api.v1 import chat as _chat
 
-        return _chat.engine_for("bot")
+        return _chat.effective_engine(user, "bot")
 
     def action(self, verb: str, token: str, user: AuthUser) -> dict[str, Any]:
         from ..api.v1 import chat as _chat
@@ -834,10 +837,11 @@ class VeneraBot:
             # Veb chatdagi AYNI kod: `queue_full` / `upstream_unreachable` /
             # `upstream_busy`, qolgani `open_failed`.
             rec.error_code, answer.error = _open_error_code(exc), exc
-            # Ochilmagan savolda ham qaysi dvigatelga borilgani izda tursin.
+            # Ochilmagan savolda ham qaysi dvigatelga borilgani izda tursin -
+            # SHU ODAMNIKI (admin unga alohida versiya bergan bo'lishi mumkin).
             engine_of = getattr(self.backend, "engine", None)
             if callable(engine_of):
-                rec.update(engine=engine_of())
+                rec.update(engine=engine_of(user))
             return answer
         # So'ralgan dvigatel (ma'lumotnoma javobida `None`); `done.engine`
         # kelsa `rec.observe` uni haqiqatda javob bergani bilan almashtiradi.

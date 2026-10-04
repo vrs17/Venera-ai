@@ -76,8 +76,14 @@ def assistant_state() -> dict:
     va sonlar."""
     from .api.v1.chat import _assistant
     from .core.engines import config_state
+    from .services.engine_control import health_state
 
-    return {"engine": config_state(), "slots": _assistant.slots_state()}
+    # `engine` - `.env` (boshlang'ich qiymat), `policy` - HOZIR haqiqatda
+    # ishlaydigani (admin panel qarori bilan). Ikkalasi kerak: admin siyosat
+    # saqlagach `.env` dagi qiymat endi ishlamaydi, va jurnal o'qiydigan
+    # odam buni shu yerda ko'rishi kerak.
+    return {"engine": config_state(), "policy": health_state(),
+            "slots": _assistant.slots_state()}
 from .services.users import example_password_hashes
 
 logging.basicConfig(

@@ -10,9 +10,12 @@ hujjatlar bo'yicha RAG va HRM ma'lumotini birlashtiradi. `/ask` esa
 quvurning bosqichli ko'rinishini beradi va Assistant sozlanmagan muhitda
 (masalan lokal ishlab chiqishda) frontend to'liq ishlashi uchun qoladi.
 
-`/stream` yordamchining qaysi DVIGATELIGA borishi kanalga bog'liq
-(`core/engines.py`): web - `v2`, `.env` da boshqacha aytilgan kanal - o'sha.
-Kadrlar O'ZGARISHSIZ o'tadi; `done` da `engine` va (so'ralgan bo'lsa) `pro`.
+`/stream` yordamchining qaysi DVIGATELIGA borishini admin panel hal qiladi
+(`services/engine_control.py`): odamga berilgan versiya, kanal siyosati,
+umumiy siyosat, oxiri `.env`. Klient tanlovi (`engine`) faqat odamga
+ruxsat berilgan bo'lsa ishlaydi - `GET /chat/engines` nima tanlash mumkinligini
+aytadi. Kadrlar O'ZGARISHSIZ o'tadi; `done` da `engine` va (so'ralgan
+bo'lsa) `pro`.
 
 Mantiq bu faylda YO'Q: `services/integrations/assistant.py` da.
 """
@@ -34,6 +37,7 @@ from collections.abc import Callable, Iterator
 import jwt
 from fastapi import APIRouter, Depends, Path, Request, Response
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from ...core import engines as _engines
 from ...core.channels import channel_of
@@ -41,6 +45,8 @@ from ...core.config import ollama_key_now, platform_tokens, settings
 from ...core.errors import bad_request, error_status
 from ...schemas.auth import AuthUser
 from ...schemas.chat import AskRequest, FileLink, FileLinkRequest, PipelineResponse, StreamRequest
+from ...schemas.engines import EngineChoice
+from ...services import engine_control as _engine_control
 from ...services.analytics import TurnRecorder, bind, carry, redact
 from ...services.integrations.assistant import (
     ARTIFACT_KINDS,
@@ -447,28 +453,50 @@ def _live_tokens(user: AuthUser) -> dict[str, str]:
     return tokens
 
 
+def effective_engine(user: AuthUser | None, channel: str | None,
+                     requested: object = None) -> str:
+    """Shu odam va kanal uchun yordamchi dvigateli. Web, mini app, bot,
+    `/chat/ask` va `/pro/quota` BITTA qoidadan foydalanadi -
+    `services/engine_control.py` (admin panel qarorlari, keyin `.env`)."""
+    return _engine_control.effective_engine(user, channel, requested)
+
+
 def engine_for(channel: str | None) -> str:
-    """Kanal uchun yordamchi dvigateli (`core/engines.py`). Web, mini app,
-    bot va `/pro/quota` BITTA qoidadan foydalanadi."""
-    return _engines.engine_for(channel)
+    """Kanalning "hamma uchun" dvigateli (odamga alohida versiya berilmagan
+    bo'lsa). Eski chaqiruvchilar uchun; yangi kod `effective_engine` ni
+    odam bilan chaqiradi."""
+    return _engine_control.effective_engine(None, channel)
+
+
+@router.get("/engines", response_model=EngineChoice)
+def engines(request: Request, user: AuthUser = Depends(current_user)) -> EngineChoice:
+    """Shu odam, shu kanalda (`X-Venera-Client`) qaysi dvigatel ishlaydi va
+    u nimani tanlay oladi. Tanlov `selectable` bo'lsagina ko'rsatiladi;
+    tanlangan qiymat `/chat/stream` tanasidagi `engine` bilan yuboriladi.
+
+    `async def` EMAS: qoida analitika omboridan o'qiladi (SQLite bloklaydi).
+    """
+    return EngineChoice(**_engine_control.client_view(user, channel_of(request)))
 
 
 def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
                 mode: str = "standard", recorder: TurnRecorder | None = None,
                 before_upstream: Callable[[], None] | None = None,
-                channel: str | None = "api") -> AnswerStream:
+                channel: str | None = "api", engine: str | None = None) -> AnswerStream:
     """Savol -> javob oqimi: web, mini app va Telegram bot BITTA yo'ldan.
 
     Avval xodimlar ma'lumotnomasi (`services/contacts_chat.py`): kontakt
     savoli yoki tahriri bo'lsa javob shu yerda tayyorlanadi va yuqoridagi
-    xizmatga BORMAYDI. Qolgan hamma savol - yordamchiga, KANALNING
-    dvigateliga (`engine_for`): web `v2`, `HRM_ASSISTANT_ENGINE_BY_CHANNEL`
-    da boshqacha aytilgan kanal - o'sha.
+    xizmatga BORMAYDI. Qolgan hamma savol - yordamchiga, SHU ODAM VA KANAL
+    uchun tanlangan dvigatelga (`effective_engine`: odamga berilgan versiya,
+    admin siyosati, oxiri `.env`).
 
     Qo'shimchalar (hammasi ixtiyoriy - bot ularsiz chaqiradi):
 
       * `channel` - so'rov kanali (web | miniapp | bot | desktop | api);
         dvigatel shundan tanlanadi;
+      * `engine` - klient tanlagan dvigatel. Faqat odamga ruxsat berilgan
+        bo'lsa ishlaydi, aks holda JIMGINA e'tiborsiz (xato emas);
       * `mode` - "Pro" (`/chat/stream` da klient aytadi). Kontakt javobiga
         TEGMAYDI: ma'lumotnoma javobi byudjetdan yemaydi va `pro` bloki
         bo'lmaydi. "Pro" FAQAT `v2` da: boshqa dvigatelda u JIMGINA
@@ -489,7 +517,13 @@ def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
         info["answered"] = local is not None
     if local is not None:
         return local
-    engine = engine_for(channel)
+    requested = engine
+    choice = _engine_control.choose(user, channel, requested)
+    engine = choice.engine
+    if recorder is not None and choice.ignored:
+        # Klient so'ragan versiya bu odamga berilmagan - izda ko'rinsin:
+        # "nega men tanlagan versiya ishlamadi" degan savolga javob shu.
+        recorder.point("engine.ignored", requested=str(requested)[:16], used=engine)
     if mode == "pro" and not _engines.pro_available(engine):
         # "Pro" bu dvigatelda yo'q: JIMGINA standart rejim. Klient buni
         # oldindan biladi (`/pro/quota` -> `available: false`) va tugmani
@@ -503,8 +537,10 @@ def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
             recorder.pro_result({"requested": True, "used": False, "calls": 0,
                                  "reason": "engine"})
     if recorder is not None:
-        # So'ralgan dvigatel - javobning `done.engine` i kelsa o'sha ustun
-        # bo'ladi; ochilmay qolgan savolda ham qaysi yo'lga borilgani ko'rinsin.
+        # TANLANGAN dvigatel (admin qarori / klient tanlovi qo'llangandan
+        # KEYINGI - yuqoriga aynan shu ketadi). Javobning `done.engine` i
+        # kelsa o'sha ustun bo'ladi; ochilmay qolgan savolda ham qaysi yo'lga
+        # borilgani ko'rinsin.
         recorder.update(engine=engine)
     if before_upstream is not None:
         before_upstream()
@@ -645,10 +681,12 @@ def stream(body: StreamRequest, request: Request,
             # ochilsa, 200 allaqachon ketgan bo'lardi va xato brauzerga
             # "uzilgan oqim" bo'lib ko'rinardi.
             #
-            # DVIGATEL kanaldan (`engine_for`): web - `v2`, boshqa kanal
-            # `.env` da alohida aytilgan bo'lsa - o'sha.
+            # DVIGATEL - odam va kanal bo'yicha (`effective_engine`): admin
+            # panel qarori, klient tanlovi (`engine`, faqat ruxsat bo'lsa),
+            # oxiri `.env`. Mini App ham shu yo'ldan (kanal `miniapp`).
             answer = open_stream(body.question, user, body.chatId, mode=body.mode,
-                                 recorder=rec, before_upstream=start_hold, channel=channel)
+                                 recorder=rec, before_upstream=start_hold, channel=channel,
+                                 engine=body.engine)
         except AssistantError as exc:
             # Sabab bo'yicha kod: `queue_full` / `upstream_unreachable` /
             # `upstream_busy`, qolgani `open_failed` (`open_error_code`).
@@ -916,9 +954,18 @@ async def ask(
     Bu yo'l ham izga yoziladi (`kind=ask`): Assistant sozlanmagan muhitda
     frontend shu yerdan ishlaydi va admin panel u yerdagi savollarni ham
     ko'rishi kerak.
+
+    `engine` - `/stream` dagi AYNI qoida (`effective_engine`): quvur
+    yordamchiga bormaydi, lekin savol izida odam qaysi versiyada ekani
+    turadi - klient ikkala yo'lga bir xil tana yuboradi va admin panel
+    dvigatellar statistikasi ikki xil ma'noga ega bo'lmasin.
     """
-    rec = TurnRecorder(user, channel_of(request), "ask", data.question)
+    channel = channel_of(request)
+    rec = TurnRecorder(user, channel, "ask", data.question)
     response.headers[TURN_HEADER] = rec.turn_id
+    # Threadpool'da: kesh eskirgan bo'lsa qoida SQLite'dan o'qiladi, bu esa
+    # `async` endpointda voqealar siklini to'xtatardi.
+    rec.update(engine=await run_in_threadpool(effective_engine, user, channel, data.engine))
     try:
         with rec.bind(), rec.span("pipeline") as info:
             result = await pipeline.ask(data.question, user)

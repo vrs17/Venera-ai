@@ -12,6 +12,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from .engines import UserEngine
+
 
 class AdminUser(BaseModel):
     """types.ts: AdminUser - ro'yxatdagi bitta odam."""
@@ -84,7 +86,8 @@ class AuditEntry(BaseModel):
     adminActorId: int | None = None
     adminName: str | None = None
     #: user.roles | user.block | user.unblock | user.note | user.signout |
-    #: user.connector.disconnect | user.telegram.unlink | report.status | report.note
+    #: user.connector.disconnect | user.telegram.unlink | report.status | report.note |
+    #: engine.policy | engine.access.set | engine.access.remove
     action: str
     targetType: str | None = None
     targetId: str | None = None
@@ -102,6 +105,9 @@ class AdminUserDetail(AdminUser):
     audit: list[AuditEntry] = Field(default_factory=list)
     #: Admin izohi (faqat panelda ko'rinadi).
     note: str | None = None
+    #: Yordamchi dvigateli: shu odamga HOZIR nima ishlaydi (kanal bo'yicha)
+    #: va unga alohida qaysi versiyalar berilgan (`/admin/engines/access`).
+    engine: UserEngine
 
 
 class AdminUserUpdate(BaseModel):

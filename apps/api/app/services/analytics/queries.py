@@ -1041,6 +1041,36 @@ def overview(db: Database, *, start: float, end: float,
     }
 
 
+def engine_stats(db: Database, *, start: float, end: float) -> list[dict[str, Any]]:
+    """types.ts: EngineUsage - dvigatellar sahifasi uchun (`/admin/engines`).
+
+    Umumiy ko'rinishdagi `engines` bilan AYNI hisob (NULL - `default`,
+    xato - `status = 'error'`, TTFT mediana), ustiga `users` - nechta odam
+    shu dvigatelda so'radi. Versiyani "hammaga ochish" qarori aynan shu
+    savolga tayanadi: sinovchilar yetarlimi va xatolari ko'p emasmi.
+    """
+    rows = _range_rows(
+        db, "SELECT engine, status, ttft_ms, actor_id FROM turns "
+            "WHERE started_at >= ? AND started_at < ? ORDER BY started_at DESC",
+        (start, end), "engines")
+    lanes: dict[str, dict[str, Any]] = {}
+    for engine, status, ttft, actor in rows:
+        lane = lanes.setdefault(engine or DEFAULT_ENGINE,
+                                {"turns": 0, "errors": 0, "ttft": [], "users": set()})
+        lane["turns"] += 1
+        if status == "error":
+            lane["errors"] += 1
+        if ttft is not None:
+            lane["ttft"].append(ttft)
+        if actor is not None:
+            lane["users"].add(actor)
+    return [
+        {"engine": name, "turns": s["turns"], "errors": s["errors"],
+         "medianTtftMs": _ms(percentile(sorted(s["ttft"]), 0.5)), "users": len(s["users"])}
+        for name, s in sorted(lanes.items(), key=lambda kv: (-kv[1]["turns"], kv[0]))
+    ]
+
+
 #: Platforma chaqiruvi xatomi: holat bor va u "yaxshi" emas (`ok`, `200`, ...).
 _TOOL_ERROR = (
     "CASE WHEN s.status IS NULL OR lower(s.status) IN ('ok', 'success', 'done') "

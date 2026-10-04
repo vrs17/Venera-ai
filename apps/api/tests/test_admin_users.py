@@ -30,7 +30,7 @@ ADMIN_USER_FIELDS = {
     "channels", "reports",
 }
 DETAIL_FIELDS = ADMIN_USER_FIELDS | {"stats", "connectors", "telegram", "recentTurns", "audit",
-                                     "note"}
+                                     "note", "engine"}
 STATS_FIELDS = {"turns", "errors", "medianTtftMs", "reports", "voiceTurns"}
 CONNECTOR_FIELDS = {"platform", "connected", "enabled", "login", "expiresAt", "state"}
 AUDIT_FIELDS = {"id", "createdAt", "adminActorId", "adminName", "action", "targetType",

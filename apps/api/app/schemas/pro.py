@@ -33,8 +33,9 @@ class ProQuota(BaseModel):
     limits: ProWindows = Field(default_factory=ProWindows)
     #: Shu oynada sarflangani.
     used: ProWindows = Field(default_factory=ProWindows)
-    #: So'rovchining KANALI uchun yordamchi dvigateli (`X-Venera-Client`):
-    #: `v1` | `v2` | `""` (versiyasiz). "Pro" faqat `v2` da.
+    #: So'rovchi uchun SHU KANALDA (`X-Venera-Client`) ishlaydigan dvigatel -
+    #: admin qarori va `?engine=` tanlovi qo'llangandan keyin
+    #: (`services/engine_control.py`): `v1` | `v2` | `""` (versiyasiz). "Pro" faqat `v2` da.
     engine: Literal["v1", "v2", ""] = ""
     #: "Pro" shu kanalda ishlatsa bo'ladimi: dvigatel `v2` VA byudjet
     #: yuqoridagi xizmatdan o'qildi. `false` bo'lsa klient "Pro" tugmasini

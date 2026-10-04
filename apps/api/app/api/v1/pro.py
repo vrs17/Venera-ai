@@ -13,18 +13,22 @@ va yubora olmaydi, aks holda birovning byudjetini ko'rish mumkin bo'lardi.
 CHEGARALAR QOTIRILMAYDI - ular shu endpointdan o'qiladi (hujjat talabi:
 "read them from this endpoint, do not hard-code").
 
-"PRO" FAQAT v2 DVIGATELIDA (xat, 3-bo'lim). Dvigatel KANALGA bog'liq
-(`core/engines.py`, kanal - `X-Venera-Client`), shuning uchun javobda shu
-kanalning `engine` i va `available` bor. Dvigatel `v2` bo'lmasa javob
-200, `available: false` - yuqoriga BORILMAYDI: u yerda bu kanal uchun
-byudjet ma'nosiz, va har sahifa ochilishida bekor so'rov ketardi.
+"PRO" FAQAT v2 DVIGATELIDA (xat, 3-bo'lim). Dvigatel ODAM VA KANALGA
+bog'liq (`services/engine_control.py`, kanal - `X-Venera-Client`), shuning
+uchun javobda shu odamning `engine` i va `available` bor. Dvigatel `v2`
+bo'lmasa javob 200, `available: false` - yuqoriga BORILMAYDI: u yerda bu
+kanal uchun byudjet ma'nosiz, va har sahifa ochilishida bekor so'rov ketardi.
+
+`?engine=` - klient tanlagan versiya (`/chat/stream` dagi `engine` bilan
+AYNI tekshiruv): odam versiyani almashtirganda "Pro" tugmasi shunga qarab
+ko'rinsin yoki yashirinsin. Ruxsat etilmagan qiymat jimgina e'tiborsiz.
 """
 
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from ...core import engines as _engines
 from ...core.channels import channel_of
@@ -51,7 +55,12 @@ _MESSAGES = {
 
 
 @router.get("/quota", response_model=ProQuota)
-def quota(request: Request, user: AuthUser = Depends(current_user)) -> ProQuota:
+def quota(
+    request: Request,
+    engine: str | None = Query(None, description="Klient tanlagan dvigatel (v1 | v2); "
+                                                 "ruxsat bo'lmasa e'tiborsiz"),
+    user: AuthUser = Depends(current_user),
+) -> ProQuota:
     """Qolgan "Pro" savollar - kiritish panelidagi hisoblagich uchun.
 
     `async def` EMAS: klient bloklaydigan `urllib` ishlatadi, FastAPI
@@ -60,7 +69,7 @@ def quota(request: Request, user: AuthUser = Depends(current_user)) -> ProQuota:
     Yuqoridagi xizmat xatosi - avvalgidek HTTP xato (503/502 ...): klient
     "byudjet hozir o'qilmadi" ni "bu kanalda Pro yo'q" dan ajrata olsin.
     """
-    engine = _chat.engine_for(channel_of(request))
+    engine = _chat.effective_engine(user, channel_of(request), engine)
     if not _engines.pro_available(engine):
         return ProQuota(engine=engine, available=False)
     try:

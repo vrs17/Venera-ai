@@ -116,6 +116,8 @@ class AskRequest(BaseModel):
     """
 
     question: str
+    #: Klient tanlagan dvigatel - `StreamRequest.engine` bilan bir xil ma'no.
+    engine: str | None = None
 
 
 class StreamRequest(BaseModel):
@@ -184,6 +186,18 @@ class StreamRequest(BaseModel):
     # `user_id` kabi). Kelajakda kerak bo'lsa - masalan rahbar o'z
     # bo'ysunuvchisi haqida so'rasa - u huquq tekshiruvi bilan birga
     # qaytariladi, so'rov tanasidan emas.
+
+    #: Klient TANLAGAN dvigatel (`v1` | `v2`, `GET /chat/engines` dagi
+    #: `available` dan). Bu ISTAK, huquq emas: server uni faqat admin shu
+    #: odamga bergan versiyalar ichida bo'lsa qo'llaydi, aks holda JIMGINA
+    #: e'tiborsiz qoldiradi (`services/engine_control.py`).
+    #:
+    #: NEGA `Literal` EMAS (`mode` dan farqli). Noto'g'ri `mode` - klient
+    #: xatosi, 422 halol. Dvigatel esa admin ruxsatni olib tashlagan PAYTDA
+    #: ham klientda saqlanib qolgan bo'ladi, yoki katalogdan versiya
+    #: chiqariladi - shunda 422 odamning chatini sindirardi. Shuning uchun
+    #: istalgan satr qabul qilinadi va server o'zi hal qiladi.
+    engine: str | None = None
 
 
 class FileLinkRequest(BaseModel):

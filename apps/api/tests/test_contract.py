@@ -160,3 +160,67 @@ def test_stream_sorovida_mode_bor():
     assert StreamRequest(question="a", mode="pro").mode == "pro"
     with pytest.raises(ValidationError):
         StreamRequest(question="a", mode="turbo")
+
+
+# types.ts: EngineInfo / EngineChoice - `GET /api/v1/chat/engines`
+ENGINE_INFO_FIELDS = {"id", "pro", "law"}
+ENGINE_CHOICE_FIELDS = {"current", "selectable", "available", "catalog"}
+
+# types.ts: AdminEngines va ichidagilar - `GET /api/v1/admin/engines`
+ADMIN_ENGINES_FIELDS = {"catalog", "policy", "envDefaults", "effective", "stats", "access"}
+ENGINE_POLICY_FIELDS = {"default", "channels", "source", "updatedAt", "updatedBy"}
+ENV_DEFAULTS_FIELDS = {"default", "channels"}
+EFFECTIVE_ENGINES_FIELDS = {"web", "miniapp", "bot"}
+ENGINE_USAGE_FIELDS = {"engine", "turns", "errors", "medianTtftMs", "users"}
+ENGINE_ACCESS_ROW_FIELDS = {"actorId", "name", "login", "engines", "defaultEngine", "note",
+                            "updatedAt", "updatedBy"}
+# types.ts: EnginePolicyUpdate / EngineAccessUpdate / EngineAccessRemoved / UserEngine
+ENGINE_POLICY_UPDATE_FIELDS = {"default", "channels"}
+ENGINE_ACCESS_UPDATE_FIELDS = {"engines", "defaultEngine", "note"}
+USER_ENGINE_FIELDS = {"effective", "access"}
+USER_ENGINE_ACCESS_FIELDS = {"engines", "defaultEngine"}
+
+
+def test_stream_va_ask_sorovida_engine_bor():
+    """`engine` - klient TANLOVI: istalgan satr qabul qilinadi (ruxsatni
+    server tekshiradi, noto'g'ri qiymat xato emas), default `None`."""
+    from app.schemas.chat import AskRequest, StreamRequest
+
+    assert StreamRequest(question="a").engine is None
+    assert StreamRequest(question="a", engine="v2").engine == "v2"
+    assert StreamRequest(question="a", engine="eskirgan-versiya").engine == "eskirgan-versiya"
+    assert AskRequest(question="a").engine is None
+    assert AskRequest(question="a", engine="v1").engine == "v1"
+
+
+def test_dvigatellar_javobi_types_ts_ga_mos(client, auth):
+    body = client.get("/api/v1/chat/engines", headers=auth).json()
+    assert set(body) == ENGINE_CHOICE_FIELDS
+    assert body["catalog"] and all(set(e) == ENGINE_INFO_FIELDS for e in body["catalog"])
+    assert body["current"] in body["available"]
+
+
+def test_admin_dvigatellar_types_ts_ga_mos(client, auth):
+    body = client.get("/api/v1/admin/engines", headers=auth).json()
+    assert set(body) == ADMIN_ENGINES_FIELDS
+    assert set(body["policy"]) == ENGINE_POLICY_FIELDS
+    assert set(body["envDefaults"]) == ENV_DEFAULTS_FIELDS
+    assert set(body["effective"]) == EFFECTIVE_ENGINES_FIELDS
+    assert all(set(e) == ENGINE_INFO_FIELDS for e in body["catalog"])
+
+
+def test_admin_dvigatel_sxemalari_types_ts_ga_mos():
+    from app.schemas.engines import (
+        EngineAccessRemoved, EngineAccessRow, EngineAccessUpdate, EnginePolicyUpdate,
+        EngineUsage, UserEngine, UserEngineAccess,
+    )
+    from app.schemas.admin_users import AdminUserDetail
+
+    assert set(EngineUsage.model_fields) == ENGINE_USAGE_FIELDS
+    assert set(EngineAccessRow.model_fields) == ENGINE_ACCESS_ROW_FIELDS
+    assert set(EnginePolicyUpdate.model_fields) == ENGINE_POLICY_UPDATE_FIELDS
+    assert set(EngineAccessUpdate.model_fields) == ENGINE_ACCESS_UPDATE_FIELDS
+    assert set(EngineAccessRemoved.model_fields) == {"removed"}
+    assert set(UserEngine.model_fields) == USER_ENGINE_FIELDS
+    assert set(UserEngineAccess.model_fields) == USER_ENGINE_ACCESS_FIELDS
+    assert "engine" in AdminUserDetail.model_fields

@@ -12,7 +12,7 @@ esa baribir bitta ipda (`writer.py`) - SQLite bir vaqtda faqat bitta
 yozuvchiga ruxsat beradi, va yozuvchilar bir-birini kutib turishi
 so'rovlarni sekinlatardi.
 
-SXEMA `PRAGMA user_version` bilan. Har qadam - bitta raqam: 0 -> 1 -> 2.
+SXEMA `PRAGMA user_version` bilan. Har qadam - bitta raqam: 0 -> 1 -> 2 -> 3.
 Yangi ustun kerak bo'lsa `MIGRATIONS` ga YANGI qadam qo'shiladi, eskisi
 o'zgartirilmaydi: prod fayli allaqachon eski qadamdan o'tgan va uni
 qayta bajarmaydi.
@@ -199,10 +199,37 @@ _V2: tuple[str, ...] = (
     "CREATE INDEX turns_engine ON turns(engine, started_at)",
 )
 
+#: 3-qadam (2026-10-04): dvigatelni ADMIN PANEL boshqaradi
+#: (`services/engine_control.py`). `.env` dagi `HRM_ASSISTANT_ENGINE*` endi
+#: faqat boshlang'ich qiymat - siyosatni o'zgartirish uchun restart kerak
+#: bo'lmasin va kim, qachon o'zgartirgani auditda tursin.
+#:
+#: `engine_policy` - kalit/qiymat: `default` va `channel:<kanal>`. Alohida
+#: ustunlar emas: yangi kanal qo'shilganda sxema o'zgarmaydi, kalitning
+#: yo'qligi esa "admin aytmagan - keyingi bo'g'in" degan ma'noni o'zi beradi.
+#:
+#: `engine_access` - odamga berilgan versiyalar (`user_admin` dan ALOHIDA:
+#: u jadval kirish huquqi uchun, va har so'rovda o'qiladi - dvigatel
+#: qarori uni kengaytirib, sessiya tekshiruviga aralashmasin).
+#:
+#: Faqat YANGI jadvallar: eski kod (`user_version` 2) faylni ochsa ularni
+#: ko'rmaydi va `.env` bo'yicha ishlayveradi (deploy orqaga qaytarilsa ham).
+_V3: tuple[str, ...] = (
+    """CREATE TABLE engine_policy (
+  key TEXT PRIMARY KEY,           -- default | channel:<web|miniapp|bot|desktop|api>
+  value TEXT NOT NULL,            -- catalog engine id (core/engines.py): v1 | v2
+  updated_at REAL, updated_by TEXT)""",
+    """CREATE TABLE engine_access (
+  actor_id INTEGER PRIMARY KEY,
+  engines TEXT NOT NULL,          -- JSON list, subset of catalog ids
+  default_engine TEXT,            -- one of engines, or NULL
+  note TEXT, updated_at REAL, updated_by TEXT)""",
+)
+
 #: `MIGRATIONS[i]` fayl `user_version = i` dan `i + 1` ga o'tkazadi.
 #: FAQAT OXIRIGA QO'SHILADI - mavjud qadamni o'zgartirish uni allaqachon
 #: bajargan fayllarni sxemadan ajratib qo'yardi.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3)
 
 SCHEMA_VERSION = len(MIGRATIONS)
 
