@@ -2,22 +2,51 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
     />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Brauzer paneli rangi. bootstrap.js ikkalasini ham ILOVA mavzusiga moslaydi
+         (OS qorong'i-yu ilova yorug' bo'lsa ham panel to'g'ri rangda), shuning uchun
+         ular skriptdan OLDIN turadi. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0e0e0f" />
     <title>Venera</title>
     <!-- Pre-paint theme/locale bootstrap. External (not inline) so the CSP stays a
          strict script-src 'self' with no inline-hash to drift. Render-blocking in
          <head> so it runs before first paint. -->
     <script src="/bootstrap.js"></script>
+    <!-- Yuklanish belgisi: router /auth/me javobini kutguncha ekran bo'sh qolmasin.
+         Faqat CSS - CSP inline uslubga ruxsat beradi, inline skriptga emas. Ranglar
+         tokenlardan; zahira qiymatlar CSS hali yetib kelmagan lahza uchun. Tez
+         yuklanishda umuman ko'rinmaydi: 400ms kechikib chiqadi. -->
+    <style>
+      html { background: var(--bg, #ffffff); }
+      html[data-theme='dark'] { background: var(--bg, #0e0e0f); color-scheme: dark; }
+      .boot { position: fixed; inset: 0; display: grid; place-items: center; }
+      .boot svg {
+        width: 28px;
+        height: 28px;
+        color: var(--brand, #ee5a24);
+        animation: boot-in 240ms ease-out 400ms both, boot-pulse 1.8s ease-in-out 640ms infinite;
+      }
+      html[data-theme='dark'] .boot svg { color: var(--brand, #ff7a45); }
+      @keyframes boot-in { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes boot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+      @media (prefers-reduced-motion: reduce) {
+        .boot svg { animation: boot-in 1ms linear 400ms both; }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="currentColor">
+          <path d="M16 1.5c1.2 8.1 6.4 13.3 14.5 14.5-8.1 1.2-13.3 6.4-14.5 14.5C14.8 22.4 9.6 17.2 1.5 16 9.6 14.8 14.8 9.6 16 1.5Z" />
+        </svg>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import urllib.error
 from collections import deque
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
@@ -22,6 +23,7 @@ from ...core.config import settings
 from ...core.errors import bad_request, error_status
 from ...schemas.auth import AuthUser
 from ...schemas.stt import TranscriptResponse, WakeResponse
+from ...services.analytics import begin
 from ...services.integrations.gapi_stt import GapiSttClient
 from ...services.stt import LOCALE_TO_STT, SttClient, SttError, Transcript
 from ...services.wake import FLAT_LIMIT, WakeLog, is_wake_phrase, measure
@@ -210,9 +212,45 @@ class _FallbackLog:
 _fallbacks = _FallbackLog()
 
 
+def _upstream_status(exc: BaseException) -> int | None:
+    """Xizmatning HAQIQIY HTTP statusi (`SttError.status` - foydalanuvchiniki:
+    GAPI ning 401 i u yerda 502). GAPI xatoni `from None` bilan ko'taradi,
+    shuning uchun `__context__` ham qaraladi."""
+    for cause in (exc.__cause__, exc.__context__):
+        if isinstance(cause, urllib.error.HTTPError):
+            return cause.code
+    return None
+
+
+def _metered_transcribe(client, op: str, audio: bytes, language: str,
+                        content_type: str, budget: float) -> Transcript:
+    """Bitta variantga murojaat - hisob bilan (`api_calls`).
+
+    NEGA SHU YERDA, klientlar ichida emas: amal nomi (`transcribe` yoki
+    `wake`) faqat shu yerda ma'lum, va ikkala variant ham, zahira ham,
+    Telegram bot ham shu yo'ldan o'tadi. Uyg'otish parchalari har 2.5
+    sekundda keladi - ular savol bilan aralashsa sarf statistikasi
+    ma'nosiz bo'lardi. Birlik - audio soniyasi (GAPI shu uchun pul oladi)
+    va yuborilgan bayt.
+    """
+    service = "stt_gapi" if isinstance(client, GapiSttClient) else "stt_router"
+    call = begin(service, op, units={"bytes": len(audio)})
+    try:
+        result = client.transcribe(audio, language=language, content_type=content_type,
+                                   budget=budget)
+    except SttError as exc:
+        call.end("error", http_status=_upstream_status(exc), error=exc)
+        raise
+    except BaseException as exc:
+        call.end("error", error=exc)
+        raise
+    call.end(http_status=200, units={"audioSec": float(result.duration_sec or 0.0)})
+    return result
+
+
 def _transcribe_with_fallback(client, audio: bytes, language: str,
                               content_type: str, *, yol: str,
-                              budget: float) -> Transcript:
+                              budget: float, op: str = "transcribe") -> Transcript:
     """Transkripsiya - 2-variant berilmasa 1-variant (Router) bilan.
 
     NEGA ZAHIRA KERAK. 2-variant (GAPI) PULLIK va chegaralangan: kunlik
@@ -241,8 +279,7 @@ def _transcribe_with_fallback(client, audio: bytes, language: str,
     """
     started = time.monotonic()
     try:
-        return client.transcribe(audio, language=language, content_type=content_type,
-                                 budget=budget)
+        return _metered_transcribe(client, op, audio, language, content_type, budget)
     except SttError as gapi_exc:
         if client is _router_client or gapi_exc.status in _NO_FALLBACK:
             raise
@@ -257,8 +294,8 @@ def _transcribe_with_fallback(client, audio: bytes, language: str,
         # beradi, ya'ni bu unga yetib ortadi.
         qolgan = max(2.0, budget - (time.monotonic() - started))
         try:
-            return _router_client.transcribe(audio, language=language,
-                                             content_type=content_type, budget=qolgan)
+            return _metered_transcribe(_router_client, op, audio, language, content_type,
+                                       qolgan)
         except SttError as router_exc:
             # IKKISI HAM yiqildi. Endpoint faqat OXIRGI xatoni yozadi, ya'ni
             # jurnalda Router aybdor bo'lib ko'rinardi va asl sabab (kvota,
@@ -411,6 +448,7 @@ def wake(
             # ya'ni 100 sekundlik byudjetning bu yerda ma'nosi yo'q. 12 s =
             # GAPI ning 8 s deadline'i + Router uchun zaxira.
             budget=12.0,
+            op="wake",
         )
     except SttError as exc:
         # Uyg'otish tekshiruvi FON ishi: 503 (navbat to'la) bu yerda odatiy

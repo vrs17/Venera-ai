@@ -114,16 +114,24 @@ export type Phase = 'idle' | 'sending'
  * added by our backend, so they are ours to name.
  */
 
-/** One proof item under an answer: a cited document, or one platform lookup
- *  (HRM or CRM — `crm` arrived 2026-09-14 and behaves exactly like `hrm`). */
+/** One proof item under an answer: a cited document, one platform lookup
+ *  (HRM or CRM — `crm` arrived 2026-09-14 and behaves exactly like `hrm`),
+ *  or a legislation article (`law`, v2 engine, 2026-10-02). */
 export interface AnswerSource {
-  kind?: 'doc' | 'hrm' | 'crm' | (string & {})
-  /** The [n] marker in the answer text (documents). */
+  kind?: 'doc' | 'law' | 'hrm' | 'crm' | (string & {})
+  /** The [n] marker in the answer text (documents AND law articles - they
+   *  share one numbering). */
   citation_index?: number
-  doc_id?: string
+  /** `law` manbalarida `null` - ular hujjat ko'ruvchisida ochilmaydi. */
+  doc_id?: string | null
   title?: string
   section?: string
-  page?: number
+  page?: number | null
+  preview_available?: boolean | null
+  /** `law` FAQAT: LEX.UZ dagi modda havolasi (`https://www.lex.uz/...#...`).
+   *  Yangi oynada ochiladi. Backend `https://` bo'lmaganini zararsizlantiradi,
+   *  brauzer ham baribir faqat `https://` ni havola qiladi (`chat/sources.ts`). */
+  url?: string | null
   /** The [Tn] marker in the answer text (platform lookups). */
   marker?: string
   /** Platform tool that was called, e.g. hrm_today_late, crm_my_issues.
@@ -150,6 +158,86 @@ export interface AnswerArtifact {
 
 /** One NDJSON line. `type` is open: the assistant may add frames, and an
  *  unknown one must be ignored rather than crash the reader. */
+/* ── "Pro" rejimi (2026-09-29) ───────────────────────────────────────────
+ *
+ * HAR XABAR uchun yoqiladigan rejim: yordamchi tashqi (hosted) modeldan
+ * maslahat oladi. Bu pulga tushadi va odamning byudjetidan yeydi, shuning
+ * uchun default O'CHIQ va har savol uchun alohida hal qilinadi.
+ * Maydon nomlari xizmatnikidek (snake_case) - `schemas/pro.py` nusxasi.
+ */
+
+/** Uchta SURILADIGAN oyna: oxirgi 24 soat / 7 kun / 30 kun. */
+export interface ProWindows {
+  day: number
+  week: number
+  month: number
+}
+
+/** Yuqoridagi yordamchining "dvigateli" (2026-10-02): `v1` - barqaror (eski
+ *  ko'rinish), `v2` - yangi (qonun moddalari, "Pro"). `''` - versiyasiz
+ *  `/api/chat` yo'li (server default'i). Backend `.env` da kanal bo'yicha tanlaydi. */
+export type AssistantEngine = 'v1' | 'v2' | ''
+
+/** schemas/pro.py: ProQuota - `GET /api/v1/pro/quota`. Chegaralar rolga
+ *  qarab o'zgaradi, shuning uchun ular QOTIRILMAYDI - shundan o'qiladi. */
+export interface ProQuota {
+  remaining: ProWindows
+  limits: ProWindows
+  used: ProWindows
+  /** CHAQIRUVCHINING kanali (`X-Venera-Client`) uchun tanlangan dvigatel. */
+  engine: AssistantEngine | (string & {})
+  /** "Pro" shu kanalda bormi: FAQAT `engine === 'v2'` va xizmatning byudjeti
+   *  o'qilganda `true`. `false` bo'lsa kalit umuman ko'rsatilmaydi - backend
+   *  baribir `mode: 'pro'` ni v2 bo'lmagan dvigatelga yubormaydi. */
+  available: boolean
+}
+
+/* ── Yordamchi versiyasini tanlash (2026-10-04) ──────────────────────────
+ *
+ * Qaysi versiya ishlashini ADMIN PANEL hal qiladi (umumiy, kanal bo'yicha yoki
+ * odamga alohida). Odamga bir nechta versiya berilgan bo'lsagina u o'zi tanlay
+ * oladi (`selectable`) - tanlov `/chat/stream` tanasidagi `engine` bilan ketadi.
+ * Nom va tavsif bu yerda YO'Q: ular tarjimalarda (`chat.engines.*`), server faqat
+ * kalit va imkoniyatlarni beradi. `schemas/engines.py` nusxasi.
+ */
+
+/** schemas/engines.py: EngineInfo - katalogdagi bitta versiya. */
+export interface EngineInfo {
+  id: AssistantEngine | (string & {})
+  /** "Pro" rejimi bor (bugun faqat `v2`). */
+  pro: boolean
+  /** Javobda LEX.UZ qonunchilik manbalari bor. */
+  law: boolean
+}
+
+/** schemas/engines.py: EngineChoice - `GET /api/v1/chat/engines` (kanal -
+ *  `X-Venera-Client` sarlavhasidan). `selectable: false` - tanlov yo'q, UI hech
+ *  narsa ko'rsatmaydi. `available` - tanlasa bo'ladiganlar (tanlov yo'q bo'lsa `[current]`). */
+export interface EngineChoice {
+  current: AssistantEngine | (string & {})
+  selectable: boolean
+  available: string[]
+  catalog: EngineInfo[]
+}
+
+/** Javob bilan kelgan `pro` bloki (`done` kadrida). Faqat "pro" so'ralgan
+ *  turlarda bo'ladi. */
+export interface ProInfo {
+  /** Shu xabar uchun "pro" so'ralganmi. */
+  requested?: boolean
+  /** Tashqi modeldan HAQIQATAN maslahat olindimi. Faqat shunda byudjetdan
+   *  yeyiladi. */
+  used?: boolean
+  calls?: number
+  remaining?: ProWindows
+  limits?: ProWindows
+  /** FAQAT so'ralib, berilmaganda: `limit` (byudjet tugagan), `no user`
+   *  (so'rovda `user_id` yo'q) yoki `engine` (tanlangan dvigatel v2 emas -
+   *  backend "pro" ni yubormagan). Javobning o'zi baribir bor - u standart
+   *  rejimda tayyorlangan. */
+  reason?: 'limit' | 'no user' | 'engine' | (string & {})
+}
+
 export interface ChatFrame {
   type: 'stage' | 'sources' | 'artifact' | 'proposal' | 'token' | 'done' | 'error' | 'hold' | (string & {})
   /** stage: human status text. token: the piece of answer to append. error: user-safe message. */
@@ -189,6 +277,10 @@ export interface ChatFrame {
   proposal?: ActionProposal
   /** done: which side answered. */
   route?: string | null
+  /** done: qaysi dvigatel javob berdi (`v1` | `v2`) - versiyali yo'llarda. */
+  engine?: string | null
+  /** done: "Pro" natijasi, faqat shu rejim so'ralgan bo'lsa. */
+  pro?: ProInfo
   /** error: machine-readable cause, e.g. auth_missing. */
   code?: string
   request_id?: string
@@ -217,10 +309,18 @@ export interface UIExchange {
    *  Shown on hover, like a chat app; reopened chats take the stored time. */
   askedAt?: number | null
   answeredAt?: number | null
-  /** rules | hrm | crm | live | both | clarify — shown in developer mode. */
+  /** rules | hrm | crm | live | both | clarify. Chatda ko'rsatilmaydi (dasturchi rejimi olib
+   *  tashlandi) - savolning to'liq izi admin panelida. */
   route?: string | null
+  /** `done.engine` (v1 | v2) - javob ostida, faqat odamga versiya tanlovi berilgan bo'lsa. */
+  engine?: string | null
   /** Audit key: the same value is in the assistant's own log. */
   requestId?: string | null
+  /** "Pro" natijasi - javob ostidagi kichik belgi uchun. */
+  pro?: ProInfo | null
+  /** Shu tur "pro" bo'lib YUBORILGANmi. Qayta yaratish o'sha rejimda
+   *  bo'lishi uchun kerak (javob kelmasdan oldin ham ma'lum). */
+  proRequested?: boolean
   /** An `error` frame that arrived AFTER some of the answer. The answer is
    *  kept and this is shown under it — discarding a partial answer because
    *  its last step failed throws away the part that was useful. */
@@ -257,7 +357,8 @@ export interface SignupResponse {
 }
 
 export interface LoginRequest {
-  email: string
+  /** HRM/CRM (Keycloak) logini, masalan `y.mamajonov`; zahira hisob uchun email. */
+  username: string
   password: string
 }
 export interface LoginResponse {

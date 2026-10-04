@@ -30,7 +30,8 @@ from fastapi.staticfiles import StaticFiles
 
 from fastapi import Depends
 
-from .api.deps import current_user, docs_viewer, get_user_store
+from .api.deps import current_user, docs_viewer, get_identity_store, get_user_store, require_roles
+from .api.metering import ChannelMiddleware
 from .api.v1 import router as v1_router
 from .core import errors
 from .core.config import crm_token_now, hrm_token_now, settings
@@ -67,6 +68,22 @@ def connector_hub():
     from .api.v1.connectors import hub
 
     return hub
+
+
+def assistant_state() -> dict:
+    """Yordamchi: dvigatel (umumiy va har kanalniki) va navbat - chat
+    endpointi ishlatayotgan AYNI klientdan. Sir yo'q - faqat versiya nomlari
+    va sonlar."""
+    from .api.v1.chat import _assistant
+    from .core.engines import config_state
+    from .services.engine_control import health_state
+
+    # `engine` - `.env` (boshlang'ich qiymat), `policy` - HOZIR haqiqatda
+    # ishlaydigani (admin panel qarori bilan). Ikkalasi kerak: admin siyosat
+    # saqlagach `.env` dagi qiymat endi ishlamaydi, va jurnal o'qiydigan
+    # odam buni shu yerda ko'rishi kerak.
+    return {"engine": config_state(), "policy": health_state(),
+            "slots": _assistant.slots_state()}
 from .services.users import example_password_hashes
 
 logging.basicConfig(
@@ -175,7 +192,13 @@ if settings.cors_origins:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Boshqa domendan JS faqat shu ro'yxatdagi sarlavhalarni o'qiy oladi:
+        # savol kaliti shikoyat va ovoz so'rovlariga qo'shiladi.
+        expose_headers=["X-Venera-Turn", "X-Venera-Request-Id"],
     )
+
+# Hisob kanali (web / miniapp / ...) har so'rov boshida - `api/metering.py`.
+app.add_middleware(ChannelMiddleware)
 
 app.include_router(v1_router)
 
@@ -233,6 +256,19 @@ def _stop_telegram_bot() -> None:
     from . import bot
 
     bot.stop()
+
+
+@app.on_event("shutdown")
+def _flush_analytics() -> None:
+    """Analitika navbatida qolgan yozuvlarni diskka tushiradi.
+
+    Botdan KEYIN (hodisalar ro'yxatdagi tartibda): botning oxirgi savoli
+    ham yozilsin. Yozuvchi ip o'zi birinchi yozuvda ishga tushadi - bu
+    yerda faqat to'xtatiladi; `atexit` esa ikkinchi to'r.
+    """
+    from .services import analytics
+
+    analytics.shutdown()
 
 
 def telegram_state() -> dict:
@@ -343,6 +379,24 @@ def _diagnostics() -> dict:
             "(.env: HRM_ASSISTANT_CLIENT_ID, HRM_ASSISTANT_CLIENT_SECRET)"
         )
 
+    # Yordamchi: qaysi DVIGATEL (kanal bo'yicha) va NAVBAT holati. Navbat
+    # 29-sentabrda jimgina "to'la" bo'lib qolgan: bir soat davomida har savol
+    # 503 olgan, yordamchiga esa birorta so'rov bormagan. Endi navbat o'zini
+    # davolaydi, lekin to'lgani va qaytarib olingan joylar SHU YERDA ko'rinadi.
+    assistant = assistant_state()
+    warnings.extend(assistant["engine"]["problems"])
+    slots = assistant["slots"]
+    if slots["busy"] >= slots["limit"]:
+        warnings.append(
+            f"Savol-javob navbati to'la ({slots['busy']}/{slots['limit']}, eng eskisi "
+            f"{slots['oldestSec']} s) - yangi savollar yordamchiga bormay 503 olyapti"
+        )
+    if slots["reclaimed"]:
+        warnings.append(
+            f"Savol-javob navbatidan {slots['reclaimed']} ta oqib ketgan joy qaytarib olingan "
+            "(ishga tushgandan beri) - jurnalda 'oqib ketgan joy' ERROR qatoriga qarang"
+        )
+
     # Umumiy HRM token'i - VAQTINCHALIK yechim, uni unutib qo'yish oson, va
     # muddati bir necha daqiqada tugaydi. Ikkalasi ham shu bir qatorda
     # aytiladi: aks holda "nega jonli savol ishlamayapti" degan savolga
@@ -373,6 +427,14 @@ def _diagnostics() -> dict:
     # Foydalanuvchilarning o'z HRM/CRM ulanishlari. Sozlanmagan bo'lsa "+"
     # menyusidagi tugma "serverda sozlanmagan" deydi - sababi shu yerda.
     hub = connector_hub()
+    # Kirish yo'li: SSO (Keycloak = CRM ulanishi sozlamasi) yoki zahira
+    # (`users.yaml`). Ikkalasi ham yo'q bo'lsa HECH KIM kira olmaydi - va
+    # bu `/api/health` da aytilmasa faqat login oynasidagi xatodan bilinardi.
+    if not hub.crm.configured and not settings.local_login_enabled:
+        warnings.append(
+            "kirish yo'li yo'q: Keycloak (CRM_IDP_TOKEN_URL/CRM_CLIENT_SECRET/CRM_BASE_URL) "
+            "sozlanmagan va LOCAL_LOGIN_ENABLED=false"
+        )
     if not hub.hrm.configured:
         warnings.append("hrm_base_url bo'sh - HRM ulanishi (foydalanuvchi hisobi) o'chiq")
     if not hub.crm.configured:
@@ -442,6 +504,12 @@ def _diagnostics() -> dict:
             warnings.append(f"Telegram bot xabar ololmayapti: {telegram['error']}")
         elif not telegram.get("running"):
             warnings.append(f"Telegram bot ishlamayapti: {telegram.get('note') or 'sabab jurnalda'}")
+        if telegram.get("conflicts_10min"):
+            warnings.append(
+                f"Telegram bot: boshqa nusxa ham shu tokenni o'qiyapti ({telegram['conflicts_10min']} "
+                "marta / 10 daq) - bot ulanishni qaytarib oladi, lekin xabar ba'zan o'sha nusxaga "
+                "tushishi mumkin; @BotFather'da tokenni yangilab, faqat jonli .env ga qo'ying"
+            )
 
     return {
         "status": "degraded" if warnings else "ok",
@@ -449,6 +517,9 @@ def _diagnostics() -> dict:
         "version": settings.version,
         "users": len(store),
         "tts_slots": {"busy": tts_busy, "limit": settings.tts_max_concurrent},
+        # Yordamchi: dvigatel (umumiy va kanal bo'yicha) va navbat (band /
+        # chegara, eng eski joy, qaytarib olinganlar).
+        "assistant": assistant,
         "stt": stt_state,
         # Kutish gapi: yoqilganmi, model sozlanganmi, tayyor ovoz nechta.
         "hold": hold,
@@ -460,6 +531,12 @@ def _diagnostics() -> dict:
             "hrm": hub.hrm.configured,
             "crm": hub.crm.configured,
             "users": hub.store.user_count(),
+        },
+        # Kirish: SSO sozlanganmi, zahira ochiqmi, SSO bilan nechta odam kirgan.
+        "login": {
+            "sso": hub.crm.configured,
+            "local": settings.local_login_enabled,
+            "identities": len(get_identity_store()),
         },
         # Telegram bot: ishlayaptimi va nechta odam ulangan. TOKEN YO'Q.
         "telegram": telegram,
@@ -495,11 +572,12 @@ def health() -> dict:
 
 
 @app.get("/api/health/detail", tags=["service"])
-def health_detail(user: AuthUser = Depends(current_user)) -> dict:
-    """To'liq tashxis - SESSIYA TALAB QILADI.
+def health_detail(user: AuthUser = Depends(require_roles("ADMIN"))) -> dict:
+    """To'liq tashxis - FAQAT ADMIN.
 
-    IT xodimi uchun mo'ljallangan ma'lumot shu yerda qoladi. Kirish
-    huquqi tekshiriladi, chunki ro'yxatdagi har bir satr tizim haqida
-    biror narsani oshkor qiladi.
+    IT xodimi uchun mo'ljallangan ma'lumot shu yerda qoladi. Oddiy sessiya
+    yetmaydi: ro'yxatdagi har bir satr tizim haqida biror narsani oshkor
+    qiladi (ichki xizmatlar holati, sozlanmagan kalitlar, namuna parolli
+    hisoblar), va buni har bir xodim ko'rishi shart emas.
     """
     return _diagnostics()

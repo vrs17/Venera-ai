@@ -80,7 +80,7 @@ def test_ochiq_holat_tashxis_bermaydi(client):
     Ismini aytmagan odam uchun bu razvedka edi.
     """
     body = client.get("/api/health").json()
-    for leak in ("warnings", "users", "upstream", "crm_session", "tts_slots"):
+    for leak in ("warnings", "users", "upstream", "crm_session", "tts_slots", "assistant"):
         assert leak not in body, f"ochiq holat {leak} ni oshkor qildi"
 
 

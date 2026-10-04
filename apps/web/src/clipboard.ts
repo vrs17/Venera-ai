@@ -17,6 +17,9 @@ export async function copyText(text: string): Promise<boolean> {
   }
 
   // Fallback: a transient off-screen textarea + execCommand.
+  // Vaqtinchalik maydon fokusni oladi - keyin fokus tugmaga QAYTADI, aks holda
+  // klaviatura bilan ishlayotgan odam o'z joyini yo'qotadi (fokus <body> ga tushardi).
+  const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
   try {
     const ta = document.createElement('textarea')
     ta.value = text
@@ -40,5 +43,7 @@ export async function copyText(text: string): Promise<boolean> {
     return ok
   } catch {
     return false
+  } finally {
+    if (previous?.isConnected) previous.focus({ preventScroll: true })
   }
 }

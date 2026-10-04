@@ -10,7 +10,7 @@ va aksincha. Ikkalasining mosligini `tests/test_contract.py` tekshiradi.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 class AuthUser(BaseModel):
@@ -31,10 +31,26 @@ class AuthUser(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    """types.ts: LoginRequest"""
+    """types.ts: LoginRequest
 
-    email: str
+    `username` - HRM/CRM (Keycloak) logini, masalan `y.mamajonov`. Zahira
+    hisob (`users.yaml`) uchun email ham shu maydonga yoziladi.
+
+    `email` - ESKI NOM. Eski build yoki mini app hali uni yuborsa ham
+    kirish ishlayveradi (API frontend'dan oldin yangilanishi mumkin).
+    Ikkisidan biri bo'lishi shart.
+    """
+
+    username: str = ""
+    email: str = ""
     password: str
+
+    @model_validator(mode="after")
+    def _login_name(self) -> "LoginRequest":
+        self.username = (self.username or self.email).strip()
+        if not self.username:
+            raise ValueError("username (login) bo'sh")
+        return self
 
 
 class LoginResponse(BaseModel):

@@ -584,3 +584,200 @@ def test_ovoz_va_matn_ishlashda_davom_etadi(world):
     bot.handle_update(voice_update())
     bot.handle_update(text_update("savol"))
     assert [q[0] for q in backend.questions] == ["bugun kech qoldimmi", "savol"]
+
+
+def test_faol_foydalanuvchidan_qayta_kirish_soralmaydi(tmp_path):
+    """Bir marta ulangan odam botdan foydalanib tursa, 30 kundan keyin ham
+    ulanish tirik; faqat 30 kun umuman ishlatilmagani tugaydi."""
+    day = 86400.0
+    store = LinkStore(tmp_path / "links.json", ttl_days=30)
+    store.link(1, 10, now=0.0)
+    for d in range(1, 91, 10):                         # har 10 kunda bitta savol
+        assert store.lookup(1, now=d * day)[1] == "linked", d
+        store.chat_for(1, idle_sec=6 * 3600, now=d * day)
+    last = 81 * day
+    assert store.lookup(1, now=last + 29 * day)[1] == "linked"
+    assert store.lookup(1, now=last + 31 * day)[1] == "expired"
+
+
+def test_yangi_suhbat_ham_muddatni_yangilaydi(tmp_path):
+    store = LinkStore(tmp_path / "links.json", ttl_days=30)
+    store.link(1, 10, now=0.0)
+    store.new_chat(1, now=25 * 86400.0)
+    assert store.lookup(1, now=50 * 86400.0)[1] == "linked"
+
+
+# --- webhook ---------------------------------------------------------------------
+
+WEBHOOK_URL = "https://llm.brb-tech.uz/api/v1/telegram/webhook"
+
+
+class WebhookTelegram(FakeTelegram):
+    """Telegram'ning webhook holati bilan."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.info = {"url": "", "pending_update_count": 0}
+        self.set_calls: list[tuple[str, str]] = []
+        self.deleted = 0
+
+    def set_webhook(self, url, *, secret, allowed_updates):
+        self.set_calls.append((url, secret))
+        self.info = {"url": url, "pending_update_count": 0}
+
+    def get_webhook_info(self):
+        return dict(self.info)
+
+    def delete_webhook(self):
+        self.deleted += 1
+        self.info = {"url": "", "pending_update_count": 0}
+
+
+def webhook_bot(tmp_path, tg):
+    users = UserStore({"a@b.uz": StoredUser(actor_id=1, email="a@b.uz", full_name="Ali",
+                                            password_hash=hash_password("x"))})
+    return VeneraBot(tg, LinkStore(tmp_path / "links.json"), users=lambda: users,
+                     backend=FakeBackend(), inline=True, typing_every=None, mode="webhook",
+                     webhook_url=WEBHOOK_URL, webhook_secret="s" * 64)
+
+
+def test_webhook_ornatiladi_va_qayta_ornatiladi(tmp_path):
+    tg = WebhookTelegram()
+    bot = webhook_bot(tmp_path, tg)
+    assert bot.mode == "webhook"
+    assert bot.check_webhook(now=1000.0) and tg.set_calls == [(WEBHOOK_URL, "s" * 64)]
+    assert bot.check_webhook(now=1060.0) and len(tg.set_calls) == 1       # joyida - tegilmaydi
+    tg.info = {"url": "https://boshqa.example/hook", "pending_update_count": 0}
+    assert bot.check_webhook(now=1120.0) and len(tg.set_calls) == 2       # kimdir o'zgartirdi
+
+
+def test_webhook_sir_rad_etilsa_bir_marta_qayta_ornatiladi(tmp_path):
+    tg = WebhookTelegram()
+    bot = webhook_bot(tmp_path, tg)
+    bot.check_webhook(now=1000.0)
+    tg.info = {"url": WEBHOOK_URL, "pending_update_count": 2,
+               "last_error_date": 1050, "last_error_message": "Wrong response from the webhook: 401 Unauthorized"}
+    assert bot.check_webhook(now=1060.0) and len(tg.set_calls) == 2
+
+
+def test_webhook_yetib_bormasa_pollingga_qaytadi(tmp_path):
+    tg = WebhookTelegram()
+    bot = webhook_bot(tmp_path, tg)
+    bot.check_webhook(now=1000.0)
+    results = []
+    for i in range(1, 6):
+        now = 1000.0 + 60 * i
+        tg.info = {"url": WEBHOOK_URL, "pending_update_count": 3, "last_error_date": now - 10,
+                   "last_error_message": "Connection timed out"}
+        results.append(bot.check_webhook(now=now))
+    assert results == [True, True, True, True, False]
+    assert tg.deleted == 1 and bot.mode == "polling"
+    assert "polling" in bot.status()["note"]
+
+
+def test_webhook_qisqa_uzilish_qaytarmaydi(tmp_path):
+    """Qayta ishga tushish paytidagi bir martalik xato - polling'ga o'tilmaydi."""
+    tg = WebhookTelegram()
+    bot = webhook_bot(tmp_path, tg)
+    bot.check_webhook(now=1000.0)
+    tg.info = {"url": WEBHOOK_URL, "pending_update_count": 1, "last_error_date": 1050,
+               "last_error_message": "Wrong response from the webhook: 502 Bad Gateway"}
+    assert bot.check_webhook(now=1060.0)
+    tg.info = {"url": WEBHOOK_URL, "pending_update_count": 0, "last_error_date": 1050,
+               "last_error_message": "Wrong response from the webhook: 502 Bad Gateway"}
+    for i in range(2, 8):
+        assert bot.check_webhook(now=1000.0 + 60 * i)
+    assert tg.deleted == 0 and bot.mode == "webhook" and bot.status()["error"] is None
+
+
+@pytest.fixture
+def webhook_on(tmp_path, monkeypatch):
+    import app.bot as bot_module
+
+    tg = WebhookTelegram()
+    bot = webhook_bot(tmp_path, tg)
+    monkeypatch.setattr(settings, "telegram_bot_token", BOT_TOKEN)
+    monkeypatch.setattr(bot_module, "_bot", bot)
+    return tg, bot, bot_module.webhook_secret()
+
+
+def test_webhook_endpoint_sirsiz_rad_etiladi(client, webhook_on):
+    tg, bot, secret = webhook_on
+    update = text_update("/help")
+    assert client.post("/api/v1/telegram/webhook", json=update).status_code == 401
+    r = client.post("/api/v1/telegram/webhook", json=update,
+                    headers={"X-Telegram-Bot-Api-Secret-Token": "x" * 64})
+    assert r.status_code == 401 and tg.calls == []
+
+
+def test_webhook_endpoint_xabarni_botga_beradi_takrorini_tashlaydi(client, webhook_on):
+    tg, bot, secret = webhook_on
+    headers = {"X-Telegram-Bot-Api-Secret-Token": secret}
+    update = dict(text_update("/help"), update_id=777)
+    assert client.post("/api/v1/telegram/webhook", json=update, headers=headers).json() == {"ok": True}
+    assert client.post("/api/v1/telegram/webhook", json=update, headers=headers).status_code == 200
+    help_texts = [t for t in tg.texts() if "Venera" in t and "/new" in t]
+    assert len(help_texts) == 1, "takroriy yangilanish ikkinchi marta ishlanmasligi kerak"
+
+
+def test_webhook_endpoint_bot_ishlamasa_503(client, monkeypatch):
+    import app.bot as bot_module
+
+    monkeypatch.setattr(settings, "telegram_bot_token", BOT_TOKEN)
+    monkeypatch.setattr(bot_module, "_bot", None)
+    r = client.post("/api/v1/telegram/webhook", json={"update_id": 1},
+                    headers={"X-Telegram-Bot-Api-Secret-Token": bot_module.webhook_secret()})
+    assert r.status_code == 503
+
+
+def test_webhook_siri_barqaror_va_telegram_belgilarida():
+    from app.services.integrations.telegram import webhook_secret
+
+    a = webhook_secret(BOT_TOKEN, "kalit-1")
+    assert a == webhook_secret(BOT_TOKEN, "kalit-1") and a != webhook_secret(BOT_TOKEN, "kalit-2")
+    assert len(a) == 64 and all(c in "0123456789abcdef" for c in a)
+    assert webhook_secret("", "kalit") == "" and webhook_secret(BOT_TOKEN, "") == ""
+
+
+def test_manzil_yoki_sir_bolmasa_polling(tmp_path):
+    tg = WebhookTelegram()
+    bot = VeneraBot(tg, LinkStore(tmp_path / "l.json"), users=lambda: UserStore({}),
+                    inline=True, mode="webhook", webhook_url="", webhook_secret="s")
+    assert bot.mode == "polling"
+
+
+# --- polling: boshqa nusxa bilan to'qnashuv --------------------------------------
+
+def _conflict():
+    text = "Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"
+    # `TelegramApi._send` shakli: "usul: kod tavsif".
+    return TelegramError(f"getUpdates: 409 {text}", code=409, description=text)
+
+
+def test_boshqa_nusxa_bolsa_darhol_qayta_soraydi(world):
+    bot, tg, *_ = world
+    wait, backoff = bot.poll_error(_conflict(), 1.0)
+    assert wait == 0.1 and backoff == 1.0
+    assert bot.status()["conflicts_10min"] == 1 and bot.status()["error"] is None
+
+
+def test_ikkinchi_nusxa_ham_shoshsa_sekinlashadi(world):
+    bot, *_ = world
+    waits = [bot.poll_error(_conflict(), 1.0, now=1000.0 + i * 0.5)[0] for i in range(40)]
+    assert waits[0] == 0.1 and waits[-1] == 2.0
+
+
+def test_webhook_ornatilgan_bolsa_kutadi_va_aytadi(world):
+    bot, *_ = world
+    text = ("Conflict: can't use getUpdates method while webhook is active; "
+            "use deleteWebhook to delete the webhook first")
+    exc = TelegramError(f"getUpdates: 409 {text}", code=409, description=text)
+    assert bot.poll_error(exc, 1.0, now=1000.0)[0] == 30.0
+    assert "webhook" in bot.status()["error"] and bot.status()["conflicts_10min"] == 0
+
+
+def test_tarmoq_xatosida_backoff_va_token_rad(world):
+    bot, *_ = world
+    assert bot.poll_error(TelegramError("tarmoq xatosi"), 1.0) == (1.0, 2.0)
+    assert bot.poll_error(TelegramError("tarmoq xatosi"), 16.0) == (16.0, 30.0)
+    assert bot.poll_error(TelegramError("401", code=401, description="Unauthorized"), 1.0)[0] == 300.0

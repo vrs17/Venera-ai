@@ -1,118 +1,270 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { UIExchange } from '../types'
+import { ArrowDown } from 'lucide-vue-next'
 import { LOCALES } from '../i18n'
 import type { Locale } from '../i18n'
 import { formatFull, formatWhen } from '../time'
+import VIconButton from '../ui/VIconButton.vue'
+import VTooltip from '../ui/VTooltip.vue'
+import type { ChatExchange } from './chat/types'
 import PipelineResult from './PipelineResult.vue'
 import CopyButton from './CopyButton.vue'
 
-const props = defineProps<{ exchanges: UIExchange[]; devMode: boolean; busy?: boolean }>()
-defineEmits<{ regenerate: [id: string] }>()
+/**
+ * Suhbat ustuni: savol - o'ngda yumshoq pufak, javob - pufaksiz, ustun kengligida.
+ *
+ * AYLANTIRISH. Pastda turgan odam uchun yangi matn o'zi ko'rinadi (javob yozilayotganda
+ * ham). Yuqoriga chiqib o'qiyotgan odamni har token'da pastga "tortib ketmaymiz" - buning
+ * o'rniga "Oxiriga o'tish" tugmasi chiqadi. Eski suhbat ochilganda - darhol oxiriga,
+ * butun tarix bo'ylab silliq aylanmasdan.
+ */
+const props = withDefaults(
+  defineProps<{
+    exchanges: ChatExchange[]
+    /** Odam versiyani tanlay oladi - javoblarda qaysi versiya javob bergani ko'rinsin. */
+    showEngine?: boolean
+    busy?: boolean
+    /** Hozir yozilayotgan javob. */
+    streamingId?: string | null
+    /** Xabar berilgan javoblar: `turnId`, u bo'lmasa `ex:<id>`. */
+    reportedKeys?: ReadonlySet<string>
+    canTrace?: boolean
+    /** Suhbat kaliti - almashsa, keyingi chizishda darhol oxiriga. */
+    chatKey?: string
+  }>(),
+  { showEngine: false, busy: false, streamingId: null, reportedKeys: () => new Set<string>(), canTrace: false, chatKey: '' },
+)
+const emit = defineEmits<{ regenerate: [id: string]; report: [id: string]; scrolled: [away: boolean] }>()
 const { t, locale } = useI18n({ useScope: 'global' })
-const scrollerRef = ref<HTMLDivElement | null>(null)
 
-// Vaqt yozuvi UI tilida: `Intl` ga BCP-47 kodi kerak (`uz-Latn`), i18n
-// kodi emas (`uz`).
+// Vaqt yozuvi UI tilida: `Intl` ga BCP-47 kodi kerak (`uz-Latn`), i18n kodi emas.
 const lang = computed(() => LOCALES.find((l) => l.code === (locale.value as Locale))?.htmlLang ?? 'uz-Latn')
 function iso(ms: number): string {
   return new Date(ms).toISOString()
 }
+function reportKey(ex: ChatExchange): string {
+  return ex.turnId ?? `ex:${ex.id}`
+}
 
-// Auto-scroll to the latest message whenever a new exchange is added or the
-// pending response resolves. deep:true catches the in-place pending->resolved
-// mutation; nextTick waits for the DOM so scrollHeight is current.
+const scroller = ref<HTMLElement | null>(null)
+const column = ref<HTMLElement | null>(null)
+/** Pastdan shuncha px ichida bo'lsa - "pastda" hisoblanadi va kuzatib boriladi. */
+const STICK = 80
+const atBottom = ref(true)
+let follow = true
+let jumpNext = true
+
+function distance(el: HTMLElement): number {
+  return el.scrollHeight - el.scrollTop - el.clientHeight
+}
+function toBottom(behavior: ScrollBehavior = 'auto') {
+  const el = scroller.value
+  if (!el) return
+  el.scrollTo({ top: el.scrollHeight, behavior })
+}
+function onScroll() {
+  const el = scroller.value
+  if (!el) return
+  atBottom.value = distance(el) < STICK
+  follow = atBottom.value
+  emit('scrolled', el.scrollTop > 2)
+}
+
+watch(
+  () => props.chatKey,
+  () => {
+    jumpNext = true
+  },
+)
 watch(
   () => props.exchanges,
-  async () => {
+  async (list, prev) => {
     await nextTick()
-    const el = scrollerRef.value
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    if (jumpNext || !prev?.length) {
+      jumpNext = false
+      follow = true
+      toBottom()
+      return
+    }
+    // Odam yangi savol yubordi - uni ko'rsin (qayerda turganidan qat'i nazar).
+    if (list.length > prev.length) {
+      follow = true
+      toBottom('smooth')
+      return
+    }
+    if (follow) toBottom()
   },
-  { deep: true },
+)
+
+// Javob matni kadrga bir marta chiziladi, manbalar ochiladi... - balandlik o'zgarsa,
+// pastda turgan odam uchun pastda qolamiz.
+let ro: ResizeObserver | null = null
+onMounted(() => {
+  // Tarixdan ochilgan suhbat ma'lumot bilan birga chiziladi - darhol oxiriga.
+  toBottom()
+  jumpNext = false
+  if (typeof ResizeObserver === 'undefined' || !column.value) return
+  ro = new ResizeObserver(() => {
+    if (follow) toBottom()
+    else if (scroller.value) atBottom.value = distance(scroller.value) < STICK
+  })
+  ro.observe(column.value)
+})
+onBeforeUnmount(() => ro?.disconnect())
+
+function jumpToLatest() {
+  follow = true
+  toBottom('smooth')
+}
+
+/* ---- ekran o'quvchi: javob tugaganda bitta qisqa xabar ---- */
+const announce = ref('')
+watch(
+  () => props.streamingId,
+  (now, before) => {
+    if (!before || now === before) return
+    const ex = props.exchanges.find((e) => e.id === before)
+    if (!ex?.response || ex.error) return
+    announce.value = ''
+    void nextTick(() => (announce.value = t('chat.answerReady')))
+  },
 )
 </script>
 
 <template>
-  <div ref="scrollerRef" :style="{ position: 'absolute', inset: 0, overflowY: 'auto', padding: '8px 24px 200px' }">
-    <div :style="{ maxWidth: '760px', margin: '0 auto' }">
-      <div v-for="ex in exchanges" :key="ex.id">
-        <!-- Tarixdan kelgan javob savolsiz bo'lishi mumkin (eski yozuv) -
-             bo'sh pufakcha ko'rsatilmaydi. -->
-        <div v-if="ex.question" class="ex__user">
-          <div
-            class="glass reveal-up"
-            :style="{
-              background: 'var(--glass-bg)',
-              border: '1px solid var(--glass-border)',
-              borderRadius: '18px 18px 4px 18px',
-              padding: '11px 16px',
-              fontSize: '15px',
-              lineHeight: 1.55,
-              maxWidth: '540px',
-              color: 'var(--text)',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-            }"
-          >
-            {{ ex.question }}
+  <div class="conv">
+    <div ref="scroller" class="conv__scroll" @scroll.passive="onScroll">
+      <section ref="column" class="conv__col" :aria-label="t('chat.thread')">
+        <article v-for="(ex, i) in exchanges" :key="ex.id" class="turn">
+          <!-- Tarixdan kelgan javob savolsiz bo'lishi mumkin (eski yozuv) - bo'sh
+               pufak ko'rsatilmaydi. -->
+          <div v-if="ex.question" class="turn__user">
+            <div class="turn__bubble">{{ ex.question }}</div>
+            <div class="turn__tools">
+              <VTooltip v-if="ex.askedAt" :text="formatFull(ex.askedAt, lang)">
+                <time class="turn__time" :datetime="iso(ex.askedAt)">{{ formatWhen(ex.askedAt, lang) }}</time>
+              </VTooltip>
+              <CopyButton :text="ex.question" :aria-label="t('copyPrompt')" />
+            </div>
           </div>
-          <div class="ex__user-tools">
-            <!-- Yuborilgan vaqt - nusxa tugmasi bilan bir qatorda, faqat
-                 sichqoncha ustida (pastdagi qoida). -->
-            <time v-if="ex.askedAt" class="ex__time" :datetime="iso(ex.askedAt)" :title="formatFull(ex.askedAt, lang)">
-              {{ formatWhen(ex.askedAt, lang) }}
-            </time>
-            <CopyButton :text="ex.question" :aria-label="t('copyPrompt')" :size="14" />
-          </div>
-        </div>
-        <!-- Javob vaqti amallar qatorida (`MessageActions`, o'ng chetda);
-             bu o'ram faqat sichqoncha ustida ko'rsatish uchun. -->
-        <div class="ex__answer">
-          <PipelineResult :exchange="ex" :dev-mode="devMode" :busy="busy" @regenerate="$emit('regenerate', ex.id)" />
-        </div>
-      </div>
+          <PipelineResult
+            :exchange="ex"
+            :show-engine="showEngine"
+            :busy="busy"
+            :streaming="ex.id === streamingId"
+            :latest="i === exchanges.length - 1"
+            :reported="reportedKeys.has(reportKey(ex))"
+            :can-trace="canTrace"
+            @regenerate="emit('regenerate', ex.id)"
+            @report="emit('report', ex.id)"
+          />
+        </article>
+      </section>
     </div>
+
+    <Transition name="conv-jump">
+      <VIconButton
+        v-if="!atBottom"
+        class="conv__jump"
+        variant="outline"
+        :icon="ArrowDown"
+        :label="t('chat.jumpToLatest')"
+        @click="jumpToLatest"
+      />
+    </Transition>
+
+    <p class="sr-only" role="status">{{ announce }}</p>
   </div>
 </template>
 
 <style scoped>
-.ex__user {
+.conv {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.conv__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.conv__col {
+  max-width: calc(var(--chat-col) + 2 * var(--gutter));
+  margin: 0 auto;
+  padding: var(--s-6) var(--gutter) var(--s-8);
+}
+
+.turn + .turn {
+  margin-top: var(--s-8);
+}
+.turn__user {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  margin: 20px 0 4px;
+  margin-bottom: var(--s-2);
 }
-.ex__user-tools {
+.turn__bubble {
+  max-width: min(85%, 560px);
+  padding: 10px var(--s-4);
+  border-radius: 20px 20px 6px 20px;
+  background: var(--fill);
+  color: var(--text);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.turn__tools {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-  margin-right: -9px; /* align the icon button's optical edge with the bubble */
+  gap: var(--s-1);
+  margin-top: var(--s-1);
+  margin-right: calc(var(--s-1) * -1);
 }
-.ex__time {
-  font-size: 11.5px;
-  color: var(--text-muted);
+.turn__time {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   cursor: default;
 }
-/* On hover-capable devices, keep the prompt copy hidden until hover/focus.
-   On touch devices (no hover) it stays visible so it's reachable. */
+/* Sichqonchali qurilmada vaqt va nusxa - faqat pufak ustida; sensorli ekranda doim. */
 @media (hover: hover) {
-  .ex__user-tools,
-  .ex__answer :deep(.msg-time) {
+  .turn__tools {
     opacity: 0;
-    transform: translateY(-2px);
-    transition: opacity 0.15s, transform 0.15s;
+    transition: opacity var(--dur-2) var(--ease-out);
   }
-  .ex__user:hover .ex__user-tools,
-  .ex__user:focus-within .ex__user-tools,
-  .ex__answer:hover :deep(.msg-time),
-  .ex__answer:focus-within :deep(.msg-time) {
+  .turn__user:hover .turn__tools,
+  .turn__user:focus-within .turn__tools {
     opacity: 1;
-    transform: translateY(0);
   }
+}
+
+.conv__jump {
+  position: absolute;
+  left: 50%;
+  bottom: var(--s-3);
+  z-index: var(--z-sticky);
+  translate: -50% 0;
+  border-radius: var(--r-full);
+  background: var(--surface);
+  box-shadow: var(--e2);
+}
+.conv-jump-enter-active,
+.conv-jump-leave-active {
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+}
+.conv-jump-enter-from,
+.conv-jump-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
 }
 </style>

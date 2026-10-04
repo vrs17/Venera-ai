@@ -37,7 +37,21 @@ class Settings(BaseSettings):
     #: Bu default qiymat ataylab "xavfsiz emas" deb ko'rinadi - unutib
     #: qo'yilsa `/health` uni ogohlantirish sifatida ko'rsatadi.
     secret_key: str = "dev-only-insecure-change-me"
+    #: HRM ulanishi 10 soat yashaydi va yangilanmaydi (`hrm_token_margin`
+    #: izohi). Sessiya undan UZUN bo'lsa "+" menyusida HRM qatori sessiya
+    #: tugamasdan "muddati tugagan" bo'lib qoladi - `.env` da 10 tavsiya.
     token_ttl_hours: int = 12
+    #: Kirish Keycloak orqali (`services/sso.py`): `crm_idp_token_url`,
+    #: `crm_client_id/secret`, `crm_base_url` (pastda) to'ldirilgan bo'lsa
+    #: login + parol Keycloak'ka ketadi va kirgan odam uchun HRM/CRM
+    #: ulanishlari o'zi ochiladi. `users.yaml` dagi hisoblar ZAHIRA:
+    #: Keycloak sozlanmagan, o'chgan yoki parolni rad etgan bo'lsa sinab
+    #: ko'riladi - administrator Keycloak'siz ham kira olsin. Prod'da
+    #: o'chirish mumkin.
+    local_login_enabled: bool = True
+    #: SSO bilan kirganlar: Keycloak `sub` -> `actor_id`
+    #: (`services/identities.py`). Sir yo'q, lekin `data/` da, 600.
+    identities_file: Path = BASE_DIR / "data" / "identities.json"
 
     #: Demo foydalanuvchilar fayli. Keyinchalik bu joyni DB egallaydi -
     #: `services/users.py` interfeysi o'zgarmaydi.
@@ -275,6 +289,25 @@ class Settings(BaseSettings):
     #: Undan uzun savol yuborilmaydi. Chegara xizmatda ham bor, lekin
     #: 100 KB matnni tarmoqqa chiqarib, keyin rad javobini olish ma'nosiz.
     hrm_assistant_max_question_chars: int = 2000
+    #: BITTA javobning eng uzun umri (soniya), kadrlar orasidagi tanaffus
+    #: emas. Xat bo'yicha v2 javobi 3-12 s, tashqi modelga borgan "Pro" 10-25 s
+    #: - 10 daqiqa katta zahira. Undan oshgan oqim uziladi (504), va shu
+    #: chegara navbatning O'ZINI DAVOLASHIGA asos: shundan (+ `timeout`)
+    #: eskiroq band joy aniq "oqib ketgan" - tirik oqim bunchalik yashamaydi
+    #: (`assistant._SlotPool`).
+    hrm_assistant_max_stream_seconds: int = 600
+    #: Yordamchi DVIGATELI (`core/engines.py`): `v1` (barqaror), `v2` (yangi:
+    #: LEX.UZ havolalari, "Pro") yoki bo'sh - versiyasiz `/api/chat/stream`
+    #: (xizmat default'i, bugun = v1; prod hozir shu yo'lda). Bu shox YANGI
+    #: ko'rinish, shuning uchun default `v2`. "Pro" faqat `v2` da ishlaydi.
+    #: BOSHLANG'ICH qiymat: admin panel siyosati (`engine_policy`) va odamga
+    #: berilgan versiya (`engine_access`) undan ustun -
+    #: `services/engine_control.py`.
+    hrm_assistant_engine: str = "v2"
+    #: Kanal bo'yicha istisno: `miniapp=v1,bot=v1` - ko'rsatilgan kanallar
+    #: shu dvigatelda, qolgani `hrm_assistant_engine` da. Kanal nomlari:
+    #: web | miniapp | bot | desktop | api. Bo'sh - hamma kanal umumiyda.
+    hrm_assistant_engine_by_channel: str = ""
 
     #: HRM sessiya token'i (JWT) - JONLI HRM ma'lumoti uchun.
     #:
@@ -341,7 +374,17 @@ class Settings(BaseSettings):
     #: o'chiq - menyuda "serverda sozlanmagan" ko'rinadi.
     hrm_base_url: str = ""
     hrm_timeout: float = 10.0
-    #: HRM tokeni 10 SOAT yashaydi va refresh'i yo'q. Muddati shundan KAM
+    #: HRM tokeni 10 SOAT yashaydi va refresh'i YO'Q.
+    #:
+    #: O'LCHANGAN (2026-09-29, jonli HRM, odamning o'z hisobi bilan):
+    #: login so'roviga "meni eslab qol" maydoni uchala yozilishida ham
+    #: (`rememberMe`, `remember-me`, `remember_me`) qo'shib ko'rildi -
+    #: HRM ularni QABUL QILDI (login ishladi) va tokenni baribir 10.0
+    #: soatlik qilib berdi. Ya'ni uzoqroq token so'rashning YO'LI YO'Q:
+    #: uni faqat HRM tomonida uzaytirish yoki refresh qo'shish mumkin.
+    #: Qayta sinab ko'rishning hojati yo'q.
+    #:
+    #: Muddati shundan KAM
     #: qolganda u yuqoridagi xizmatga BERILMAYDI va odam qayta kiradi:
     #: savol-javob bir necha daqiqa cho'zilishi mumkin, token esa javob
     #: OXIRIGACHA yaroqli turishi kerak.
@@ -380,14 +423,33 @@ class Settings(BaseSettings):
     #: (`conftest.py`): aks holda har test yurishi jonli botga ulanib,
     #: odamlarning xabarlarini "yutib" yuborardi.
     telegram_bot_enabled: bool = True
+    #: Xabarlarni olish usuli: `webhook` - Telegram o'zi yuboradi; `polling` -
+    #: bot o'zi so'raydi (`getUpdates`).
+    #:
+    #: JONLI TIZIMDA `polling`, va sababi o'lchangan (2026-09-24). Webhook
+    #: sinaldi: Telegram'ning serverimizga (`195.158.16.251`) ulanishi ko'pincha
+    #: birinchi urinishda "Connection timed out" bo'lib, xabarlar 20 s - 2
+    #: daqiqa kechikdi. Polling'da ulanishni BIZ ochamiz (chiquvchi) - u tez.
+    #:
+    #: Bitta tokenni boshqa nusxa ham o'qisa (o'sha kuni dev serverda shunday
+    #: bo'ldi - xabarlar bo'linib, dev nusxa odamdan qayta kirishni so'radi),
+    #: polling ulanishni darhol qaytarib oladi (`runner.poll_error`). To'liq
+    #: yechim - @BotFather'da tokenni yangilash va faqat jonli `.env` ga
+    #: qo'yish.
+    #:
+    #: Webhook'ni faqat jonli `.env` da yoqish mumkin (`TELEGRAM_MODE=webhook`):
+    #: kod nusxalangan muhit default bilan webhook'ga tegmaydi.
+    telegram_mode: str = "polling"
+    #: Webhook manzili - ommaviy HTTPS; nginx `/api/` ni API'ga o'tkazadi.
+    telegram_webhook_url: str = "https://llm.brb-tech.uz/api/v1/telegram/webhook"
     #: Mini app manzili - "Venera ilovasini ochish" tugmasi shu yerga.
     telegram_webapp_url: str = "https://llm.brb-tech.uz/tg/"
     #: Telegram hisobi -> Venera hisobi. `data/` gitignore'da, 600, atomik.
     telegram_links_file: Path = BASE_DIR / "data" / "telegram" / "links.json"
-    #: Ulanish shuncha kun yashaydi va faqat MINI APP ochilganda (tirik
-    #: sessiya bilan) yangilanadi - bot bilan yozishish uni uzaytirmaydi.
-    #: Ya'ni odam oyiga kamida bir marta o'z sessiyasi bilan kiradi: bot
-    #: muddatsiz sessiyaga aylanmaydi.
+    #: Ulanish OXIRGI FAOLLIKDAN shuncha kun yashaydi: mini app ochilishi ham,
+    #: botdagi savol ham uni yangilaydi. Odam bir marta kiradi va botdan
+    #: foydalanib tursa qayta so'ralmaydi; faqat shuncha kun umuman
+    #: ishlatilmagan ulanish tugaydi.
     telegram_link_days: int = 30
     #: Mini app `initData` si shundan eski bo'lsa ulash rad etiladi. Ilova
     #: ochilgan zahoti ulanadi, ya'ni bir kun ochiq turgan varaqqa ham yetadi.
@@ -401,6 +463,45 @@ class Settings(BaseSettings):
     #: Bir vaqtda nechta xabar ishlanadi. Bitta odamning xabarlari esa
     #: KETMA-KET, navbat bilan.
     telegram_workers: int = 4
+
+    # --- Xodimlar ma'lumotnomasi (kontaktlar) ---
+    #: F.I.SH, Telegram, telefon, email - `services/contacts.py`. SHAXSIY
+    #: MA'LUMOT: `data/` gitignore'da, fayl 600.
+    contacts_db: Path = BASE_DIR / "data" / "contacts" / "contacts.db"
+    #: Qo'shish/o'zgartirish/o'chirishni TASDIQLAY oladigan rollar. Qidirish
+    #: va ko'rish - har qanday kirgan foydalanuvchiga ochiq.
+    contacts_editor_roles: list[str] = ["ADMIN"]
+
+    # --- Analitika va admin panel ---
+    #: Har savol-javob izi, tashqi chaqiruvlar hisobi, shikoyatlar va admin
+    #: o'zgarishlari - BITTA SQLite faylda (`services/analytics/`). Faylda
+    #: savollar va javoblar turadi, ya'ni SHAXSIY MA'LUMOT: `data/`
+    #: gitignore'da, papka 700, fayl 600.
+    analytics_db_file: Path = BASE_DIR / "data" / "analytics" / "venera.db"
+    #: O'chirilsa YANGI yozuvlar to'xtaydi, chat esa odatdagidek ishlaydi -
+    #: yozib olish ikkinchi darajali. Admin panel eski yozuvlarni ko'rsataveradi.
+    analytics_enabled: bool = True
+    #: Shuncha kundan eski savollar, chaqiruvlar va kirish urinishlari har
+    #: 6 soatda o'chiriladi. Shikoyatlar va admin auditi SAQLANADI - ular
+    #: statistika emas, hujjat. 0 - hech narsa o'chirilmaydi.
+    analytics_retention_days: int = 180
+    #: Vergul bilan loginlar/emaillar (harf registriga qaramaydi) - ular
+    #: HAR DOIM ADMIN, admin paneldan ham olib bo'lmaydi. Birinchi
+    #: administratorni tayinlash va "hamma adminlar o'zini bloklab qo'ydi"
+    #: holatidan chiqish yo'li shu: rolni faylda emas, `.env` da berish.
+    #: SSO hisobi FAQAT LOGINI bilan (`y.mamajonov`) tanlanadi - emailini
+    #: Keycloak'da odam o'zi o'zgartira oladi; email faqat `users.yaml` dagi
+    #: zahira hisob uchun ishlaydi (`services/admin_users.is_bootstrap`).
+    admin_logins: str = ""
+    #: Keycloak'dan kelgan qaysi IMTIYOZLI rollarga (ADMIN, RAG_ADMIN)
+    #: ishoniladi - vergul bilan. Default BO'SH: SSO rollari Keycloak'dan
+    #: qanday bo'lsa shunday ko'chiriladi, va realm'da yoki boshqa client'da
+    #: tasodifan `ADMIN` degan rol bo'lsa, u Venera ADMIN ini (hammaning
+    #: suhbat yozuvlarini o'qish) berib yuborardi. Imtiyoz faqat
+    #: `admin_logins`, `users.yaml` va admin panel orqali keladi; Keycloak
+    #: rollari Venera uchun ATAYLAB boshqarilsagina shu yerga yoziladi
+    #: (`services/admin_users._effective_roles`).
+    sso_trusted_roles: str = ""
 
     # --- CORS ---
     #: Bo'sh bo'lsa CORS o'chirilgan: frontend nginx orqali BIR XIL originda

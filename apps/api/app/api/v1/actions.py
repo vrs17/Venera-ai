@@ -21,6 +21,9 @@ from fastapi import APIRouter, Depends, Path
 from ...core.errors import error_status
 from ...schemas.actions import ActionResult
 from ...schemas.auth import AuthUser
+from ...services import contacts_chat
+from ...services.analytics import set_proposal_status
+from ...services.analytics.recorder import PROPOSAL_STATUSES
 from ...services.integrations.assistant import AssistantError
 from . import chat as _chat
 from ..deps import current_user
@@ -44,16 +47,41 @@ _MESSAGES = {
 _TOKEN = Path(max_length=128, description="Yordamchi bergan taklif kaliti")
 
 
-def _run(call, user: AuthUser, token: str, what: str) -> ActionResult:
+def _run(call, user: AuthUser, token: str, what: str, verb: str | None = None) -> ActionResult:
     try:
         result = call()
     except AssistantError as exc:
         log.warning("Amal %s (%s, %s): %s", what, user.email, token, exc)
+        if verb and exc.status == 404:
+            # Xizmat taklifni tanimadi - muddati o'tgan (15 daqiqa).
+            set_proposal_status(token, "expired")
         status = exc.status if exc.status in _MESSAGES else 502
         raise error_status(status, _MESSAGES[status]) from exc
     log.info("Amal %s (%s): token=%s holat=%s ok=%s", what, user.email, token,
              result.get("status"), result.get("ok"))
+    if verb:
+        outcome = proposal_outcome(verb, result)
+        if outcome:
+            set_proposal_status(token, outcome)
     return ActionResult(**{k: v for k, v in result.items() if k in ActionResult.model_fields})
+
+
+def proposal_outcome(verb: str, result: dict) -> str | None:
+    """Tasdiqlash/rad etish natijasi -> savol izidagi taklif holati
+    (`turns.proposal_status`): admin panel "taklif nima bo'ldi" deb ko'radi.
+
+    Xizmat holatni o'zi aytsa - o'sha (`executed`, `failed`, ...); aytmasa
+    `ok` bo'yicha. Bot ham shu funksiyani ishlatadi - ikki kanalda bir xil.
+    """
+    status = result.get("status")
+    if isinstance(status, str) and status in PROPOSAL_STATUSES and status != "pending":
+        return status
+    if verb == "cancel":
+        return "cancelled"
+    if verb == "confirm":
+        ok = result.get("ok")
+        return "executed" if ok is True else ("failed" if ok is False else None)
+    return None
 
 
 def _user_id(user: AuthUser) -> str:
@@ -66,24 +94,32 @@ def _user_id(user: AuthUser) -> str:
 def confirm(token: str = _TOKEN, user: AuthUser = Depends(current_user)) -> ActionResult:
     """Taklifni BAJARISH. Faqat odam bosgandan keyin, faqat o'sha odam,
     bir marta, 15 daqiqa ichida - qolganini xizmat tekshiradi."""
+    if contacts_chat.owns(token):
+        # Xodimlar ma'lumotnomasi taklifi - Venera'ning o'zida (rol shu yerda
+        # qayta tekshiriladi).
+        return _run(lambda: contacts_chat.act("confirm", token, user), user, token, "tasdiqlash")
     return _run(
         lambda: _chat._assistant.confirm_action(
             token, user_id=_user_id(user), tokens=_chat._live_tokens(user)),
-        user, token, "tasdiqlash",
+        user, token, "tasdiqlash", "confirm",
     )
 
 
 @router.post("/{token}/cancel", response_model=ActionResult)
 def cancel(token: str = _TOKEN, user: AuthUser = Depends(current_user)) -> ActionResult:
     """Taklifni RAD ETISH - endi tasdiqlab bo'lmaydi."""
+    if contacts_chat.owns(token):
+        return _run(lambda: contacts_chat.act("cancel", token, user), user, token, "rad etish")
     return _run(
         lambda: _chat._assistant.cancel_action(
             token, user_id=_user_id(user), tokens=_chat._live_tokens(user)),
-        user, token, "rad etish",
+        user, token, "rad etish", "cancel",
     )
 
 
 @router.get("/{token}", response_model=ActionResult)
 def status(token: str = _TOKEN, user: AuthUser = Depends(current_user)) -> ActionResult:
     """Taklifning holati."""
+    if contacts_chat.owns(token):
+        return _run(lambda: contacts_chat.act("status", token, user), user, token, "holati")
     return _run(lambda: _chat._assistant.get_action(token), user, token, "holati")

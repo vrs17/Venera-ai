@@ -6,10 +6,15 @@ ni yuboradi. Ikkalasi birga "shu Telegram hisobi shu xodimniki" degan
 isbot bo'ladi. Bot chatida parol so'ralmaydi va so'ralmasligi kerak: u
 Telegram serverida suhbat tarixida qolardi.
 
-MUDDAT. Ulanish `ttl_days` yashaydi va faqat mini app ochilganda
-yangilanadi (`seen_at`). Bot bilan yozishish uni UZAYTIRMAYDI - aks holda
-faol odam uchun bot muddatsiz sessiyaga aylanardi, veb sessiya esa 12
-soatda tugaydi.
+MUDDAT. Ulanish OXIRGI FAOLLIKDAN `ttl_days` yashaydi (`seen_at`): mini app
+ochilishi ham, botga savol yoki ovozli xabar ham uni yangilaydi. Ya'ni
+odam bir marta kiradi va botdan foydalanib tursa QAYTA SO'RALMAYDI - faqat
+`ttl_days` davomida umuman ishlatilmagan ulanish tugaydi. Oldin muddatni
+faqat mini app uzaytirardi va faol odam ham oyiga bir marta qayta kirishga
+majbur edi - bu noqulay deb topildi.
+
+Bekor qilish yo'llari o'zgarmagan: botdagi `/logout`, mini app'dan chiqish
+va hisobning `users.yaml` dan olib tashlanishi (keyingi xabarda uziladi).
 
 SAQLANADIGAN NARSA - faqat raqamlar: Telegram `id`, Venera `actor_id`,
 vaqtlar va joriy suhbat kaliti. Ism, username, telefon SAQLANMAYDI - ular
@@ -40,7 +45,8 @@ class TelegramLink:
     tg_id: int
     actor_id: int
     linked_at: float
-    #: Oxirgi marta mini app orqali (sessiya bilan) tasdiqlangan payt.
+    #: Oxirgi faollik: mini app orqali tasdiq yoki botdagi savol. Muddat
+    #: shundan hisoblanadi.
     seen_at: float
     #: Botdagi joriy suhbat (`chatId`) va undagi oxirgi faollik.
     chat_id: str | None = None
@@ -82,6 +88,18 @@ class LinkStore:
         if now - link.seen_at > self.ttl:
             return None, "expired"
         return link, "linked"
+
+    def by_actor(self, actor_id: int) -> list[TelegramLink]:
+        """Shu Venera hisobiga ulangan HAMMA Telegram hisoblari, muddati
+        o'tganlari ham - admin panel uchun ("nechta ulanish bor"). Bitta odam
+        bir necha Telegram hisobidan ulangan bo'lishi mumkin."""
+        with self._lock:
+            self._reload()
+            items = list(self._links.items())
+        found = [_parse(int(key), raw) for key, raw in items
+                 if key.lstrip("-").isdigit() and isinstance(raw, dict)
+                 and raw.get("actor_id") == actor_id]
+        return [link for link in found if link is not None]
 
     def count(self, *, now: float | None = None) -> int:
         """Amaldagi (muddati o'tmagan) ulanishlar soni - `/api/health/detail`."""
@@ -137,10 +155,27 @@ class LinkStore:
             self._write()
         return True
 
+    def unlink_actor(self, actor_id: int) -> int:
+        """Shu hisobning HAMMA Telegram ulanishlarini uzadi -> nechtasi uzildi.
+
+        Admin "hamma sessiyalardan chiqarish" yoki "Telegramni uzish" ni
+        bosganda: bot sessiyasi JWT emas, u faqat shu ulanish bilan yashaydi.
+        """
+        with self._lock:
+            self._reload()
+            keys = [key for key, raw in self._links.items()
+                    if isinstance(raw, dict) and raw.get("actor_id") == actor_id]
+            for key in keys:
+                del self._links[key]
+            if keys:
+                self._write()
+        return len(keys)
+
     def chat_for(self, tg_id: int, *, idle_sec: float, now: float | None = None) -> str:
         """Joriy suhbat kaliti. Uzoq jimlikdan keyin - YANGI suhbat.
 
-        Faollik vaqti har savolda yangilanadi.
+        Har savolda suhbat faolligi (`chat_at`) VA ulanish muddati (`seen_at`)
+        yangilanadi - faol odamdan qayta kirish so'ralmaydi.
         """
         now = time.time() if now is None else now
         key = str(tg_id)
@@ -155,6 +190,7 @@ class LinkStore:
                 chat = _new_chat_id()
             entry["chat_id"] = chat
             entry["chat_at"] = now
+            entry["seen_at"] = max(float(entry.get("seen_at") or 0), now)
             self._write()
             return chat
 
@@ -168,6 +204,7 @@ class LinkStore:
                 return None
             entry["chat_id"] = _new_chat_id()
             entry["chat_at"] = now
+            entry["seen_at"] = max(float(entry.get("seen_at") or 0), now)
             self._write()
             return entry["chat_id"]
 

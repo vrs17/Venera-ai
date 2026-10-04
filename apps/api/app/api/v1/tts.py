@@ -23,15 +23,20 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import Response, StreamingResponse
 
 from ...core.config import settings
 from ...core.errors import bad_request, error_status
 from ...schemas.auth import AuthUser
 from ...schemas.tts import SpeakRequest
+from ...services.analytics import bind, valid_turn_id
 from ...services.tts import LOCALE_TO_TTS, TtsClient, TtsError
 from ..deps import current_user
+
+#: `chat.TURN_HEADER` bilan bir xil. Import emas: `chat` ni modul boshida
+#: import qilish aylanma bog'liqlik yasaydi (`_hold_voices` izohi).
+_TURN_HEADER = "X-Venera-Turn"
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/tts", tags=["tts"])
@@ -67,12 +72,17 @@ _MESSAGES = {
     responses={200: {"content": {"audio/L16": {}},
                      "description": "Xom PCM oqimi, 16-bit LE mono"}},
 )
-def speak(body: SpeakRequest, user: AuthUser = Depends(current_user)) -> StreamingResponse:
+def speak(body: SpeakRequest, request: Request,
+          user: AuthUser = Depends(current_user)) -> StreamingResponse:
     """Matn -> PCM oqimi.
 
     `async def` EMAS, ataylab: klient bloklaydigan `urllib` ishlatadi. Oddiy
     `def` bilan FastAPI uni threadpool'da ishlatadi va event loop bo'sh
     qoladi - aks holda bitta uzun oqim butun serverni to'xtatib qo'yardi.
+
+    `X-Venera-Turn` (ixtiyoriy) - klient o'qib berayotgan javobning savol
+    kaliti: hisobda ovoz o'sha savolga bog'lanadi. Faqat yaroqli kalit
+    (32 hex) olinadi, boshqasi e'tiborsiz - bu faqat statistika.
     """
     if LOCALE_TO_TTS.get(body.language) is None:
         # Birinchi bosqich ataylab faqat o'zbek (lotin): model shu til uchun,
@@ -83,6 +93,8 @@ def speak(body: SpeakRequest, user: AuthUser = Depends(current_user)) -> Streami
     if not text:
         raise bad_request("matn bo'sh")
 
+    turn = valid_turn_id(request.headers.get(_TURN_HEADER))
+    binding = bind(turn_id=turn) if turn else None
     try:
         # Oqim SHU YERDA ochiladi, generator ichida emas: validatsiya
         # xatolari (422, 500, 503) shunda oddiy HTTP javobi bo'lib chiqadi.
@@ -99,6 +111,10 @@ def speak(body: SpeakRequest, user: AuthUser = Depends(current_user)) -> Streami
         log.warning("TTS (%s): %s", user.email, exc)
         status = exc.status if exc.status in _MESSAGES else 502
         raise error_status(status, _MESSAGES[status]) from exc
+    finally:
+        # Hisob chaqiruvi kalitni OCHILISHDA oldi (`begin`) - endi kerak emas.
+        if binding is not None:
+            binding.reset()
 
     def body_iter():
         try:

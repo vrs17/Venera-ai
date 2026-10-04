@@ -1,22 +1,25 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { LogOut } from 'lucide-vue-next'
 import { useAuth } from '../composables/useAuth'
-import { localizeApiError } from '../api/errors'
-import { KeyIcon, LockIcon } from '../icons'
+import { localizeAuthError } from '../api/errors'
+import { redirectTarget } from '../router'
 import AuthShell from '../components/AuthShell.vue'
 import AuthField from '../components/AuthField.vue'
 import AuthButton from '../components/AuthButton.vue'
 import AuthError from '../components/AuthError.vue'
 import PasswordStrength from '../components/PasswordStrength.vue'
+import VButton from '../ui/VButton.vue'
 
 // Forced first-login password change: replace the emailed temporary password
 // with the user's own. Backend rules: >=8 chars, >=1 letter, >=1 digit, and
 // different from the current password.
 const { t } = useI18n({ useScope: 'global' })
 const router = useRouter()
-const { changePassword, logout } = useAuth()
+const route = useRoute()
+const { user, changePassword, logout } = useAuth()
 
 const current = ref('')
 const next = ref('')
@@ -24,7 +27,14 @@ const confirm = ref('')
 const busy = ref(false)
 const submitted = ref(false)
 const formError = ref('')
-const shell = ref<{ ignite: () => void } | null>(null)
+
+const currentField = ref<InstanceType<typeof AuthField> | null>(null)
+const nextField = ref<InstanceType<typeof AuthField> | null>(null)
+const confirmField = ref<InstanceType<typeof AuthField> | null>(null)
+const strengthId = useId()
+
+// Qaysi hisob - parol menejeri uchun yashirin maydon va pastdagi "kim sifatida" qatori.
+const account = computed(() => user.value?.email || user.value?.fullName || '')
 
 const hasLetter = (s: string) => /[A-Za-z]/.test(s)
 const hasDigit = (s: string) => /\d/.test(s)
@@ -46,17 +56,29 @@ const confirmError = computed(() =>
   !submitted.value ? '' : !confirm.value ? t('required') : confirm.value !== next.value ? t('passwordMismatch') : '',
 )
 
+watch([current, next, confirm], () => {
+  formError.value = ''
+})
+
+onMounted(() => {
+  if (window.matchMedia('(pointer: fine)').matches) currentField.value?.focus()
+})
+
 async function submit() {
   submitted.value = true
   formError.value = ''
-  if (busy.value || !valid.value) return
+  if (busy.value) return
+  if (!valid.value) {
+    const first = currentError.value ? currentField : newError.value ? nextField : confirmField
+    first.value?.focus()
+    return
+  }
   busy.value = true
-  shell.value?.ignite()
   try {
     await changePassword(current.value, next.value)
-    router.push('/')
+    router.push(redirectTarget(route.query) ?? '/')
   } catch (err) {
-    formError.value = localizeApiError(err, t)
+    formError.value = localizeAuthError(err, t)
     busy.value = false
   }
 }
@@ -70,91 +92,101 @@ async function onSignOut() {
 </script>
 
 <template>
-  <AuthShell ref="shell" :hero-title="t('authChangeTitle')" :hero-sub="t('authChangeSub')">
-    <form class="auth-body" novalidate @submit.prevent="submit">
-      <div class="auth-head rise">
-        <span class="auth-head__icon" aria-hidden="true"><KeyIcon :size="18" /></span>
-        <h2 class="auth-head__title">{{ t('changePassword') }}</h2>
+  <AuthShell :title="t('authChangeTitle')" :caption="t('authChangeSub')">
+    <form class="auth-form" novalidate @submit.prevent="submit">
+      <!-- Parol menejeri QAYSI hisob paroli yangilanayotganini bilsin. -->
+      <input
+        class="sr-only"
+        type="text"
+        name="username"
+        autocomplete="username"
+        :value="account"
+        readonly
+        tabindex="-1"
+        aria-hidden="true"
+      />
+
+      <div class="auth-form__fields">
+        <AuthField
+          ref="currentField"
+          v-model="current"
+          :label="t('currentPassword')"
+          type="password"
+          name="current-password"
+          autocomplete="current-password"
+          :error="currentError"
+        />
+        <div class="auth-form__new">
+          <AuthField
+            ref="nextField"
+            v-model="next"
+            :label="t('newPassword')"
+            type="password"
+            name="new-password"
+            autocomplete="new-password"
+            :error="newError"
+            :aria-describedby="next && !newError ? strengthId : undefined"
+          />
+          <PasswordStrength :id="strengthId" :password="next" :current="current" :quiet="!!newError" />
+        </div>
+        <AuthField
+          ref="confirmField"
+          v-model="confirm"
+          :label="t('confirmPassword')"
+          type="password"
+          name="confirm-password"
+          autocomplete="new-password"
+          :error="confirmError"
+        />
       </div>
+
+      <AuthButton :label="t('ui.save')" :busy="busy" />
 
       <AuthError :message="formError" />
-
-      <AuthField
-        v-model="current"
-        :label="t('currentPassword')"
-        type="password"
-        autocomplete="current-password"
-        :icon="LockIcon"
-        :error="currentError"
-        reveal-delay="0.04s"
-      />
-      <AuthField
-        v-model="next"
-        :label="t('newPassword')"
-        type="password"
-        autocomplete="new-password"
-        :icon="LockIcon"
-        :error="newError"
-        reveal-delay="0.1s"
-      />
-      <PasswordStrength :password="next" />
-      <AuthField
-        v-model="confirm"
-        :label="t('confirmPassword')"
-        type="password"
-        autocomplete="new-password"
-        :icon="LockIcon"
-        :error="confirmError"
-        reveal-delay="0.16s"
-      />
-
-      <div class="rise" style="animation-delay: 0.2s">
-        <AuthButton :label="t('changePassword')" :valid="valid" :busy="busy" />
-      </div>
-
-      <p class="auth-foot rise" style="animation-delay: 0.24s">
-        <button type="button" class="auth-link auth-link--strong" @click="onSignOut">{{ t('logout') }}</button>
-      </p>
     </form>
+
+    <div class="auth-account">
+      <span v-if="account" class="auth-account__who">{{ account }}</span>
+      <VButton variant="ghost" size="sm" :icon="LogOut" @click="onSignOut">{{ t('logout') }}</VButton>
+    </div>
   </AuthShell>
 </template>
 
 <style scoped>
-.auth-body {
+.auth-form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--s-6);
 }
-.auth-head {
+.auth-form__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+.auth-form__new {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+/* "Kim sifatida" va chiqish - shakl ostida jim qator; majburiy o'zgartirishdan
+   yagona chiqish yo'li shu. */
+.auth-account {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
+  justify-content: center;
+  gap: var(--s-2);
+  margin-top: var(--s-8);
+  padding-top: var(--s-5);
+  border-top: 1px solid var(--line);
+  min-width: 0;
 }
-.auth-head__title {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.3px;
-  color: var(--text);
-}
-.auth-foot {
-  margin: 6px 0 0;
-  text-align: center;
-}
-.auth-link {
-  font-size: 13px;
-  color: var(--link);
-  text-decoration: underline;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-family: 'Figtree', sans-serif;
-}
-.auth-link:hover {
-  filter: brightness(1.12);
-}
-.auth-link--strong {
-  font-weight: 600;
+.auth-account__who {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
 }
 </style>

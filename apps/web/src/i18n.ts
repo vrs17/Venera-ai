@@ -9,6 +9,15 @@
 
 import { createI18n } from 'vue-i18n'
 import type { ActorType } from './types'
+// Yangi bo'limlar alohida modullarda, har biri o'z nom maydoni ostida (`ui.*`,
+// `admin.*`, `report.*`). Ular ham xuddi shu qoidaga bo'ysunadi: `en` - manba,
+// qolgan tillar `Mirror<typeof en>` - bitta kalit yetishmasa ham kompilyatsiya xatosi.
+import { ui } from './i18n/ui'
+import { report } from './i18n/report'
+import { chat } from './i18n/chat'
+import { composer } from './i18n/composer'
+import { shell } from './i18n/shell'
+import { pro } from './i18n/pro'
 
 export type Locale = 'uz' | 'uz-Cyrl' | 'ru' | 'en'
 
@@ -66,6 +75,7 @@ const en = {
   actorType: 'Actor type',
   actorId: 'Actor ID',
   email: 'Email',
+  loginName: 'Login',
   rolesLabel: 'Roles (comma-separated)',
   departmentLabel: 'Department (optional)',
   cancel: 'Cancel',
@@ -129,21 +139,17 @@ const en = {
   generationStopped: 'Generation stopped.',
   disclaimer: 'Venera can make mistakes. Verify important info.',
   // Results
-  statusReady: 'Ready',
-  statusBlocked: 'Blocked by guard',
-  statusAccessDenied: 'Access denied',
   statusRequestFailed: 'Request failed',
   processing: 'Processing…',
-  roundTrip: 'Round-trip {n}s',
   networkError: 'Network error',
   headlineUnsafe: 'Sorry, this request doesn’t comply with the safety policy.',
   headlineAccessDenied: 'You don’t have sufficient permission to view this information.',
-  headlinePending: 'Pipeline allowed the request. Retrieval / answer generation pending backend wiring.',
+  headlinePending: 'No answer this time. Try again.',
   // Auth — hero
   authWelcomeBack: 'Welcome back',
   authCreateAccount: 'Create your account',
   authRecover: 'Reset your password',
-  authLoginSub: 'Sign in to continue to Venera.',
+  authLoginSub: 'Sign in with your HRM / CRM account.',
   authRegisterSub: 'A few details and you’re in.',
   authForgotSub: 'We’ll help you back into your account.',
   // Auth — fields
@@ -197,7 +203,6 @@ const en = {
   passwordTooShort: 'Use at least 8 characters',
   invalidCredentials: 'Invalid email or password',
   // Mode + account
-  developerMode: 'Developer mode',
   thinking: 'Thinking',
   logout: 'Log out',
   // Message actions
@@ -225,13 +230,7 @@ const en = {
   errInvalidRequest: 'Something went wrong with the request. Please try again.',
   errUnsupportedDocument: 'This document type isn’t supported yet.',
   // Chat statuses + domains
-  statusNoContext: 'No sources',
-  statusModuleNotReady: 'Module in progress',
   headlineModuleNotReady: 'This module isn’t available yet. It’s coming soon.',
-  domainHR: 'HR',
-  domainPublic: 'Public',
-  domainGeneral: 'General',
-  domainFuture: 'Coming soon',
   // Documents
   documents: 'Documents',
   selectTemplate: 'Choose a document',
@@ -274,7 +273,7 @@ const en = {
   wakeWord: 'Wake word',
   wakeWordHint: 'Say "Salom Venera" to open the voice panel. The microphone stays on while this is enabled.',
   wakeWordActive: 'Listening for "Salom Venera"',
-  wakeWordDistorted: 'The microphone signal arrives with gaps cut into the speech, so "Salom Venera" cannot be recognised. Turn off microphone "audio enhancements" (noise suppression / noise gate) in Windows sound settings or your headset software, or speak closer to the microphone.',
+  wakeWordDistorted: 'The microphone cuts gaps into speech, so "Salom Venera" is not recognised. Turn off noise suppression in your sound or headset settings.',
   chatNotConnected: 'This question needs live data, and that system is not connected to your account here yet. Questions about rules and documents work.',
   chatFailed: 'The answer could not be completed.',
   sourcesDocuments: 'Sources',
@@ -283,7 +282,6 @@ const en = {
   sourcePage: 'p. {n}',
   artifactReady: 'Application prepared',
   artifactDownload: 'Download {format}',
-  answerRoute: 'Route: {route}',
   voiceGreeting: 'Assalomu Alaykum. Men Venera ovozli yordamchisiman sizga qanday yordam beraolaman',
   voiceSpeaking: 'Speaking…',
   voiceReplay: 'Play again',
@@ -311,6 +309,15 @@ const en = {
   deleteChat: 'Delete',
   chatDeleted: 'Chat deleted',
   undo: 'Undo',
+  // Pro rejimi (per-xabar)
+  proLabel: 'Pro',
+  proHint: 'Pro: for hard questions — the assistant consults an external model (within your limit).',
+  proExhausted: 'Pro limit reached. It resets as the window rolls.',
+  proUsed: 'Pro: external model consulted',
+  proNotNeeded: 'Pro: not needed for this answer',
+  proDenied: 'Pro not granted: {why}',
+  proReasonLimit: 'limit reached',
+  proReasonNoUser: 'user not identified',
 }
 
 export type MsgKey = keyof typeof en
@@ -329,6 +336,7 @@ const uz: Dict = {
   actorType: 'Aktor turi',
   actorId: 'Aktor ID',
   email: 'Email',
+  loginName: 'Login',
   rolesLabel: 'Rollar (vergul bilan)',
   departmentLabel: 'Boʻlim (ixtiyoriy)',
   cancel: 'Bekor qilish',
@@ -390,20 +398,16 @@ const uz: Dict = {
   stopAria: 'Yaratishni toʻxtatish',
   generationStopped: 'Yaratish toʻxtatildi.',
   disclaimer: 'Venera xatolarga yoʻl qoʻyishi mumkin. Muhim maʼlumotlarni tekshiring.',
-  statusReady: 'Tayyor',
-  statusBlocked: 'Guard tomonidan bloklandi',
-  statusAccessDenied: 'Ruxsat rad etildi',
   statusRequestFailed: 'Soʻrov bajarilmadi',
   processing: 'Qayta ishlanmoqda…',
-  roundTrip: 'Javob vaqti {n}s',
   networkError: 'Tarmoq xatosi',
   headlineUnsafe: 'Kechirasiz, ushbu soʻrov xavfsizlik siyosatiga mos kelmaydi.',
   headlineAccessDenied: 'Sizda ushbu maʼlumotni koʻrish uchun yetarli ruxsat mavjud emas.',
-  headlinePending: 'Pipeline soʻrovga ruxsat berdi. Maʼlumot izlash / javob yaratish backend ulanishini kutmoqda.',
+  headlinePending: 'Bu safar javob kelmadi. Qayta urinib koʻring.',
   authWelcomeBack: 'Xush kelibsiz',
   authCreateAccount: 'Hisob yarating',
   authRecover: 'Parolni tiklash',
-  authLoginSub: 'Veneraga kirish uchun tizimga kiring.',
+  authLoginSub: 'HRM / CRM hisobingiz bilan kiring.',
   authRegisterSub: 'Bir necha maʼlumot — va tayyor.',
   authForgotSub: 'Hisobingizga qaytishingizga yordam beramiz.',
   firstName: 'Ism',
@@ -450,7 +454,6 @@ const uz: Dict = {
   menu: 'Menyu',
   passwordTooShort: 'Kamida 8 ta belgidan foydalaning',
   invalidCredentials: 'Email yoki parol notoʻgʻri',
-  developerMode: 'Dasturchi rejimi',
   thinking: 'Oʻylayapman',
   logout: 'Chiqish',
   copy: 'Nusxalash',
@@ -474,13 +477,7 @@ const uz: Dict = {
   errSessionExpired: 'Sessiya muddati tugadi. Iltimos, qaytadan kiring.',
   errInvalidRequest: 'Soʻrovda xatolik yuz berdi. Qaytadan urinib koʻring.',
   errUnsupportedDocument: 'Bu hujjat turi hozircha qoʻllab-quvvatlanmaydi.',
-  statusNoContext: 'Manba topilmadi',
-  statusModuleNotReady: 'Modul tayyorlanmoqda',
   headlineModuleNotReady: 'Bu modul hali mavjud emas. Tez orada qoʻshiladi.',
-  domainHR: 'HR',
-  domainPublic: 'Ommaviy',
-  domainGeneral: 'Umumiy',
-  domainFuture: 'Tez orada',
   documents: 'Hujjatlar',
   selectTemplate: 'Hujjatni tanlang',
   generate: 'Yaratish',
@@ -519,19 +516,18 @@ const uz: Dict = {
   voiceUnsure: 'To\u02bbg\u02bbri eshitganimga ishonchim komil emas.',
   voiceSendAnyway: 'Baribir yuborish',
   voiceTruncatedNote: 'Yozuv juda uzun edi, oxiri kesildi.',
-  wakeWord: 'Uyg`otish so`zi',
+  wakeWord: 'Uygʻotish soʻzi',
   wakeWordHint: '"Salom Venera" desangiz ovoz paneli ochiladi. Yoqilgan paytda mikrofon ochiq turadi.',
   wakeWordActive: '"Salom Venera" kutilmoqda',
-  wakeWordDistorted: 'Mikrofon signali nutq ichida bo`shliqlar bilan kelyapti, shuning uchun "Salom Venera" tanilmaydi. Windows ovoz sozlamalarida mikrofon uchun "Audio enhancements" (shovqin bostirish / shovqin darvozasi) ni yoki garnitura dasturidagi shu funksiyani o`chiring, yoki mikrofonga yaqinroq gapiring.',
-  chatNotConnected: 'Bu savol uchun jonli ma`lumot kerak, o`sha tizim esa hisobingizga bu yerda hali ulanmagan. Qoidalar va hujjatlar bo`yicha savollar ishlaydi.',
-  chatFailed: 'Javobni tugatib bo`lmadi.',
+  wakeWordDistorted: 'Mikrofon nutqni uzib yuboryapti, shuning uchun "Salom Venera" tanilmaydi. Ovoz yoki garnitura sozlamalarida shovqin bostirishni oʻchiring.',
+  chatNotConnected: 'Bu savol uchun jonli maʼlumot kerak, oʻsha tizim esa hisobingizga bu yerda hali ulanmagan. Qoidalar va hujjatlar boʻyicha savollar ishlaydi.',
+  chatFailed: 'Javobni tugatib boʻlmadi.',
   sourcesDocuments: 'Manbalar',
-  sourcesLookups: 'Tizim so`rovlari',
+  sourcesLookups: 'Tizim soʻrovlari',
   sourceDocument: 'Hujjat',
   sourcePage: '{n}-bet',
   artifactReady: 'Ariza tayyorlandi',
   artifactDownload: '{format} yuklab olish',
-  answerRoute: 'Yo`nalish: {route}',
   voiceGreeting: 'Assalomu Alaykum. Men Venera ovozli yordamchisiman sizga qanday yordam beraolaman',
   voiceSpeaking: 'Ovoz chiqmoqda…',
   voiceReplay: 'Qayta tinglash',
@@ -559,6 +555,15 @@ const uz: Dict = {
   deleteChat: 'Oʻchirish',
   chatDeleted: 'Suhbat oʻchirildi',
   undo: 'Bekor qilish',
+  // Pro rejimi (per-xabar)
+  proLabel: 'Pro',
+  proHint: 'Pro: murakkab savollar uchun — yordamchi tashqi modeldan maslahat oladi (limit doirasida).',
+  proExhausted: 'Pro limiti tugadi. Oyna surilgani sari tiklanadi.',
+  proUsed: 'Pro: tashqi modeldan maslahat olindi',
+  proNotNeeded: 'Pro: bu javob uchun kerak boʻlmadi',
+  proDenied: 'Pro berilmadi: {why}',
+  proReasonLimit: 'limit tugagan',
+  proReasonNoUser: 'foydalanuvchi aniqlanmadi',
 }
 
 const uzCyrl: Dict = {
@@ -574,6 +579,7 @@ const uzCyrl: Dict = {
   actorType: 'Актор тури',
   actorId: 'Актор ID',
   email: 'Email',
+  loginName: 'Логин',
   rolesLabel: 'Роллар (вергул билан)',
   departmentLabel: 'Бўлим (ихтиёрий)',
   cancel: 'Бекор қилиш',
@@ -635,20 +641,16 @@ const uzCyrl: Dict = {
   stopAria: 'Яратишни тўхтатиш',
   generationStopped: 'Яратиш тўхтатилди.',
   disclaimer: 'Венера хатоларга йўл қўйиши мумкин. Муҳим маълумотларни текширинг.',
-  statusReady: 'Тайёр',
-  statusBlocked: 'Guard томонидан блокланди',
-  statusAccessDenied: 'Рухсат рад этилди',
   statusRequestFailed: 'Сўров бажарилмади',
   processing: 'Қайта ишланмоқда…',
-  roundTrip: 'Жавоб вақти {n}с',
   networkError: 'Тармоқ хатоси',
   headlineUnsafe: 'Кечирасиз, ушбу сўров хавфсизлик сиёсатига мос келмайди.',
   headlineAccessDenied: 'Сизда ушбу маълумотни кўриш учун етарли рухсат мавжуд эмас.',
-  headlinePending: 'Pipeline сўровга рухсат берди. Маълумот излаш / жавоб яратиш backend уланишини кутмоқда.',
+  headlinePending: 'Бу сафар жавоб келмади. Қайта уриниб кўринг.',
   authWelcomeBack: 'Хуш келибсиз',
   authCreateAccount: 'Ҳисоб яратинг',
   authRecover: 'Паролни тиклаш',
-  authLoginSub: 'Венерага кириш учун тизимга киринг.',
+  authLoginSub: 'HRM / CRM ҳисобингиз билан киринг.',
   authRegisterSub: 'Бир неча маълумот — ва тайёр.',
   authForgotSub: 'Ҳисобингизга қайтишингизга ёрдам берамиз.',
   firstName: 'Исм',
@@ -695,7 +697,6 @@ const uzCyrl: Dict = {
   menu: 'Меню',
   passwordTooShort: 'Камида 8 та белгидан фойдаланинг',
   invalidCredentials: 'Email ёки парол нотўғри',
-  developerMode: 'Дастурчи режими',
   thinking: 'Ўйлаяпман',
   logout: 'Чиқиш',
   copy: 'Нусхалаш',
@@ -719,13 +720,7 @@ const uzCyrl: Dict = {
   errSessionExpired: 'Сессия муддати тугади. Илтимос, қайтадан киринг.',
   errInvalidRequest: 'Сўровда хатолик юз берди. Қайтадан уриниб кўринг.',
   errUnsupportedDocument: 'Бу ҳужжат тури ҳозирча қўллаб-қувватланмайди.',
-  statusNoContext: 'Манба топилмади',
-  statusModuleNotReady: 'Модул тайёрланмоқда',
   headlineModuleNotReady: 'Бу модул ҳали мавжуд эмас. Тез орада қўшилади.',
-  domainHR: 'HR',
-  domainPublic: 'Оммавий',
-  domainGeneral: 'Умумий',
-  domainFuture: 'Тез орада',
   documents: 'Ҳужжатлар',
   selectTemplate: 'Ҳужжатни танланг',
   generate: 'Яратиш',
@@ -767,7 +762,7 @@ const uzCyrl: Dict = {
   wakeWord: 'Уйғотиш сўзи',
   wakeWordHint: '"Салом Венера" десангиз овоз панели очилади. Ёқилган пайтда микрофон очиқ туради.',
   wakeWordActive: '"Салом Венера" кутилмоқда',
-  wakeWordDistorted: 'Микрофон сигнали нутқ ичида бўшлиқлар билан келяпти, шунинг учун "Салом Венера" танилмайди. Windows овоз созламаларида микрофон учун "Audio enhancements" (шовқин бостириш / шовқин дарвозаси) ни ёки гарнитура дастуридаги шу функцияни ўчиринг, ёки микрофонга яқинроқ гапиринг.',
+  wakeWordDistorted: 'Микрофон нутқни узиб юборяпти, шунинг учун "Салом Венера" танилмайди. Овоз ёки гарнитура созламаларида шовқин бостиришни ўчиринг.',
   chatNotConnected: 'Бу савол учун жонли маълумот керак, ўша тизим эса ҳисобингизга бу ерда ҳали уланмаган. Қоидалар ва ҳужжатлар бўйича саволлар ишлайди.',
   chatFailed: 'Жавобни тугатиб бўлмади.',
   sourcesDocuments: 'Манбалар',
@@ -776,7 +771,6 @@ const uzCyrl: Dict = {
   sourcePage: '{n}-бет',
   artifactReady: 'Ариза тайёрланди',
   artifactDownload: '{format} юклаб олиш',
-  answerRoute: 'Йўналиш: {route}',
   voiceGreeting: 'Ассалому Алайкум. Мен Венера овозли ёрдамчисиман сизга қандай ёрдам бераоламан',
   voiceSpeaking: 'Овоз чиқмоқда…',
   voiceReplay: 'Қайта тинглаш',
@@ -804,6 +798,15 @@ const uzCyrl: Dict = {
   deleteChat: 'Ўчириш',
   chatDeleted: 'Суҳбат ўчирилди',
   undo: 'Бекор қилиш',
+  // Pro rejimi (per-xabar)
+  proLabel: 'Pro',
+  proHint: 'Pro: мураккаб саволлар учун — ёрдамчи ташқи моделдан маслаҳат олади (лимит доирасида).',
+  proExhausted: 'Pro лимити тугади. Ойна сурилгани сари тикланади.',
+  proUsed: 'Pro: ташқи моделдан маслаҳат олинди',
+  proNotNeeded: 'Pro: бу жавоб учун керак бўлмади',
+  proDenied: 'Pro берилмади: {why}',
+  proReasonLimit: 'лимит тугаган',
+  proReasonNoUser: 'фойдаланувчи аниқланмади',
 }
 
 const ru: Dict = {
@@ -819,6 +822,7 @@ const ru: Dict = {
   actorType: 'Тип субъекта',
   actorId: 'ID субъекта',
   email: 'Эл. почта',
+  loginName: 'Логин',
   rolesLabel: 'Роли (через запятую)',
   departmentLabel: 'Отдел (необязательно)',
   cancel: 'Отмена',
@@ -880,20 +884,16 @@ const ru: Dict = {
   stopAria: 'Остановить генерацию',
   generationStopped: 'Генерация остановлена.',
   disclaimer: 'Венера может ошибаться. Проверяйте важную информацию.',
-  statusReady: 'Готово',
-  statusBlocked: 'Заблокировано защитой',
-  statusAccessDenied: 'Доступ запрещён',
   statusRequestFailed: 'Запрос не выполнен',
   processing: 'Обработка…',
-  roundTrip: 'Время ответа {n}с',
   networkError: 'Ошибка сети',
   headlineUnsafe: 'Извините, этот запрос не соответствует политике безопасности.',
   headlineAccessDenied: 'У вас недостаточно прав для просмотра этой информации.',
-  headlinePending: 'Pipeline разрешил запрос. Поиск и генерация ответа ожидают подключения бэкенда.',
+  headlinePending: 'Ответа нет. Попробуйте ещё раз.',
   authWelcomeBack: 'С возвращением',
   authCreateAccount: 'Создайте аккаунт',
   authRecover: 'Сброс пароля',
-  authLoginSub: 'Войдите, чтобы продолжить в Венеру.',
+  authLoginSub: 'Войдите с учётной записью HRM / CRM.',
   authRegisterSub: 'Несколько данных — и готово.',
   authForgotSub: 'Поможем вернуть доступ к аккаунту.',
   firstName: 'Имя',
@@ -940,7 +940,6 @@ const ru: Dict = {
   menu: 'Меню',
   passwordTooShort: 'Минимум 8 символов',
   invalidCredentials: 'Неверная почта или пароль',
-  developerMode: 'Режим разработчика',
   thinking: 'Думаю',
   logout: 'Выйти',
   copy: 'Копировать',
@@ -964,13 +963,7 @@ const ru: Dict = {
   errSessionExpired: 'Сессия истекла. Войдите снова.',
   errInvalidRequest: 'Произошла ошибка запроса. Попробуйте ещё раз.',
   errUnsupportedDocument: 'Этот тип документа пока не поддерживается.',
-  statusNoContext: 'Нет источников',
-  statusModuleNotReady: 'Модуль в разработке',
   headlineModuleNotReady: 'Этот модуль пока недоступен. Скоро появится.',
-  domainHR: 'HR',
-  domainPublic: 'Публичный',
-  domainGeneral: 'Общий',
-  domainFuture: 'Скоро',
   documents: 'Документы',
   selectTemplate: 'Выберите документ',
   generate: 'Сгенерировать',
@@ -1012,7 +1005,7 @@ const ru: Dict = {
   wakeWord: 'Слово-активатор',
   wakeWordHint: 'Скажите "Salom Venera", чтобы открыть голосовую панель. Пока включено, микрофон остаётся активным.',
   wakeWordActive: 'Ожидание "Salom Venera"',
-  wakeWordDistorted: 'Сигнал микрофона приходит с вырезанными паузами внутри речи, поэтому "Salom Venera" не распознаётся. Отключите для микрофона "улучшения звука" (шумоподавление / шумовой гейт) в настройках звука Windows или в программе гарнитуры, либо говорите ближе к микрофону.',
+  wakeWordDistorted: 'Микрофон обрезает речь, поэтому "Salom Venera" не распознаётся. Отключите шумоподавление в настройках звука или гарнитуры.',
   chatNotConnected: 'Для этого вопроса нужны актуальные данные, а нужная система пока не подключена к вашей учётной записи здесь. Вопросы по правилам и документам работают.',
   chatFailed: 'Не удалось завершить ответ.',
   sourcesDocuments: 'Источники',
@@ -1021,7 +1014,6 @@ const ru: Dict = {
   sourcePage: 'стр. {n}',
   artifactReady: 'Заявление подготовлено',
   artifactDownload: 'Скачать {format}',
-  answerRoute: 'Маршрут: {route}',
   voiceGreeting: 'Assalomu Alaykum. Men Venera ovozli yordamchisiman sizga qanday yordam beraolaman',
   voiceSpeaking: 'Воспроизведение…',
   voiceReplay: 'Проиграть снова',
@@ -1049,6 +1041,15 @@ const ru: Dict = {
   deleteChat: 'Удалить',
   chatDeleted: 'Чат удалён',
   undo: 'Отменить',
+  // Pro rejimi (per-xabar)
+  proLabel: 'Pro',
+  proHint: 'Pro: для сложных вопросов — ассистент консультируется с внешней моделью (в пределах лимита).',
+  proExhausted: 'Лимит Pro исчерпан. Он восстанавливается по мере сдвига окна.',
+  proUsed: 'Pro: внешняя модель использована',
+  proNotNeeded: 'Pro: для этого ответа не потребовалась',
+  proDenied: 'Pro не предоставлен: {why}',
+  proReasonLimit: 'лимит исчерпан',
+  proReasonNoUser: 'пользователь не определён',
 }
 
 export const i18n = createI18n({
@@ -1056,8 +1057,30 @@ export const i18n = createI18n({
   locale: getInitialLocale(),
   fallbackLocale: 'en',
   // Named interpolation uses {name} / {n} — identical to the original dicts.
-  messages: { uz, 'uz-Cyrl': uzCyrl, ru, en },
+  messages: {
+    uz: { ...uz, ui: ui.uz, report: report.uz, chat: chat.uz, composer: composer.uz, shell: shell.uz, pro: pro.uz },
+    'uz-Cyrl': { ...uzCyrl, ui: ui['uz-Cyrl'], report: report['uz-Cyrl'], chat: chat['uz-Cyrl'], composer: composer['uz-Cyrl'], shell: shell['uz-Cyrl'], pro: pro['uz-Cyrl'] },
+    ru: { ...ru, ui: ui.ru, report: report.ru, chat: chat.ru, composer: composer.ru, shell: shell.ru, pro: pro.ru },
+    en: { ...en, ui: ui.en, report: report.en, chat: chat.en, composer: composer.en, shell: shell.en, pro: pro.en },
+  },
 })
+
+// `admin.*` matnlari (4 til, ~55 kB) faqat admin panelida kerak: chat foydalanuvchisi
+// ularni yuklamasin. Admin marshruti ochilishidan OLDIN qo'shiladi (router), ya'ni
+// panel hech qachon kalit nomlari bilan chizilmaydi. Yuklanmasa - keyingi urinishda qayta.
+let adminMessages: Promise<void> | null = null
+export function loadAdminMessages(): Promise<void> {
+  adminMessages ??= import('./i18n/admin').then(
+    ({ admin }) => {
+      for (const { code } of LOCALES) i18n.global.mergeLocaleMessage(code, { admin: admin[code] })
+    },
+    (err: unknown) => {
+      adminMessages = null
+      throw err
+    },
+  )
+  return adminMessages
+}
 
 // Make the app the authoritative source of <html lang> + persisted locale on
 // startup (index.html only sets a pre-paint default). Mirrors the mount-time

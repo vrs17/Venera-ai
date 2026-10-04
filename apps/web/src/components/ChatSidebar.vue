@@ -1,78 +1,83 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { PanelLeftClose, PanelLeftOpen, Search, SquarePen, X } from 'lucide-vue-next'
 import type { AuthUser } from '../types'
-import type { Theme } from '../theme'
-import { LOCALES, setLocale } from '../i18n'
-import type { Locale } from '../i18n'
-import { ChevronDownIcon, CodeIcon, EarIcon, GlobeIcon, HistoryIcon, MoonIcon, PanelLeftIcon, PlusIcon, SunIcon } from '../icons'
+import type { ThemePreference } from '../theme'
+import VIconButton from '../ui/VIconButton.vue'
+import VKbd from '../ui/VKbd.vue'
+import VResizeHandle from '../ui/VResizeHandle.vue'
+import VSearchField from '../ui/VSearchField.vue'
+import VTooltip from '../ui/VTooltip.vue'
+import { useId } from '../ui/composables/useId'
+import type { ResizablePanel } from '../ui/composables/useResizablePanel'
+import BrandSpark from './BrandSpark.vue'
 import ChatHistory from './ChatHistory.vue'
 import IdentityBar from './IdentityBar.vue'
 
-const props = defineProps<{
-  user: AuthUser | null
-  theme: Theme
-  open: boolean
-  collapsed: boolean
-  devMode: boolean
-  /** "Salom Venera" tinglash yoqilgan. */
-  wake: boolean
-  /** Mikrofon ochiq va tinglayapti - foydalanuvchi buni KO'RISHI kerak. */
-  wakeActive: boolean
-  /** Joriy tilda uyg'otish so'zi bor (hozircha faqat o'zbek). */
-  wakeSupported: boolean
-  /** Server oxirgi parchani buzilgan deb topdi (nutq darvoza bilan kesilgan).
-   *  Buni faqat foydalanuvchi tuzata oladi - shuning uchun ko'rsatiladi. */
-  wakeDistorted: boolean
-}>()
+/**
+ * Chap panel - faqat navigatsiya: logotip, "Yangi suhbat", qidiruv, tarix va pastda
+ * hisob (sozlamalar hisob menyusida). Ikki rejim:
+ *   inline (≥1120)   - sahifada; kenglik `resize` dan (tortib o'zgartiriladi, eslab
+ *                      qolinadi), yig'ilsa 56px belgilar ustuni;
+ *   drawer (<1120)   - ChatView uni VSheet ichida ochadi (fokus tuzog'i, Esc, parda).
+ * Yangi suhbat va suhbat ochish drawer'ni yopadi.
+ *
+ * Ochiq panel va ustun - BITTA <aside>: kenglik silliq o'zgaradi, belgilar (yangi
+ * suhbat, qidiruv, avatar) ikkala holatda bir xil x da turadi, yozuvlar esa so'nib,
+ * torayayotgan panel tomonidan kesiladi. Ilgari ikki xil <aside> almashardi - panel
+ * "sakrardi" va bosilgan tugma DOM'dan chiqib, fokus <body> ga tushardi.
+ */
+const props = withDefaults(
+  defineProps<{
+    user: AuthUser | null
+    mode?: 'inline' | 'drawer'
+    /** Faqat inline: 56px belgilar ustuni (tortish paytida - yig'ilish chegarasidan o'tilgan). */
+    collapsed?: boolean
+    /** Faqat inline: kenglik boshqaruvi (ChatView'dagi `useResizablePanel`). */
+    resize?: ResizablePanel | null
+    theme: ThemePreference
+    wake: boolean
+    wakeSupported: boolean
+    wakeDistorted?: boolean
+    wakeBlocked?: boolean
+    isAdmin?: boolean
+  }>(),
+  { mode: 'inline', collapsed: false, resize: null, wakeDistorted: false, wakeBlocked: false, isAdmin: false },
+)
 const emit = defineEmits<{
-  toggleTheme: []
-  toggleDevMode: []
-  toggleWake: []
+  toggleCollapse: []
   newChat: []
   /** Yon paneldagi suhbat tanlandi - ChatView uni ochadi. */
   openChat: [id: string]
   close: []
-  toggleCollapse: []
+  setTheme: [theme: ThemePreference]
+  toggleWake: []
+  openDesktop: []
   logout: []
 }>()
 
-const { t, locale } = useI18n({ useScope: 'global' })
-const currentLang = computed(() => LOCALES.find((l) => l.code === (locale.value as Locale)) ?? LOCALES[0])
-// Collapse only applies on desktop; the mobile sidebar is the full off-canvas panel.
-const mq = window.matchMedia('(max-width: 768px)')
-const isMobile = ref(mq.matches)
-function syncMq() {
-  isMobile.value = mq.matches
-}
-onMounted(() => {
-  syncMq()
-  mq.addEventListener('change', syncMq)
-  window.addEventListener('resize', syncMq)
+const { t } = useI18n({ useScope: 'global' })
+const query = ref('')
+const search = ref<InstanceType<typeof VSearchField> | null>(null)
+const aside = ref<HTMLElement | null>(null)
+const toggle = ref<InstanceType<typeof VIconButton> | null>(null)
+const panelId = useId('sb')
+
+const inline = computed(() => props.mode === 'inline')
+const folded = computed(() => inline.value && props.collapsed)
+
+// Kenglik `resize` dan; u berilmasa (masalan, katalogda) - tokenlardagi qiymatlar.
+const panelStyle = computed(() => {
+  if (!inline.value) return undefined
+  return (
+    props.resize?.style.value ?? {
+      '--panel-w': props.collapsed ? 'var(--rail-w)' : 'var(--sidebar-w)',
+      '--panel-content-w': 'var(--sidebar-w)',
+    }
+  )
 })
 
-const compact = computed(() => props.collapsed && !isMobile.value)
-
-// Language menu opens upward (the row sits low in the sidebar).
-const langOpen = ref(false)
-const langRef = ref<HTMLElement | null>(null)
-function onDocDown(e: MouseEvent) {
-  if (langRef.value && !langRef.value.contains(e.target as Node)) langOpen.value = false
-}
-watch(langOpen, (o) => {
-  if (o) document.addEventListener('mousedown', onDocDown)
-  else document.removeEventListener('mousedown', onDocDown)
-})
-onBeforeUnmount(() => {
-  document.removeEventListener('mousedown', onDocDown)
-  mq.removeEventListener('change', syncMq)
-  window.removeEventListener('resize', syncMq)
-})
-
-function chooseLang(code: Locale) {
-  setLocale(code)
-  langOpen.value = false
-}
 function onNewChat() {
   emit('newChat')
   emit('close')
@@ -81,404 +86,355 @@ function onOpenChat(id: string) {
   emit('openChat', id)
   emit('close')
 }
-// Collapsed: expand the rail, then reveal the language menu.
-function expandToLang() {
+
+// Yig'ilganda tarix va qidiruv `inert` bo'ladi. Fokus ularning ichida bo'lsa (masalan,
+// tarix qatorida Esc bosildi), u <body> ga tushib qolardi - DOM yangilanishidan OLDIN
+// (watch standart 'pre') joyida qoladigan yig'ish tugmasiga o'tkaziladi.
+watch(folded, (now) => {
+  if (!now) return
+  const active = document.activeElement
+  if (!(active instanceof HTMLElement) || !aside.value?.contains(active) || !active.closest('.sb__block')) return
+  ;(toggle.value?.$el as HTMLElement | undefined)?.focus({ preventScroll: true })
+})
+
+// Yig'iq ustundagi lupa: panel ochiladi va fokus darhol qidiruvga. `preventScroll` -
+// maydon hali ochilayotgan panelda kesilgan holda turibdi, brauzer uni "ko'rsataman"
+// deb panel ichini yon tomonga surib qo'ymasin.
+async function expandToSearch() {
   emit('toggleCollapse')
-  langOpen.value = true
+  await nextTick()
+  search.value?.focus({ preventScroll: true })
 }
 </script>
 
 <template>
-  <aside class="sidebar" :class="{ 'is-open': open, 'is-collapsed': compact }">
-    <div class="sidebar__top">
-      <button class="sidebar__toggle" :aria-label="t('menu')" :title="t('menu')" @click="emit('toggleCollapse')">
-        <PanelLeftIcon :size="18" />
-      </button>
-      <span v-if="!compact" class="sidebar__brand">
-        Venera
-        <span class="sidebar__spark" aria-hidden="true">✦</span>
-      </span>
-    </div>
-
-    <button class="sidebar__new" :title="t('newChat')" @click="onNewChat">
-      <PlusIcon :size="15" />
-      <span v-if="!compact">{{ t('newChat') }}</span>
-    </button>
-
-    <!-- Suhbatlar tarixi. Yig'ilgan panelda ro'yxatga joy yo'q - belgi
-         panelni ochadi. -->
-    <ChatHistory v-if="!compact" @open="onOpenChat" @removed-active="emit('newChat')" />
-    <template v-else>
-      <button class="sidebar__row sidebar__row--history" :title="t('historyHeading')" @click="emit('toggleCollapse')">
-        <HistoryIcon :size="16" />
-      </button>
-      <div class="sidebar__spacer" />
-    </template>
-
-    <div class="sidebar__config">
-      <!-- Developer mode -->
-      <button
-        class="sidebar__row sidebar__row--switch"
-        :class="{ 'is-on': devMode }"
-        :title="t('developerMode')"
-        role="switch"
-        :aria-checked="devMode"
-        @click="emit('toggleDevMode')"
-      >
-        <CodeIcon :size="16" />
-        <span v-if="!compact" class="sidebar__row-label">{{ t('developerMode') }}</span>
-        <span v-if="!compact" class="sidebar__switch" aria-hidden="true"><span class="sidebar__switch-knob" /></span>
-      </button>
-
-      <!-- "Salom Venera". Faqat uyg'otish so'zi bor tillarda ko'rinadi -
-           boshqa tilda tugma bosilsa hech narsa qilmasdi. -->
-      <button
-        v-if="wakeSupported"
-        class="sidebar__row sidebar__row--switch"
-        :class="{ 'is-on': wake }"
-        :title="t('wakeWordHint')"
-        role="switch"
-        :aria-checked="wake"
-        @click="emit('toggleWake')"
-      >
-        <EarIcon :size="16" />
-        <span v-if="!compact" class="sidebar__row-label">{{ t('wakeWord') }}</span>
-        <span
-          v-if="!compact && wakeActive"
-          class="sidebar__live"
-          :title="t('wakeWordActive')"
-          aria-hidden="true"
+  <aside
+    :id="panelId"
+    ref="aside"
+    class="sb"
+    :class="{
+      'is-inline': inline,
+      'is-drawer': !inline,
+      'is-folded': folded,
+      'is-resizing': !!resize?.dragging.value,
+    }"
+    :style="panelStyle"
+    :aria-label="t('chat.navigation')"
+  >
+    <div class="sb__clip">
+      <div class="sb__top">
+        <span class="sb__brand sb__block">
+          <span class="sb__spark" aria-hidden="true"><BrandSpark :size="16" /></span>
+          <span class="sb__word">Venera</span>
+        </span>
+        <!-- Bitta tugma ikkala holatda: panel o'ng chetiga yopishgan, yig'ilganda chet
+             bilan birga ustun markaziga suriladi. Element almashmaydi - fokus saqlanadi. -->
+        <VIconButton
+          v-if="inline"
+          ref="toggle"
+          class="sb__toggle"
+          :icon="folded ? PanelLeftOpen : PanelLeftClose"
+          :label="folded ? t('chat.expand') : t('chat.collapse')"
+          :tooltip-placement="folded ? 'right' : 'bottom'"
+          @click="emit('toggleCollapse')"
         />
-        <span v-if="!compact" class="sidebar__switch" aria-hidden="true"><span class="sidebar__switch-knob" /></span>
-      </button>
-      <!-- Yozuv buzilgan: "uyg'onmadi" ning sababi so'zda emas, mikrofon
-           zanjirida. Bu holatda jim turish foydalanuvchini "aniq aytmadim"
-           deb o'ylashga majbur qilardi - aslida u hech narsa qila olmasdi. -->
-      <p v-if="wakeSupported && wake && wakeDistorted && !compact" class="sidebar__notice" role="status">
-        {{ t('wakeWordDistorted') }}
-      </p>
+        <VIconButton
+          v-else
+          class="sb__toggle"
+          size="sm"
+          :icon="X"
+          :label="t('close')"
+          tooltip-placement="bottom"
+          @click="emit('close')"
+        />
+      </div>
 
-      <!-- Theme -->
-      <button class="sidebar__row" :title="theme === 'dark' ? t('light') : t('dark')" @click="emit('toggleTheme')">
-        <SunIcon v-if="theme === 'dark'" :size="17" />
-        <MoonIcon v-else :size="17" />
-        <span v-if="!compact" class="sidebar__row-label">{{ theme === 'dark' ? t('light') : t('dark') }}</span>
-      </button>
-
-      <!-- Language -->
-      <div v-if="!compact" ref="langRef" class="sidebar__lang" @keydown.esc="langOpen = false">
-        <button class="sidebar__row" :aria-expanded="langOpen" aria-haspopup="menu" @click="langOpen = !langOpen">
-          <GlobeIcon :size="16" />
-          <span class="sidebar__row-label">{{ currentLang.label }}</span>
-          <ChevronDownIcon
-            :size="10"
-            :style="{ transform: langOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', marginLeft: 'auto', flexShrink: 0 }"
-          />
-        </button>
-        <div v-if="langOpen" class="sidebar__menu glass">
-          <button
-            v-for="l in LOCALES"
-            :key="l.code"
-            class="sidebar__menu-item"
-            :class="{ 'is-active': l.code === locale }"
-            @click="chooseLang(l.code)"
-          >
-            <span>{{ l.label }}</span>
-            <span v-if="l.code === locale" class="sidebar__dot" aria-hidden="true" />
+      <div class="sb__actions">
+        <VTooltip
+          :text="t('newChat')"
+          shortcut="mod+shift+o"
+          placement="right"
+          :disabled="!folded"
+          :describe="false"
+        >
+          <button type="button" class="sb__new" aria-keyshortcuts="Control+Shift+O Meta+Shift+O" @click="onNewChat">
+            <span class="sb__row">
+              <span class="sb__ico"><SquarePen :size="18" :stroke-width="1.75" aria-hidden="true" /></span>
+              <span class="sb__label sb__new-label">{{ t('newChat') }}</span>
+              <VKbd class="sb__kbd" keys="mod+shift+o" size="sm" aria-hidden="true" />
+            </span>
           </button>
+        </VTooltip>
+
+        <!-- Qidiruv: ochiq panelda maydon, ustunda - aynan maydondagi lupa o'rnida
+             turgan tugma (ikkalasi bir joyda almashinadi, belgi siljimaydi). -->
+        <div class="sb__search">
+          <div class="sb__search-field sb__block" :inert="folded">
+            <VSearchField
+              ref="search"
+              v-model="query"
+              size="sm"
+              :placeholder="t('ui.search')"
+              :aria-label="t('chat.search')"
+            />
+          </div>
+          <span v-if="inline" class="sb__search-rail sb__rail-only" :inert="!folded">
+            <VIconButton
+              size="sm"
+              :icon="Search"
+              :label="t('chat.search')"
+              tooltip-placement="right"
+              @click="expandToSearch"
+            />
+          </span>
         </div>
       </div>
-      <button v-else class="sidebar__row" :title="currentLang.label" @click="expandToLang">
-        <GlobeIcon :size="16" />
-      </button>
 
-      <!-- Account -->
-      <IdentityBar v-if="!compact" :user="user" @logout="emit('logout')" />
-      <button v-else class="sidebar__row sidebar__row--avatar" :title="user?.email || ''" @click="emit('toggleCollapse')">
-        <span class="sidebar__avatar">{{ (user?.email?.[0] || '?').toUpperCase() }}</span>
-      </button>
+      <div class="sb__hist sb__block" :inert="folded">
+        <ChatHistory :query="query" @open="onOpenChat" @removed-active="emit('newChat')" />
+      </div>
+
+      <div class="sb__foot">
+        <IdentityBar
+          :compact="folded"
+          :user="user"
+          :theme="theme"
+          :wake="wake"
+          :wake-supported="wakeSupported"
+          :wake-distorted="wakeDistorted"
+          :wake-blocked="wakeBlocked"
+          :is-admin="isAdmin"
+          @set-theme="emit('setTheme', $event)"
+          @toggle-wake="emit('toggleWake')"
+          @open-desktop="emit('openDesktop')"
+          @logout="emit('logout')"
+        />
+      </div>
     </div>
+
+    <!-- Kesuvchi o'ramadan TASHQARIDA: tutqich chegaraning ustida, yarmi panel tashqarisida. -->
+    <VResizeHandle v-if="inline && resize?.enabled.value" :panel="resize" :controls="panelId" />
   </aside>
 </template>
 
 <style scoped>
-.sidebar {
-  width: 264px;
+.sb {
+  position: relative;
+  display: flex;
+  flex-direction: column;
   flex-shrink: 0;
   height: 100%;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  padding: 18px 14px;
-  background: var(--surface-sunken);
-  border-right: 1px solid var(--border);
-  position: relative;
-  z-index: 20;
-  transition: width 0.2s ease;
+  min-height: 0;
+  background: var(--bg-subtle);
+  border-right: 1px solid var(--line);
 }
-.sidebar__top {
+/* Sahifadagi panel: kenglik --panel-w dan (yig'iq bo'lsa - ustun), ochish/yig'ish silliq.
+   Tortish paytida o'tish o'chadi - panel kursorga yopishib yursin, orqada qolmasin.
+   --sb-inner-w - ichki kenglik OCHIQ panel bo'yicha (1px - o'ng chegara), --sb-row-w -
+   bitta qator mazmuni. Ikkalasi yig'ilish animatsiyasida o'zgarmaydi: yozuvlar qayta
+   joylashmaydi, faqat kesiladi. */
+.sb.is-inline {
+  --sb-inner-w: calc(var(--panel-content-w) - 1px);
+  --sb-row-w: calc(var(--sb-inner-w) - 2 * var(--s-2));
+  width: var(--panel-w);
+  transition: width var(--dur-panel) var(--ease-out);
+}
+.sb.is-inline.is-resizing {
+  transition: none;
+}
+.sb.is-drawer {
+  width: 100%;
+  border-right: 0;
+  background: var(--surface);
+  /* viewport-fit=cover: drawer ekran chetidan 8px ichkarida (VSheet), iPhone'da esa
+     kesik/holat paneli va "home" chizig'i undan kattaroq - logotip va hisob ular
+     ostiga kirib qolmasin. */
+  padding:
+    max(0px, calc(env(safe-area-inset-top, 0px) - var(--s-2))) 0
+    max(0px, calc(env(safe-area-inset-bottom, 0px) - var(--s-2)))
+    max(0px, calc(env(safe-area-inset-left, 0px) - var(--s-2)));
+}
+/* Kesish shu ichki o'ramada: tutqich (VResizeHandle) panel chetidan tashqariga chiqib
+   turadi va kesilmasligi kerak. `clip` aylantiriladigan quti emas - kesilgan maydonga
+   fokus berilganda panel ichi yon tomonga surilib qolmaydi (`hidden` - eski brauzerlar). */
+.sb__clip {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  overflow: clip;
+}
+
+.sb__top {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
+  flex-shrink: 0;
+  height: 56px;
+  /* Uchqun markazi = belgilar ustuni markazi (28px): pastdagi belgilar bilan bir chiziqda. */
+  padding: 0 var(--s-5);
 }
-.sidebar__toggle {
+.sb__brand {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  flex-shrink: 0;
-  border: none;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  gap: var(--s-3);
+  white-space: nowrap;
 }
-.sidebar__toggle:hover {
-  background: var(--surface-hover);
-  color: var(--text);
+.sb__spark {
+  display: inline-flex;
+  color: var(--brand);
 }
-.sidebar__brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.sb__word {
   font-size: 15px;
   font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
+  letter-spacing: -0.011em;
 }
-.sidebar__spark {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--accent);
+/* O'ng chetga yopishgan: yig'ilganda chet bilan birga suriladi va boshqa belgilar bilan
+   bir ustunda (markazi 28px) to'xtaydi. -1px - o'ng chegara (u kesilgan qutidan tashqarida). */
+.sb__toggle {
+  position: absolute;
+  top: calc((var(--rail-w) - 36px) / 2);
+  right: calc((var(--rail-w) - 36px) / 2 - 1px);
 }
-.sidebar__new {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 600;
-  font-family: 'Figtree', sans-serif;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  transition: background 0.15s, border-color 0.15s;
+.sb.is-drawer .sb__toggle {
+  top: var(--s-3);
+  right: var(--s-3);
 }
-.sidebar__new:hover {
-  background: var(--surface-hover);
-  border-color: var(--border-hover);
-}
-.sidebar__nav {
-  margin-top: 4px;
-}
-.sidebar__spacer {
-  flex: 1;
-}
-.sidebar__row--history {
-  margin-top: 10px;
-}
-.sidebar__config {
+
+.sb__actions {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+  gap: var(--s-2);
+  flex-shrink: 0;
+  padding: var(--s-1) var(--s-2) var(--s-3);
 }
-.sidebar__row {
+.sb__new {
   display: flex;
   align-items: center;
-  gap: 10px;
   width: 100%;
-  padding: 9px 10px;
-  border: none;
-  border-radius: 12px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 13.5px;
-  font-weight: 500;
-  font-family: 'Figtree', sans-serif;
-  cursor: pointer;
-  white-space: nowrap;
+  height: 36px;
+  padding: 0;
   overflow: hidden;
-  transition: background 0.15s, color 0.15s;
-}
-.sidebar__row:hover {
-  background: var(--surface-hover);
+  border-radius: var(--r-sm);
   color: var(--text);
-}
-.sidebar__row-label {
-  white-space: nowrap;
-}
-/* Uyg'otish yozuvi buzilgani haqida eslatma - qator ostida, kichik. */
-.sidebar__notice {
-  margin: -2px 8px 6px 8px;
-  padding: 6px 8px;
-  font-size: 12px;
-  line-height: 1.35;
-  color: var(--text);
-  opacity: 0.85;
-  border-left: 2px solid var(--border-hover);
-  border-radius: 0 6px 6px 0;
-  background: var(--surface-hover);
-}
-/* Developer-mode pill switch. */
-.sidebar__row--switch.is-on {
-  color: var(--text);
-}
-.sidebar__switch {
-  margin-left: auto;
-  flex-shrink: 0;
-  width: 34px;
-  height: 19px;
-  border-radius: 999px;
-  background: var(--surface-hover);
-  border: 1px solid var(--border-hover);
-  position: relative;
-  transition: background 0.2s, border-color 0.2s;
-}
-.sidebar__row--switch.is-on .sidebar__switch {
-  background: var(--ink);
-  border-color: transparent;
-}
-.sidebar__switch-knob {
-  position: absolute;
-  top: 1.5px;
-  left: 1.5px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-  transition: transform 0.22s var(--spring);
-}
-.sidebar__row--switch.is-on .sidebar__switch-knob {
-  transform: translateX(15px);
-}
-/* Collapsed rail: no track visible, so signal the active mode by tinting the icon. */
-.sidebar.is-collapsed .sidebar__row--switch.is-on {
-  color: var(--ink);
-}
-.sidebar__avatar {
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--avatar-bg);
-  color: var(--avatar-fg);
-  font-size: 11px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.sidebar__lang {
-  position: relative;
-}
-.sidebar__menu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  right: 0;
-  padding: 6px;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: 12px;
-  box-shadow: var(--menu-shadow);
-  z-index: 40;
-  animation: fadeUp 0.2s ease both;
-}
-.sidebar__menu-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  width: 100%;
-  padding: 8px 10px;
-  border: none;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: 'Figtree', sans-serif;
-  font-size: 13.5px;
+  font-size: var(--fs-body-sm);
   font-weight: 500;
   text-align: left;
-  cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out);
 }
-.sidebar__menu-item:hover {
-  background: var(--surface-hover);
+/* Tugma panel bilan torayadi (foni ustunda 40px katak bo'lib qoladi), ichidagi qator esa
+   ochiq panel kengligida - belgi joyida, yozuv kesiladi. */
+.sb__row {
+  display: flex;
+  align-items: center;
+  flex: none;
+  width: var(--sb-row-w, 100%);
+  height: 100%;
+  padding-right: var(--s-2);
 }
-.sidebar__menu-item.is-active {
-  color: var(--text);
-  font-weight: 700;
+/* Belgi katagi = ustun kengligi minus chetlar: markazi har doim 28px da. */
+.sb__ico {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: calc(var(--rail-w) - 2 * var(--s-2));
+  color: var(--text-2);
 }
-.sidebar__dot {
-  width: 6px;
-  height: 6px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--ink);
+.sb__new-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
-/* Collapsed rail: icon-only, centred. */
-.sidebar.is-collapsed {
-  width: 64px;
-  padding: 18px 10px;
+.sb__kbd {
+  flex: none;
+  margin-left: var(--s-2);
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease-out);
 }
-.sidebar.is-collapsed .sidebar__top,
-.sidebar.is-collapsed .sidebar__new,
-.sidebar.is-collapsed .sidebar__row {
-  justify-content: center;
-  padding-left: 0;
-  padding-right: 0;
-}
-
-/* Mobile: off-canvas slide-in panel (always full width, never collapsed). */
-@media (max-width: 768px) {
-  .sidebar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    transform: translateX(-100%);
-    transition: transform 0.28s ease;
-    box-shadow: var(--menu-shadow);
+@media (hover: hover) {
+  .sb__new:hover {
+    background: var(--fill);
   }
-  .sidebar.is-open {
-    transform: translateX(0);
+  .sb__new:hover .sb__kbd {
+    opacity: 1;
   }
-  .sidebar__toggle {
+}
+.sb__new:focus-visible .sb__kbd {
+  opacity: 1;
+}
+@media (hover: none) {
+  .sb__kbd {
     display: none;
   }
 }
-/* Mikrofon ochiq. Qizil - yozuv indikatorining umumiy tili, lekin yolg'iz
-   qizil nuqta xato belgisiga o'xshab ketadi: halqa uni "efirda" ma'nosiga
-   yaqinlashtiradi. Yorliq ICHIDA emas, yonida turadi - u yerda `nowrap`
-   uni harflarga yopishtirib qo'yardi.
-   Nomi `__dot` EMAS: u til tanlovidagi belgi uchun band. */
-.sidebar__live {
+
+.sb__search {
+  position: relative;
+}
+.sb__search-field {
+  width: var(--sb-row-w, 100%);
+}
+/* Maydondagi lupa - belgilar ustunida: 8 + 1 (chegara) + 10 (ichki chet) + 9 = 28px.
+   VInput uni 2px chapga suradi (`margin-left: -2px`) - bu yerda yo'q, aks holda ustun
+   tugmasiga almashganda lupa siljib ko'rinardi. Ustun tugmasi (sm, 32px): 8 + 4 + 16. */
+.sb__search-field :deep(.v-input__lead) {
+  margin-left: 0;
+}
+.sb__search-rail {
+  position: absolute;
+  top: 50%;
+  left: var(--s-1);
+  translate: 0 -50%;
+}
+
+.sb__hist {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  width: var(--sb-inner-w, 100%);
+}
+
+.sb__foot {
   flex-shrink: 0;
-  width: 6px;
-  height: 6px;
-  margin-left: -4px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
-  animation: sidebar-live 1.8s ease-in-out infinite;
+  padding: var(--s-2);
+  border-top: 1px solid var(--line);
+  transition: border-color var(--dur-1) var(--ease-out);
 }
-@keyframes sidebar-live {
-  0%, 100% { opacity: 0.35; }
-  50%      { opacity: 1; }
+
+/* ---- yig'ish / ochish ----
+   Yozuvlar tez (--dur-1) so'nadi: kenglik animatsiyasi (--dur-panel) tugashini kutmaydi.
+   `sb__block` - butun bo'lak (logotip, qidiruv maydoni, tarix): so'ngach
+   `visibility: hidden` - Tab va ekran o'quvchi uni ko'rmaydi (shablonda yana `inert`).
+   `sb__label` - tugma ichidagi yozuv: faqat shaffof, chunki u tugmaning NOMI va
+   ustunda ham o'qilishi kerak. `sb__rail-only` - aksincha, faqat ustunda. */
+.sb__block,
+.sb.is-folded .sb__rail-only {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    visibility 0s;
 }
-@media (prefers-reduced-motion: reduce) {
-  .sidebar__live { animation: none; opacity: 1; }
+.sb.is-folded .sb__block,
+.sb__rail-only {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    visibility 0s linear var(--dur-1);
+}
+.sb__label {
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+.sb.is-folded .sb__label,
+.sb.is-folded .sb__new .sb__kbd {
+  opacity: 0;
+}
+.sb.is-folded .sb__foot {
+  border-top-color: transparent;
 }
 </style>

@@ -1,15 +1,34 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { CSSProperties } from 'vue'
+import { ArrowUp, Mic, Square } from 'lucide-vue-next'
 import type { Phase } from '../types'
-import { AttachIcon, ConversationIcon, MicIcon, SendIcon, StopIcon } from '../icons'
-import BottomCurrent from './BottomCurrent.vue'
+import { ApiError } from '../api/http'
+import { localizeApiError } from '../api/errors'
+import VIconButton from '../ui/VIconButton.vue'
+import VTooltip from '../ui/VTooltip.vue'
+import { useId } from '../ui/composables/useId'
+import { toast } from '../ui/useToast'
+import { usePro } from '../composables/usePro'
+import { useDictation } from '../composables/useDictation'
+import type { DictationOutcome, DictationStartFailure } from '../composables/useDictation'
 import ComposerMenu from './ComposerMenu.vue'
+import DictationBar from './chat/DictationBar.vue'
+import EnginePicker from './chat/EnginePicker.vue'
 
-// Grow the textarea up to ~7 lines, then scroll internally.
-const MAX_HEIGHT = 168
-
+/**
+ * Yozish maydoni (spec §4.3): suzuvchi karta - matn, ostida bitta qator boshqaruv:
+ * chapda "+" (ulanishlar, fayl), versiya ("v2 ▾" - faqat odamga tanlov berilgan bo'lsa)
+ * va "Pro" kaliti, o'ngda mikrofon (ovoz bilan yozish) va yuborish.
+ * Javob yozilayotganda yuborish o'rnini "To'xtatish" egallaydi.
+ *
+ * Mikrofon HECH QAYERGA OLIB BORMAYDI: u shu kartaning ichida ovozni yozib oladi
+ * (jonli to'lqin bilan) va matnni maydonga qo'yadi - yuborishni odam o'zi qiladi.
+ * Jonli ovozli suhbat (VoicePanel) hozircha faqat "Salom Venera" orqali ochiladi.
+ *
+ * Joylashuv (pastda yopishish, safe-area, salomlashuvda markaz) - ChatView'ning ishi;
+ * bu komponent faqat kartani chizadi.
+ */
 const props = defineProps<{
   phase: Phase
   // Returns true if the send was accepted (so the dock clears its input).
@@ -19,25 +38,23 @@ const props = defineProps<{
   stop?: () => void
 }>()
 
-// Opening the voice panel is the parent's business — the dock only asks.
-const emit = defineEmits<{ (e: 'conversation'): void }>()
+// Diktovka paytida mikrofon kompozerniki: ChatView shunga qarab "Salom Venera"
+// tinglovchisini to'xtatib turadi (VoicePanel ochiqdagidek), aks holda u
+// aytilgan gapni ham eshitib, serverga "uyg'otish so'zi" deb yuborardi.
+const emit = defineEmits<{ (e: 'dictating', on: boolean): void }>()
 
-const { t } = useI18n({ useScope: 'global' })
+const { t, locale } = useI18n({ useScope: 'global' })
+const inputId = useId('composer')
 const value = ref('')
-const focused = ref(false)
-const hovering = ref(false)
-const convHover = ref(false)
 const taRef = ref<HTMLTextAreaElement | null>(null)
-// "+" menyusi (rasm, ulanishlar). Tugma dockning ichida, menyu esa tashqarida
-// (qarang ComposerMenu) - shuning uchun tugmaga ref kerak: menyu uni "o'zimniki"
-// deb biladi va unga bosilganda yopilmaydi.
-const menuOpen = ref(false)
-const plusRef = ref<HTMLButtonElement | null>(null)
-const plusHover = ref(false)
+const cardRef = ref<HTMLElement | null>(null)
+
+// 1-8 qator o'sadi, keyin ichida aylanadi. Qator balandligi CSS dagi line-height bilan bir xil.
+const LINE_HEIGHT = 24
+const MAX_ROWS = 8
 
 const hasText = computed(() => value.value.trim().length > 0)
 const busy = computed(() => props.phase !== 'idle')
-const active = computed(() => focused.value || hasText.value)
 
 // Auto-resize to fit content (reset to one line when cleared after send).
 // flush:'post' so the textarea's scrollHeight is measured after the new value
@@ -45,12 +62,17 @@ const active = computed(() => focused.value || hasText.value)
 function resize() {
   const ta = taRef.value
   if (!ta) return
+  const cs = getComputedStyle(ta)
+  const max = LINE_HEIGHT * MAX_ROWS + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
   ta.style.height = 'auto'
-  ta.style.height = `${Math.min(ta.scrollHeight, MAX_HEIGHT)}px`
+  ta.style.height = `${Math.min(ta.scrollHeight, max)}px`
+  ta.style.overflowY = ta.scrollHeight > max ? 'auto' : 'hidden'
 }
 onMounted(resize)
 watch(value, resize, { flush: 'post' })
 
+// Qoralama FAQAT qabul qilinganda tozalanadi: quvur band bo'lsa (send → false)
+// yozilgan savol yo'qolmaydi.
 function trySend() {
   if (props.send(value.value)) value.value = ''
 }
@@ -68,222 +90,406 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
-const roundButton: CSSProperties = {
-  width: '34px',
-  height: '34px',
-  border: 'none',
-  background: 'transparent',
-  borderRadius: '50%',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  flexShrink: 0,
-  color: 'var(--icon-muted)',
-}
-const disabledRoundButton: CSSProperties = { ...roundButton, cursor: 'not-allowed' }
-
-// "+" jonli: menyuni ochadi. Ochiq yoki sichqoncha ustida bo'lsa fon chiqadi,
-// tugma menyuga tegishli ekani ko'rinsin.
-const attachButtonStyle = computed<CSSProperties>(() => {
-  const lit = menuOpen.value || plusHover.value
-  return {
-    ...roundButton,
-    position: 'relative',
-    cursor: 'pointer',
-    background: lit ? 'var(--surface-hover)' : 'transparent',
-    color: lit ? 'var(--text)' : 'var(--icon-muted)',
-    transition: 'background 0.15s, color 0.15s',
-  }
-})
-
-// A filled square-ish button, not another outlined circle: the three buttons to
-// its left are all single actions on the current message, this one switches the
-// whole interaction to voice. Solid fill is what separates the two groups, so
-// the label is no longer needed to carry that difference.
-const conversationBtnStyle = computed<CSSProperties>(() => ({
-  display: 'grid',
-  placeItems: 'center',
-  width: '38px',
-  height: '38px',
-  border: 'none',
-  borderRadius: '12px',
-  cursor: 'pointer',
-  flexShrink: 0,
-  background: convHover.value ? 'var(--voice)' : 'var(--voice-soft)',
-  color: convHover.value ? '#FFFFFF' : 'var(--voice)',
-  transition: 'background 0.22s, color 0.22s, transform 0.1s',
-  transform: convHover.value ? 'scale(1.05)' : 'none',
-}))
-
-const textareaStyle: CSSProperties = {
-  flex: 1,
-  border: 'none',
-  outline: 'none',
-  resize: 'none',
-  fontFamily: 'Figtree, sans-serif',
-  fontSize: '15.5px',
-  lineHeight: 1.45,
-  color: 'var(--text)',
-  background: 'transparent',
-  minWidth: 0,
-  padding: '7px 0',
-  margin: 0,
-  maxHeight: `${MAX_HEIGHT}px`,
-  overflowY: 'auto',
-  display: 'block',
-  boxSizing: 'border-box',
+// Kartaning bo'sh joyiga (tugmalar orasiga) bosilsa ham kursor matnga tushsin.
+// Diktovka paytida maydon yashirin - u yerga fokus yuborilmaydi.
+function onCardPointerDown(e: PointerEvent) {
+  if (dictating.value) return
+  const target = e.target as Element | null
+  if (!target || target === taRef.value || target.closest('button, a, [role="button"]')) return
+  e.preventDefault()
+  taRef.value?.focus()
 }
 
-const dockStyle = computed<CSSProperties>(() => ({
-  position: 'relative',
-  width: '100%',
-  borderRadius: '26px',
-  background: 'var(--glass-bg)',
-  // No solid border line at all — the gradient light ring (.dock::before) is the
-  // only edge. The glow strengthens when active (focused / typing).
-  border: 'none',
-  display: 'flex',
-  alignItems: 'flex-end',
-  gap: '8px',
-  padding: '7px 10px 7px 14px',
-  pointerEvents: 'auto',
-  boxSizing: 'border-box',
-  transition: 'box-shadow 0.5s ease, background 0.3s',
-  // No border line — a ~5px accent glow that fades solid -> transparent, only
-  // when active (focused / typing), keeping the accent reserved for focus.
-  boxShadow: active.value
-    ? '0 0 5px var(--accent), 0 0 10px rgba(232, 51, 26, 0.3), var(--glass-shadow)'
-    : 'var(--glass-shadow)',
-}))
+// "Pro" kaliti - SHU xabar uchun. Holat modul darajasida (`usePro`): javob kelganda
+// byudjetni ChatView yangilaydi, bu yerda faqat ko'rsatiladi. Qoldiq - tooltip'da
+// (kam so'z: panelda faqat "Pro" yozuvi).
+//
+// Kalit FAQAT `available` bo'lsa bor (backend: shu kanal v2 da va byudjet o'qildi).
+// v1 kanalida u umuman chizilmaydi - o'chiq tugma "nega bosilmaydi?" degan savol
+// tug'dirardi, javobi esa odamga kerak emas (sozlama).
+const { enabled: proOn, available: proAvailable, remaining: proLeft, exhausted: proSpent } = usePro()
 
-// While busy the same slot becomes a Stop button: gray at rest, red on hover — the
-// destructive "stop" reveals its intent on hover instead of always shouting red.
-const sendBtnStyle = computed<CSSProperties>(() => {
-  let background: string
-  let color: string
-  if (busy.value) {
-    background = hovering.value ? 'var(--accent)' : 'color-mix(in srgb, var(--surface-hover) 82%, var(--ink))'
-    color = hovering.value ? 'var(--accent-contrast)' : 'var(--text-secondary)'
-  } else if (hasText.value) {
-    background = 'var(--accent)'
-    color = 'var(--accent-contrast)'
-  } else {
-    background = 'var(--surface-hover)'
-    color = 'var(--icon-muted)'
-  }
-  return {
-    width: '38px',
-    height: '38px',
-    border: 'none',
-    borderRadius: '50%',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-    background,
-    color,
-    transition: 'background 0.25s, color 0.25s, transform 0.1s',
-  }
+// Tooltip = ekran o'quvchi tavsifi (VTooltip `aria-describedby` ni o'zi ulaydi).
+// Birinchi qator - xizmat jamoasi bergan izoh (`pro.hint`), ikkinchisi - holat.
+const proStatus = computed(() => {
+  if (proSpent.value) return t('pro.exhausted')
+  return proLeft.value !== null ? t('pro.left', { n: proLeft.value }) : ''
 })
+
+// Byudjet tugagan bo'lsa bosilmaydi: yoqiq kalit bilan yuborilgan savol baribir
+// standart rejimda javob olardi va odam "Pro so'radim" deb o'ylab qolardi.
+// `disabled` emas, `aria-disabled`: o'chiq tugma sichqoncha hodisalarini bermaydi
+// va tooltip nega bosilmasligini ayta olmasdi.
+function togglePro() {
+  if (proSpent.value) return
+  proOn.value = !proOn.value
+}
+
+// --- Ovoz bilan yozish ---------------------------------------------------------
+const dictation = useDictation({
+  language: () => String(locale.value),
+  onOutcome,
+})
+const dictState = dictation.state
+const dictating = computed(() => dictState.value !== 'idle')
+const barRef = ref<InstanceType<typeof DictationBar> | null>(null)
+
+// Kartaning balandligi yozuv boshlangan paytdagidek QOTADI: qator almashganda
+// karta sakrasa, suhbat ham sakraydi. `sync` - o'lchov DOM hali eski
+// (maydon ko'rinib turgan) paytda olinadi; `idle` da qaytarilgan matn bilan
+// bitta chizishda bo'shatiladi.
+const lockedHeight = ref<number | null>(null)
+watch(
+  dictState,
+  (now, before) => {
+    if (before === 'idle' && now !== 'idle') lockedHeight.value = cardRef.value?.offsetHeight ?? null
+    else if (now === 'idle') lockedHeight.value = null
+  },
+  { flush: 'sync' },
+)
+// `sync`: ota "Salom Venera" ni `useDictation` mikrofonni so'rashidan OLDIN
+// to'xtatishi kerak (u bir tik kutadi).
+watch(dictating, (on) => emit('dictating', on), { flush: 'sync' })
+
+// Ekran o'quvchi uchun jim e'lonlar. Bo'shatib qayta yoziladi - bir xil gap
+// ketma-ket ikki marta aytilsa ham o'qilsin.
+const announcement = ref('')
+function announce(text: string) {
+  announcement.value = ''
+  void nextTick(() => {
+    announcement.value = text
+  })
+}
+
+watch(
+  dictState,
+  (now, before) => {
+    if (now === 'starting') barRef.value?.focusDone()
+    else if (now === 'recording') announce(t('composer.dictate.started'))
+    else if (now === 'transcribing') announce(t('composer.dictate.transcribing'))
+    else if (now === 'idle' && before !== 'idle') focusEnd()
+  },
+  { flush: 'post' },
+)
+
+/** Fokus matn oxiriga - aytilgan gapni darhol davom ettirish yoki tuzatish mumkin. */
+function focusEnd() {
+  const ta = taRef.value
+  if (!ta) return
+  resize()
+  ta.focus({ preventScroll: true })
+  const end = ta.value.length
+  ta.setSelectionRange(end, end)
+  ta.scrollTop = ta.scrollHeight
+}
+
+async function onMicClick() {
+  if (busy.value || dictating.value) return
+  const failure = await dictation.start()
+  if (failure) toast.error(startFailureText(failure), { id: 'dictation', duration: 8000 })
+}
+
+function startFailureText(failure: DictationStartFailure): string {
+  switch (failure) {
+    case 'insecure': return `${t('voiceNeedsHttps')} ${t('voiceNeedsHttpsHow')}`
+    case 'policy': return `${t('voiceBlockedPolicy')} ${t('voiceBlockedPolicyHow')}`
+    case 'denied': return `${t('voiceDenied')} ${t('voiceDeniedHow')}`
+    case 'noDevice': return t('voiceNoMic')
+    default: return t('voiceError')
+  }
+}
+
+/** Proksi xatolari (nginx 413/504) xabarsiz keladi - holat bo'yicha. VoicePanel'dagi
+ *  bilan bir xil; odam "Request failed (504)" ni ko'rmasin. */
+function errorText(err: unknown): string {
+  if (err instanceof ApiError) {
+    // nginx sahifasida JSON konvert yo'q - `status` bo'sh qoladi, holat faqat
+    // `apiFetch` yozgan "Request failed (504)" matnida (authErrorKind ham shunday).
+    const status = err.status ?? (err.body ? undefined : Number(/\((\d{3})\)$/.exec(err.message)?.[1]))
+    switch (status) {
+      case 503: return t('voiceBusy')
+      case 504: return t('voiceTooLong')
+      case 413: return t('voiceTooLarge')
+      case 415: return t('voiceFormat')
+    }
+  }
+  return localizeApiError(err, t)
+}
+
+/** Aytilgan matn qoralamaga QO'SHILADI (almashtirmaydi): odam yozib turgan gapni
+ *  ovoz bilan davom ettirishi mumkin. Qoralama bo'shliq bilan tugasa - o'sha qoladi
+ *  (masalan, yangi qatordan boshlangan bo'lsa). */
+function insert(text: string) {
+  const draft = value.value
+  if (!draft.trim()) value.value = text
+  else value.value = /\s$/.test(draft) ? `${draft}${text}` : `${draft} ${text}`
+}
+
+function onOutcome(outcome: DictationOutcome) {
+  switch (outcome.kind) {
+    case 'text':
+      insert(outcome.text)
+      announce(t('composer.dictate.inserted'))
+      if (outcome.truncated) toast.show({ message: t('voiceTruncatedNote'), id: 'dictation' })
+      break
+    case 'empty':
+      toast.show({ message: t('composer.dictate.noSpeech'), id: 'dictation' })
+      break
+    case 'cancelled':
+      if (!outcome.silent) announce(t('composer.dictate.cancelled'))
+      break
+    case 'error':
+      toast.error(errorText(outcome.error), { id: 'dictation' })
+      break
+  }
+}
+
+// ChatView uchun: fokus yo'qolgan joydan (masalan, taklif tugmasi yo'qolganda) matnga.
+defineExpose({ focus: () => taRef.value?.focus({ preventScroll: true }) })
 </script>
 
 <template>
-  <div
-    :style="{
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      right: 0,
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      padding: '0 24px 22px',
-      background: 'linear-gradient(to top, var(--bg) 58%, transparent)',
-      pointerEvents: 'none',
-    }"
-  >
-    <!-- O'ram: menyu dockning tashqarisida, lekin unga nisbatan joylashadi -
-         dock `.glass` (contain: paint) bo'lgani uchun ichida kesilib qolardi. -->
-    <div :style="{ position: 'relative', width: '100%', maxWidth: '740px', pointerEvents: 'auto' }">
-    <ComposerMenu v-if="menuOpen" :anchor="plusRef" @close="menuOpen = false" />
-    <div class="glass" :style="dockStyle">
-      <!-- A light wanders randomly along the bottom edge while answering. -->
-      <BottomCurrent v-if="busy" />
-
-      <!-- Plus with a small brand spark, à la Gemini. Ochiq holatda 45° buriladi:
-           × - ya'ni "yopish". -->
-      <button
-        ref="plusRef"
-        type="button"
-        :title="t('attach')"
-        :aria-label="t('attach')"
-        aria-haspopup="menu"
-        :aria-expanded="menuOpen"
-        :style="attachButtonStyle"
-        @click="menuOpen = !menuOpen"
-        @mouseenter="plusHover = true"
-        @mouseleave="plusHover = false"
-      >
-        <span
-          :style="{
-            display: 'inline-flex',
-            transform: menuOpen ? 'rotate(45deg)' : 'none',
-            transition: 'transform 0.2s',
-          }"
-        >
-          <AttachIcon />
-        </span>
-        <span
-          :style="{
-            position: 'absolute',
-            top: '5px',
-            right: '5px',
-            fontSize: '7px',
-            lineHeight: 1,
-            color: 'var(--accent)',
-          }"
-          >✦</span
-        >
-      </button>
+  <div class="dock">
+    <div
+      ref="cardRef"
+      class="dock__card"
+      :class="{ 'is-busy': busy, 'is-dictating': dictating }"
+      :style="lockedHeight ? { height: `${lockedHeight}px` } : undefined"
+      @pointerdown="onCardPointerDown"
+    >
+      <label class="sr-only" :for="inputId">{{ t('composer.message') }}</label>
+      <!-- Yozuv paytida maydon O'CHIRILMAYDI, faqat yashiriladi (`.is-dictating`):
+           qoralama, balandlik va bekor qilish tarixi saqlanadi. v-show emas - u
+           `display` ni chizishdan KEYIN qo'yadi va qaytgan matn yashirin maydonda
+           o'lchanib, fokus ham unga tushmay qolardi. -->
       <textarea
+        :id="inputId"
         ref="taRef"
         v-model="value"
-        :rows="1"
-        :placeholder="t('askPlaceholder')"
-        :style="textareaStyle"
+        class="dock__input"
+        rows="1"
+        enterkeyhint="send"
+        :placeholder="t('composer.placeholder')"
         @keydown="onKeyDown"
-        @focus="focused = true"
-        @blur="focused = false"
       />
-      <button :title="t('comingSoon')" aria-disabled="true" :style="disabledRoundButton">
-        <MicIcon />
-      </button>
-      <button
-        class="send-btn"
-        :title="busy ? t('stop') : t('send')"
-        :aria-label="busy ? t('stopAria') : t('send')"
-        :style="sendBtnStyle"
-        @click="onPrimaryClick"
-        @mouseenter="hovering = true"
-        @mouseleave="hovering = false"
-      >
-        <StopIcon v-if="busy" :size="24" />
-        <SendIcon v-else stroke="currentColor" />
-      </button>
-      <button
-        class="conv-btn"
-        :title="t('voiceTitle')"
-        :aria-label="t('voiceTitle')"
-        :style="conversationBtnStyle"
-        @click="emit('conversation')"
-        @mouseenter="convHover = true"
-        @mouseleave="convHover = false"
-      >
-        <ConversationIcon :size="18" />
-      </button>
+      <DictationBar
+        v-if="dictState !== 'idle'"
+        ref="barRef"
+        :state="dictState"
+        :elapsed="dictation.elapsed.value"
+        :levels="dictation.levels"
+        @cancel="dictation.cancel"
+        @done="dictation.finish"
+      />
+      <div class="dock__bar">
+        <ComposerMenu />
+        <!-- Versiya: "Pro" dan oldin - Pro shu tanlovga bog'liq (v1 da Pro yo'q). -->
+        <EnginePicker />
+        <!-- pointerdown.prevent: kalit bosilganda fokus matnda qoladi (yuborish kabi). -->
+        <VTooltip v-if="proAvailable">
+          <template #content>
+            <span class="dock__tip">
+              <span>{{ t('pro.hint') }}</span>
+              <!-- Bo'shliq: ekran o'quvchi ikki gapni qo'shib o'qimasin (flex'da ko'rinmaydi). -->
+              {{ ' ' }}<span v-if="proStatus" class="dock__tip-status">{{ proStatus }}</span>
+            </span>
+          </template>
+          <button
+            type="button"
+            class="dock__pro"
+            role="switch"
+            :class="{ 'is-on': proOn }"
+            :aria-checked="proOn ? 'true' : 'false'"
+            :aria-disabled="proSpent ? 'true' : undefined"
+            :aria-label="t('pro.toggle')"
+            @pointerdown.prevent
+            @click="togglePro"
+          >
+            {{ t('pro.label') }}
+          </button>
+        </VTooltip>
+        <span class="dock__spacer" />
+        <!-- Javob yozilayotganda o'chiq (yuborish tugmasi o'shanda "To'xtatish"):
+             aytilgan savol baribir javob tugaguncha ketmaydi. Mikrofon ishlamaydigan
+             joyda (HTTP) ham KO'RINADI - bosilganda nega ishlamasligini aytadi. -->
+        <VIconButton :label="t('composer.dictate.start')" :icon="Mic" size="sm" :disabled="busy" @click="onMicClick" />
+        <!-- pointerdown.prevent: sichqoncha bilan bosilganda fokus matnda qoladi -
+             keyingi savolni darhol yozish mumkin (telefonda klaviatura ham yopilmaydi). -->
+        <VIconButton
+          class="dock__send"
+          variant="primary"
+          size="sm"
+          :label="busy ? t('stopAria') : t('send')"
+          :disabled="!busy && !hasText"
+          @pointerdown.prevent
+          @click="onPrimaryClick"
+        >
+          <Square v-if="busy" :size="12" :stroke-width="0" fill="currentColor" aria-hidden="true" />
+          <ArrowUp v-else :size="18" :stroke-width="2" aria-hidden="true" />
+        </VIconButton>
+      </div>
     </div>
-    </div>
-    <div :style="{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }">{{ t('disclaimer') }}</div>
+    <p class="dock__note">{{ t('composer.disclaimer') }}</p>
+    <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ announcement }}</p>
   </div>
 </template>
+
+<style scoped>
+.dock {
+  width: 100%;
+  max-width: var(--chat-col);
+  margin: 0 auto;
+}
+
+.dock__card {
+  /* Halo juda och (6%) va kengroq (4px) - chiziq emas, yumshoq "nur". Oldingi 8%/3px
+     line-strong chegara bilan qo'shilib, oq fonda qalin kulrang-qora halqa bo'lib o'qilardi. */
+  --dock-ring: color-mix(in srgb, var(--text) 6%, transparent);
+  display: flex;
+  flex-direction: column;
+  padding: var(--s-3) var(--s-3) var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: var(--e2);
+  cursor: text;
+  transition:
+    border-color var(--dur-2) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out);
+}
+@media (hover: hover) {
+  .dock__card:hover:not(:focus-within) {
+    border-color: var(--line-strong);
+  }
+}
+/* Fokus - jim: line-strong chegara + yumshoq halo + odatdagi e2 soya. Kompozer ekrandagi
+   yagona katta maydon va kursor ichida miltillaydi - qayerda yozilayotgani baribir
+   ko'rinadi, qora halqa ortiqcha. Klaviatura bilan kartadagi tugmalarga o'tilsa, ularning
+   o'z :focus-visible halqasi (base.css) ishlaydi. */
+.dock__card:focus-within {
+  border-color: var(--line-strong);
+  box-shadow:
+    var(--e2),
+    0 0 0 4px var(--dock-ring);
+}
+/* Ovoz yozilyapti: bitta qator kartaning o'rtasida. Yuqori/past ichki bo'shliq
+   tenglashadi - balandlik qotgan (`lockedHeight`), qator esa optik markazda tursin. */
+.dock__card.is-dictating {
+  flex-direction: row;
+  align-items: center;
+  padding: var(--s-2) var(--s-3);
+  cursor: default;
+}
+/* "+" va "Pro" ham, mikrofon va yuborish ham shu qatorda - yozuv paytida ularning
+   o'rnini DictationBar'ning ✕ / ✓ tugmalari egallaydi. */
+.dock__card.is-dictating > .dock__input,
+.dock__card.is-dictating > .dock__bar {
+  display: none;
+}
+
+.dock__input {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: var(--s-1) var(--s-2) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-body);
+  line-height: 24px;
+  letter-spacing: -0.006em;
+  resize: none;
+  overflow-y: hidden;
+  outline: none;
+}
+/* Fokus kartaning halqasida ko'rinadi - maydonning o'z chizig'i kerak emas. */
+.dock__input:focus-visible {
+  outline: none;
+}
+.dock__input::placeholder {
+  color: var(--text-4);
+  opacity: 1;
+}
+/* iOS 16px dan kichik shriftli maydonga fokusda sahifani kattalashtiradi. */
+@media (max-width: 767.98px) {
+  .dock__input {
+    font-size: 16px;
+  }
+}
+
+.dock__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  margin-top: var(--s-2);
+  cursor: default;
+}
+.dock__spacer {
+  flex: 1;
+}
+
+/* "Pro" - tabletka kalit (VChoiceChips chipi kabi): o'chiqda jim (faqat matn, hover'da
+   --fill), yoqiqda siyoh fon. Balandligi "+" bilan bir xil - qator tekis turadi. */
+.dock__pro {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--text-3);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  white-space: nowrap;
+  touch-action: manipulation;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+@media (hover: hover) {
+  .dock__pro:not([aria-disabled='true']):not(.is-on):hover {
+    background: var(--fill);
+    color: var(--text);
+  }
+}
+.dock__pro:not([aria-disabled='true']):active {
+  transform: scale(0.97);
+}
+.dock__pro.is-on {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+@media (hover: hover) {
+  .dock__pro.is-on:hover {
+    background: var(--ink-hover);
+  }
+}
+.dock__pro[aria-disabled='true'] {
+  color: var(--text-4);
+  cursor: not-allowed;
+}
+/* Tooltip ichi: izoh, ostida holat (qoldiq yoki "limit tugadi") - xira. */
+.dock__tip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dock__tip-status {
+  opacity: 0.72;
+}
+/* Yuborish: 32px dumaloq siyoh tugma; bo'sh maydonda --fill (VIconButton primary disabled). */
+.dock__send {
+  border-radius: var(--r-full);
+}
+
+.dock__note {
+  margin-top: var(--s-2);
+  color: var(--text-4);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  text-align: center;
+}
+</style>

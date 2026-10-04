@@ -2,6 +2,7 @@
 
     POST /telegram/link     shu Telegram hisobi -> sessiyadagi Venera hisobi
     POST /telegram/unlink   uzish (mini app'dan chiqishda)
+    POST /telegram/webhook  Telegram'ning o'zi xabar yuboradi (webhook rejimi)
 
 ISBOT IKKITA, va ikkalasi ham kerak:
 
@@ -19,9 +20,10 @@ Bot chatida parol so'ralmaydi: u Telegram serverida suhbat tarixida qolardi.
 
 from __future__ import annotations
 
+import hmac
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from ... import bot
 from ...core.config import settings
@@ -59,7 +61,8 @@ def link(body: TelegramLinkRequest, user: AuthUser = Depends(current_user)) -> T
     """Bot chatini shu Venera hisobiga ulaydi (yoki muddatini yangilaydi).
 
     Mini app buni HAR ochilganda chaqiradi - ulanish muddati shu bilan
-    yangilanadi. Yangi ulanishda bot "hisobingiz ulandi" deb yozadi.
+    yangilanadi (botdagi har savol ham yangilaydi). Yangi ulanishda bot
+    "hisobingiz ulandi" deb yozadi.
     """
     tg_id = _telegram_user(body.initData, max_age=settings.telegram_init_max_age,
                            actor_id=user.actorId)
@@ -79,3 +82,41 @@ def unlink(body: TelegramLinkRequest, user: AuthUser = Depends(current_user)) ->
     if removed:
         log.info("Telegram hisobi uzildi (%s)", user.actorId)
     return TelegramUnlinkResult(unlinked=removed)
+
+
+#: Telegram yangilanishi odatda bir necha KB. Undan kattasi - xato yoki suiiste'mol.
+_WEBHOOK_MAX_BYTES = 1024 * 1024
+
+
+@router.post("/webhook", include_in_schema=False)
+async def webhook(request: Request) -> dict:
+    """Telegram yuborgan yangilanish (webhook rejimi) - SESSIYASIZ.
+
+    Kimligi `X-Telegram-Bot-Api-Secret-Token` sarlavhasi bilan tekshiriladi:
+    sirni faqat Telegram biladi (`setWebhook` da berilgan). Sirsiz so'rov
+    rad etiladi - aks holda har kim soxta "xabar" yuborib, bot nomidan
+    boshqa odamning chatiga javob chiqarib olishi mumkin edi.
+
+    Javob DARHOL qaytadi: xabar navbatga qo'yiladi, ishlanishi (15-40 s)
+    Telegram'ni kutdirmaydi.
+    """
+    expected = bot.webhook_secret()
+    given = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not expected or not hmac.compare_digest(given.encode(), expected.encode()):
+        raise error_status(401, "Ruxsat yo'q")
+    try:
+        size = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        size = 0
+    if size > _WEBHOOK_MAX_BYTES:
+        raise error_status(413, "Yangilanish juda katta")
+    try:
+        update = await request.json()
+    except ValueError as exc:
+        raise bad_request("Yangilanish o'qilmadi") from exc
+    if not isinstance(update, dict):
+        raise bad_request("Yangilanish o'qilmadi")
+    if not bot.feed(update):
+        # Bot ishlamayapti (endigina ishga tushyapti) - Telegram keyin qayta yuboradi.
+        raise error_status(503, "Bot hozir ishlamayapti")
+    return {"ok": True}

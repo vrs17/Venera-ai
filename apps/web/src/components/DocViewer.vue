@@ -3,12 +3,20 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import { ChevronLeft, ChevronRight, Download, Minus, Plus, X } from 'lucide-vue-next'
 import { downloadFile } from '../api/chat.api'
 import { localizeApiError } from '../api/errors'
 import { ApiError, BASE_URL, getToken } from '../api/http'
 import type { ViewerDoc } from '../composables/useDocViewer'
 import type { ApiErrorResponse } from '../types'
-import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, MinusIcon, PlusIcon, XIcon } from '../icons'
+import VIconButton from '../ui/VIconButton.vue'
+import VSpinner from '../ui/VSpinner.vue'
+import VTooltip from '../ui/VTooltip.vue'
+import { toast } from '../ui/useToast'
+import { useFocusTrap } from '../ui/composables/useFocusTrap'
+import { useId } from '../ui/composables/useId'
+import { useIsPhone } from '../ui/composables/useMediaQuery'
+import { useLayer } from '../ui/composables/useClickOutside'
 
 /**
  * Iqtibos qilingan hujjat - chat yonida, AYNAN PDF qanday bo'lsa shunday.
@@ -27,6 +35,13 @@ import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, MinusIcon, PlusIcon, X
 const props = defineProps<{ doc: ViewerDoc }>()
 const emit = defineEmits<{ close: [] }>()
 const { t } = useI18n({ useScope: 'global' })
+
+const rootRef = ref<HTMLElement | null>(null)
+const titleId = useId('dv-title')
+const title = computed(() => props.doc.title || t('sourceDocument'))
+// Telefonda panel butun ekranni egallaydi - u yerda u haqiqiy modal oyna (fokus
+// tuzog'i, aria-modal). Kattaroq ekranda chat bilan yonma-yon ishlanadi - tuzoq yo'q.
+const isPhone = useIsPhone()
 
 const bodyRef = ref<HTMLDivElement | null>(null)
 const pagesRef = ref<HTMLDivElement | null>(null)
@@ -50,7 +65,12 @@ let resizeTimer: number | undefined
 async function fetchBytes(url: string): Promise<Uint8Array> {
   const token = getToken()
   const response = await fetch(`${BASE_URL}${url}`, {
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), Accept: 'application/pdf, */*' },
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      Accept: 'application/pdf, */*',
+      // Kanal statistikasi: sarlavhasiz so'rovni server "API" deb hisoblaydi.
+      'X-Venera-Client': 'web',
+    },
   })
   if (!response.ok) {
     let body: ApiErrorResponse | undefined
@@ -224,24 +244,35 @@ function setZoom(value: number) {
 }
 
 async function download() {
-  const base = (props.doc.title || props.doc.docId || 'hujjat').replace(/[^\w.\- ]+/g, '_')
+  // Harf va raqam HAR QANDAY yozuvda qoladi: kirillcha nom "_____.pdf" bo'lib ketmasin.
+  const base = (props.doc.title || props.doc.docId || 'hujjat').replace(/[^\p{L}\p{M}\p{N}.\- ]+/gu, '_')
   try {
     await downloadFile(props.doc.url, base.toLowerCase().endsWith('.pdf') ? base : `${base}.pdf`)
   } catch (err) {
-    error.value = localizeApiError(err, t)
+    // Toast'da: ochiq hujjat xato matni ostida qolib ketmasin.
+    toast.error(localizeApiError(err, t))
   }
 }
 
-// Escape panelni yopadi. ChatView Escape'ni window'da tinglaydi va
-// `defaultPrevented` bo'lsa o'tkazib yuboradi - yon panel yig'ilmasin.
-function onKeyDown(e: KeyboardEvent) {
-  if (e.key !== 'Escape' || e.isComposing) return
-  e.preventDefault()
-  emit('close')
-}
+// Escape panelni yopadi - umumiy qatlam steki orqali: ustida menyu yoki dialog ochiq
+// bo'lsa, Esc avval o'shani yopadi (bitta bosish ikki narsani yopmaydi). Stek
+// `preventDefault` qiladi - ChatView yon panelni yig'ib yubormaydi. Tashqariga bosish
+// yopmaydi: panel yonida chat ishlatiladi.
+const layer = useLayer(true, {
+  kind: 'sheet',
+  elements: () => [rootRef.value],
+  onDismiss: (reason) => reason === 'escape' && emit('close'),
+  closeOnOutside: false,
+})
+useFocusTrap(rootRef, isPhone, { allowOutside: (node) => layer.contains(node) })
+
+// Fokus panelga kiradi va yopilganda ochgan joyga (iqtibos chipi) qaytadi.
+let opener: HTMLElement | null = null
 
 onMounted(() => {
-  document.addEventListener('keydown', onKeyDown)
+  const active = document.activeElement
+  opener = active instanceof HTMLElement && active !== document.body ? active : null
+  rootRef.value?.focus({ preventScroll: true })
   // Panel kengligi o'zgarsa (oyna, yon panel) - sig'dirish qayta hisoblanadi.
   if (bodyRef.value && typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(() => {
@@ -261,7 +292,10 @@ onMounted(() => {
 })
 watch(() => props.doc.url + '#' + props.doc.page, () => void load())
 onBeforeUnmount(() => {
-  document.removeEventListener('keydown', onKeyDown)
+  const active = document.activeElement
+  if (opener?.isConnected && (!active || active === document.body || rootRef.value?.contains(active))) {
+    opener.focus({ preventScroll: true })
+  }
   resizeObserver?.disconnect()
   window.clearTimeout(resizeTimer)
   void destroy()
@@ -269,49 +303,104 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <aside class="dv" role="dialog" :aria-label="doc.title">
+  <aside
+    ref="rootRef"
+    class="dv"
+    :role="isPhone ? 'dialog' : 'region'"
+    :aria-modal="isPhone ? 'true' : undefined"
+    :aria-labelledby="titleId"
+    tabindex="-1"
+    :style="{ zIndex: layer.zIndex.value }"
+  >
     <header class="dv__head">
-      <div class="dv__titles">
-        <h2 class="dv__title" :title="doc.title">{{ doc.title }}</h2>
-        <p class="dv__meta">
-          <span v-if="doc.docId">{{ doc.docId }}</span>
-          <span v-if="doc.page"><template v-if="doc.docId"> · </template>{{ t('sourcePage', { n: doc.page }) }}</span>
-          <span v-if="doc.section"> · {{ doc.section }}</span>
-        </p>
+      <div class="dv__top">
+        <div class="dv__titles">
+          <VTooltip :text="title" placement="bottom-start" :describe="false">
+            <h2 :id="titleId" class="dv__title">{{ title }}</h2>
+          </VTooltip>
+          <p v-if="doc.docId || doc.page || doc.section" class="dv__meta">
+            <span v-if="doc.docId" class="dv__id">{{ doc.docId }}</span>
+            <span v-if="doc.page"><template v-if="doc.docId"> · </template>{{ t('sourcePage', { n: doc.page }) }}</span>
+            <span v-if="doc.section"> · {{ doc.section }}</span>
+          </p>
+        </div>
+        <VIconButton :label="t('close')" :icon="X" size="sm" tooltip-placement="bottom" @click="emit('close')" />
       </div>
-      <button type="button" class="dv__icon" :title="t('close')" :aria-label="t('close')" @click="emit('close')">
-        <XIcon :size="16" />
-      </button>
+
+      <div class="dv__bar">
+        <div class="dv__group">
+          <VIconButton
+            :label="t('viewerPrev')"
+            :icon="ChevronLeft"
+            size="sm"
+            tooltip-placement="bottom"
+            :disabled="pageNo <= 1"
+            @click="go(pageNo - 1)"
+          />
+          <span class="dv__pages">
+            <input
+              class="dv__input"
+              type="number"
+              inputmode="numeric"
+              min="1"
+              :max="numPages || 1"
+              :value="pageNo"
+              :disabled="!numPages"
+              :aria-label="t('viewerPageOf', { n: pageNo, m: numPages })"
+              @change="onPageInput"
+            />
+            <span class="dv__of" aria-hidden="true">/ {{ numPages || '–' }}</span>
+          </span>
+          <VIconButton
+            :label="t('viewerNext')"
+            :icon="ChevronRight"
+            size="sm"
+            tooltip-placement="bottom"
+            :disabled="!numPages || pageNo >= numPages"
+            @click="go(pageNo + 1)"
+          />
+        </div>
+
+        <div class="dv__group">
+          <VIconButton
+            :label="t('viewerZoomOut')"
+            :icon="Minus"
+            size="sm"
+            tooltip-placement="bottom"
+            :disabled="!numPages"
+            @click="setZoom(zoom / 1.2)"
+          />
+          <!-- Foiz - "kenglikka moslash" tugmasi ham: bosilsa 100% ga qaytadi. -->
+          <VTooltip :text="t('composer.fit')" placement="bottom" :describe="false">
+            <button
+              type="button"
+              class="dv__pct"
+              :disabled="!numPages"
+              :aria-label="`${t('composer.fit')} (${zoomPct}%)`"
+              @click="setZoom(1)"
+            >
+              {{ zoomPct }}%
+            </button>
+          </VTooltip>
+          <VIconButton
+            :label="t('viewerZoomIn')"
+            :icon="Plus"
+            size="sm"
+            tooltip-placement="bottom"
+            :disabled="!numPages"
+            @click="setZoom(zoom * 1.2)"
+          />
+          <span class="dv__sep" aria-hidden="true" />
+          <VIconButton :label="t('viewerDownload')" :icon="Download" size="sm" tooltip-placement="bottom" @click="download" />
+        </div>
+      </div>
     </header>
 
-    <div class="dv__bar">
-      <button type="button" class="dv__icon" :disabled="pageNo <= 1" :title="t('viewerPrev')" :aria-label="t('viewerPrev')" @click="go(pageNo - 1)">
-        <ChevronLeftIcon :size="12" />
-      </button>
-      <span class="dv__pages" :aria-label="t('viewerPageOf', { n: pageNo, m: numPages })">
-        <input class="dv__input" type="number" min="1" :max="numPages || 1" :value="pageNo" :disabled="!numPages" @change="onPageInput" />
-        <span class="dv__of">/ {{ numPages || '–' }}</span>
-      </span>
-      <button type="button" class="dv__icon" :disabled="!numPages || pageNo >= numPages" :title="t('viewerNext')" :aria-label="t('viewerNext')" @click="go(pageNo + 1)">
-        <ChevronRightIcon :size="12" />
-      </button>
-
-      <span class="dv__spacer" />
-
-      <button type="button" class="dv__icon" :disabled="!numPages" :title="t('viewerZoomOut')" :aria-label="t('viewerZoomOut')" @click="setZoom(zoom / 1.2)">
-        <MinusIcon :size="14" />
-      </button>
-      <button type="button" class="dv__pct" :disabled="!numPages" @click="setZoom(1)">{{ zoomPct }}%</button>
-      <button type="button" class="dv__icon" :disabled="!numPages" :title="t('viewerZoomIn')" :aria-label="t('viewerZoomIn')" @click="setZoom(zoom * 1.2)">
-        <PlusIcon :size="14" />
-      </button>
-      <button type="button" class="dv__icon" :title="t('viewerDownload')" :aria-label="t('viewerDownload')" @click="download">
-        <DownloadIcon :size="16" />
-      </button>
-    </div>
-
     <div ref="bodyRef" class="dv__body" @scroll.passive="onScroll">
-      <p v-if="loading" class="dv__state" role="status">{{ t('viewerLoading') }}</p>
+      <div v-if="loading" class="dv__state" role="status">
+        <VSpinner :size="20" />
+        <span>{{ t('viewerLoading') }}</span>
+      </div>
       <p v-else-if="error" class="dv__state dv__state--bad" role="alert">{{ error }}</p>
       <div ref="pagesRef" class="dv__host" />
     </div>
@@ -319,178 +408,238 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* Joylashuv (spec §4.3): ≥1680 - chat yonida (ustun), undan kichikda - o'ngdan
+   suzuvchi panel (chat orqada ishlashda davom etadi), telefonda - butun ekran. */
 .dv {
-  position: relative;
-  z-index: 21;
+  /* Qog'oz ATAYLAB oq: PDF sahifasi mavzuga bo'ysunmaydi. Qorong'i mavzuda --ink
+     deyarli oq (#F4F4F3) - xom rang yozmasdan "qog'oz" olamiz. */
+  --dv-paper: var(--surface);
+  position: fixed;
+  top: var(--s-2);
+  right: var(--s-2);
+  bottom: var(--s-2);
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
-  width: clamp(360px, 46%, 780px);
-  height: 100%;
+  width: min(560px, calc(100vw - var(--s-4)));
   min-height: 0;
-  border-left: 1px solid var(--border);
-  background: var(--surface-sunken);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: var(--e3);
   color: var(--text);
-  font-family: 'Figtree', sans-serif;
-  animation: fadeUp 0.25s ease both;
+  outline: none;
+  animation: dv-in var(--dur-3) var(--ease-sheet) both;
 }
+:root[data-theme='dark'] .dv {
+  --dv-paper: var(--ink);
+}
+.dv:focus-visible {
+  outline: none;
+}
+@keyframes dv-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+@media (min-width: 1680px) {
+  .dv {
+    position: relative;
+    inset: auto;
+    flex-shrink: 0;
+    width: clamp(480px, 38%, 760px);
+    height: 100%;
+    border-width: 0 0 0 1px;
+    border-radius: 0;
+    box-shadow: none;
+    background: var(--bg);
+  }
+}
+@media (max-width: 767.98px) {
+  .dv {
+    inset: 0;
+    width: auto;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
 .dv__head {
+  flex-shrink: 0;
+  padding: var(--s-4) var(--s-3) var(--s-2) var(--s-5);
+  border-bottom: 1px solid var(--line);
+}
+.dv__top {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 14px 12px 10px 16px;
-  border-bottom: 1px solid var(--border);
+  gap: var(--s-3);
 }
 .dv__titles {
   flex: 1;
   min-width: 0;
+  padding-top: var(--s-1);
 }
 .dv__title {
-  margin: 0;
-  font-size: 14.5px;
-  font-weight: 700;
-  line-height: 1.3;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-title-3);
+  line-height: var(--lh-title-3);
+  font-weight: 600;
+  letter-spacing: -0.011em;
 }
 .dv__meta {
-  margin: 3px 0 0;
-  font-size: 12px;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
 }
+.dv__id {
+  font-family: var(--font-mono);
+}
+
 .dv__bar {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  justify-content: space-between;
+  gap: var(--s-2);
+  margin: var(--s-2) 0 0 calc(var(--s-2) * -1);
 }
-.dv__spacer {
-  flex: 1;
-}
-.dv__icon {
-  display: inline-flex;
+.dv__group {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  flex-shrink: 0;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  gap: 2px;
 }
-.dv__icon:hover:not(:disabled),
-.dv__pct:hover:not(:disabled) {
-  background: var(--surface-hover);
-  color: var(--text);
-}
-.dv__icon:disabled,
-.dv__pct:disabled,
-.dv__input:disabled {
-  opacity: 0.45;
-  cursor: default;
+.dv__sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 var(--s-1);
+  background: var(--line);
 }
 .dv__pages {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 13px;
+  gap: var(--s-1);
+  padding: 0 var(--s-1);
+  color: var(--text-2);
+  font-size: var(--fs-body-sm);
   font-variant-numeric: tabular-nums;
-  color: var(--text);
 }
 .dv__input {
-  width: 42px;
-  padding: 4px 6px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-inset);
+  width: 44px;
+  height: 28px;
+  padding: 0 var(--s-1);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--fill);
   color: var(--text);
   font: inherit;
   text-align: center;
   -moz-appearance: textfield;
   appearance: textfield;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out);
+}
+.dv__input:focus-visible {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 10%, transparent);
 }
 .dv__input::-webkit-outer-spin-button,
 .dv__input::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
+.dv__input:disabled {
+  color: var(--text-4);
+}
 .dv__of {
-  color: var(--text-secondary);
+  color: var(--text-3);
 }
 .dv__pct {
   min-width: 48px;
-  padding: 0 6px;
-  height: 30px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12.5px;
+  height: 32px;
+  padding: 0 var(--s-1_5);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
-  cursor: pointer;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
 }
+@media (hover: hover) {
+  .dv__pct:not(:disabled):hover {
+    background: var(--fill);
+    color: var(--text);
+  }
+}
+.dv__pct:disabled {
+  color: var(--text-4);
+}
+
 .dv__body {
   position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 12px 16px 24px;
-  background: var(--surface-inset);
+  overscroll-behavior: contain;
+  padding: var(--s-4) var(--s-4) var(--s-8);
+  background: var(--fill);
 }
 .dv__state {
-  margin: 24px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  margin: var(--s-8) 0;
+  color: var(--text-3);
+  font-size: var(--fs-body-sm);
   text-align: center;
-  font-size: 13.5px;
-  color: var(--text-secondary);
 }
 .dv__state--bad {
-  color: var(--bad-fg);
+  color: var(--crit-text);
 }
 .dv__host {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: var(--s-3);
 }
-/* Sahifa elementlari DOM orqali yaratiladi - `:deep` shuning uchun. Oq fon
-   ATAYLAB: PDF sahifasi qog'oz, mavzuga bo'ysunmaydi - matn hujjatdagidek
-   qora bo'lib qolishi kerak. */
+/* Sahifa elementlari DOM orqali yaratiladi - `:deep` shuning uchun. */
+/* Qog'oz: hairline chegara + e1. Chegara box-shadow bilan (border emas) - sahifa o'lchami
+   JS da canvas'ga teng qo'yiladi, 1px border uni siqib qo'yardi. */
 .dv :deep(.dv__page) {
   position: relative;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18), 0 6px 20px rgba(0, 0, 0, 0.1);
+  background: var(--dv-paper);
   border-radius: 2px;
+  box-shadow:
+    0 0 0 1px var(--line),
+    var(--e1);
 }
 .dv :deep(.dv__page canvas) {
   display: block;
 }
-/* Iqtibos qilingan sahifa - chetida yupqa aksent chiziq, ko'z darhol topsin. */
+/* Iqtibos qilingan sahifa - faqat biroz quyuqroq hairline. Oldingi 2px siyoh outline
+   sahifani qalin qora ramkaga o'rardi; sahifa baribir ochilganda shu yerga suriladi,
+   sarlavhada "N-bet" turadi va iqtibos matni hujjatning o'zida belgilangan. */
 .dv :deep(.dv__page.is-cited) {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
+  box-shadow:
+    0 0 0 1px var(--line-strong),
+    var(--e1);
 }
-@media (max-width: 768px) {
-  .dv {
-    position: fixed;
-    inset: 0;
-    z-index: 45;
-    width: auto;
-    height: auto;
-    border-left: none;
-  }
-}
+
 @media (prefers-reduced-motion: reduce) {
   .dv {
-    animation: none !important;
+    animation: none;
   }
 }
 </style>

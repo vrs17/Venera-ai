@@ -1,281 +1,172 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { applyTheme, getInitialTheme } from '../theme'
-import { MoonIcon, SunIcon } from '../icons'
+import { Moon, Sun } from 'lucide-vue-next'
+import { useTheme } from '../theme'
+import VIconButton from '../ui/VIconButton.vue'
+import BrandSpark from './BrandSpark.vue'
 import LanguageSwitcher from './LanguageSwitcher.vue'
-import AuthAurora from './AuthAurora.vue'
 
-defineProps<{ heroTitle: string; heroSub: string }>()
+/**
+ * Kirish, parol va xush kelibsiz sahifalarining umumiy qobig'i (spec §4.1): yuqorida
+ * jim panel (chapda logotip, o'ngda til va mavzu), o'rtada bitta ustun. Karta, soya,
+ * bezak yo'q - sahifa foni va bo'sh joy.
+ *
+ * Ustun ekranning 42% balandligida turadi (aniq o'rtadan biroz yuqori - ko'z tabiiy
+ * shu yerga tushadi). Kontent sig'masa sahifa oddiy aylanadi, tepa kesilmaydi.
+ *
+ * Ildiz elementda kirish animatsiyasi YO'Q: App.vue dagi sahifalar almashinuvi o'zi
+ * so'ndiradi, forwards-to'ldirilgan animatsiya esa uni buzardi.
+ */
+withDefaults(
+  defineProps<{
+    /** form - 360px (kirish shakllari); wide - 560px (xush kelibsiz). */
+    width?: 'form' | 'wide'
+    /** Chapdagi logotip. Xush kelibsiz sahifasi o'zi katta nom ko'rsatadi - takrorlamaydi. */
+    brand?: boolean
+    /** Sahifa sarlavhasi (h1) va uning ostidagi bitta izoh qatori. */
+    title?: string
+    caption?: string
+  }>(),
+  { width: 'form', brand: true },
+)
+
+defineSlots<{
+  default?(): unknown
+  footer?(): unknown
+}>()
 
 const { t } = useI18n({ useScope: 'global' })
-
-// The auth pages own theme state the same way ChatView does; applyTheme persists
-// to localStorage so the chat picks up the same theme after sign-in.
-const theme = ref(getInitialTheme())
-watch(theme, (v) => applyTheme(v), { immediate: true })
-function toggleTheme() {
-  theme.value = theme.value === 'dark' ? 'light' : 'dark'
-}
-
-// Ignition bloom — views call ignite() on a successful step.
-const igniting = ref(false)
-let ignitionTimer: ReturnType<typeof setTimeout> | undefined
-function ignite() {
-  igniting.value = false
-  // next tick so the animation re-triggers even on rapid successive calls
-  requestAnimationFrame(() => {
-    igniting.value = true
-    clearTimeout(ignitionTimer)
-    ignitionTimer = setTimeout(() => {
-      igniting.value = false
-    }, 760)
-  })
-}
-onBeforeUnmount(() => clearTimeout(ignitionTimer))
-
-defineExpose({ ignite })
+const { theme, toggle } = useTheme()
+const isDark = computed(() => theme.value === 'dark')
 </script>
 
 <template>
-  <div class="auth-root">
-    <!-- Brand hero -->
-    <section class="auth-hero">
-      <AuthAurora />
-      <div class="auth-hero__content">
-        <div class="auth-hero__brand">
-          Venera
-          <span class="auth-hero__spark-sm" aria-hidden="true">✦</span>
-        </div>
-
-        <div class="auth-hero__center">
-          <div class="auth-hero__mark">
-            <span class="hero-spark" :class="{ 'is-igniting': igniting }" aria-hidden="true">✦</span>
-            <span v-if="igniting" class="ignition-ring" />
-          </div>
-          <h1 class="auth-hero__title">{{ heroTitle }}</h1>
-          <p class="auth-hero__sub">{{ heroSub }}</p>
-        </div>
-
-        <div class="auth-hero__legal">© Venera</div>
+  <div class="shell">
+    <header class="shell__bar">
+      <div v-if="brand" class="shell__brand">
+        <span class="shell__spark"><BrandSpark :size="16" /></span>
+        <span>Venera</span>
       </div>
-    </section>
+      <span v-else aria-hidden="true" />
+      <div class="shell__tools">
+        <LanguageSwitcher />
+        <VIconButton
+          :icon="isDark ? Sun : Moon"
+          :label="isDark ? t('themeToLight') : t('themeToDark')"
+          tooltip-placement="bottom"
+          @click="toggle"
+        />
+      </div>
+    </header>
 
-    <!-- Form -->
-    <section class="auth-form">
-      <div class="glass auth-card">
+    <main class="shell__main">
+      <div class="shell__col" :class="`shell__col--${width}`">
+        <header v-if="title" class="shell__head">
+          <h1 class="shell__title">{{ title }}</h1>
+          <p v-if="caption" class="shell__caption">{{ caption }}</p>
+        </header>
         <slot />
       </div>
-    </section>
+    </main>
 
-    <!-- Theme + language, fixed top-right on every breakpoint -->
-    <div class="auth-controls">
-      <LanguageSwitcher />
-      <button
-        class="glass glass-hover auth-theme-btn"
-        :title="theme === 'dark' ? t('themeToLight') : t('themeToDark')"
-        :aria-label="t('toggleTheme')"
-        @click="toggleTheme"
-      >
-        <SunIcon v-if="theme === 'dark'" />
-        <MoonIcon v-else />
-      </button>
-    </div>
+    <footer v-if="$slots.footer" class="shell__foot">
+      <slot name="footer" />
+    </footer>
   </div>
 </template>
 
 <style scoped>
-.auth-root {
-  height: 100vh;
-  overflow: hidden;
+.shell {
+  --shell-pad-l: max(var(--gutter), env(safe-area-inset-left));
+  --shell-pad-r: max(var(--gutter), env(safe-area-inset-right));
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 100vh;
+  min-height: 100dvh;
   background: var(--bg);
-  display: flex;
-  /* No fadeUp animation here: a forwards-filling animation holds opacity at 1
-     and would block the App-level route crossfade (mode=out-in) from ever
-     finishing its leave. The route transition supplies the entrance instead. */
-}
-
-.auth-hero {
-  position: relative;
-  overflow: hidden;
-  flex: 1.08 1 0;
-  display: flex;
-  border-right: 1px solid var(--border-faint);
-}
-.auth-hero__content {
-  position: relative;
-  z-index: 1;
-  box-sizing: border-box;
-  width: 100%;
-  height: 100%;
-  padding: 48px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
-.auth-hero__brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 15px;
-  font-weight: 600;
   color: var(--text);
 }
-.auth-hero__spark-sm {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--accent);
+
+.shell__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  height: calc(64px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) calc(var(--shell-pad-r) - var(--s-2)) 0 var(--shell-pad-l);
 }
-.auth-hero__center {
-  max-width: 460px;
-}
-.auth-hero__mark {
-  position: relative;
+.shell__brand {
   display: inline-flex;
-  width: 56px;
-  height: 56px;
   align-items: center;
-  justify-content: center;
-  margin-bottom: 6px;
-}
-.hero-spark {
-  font-size: 56px;
-  line-height: 1;
-  color: var(--accent);
-}
-.hero-spark.is-igniting {
-  animation: sparkBloom 0.72s ease;
-}
-.ignition-ring {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 72px;
-  height: 72px;
-  border-radius: 50%;
-  border: 2px solid var(--accent);
-  pointer-events: none;
-  animation: ignitionRing 0.72s ease-out forwards;
-}
-.auth-hero__title {
-  font-size: 46px;
+  gap: var(--s-2);
+  font-size: 15px;
+  line-height: 20px;
   font-weight: 600;
-  letter-spacing: -0.5px;
-  margin: 14px 0 10px;
-  background-image: var(--greeting-grad);
-  background-size: 200% auto;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: shimmer 7s linear infinite;
+  letter-spacing: -0.011em;
+  color: var(--text);
 }
-.auth-hero__sub {
-  margin: 0;
-  font-size: 16px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  max-width: 380px;
+.shell__spark {
+  display: inline-flex;
+  color: var(--brand);
 }
-.auth-hero__legal {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.auth-form {
-  flex: 1 1 0;
-  position: relative;
-  display: flex;
-  /* Scroll the form column (not the whole page) when a tall card exceeds the
-     viewport; margin:auto on the card centers it when there's room and lets it
-     scroll from the top when there isn't (avoids the flex-centering clip). */
-  overflow-y: auto;
-  padding: 40px;
-  box-sizing: border-box;
-}
-.auth-card {
-  position: relative;
-  margin: auto;
-  width: 100%;
-  max-width: 420px;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: 24px;
-  box-shadow: var(--glass-shadow);
-  padding: 40px;
-  box-sizing: border-box;
-  overflow: hidden;
-}
-
-.auth-controls {
-  position: absolute;
-  top: 14px;
-  right: 16px;
-  z-index: 50;
+.shell__tools {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--s-1);
 }
-.auth-theme-btn {
-  width: 36px;
-  height: 36px;
+
+/* Pastki padding tepadagidan 16dvh ko'p: bo'sh joy markazi 8dvh yuqoriga siljiydi,
+   ustun ~42% balandlikda turadi. Klaviatura ochilganda (dvh qisqaradi) farq ham
+   o'zi kichrayadi. */
+.shell__main {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: var(--text-secondary);
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: 50%;
-  cursor: pointer;
-  box-shadow: var(--glass-shadow);
-  transition: background 0.2s, border-color 0.2s, color 0.2s;
+  min-width: 0;
+  padding: var(--s-8) var(--shell-pad-r) calc(var(--s-8) + 16vh) var(--shell-pad-l);
+  padding-bottom: calc(var(--s-8) + 16dvh);
+}
+.shell__col {
+  width: 100%;
+  min-width: 0;
+}
+.shell__col--form {
+  max-width: 360px;
+}
+.shell__col--wide {
+  max-width: 560px;
+}
+.shell__head {
+  margin-bottom: var(--s-8);
+}
+.shell__title {
+  font-size: var(--fs-title-1);
+  line-height: var(--lh-title-1);
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  color: var(--text);
+  text-wrap: balance;
+}
+.shell__caption {
+  margin-top: var(--s-2);
+  color: var(--text-3);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+  text-wrap: pretty;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .auth-hero__title {
-    animation: none !important;
-  }
+.shell__foot {
+  display: flex;
+  justify-content: center;
+  padding: var(--s-6) var(--shell-pad-r) max(var(--s-8), env(safe-area-inset-bottom)) var(--shell-pad-l);
 }
 
-@media (max-width: 880px) {
-  .auth-root {
-    flex-direction: column;
-  }
-  .auth-hero {
-    flex: none;
-    height: 184px;
-    border-right: none;
-    border-bottom: 1px solid var(--border-faint);
-  }
-  .auth-hero__content {
-    padding: 22px 24px;
-    justify-content: center;
-    gap: 6px;
-  }
-  .auth-hero__legal {
-    display: none;
-  }
-  .auth-hero__mark {
-    display: none;
-  }
-  .auth-hero__center {
-    margin-top: 8px;
-  }
-  .auth-hero__title {
-    font-size: 30px;
-    margin: 6px 0 4px;
-  }
-  .auth-hero__sub {
-    font-size: 14px;
-  }
-  .auth-form {
-    flex: 1 1 auto;
-    align-items: flex-start;
-    padding: 22px 16px 36px;
-  }
-  .auth-card {
-    margin: 0 auto;
-    max-width: 440px;
-    padding: 28px 22px;
+@media (max-width: 767.98px) {
+  .shell__main {
+    padding-top: var(--s-4);
+    padding-bottom: calc(var(--s-8) + 8dvh);
   }
 }
 </style>

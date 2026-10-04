@@ -8,6 +8,19 @@ OQIM (bitta savol):
          bilan - javob 15-40 s oladi va odam boshqa ishga o'tgan bo'ladi)
       -> manbalar tugmalari, taklif kartasi, ariza fayli
 
+XABAR QANDAY KELADI. Ikki rejim (`settings.telegram_mode`):
+
+  * `polling` - bot o'zi so'raydi (`getUpdates`, chiquvchi ulanish). JONLI
+    TIZIMDA SHU. Boshqa nusxa shu tokenni o'qisa (409) - ulanish DARHOL
+    qaytarib olinadi (`poll_error`).
+  * `webhook` - Telegram xabarni o'zi `/api/v1/telegram/webhook` ga yuboradi
+    va boshqa `getUpdates` o'quvchilarni rad etadi. O'LCHANGAN (2026-09-24):
+    Telegram'ning serverimizga ulanishi ko'pincha birinchi urinishda
+    "Connection timed out" bo'ladi va xabar 20 s - 2 daqiqa kechikadi
+    (ovozli savol: yetkazish ~80 s, GAPI 1.6 s, javob 7 s). Tarmoq yo'li
+    Venera'dan tashqarida - shuning uchun jonli tizim `polling` da. Webhook
+    kodi qoladi: tarmoq tuzatilsa `.env` dagi bitta qator bilan yoqiladi.
+
 NAVBAT. Bitta odamning xabarlari KETMA-KET ishlanadi (tartib saqlanadi:
 `/new` dan keyingi savol haqiqatan yangi suhbatga tushadi), turli odamlar
 esa parallel - `telegram_workers` ta ipgacha. Tugma bosishlar navbatsiz:
@@ -24,6 +37,11 @@ faqat guruhlar uchun). Bot qila oladigani - qabul qilmaslik va o'chirish.
 
 JURNAL: savol, transkript va javob MATNI yozilmaydi (shaxsiy ma'lumot) -
 faqat `actorId`, uzunlik va natija.
+
+ADMIN PANEL IZI esa veb chatdagi bilan bir xil (`services/analytics`):
+har savol `turns` ga kanal `bot`, tur `bot` bilan yoziladi - kadrlar,
+manbalar, vaqtlar va natija. Bu jurnal emas, ADMIN uchun ruxsatli ombor
+(saqlash muddati `analytics_retention_days`).
 """
 
 from __future__ import annotations
@@ -42,10 +60,13 @@ from typing import Any
 
 from ..core.config import settings
 from ..schemas.auth import AuthUser
+from ..services import admin_users
+from ..services.analytics import TurnRecorder, bind, redact, set_proposal_status
 from ..services.integrations.assistant import AssistantError
 from ..services.integrations.telegram import TelegramApi, TelegramError
 from ..services.stt import SttError, Transcript
 from ..services.telegram_links import LinkStore, TelegramLink
+from ..services.identities import Directory
 from ..services.users import UserStore
 from . import render
 from .render import esc
@@ -59,6 +80,27 @@ _HINT_EVERY = 60.0
 #: "Faqat matn va ovoz" izohi shundan tez takrorlanmaydi: albomdagi o'nta
 #: video o'nta izoh bo'lmasin (har biri baribir o'chiriladi).
 _NOTE_EVERY = 10.0
+#: Webhook holati shu oraliqda tekshiriladi (soniya).
+_WEBHOOK_CHECK = 60.0
+#: Telegram webhook'ga shuncha KETMA-KET tekshiruv davomida yetib bora
+#: olmasa (yangi xato va navbatda xabar bor) - `polling` ga qaytiladi. 5
+#: daqiqa: qayta ishga tushish paytidagi bir necha soniyalik uzilish buni
+#: qo'zg'atmaydi - Telegram keyingi urinishda baribir yetkazadi.
+_WEBHOOK_FAILS = 5
+#: Telegram javobni olmay qolsa yangilanishni QAYTA yuboradi - shuncha
+#: oxirgi `update_id` eslab qolinadi va takrori tashlanadi.
+_SEEN_UPDATES = 2000
+#: Bot faqat shu turdagi yangilanishlarni oladi.
+ALLOWED_UPDATES = ["message", "callback_query"]
+#: Boshqa nusxa bilan to'qnashuvda (409) qayta so'rash oralig'i. Ikkinchi
+#: nusxa har to'qnashuvdan keyin ~30 s kutadi, biz esa DARHOL qaytamiz - u
+#: ulanishni atigi bir necha yuz millisekund ushlab turadi. Nol emas: u ham
+#: darhol qaytsa, ikkalasi tarmoqni bosib qo'ymasin.
+_CONFLICT_RETRY = 0.1
+#: Bir daqiqada shundan ko'p to'qnashuv - ikkinchi nusxa ham shoshyapti:
+#: sekinlashamiz (baribir yutib bo'lmaydi, faqat tarmoq to'ladi).
+_CONFLICT_BURST = 30
+_CONFLICT_SLOW = 2.0
 #: "⏳" xabaridagi bosqich matni shundan tez yangilanmaydi.
 _STAGE_EVERY = 1.5
 #: "yozmoqda..." holati 5 s yashaydi - shundan oldin yangilanadi.
@@ -83,9 +125,12 @@ _INTRO = (
     "Venera ilovasini oching va kiring. Ulangach shu yerga xabar keladi."
 )
 _EXPIRED = (
-    "Xavfsizlik uchun ulanish muddati tugadi ({days} kun). Venera ilovasini ochib "
-    "kiring - ulanish yangilanadi va shu yerda davom etasiz."
+    "Bot {days} kun ishlatilmagani uchun xavfsizlik maqsadida ulanish tugadi. "
+    "Venera ilovasini ochib kiring - ulanish yangilanadi va shu yerda davom etasiz."
 )
+#: Admin panelda bloklangan hisob. Sabab va kim bloklagani AYTILMAYDI -
+#: faqat nima qilish kerakligi.
+_BLOCKED = "Hisobingiz bloklangan. Administratorga murojaat qiling."
 _HELP = (
     "<b>Venera</b> - HRM va CRM bo'yicha yordamchi.\n\n"
     "• Savolni yozing yoki 🎙 ovozli xabar yuboring - javobni matn bilan beraman.\n"
@@ -126,17 +171,26 @@ class Backend:
     def stream(self, question: str, user: AuthUser, chat_id: str):
         from ..api.v1 import chat as _chat
 
-        return _chat._assistant.stream(
-            question,
-            user_id=_chat.assistant_user_id(user),
-            chat_id=chat_id,
-            tokens=_chat._live_tokens(user),
-            max_chars=settings.hrm_assistant_max_question_chars,
-        )
+        # Web va mini app bilan BITTA yo'l: xodimlar ma'lumotnomasi, keyin yordamchi.
+        # Dvigatel - SHU ODAMNING `bot` kanalidagisi (`effective_engine`):
+        # admin unga alohida versiya bergan bo'lsa o'sha, bo'lmasa bot
+        # kanali siyosati, oxiri `.env`. Botda tanlov tugmasi yo'q - odam
+        # o'z default'ida. "Pro" botda yo'q.
+        return _chat.open_stream(question, user, chat_id, channel="bot")
+
+    def engine(self, user: AuthUser | None = None) -> str:
+        """Bot kanalining dvigateli (shu odam uchun) - savol izi uchun
+        (`_collect`). Odamsiz - "hamma uchun" qiymat."""
+        from ..api.v1 import chat as _chat
+
+        return _chat.effective_engine(user, "bot")
 
     def action(self, verb: str, token: str, user: AuthUser) -> dict[str, Any]:
         from ..api.v1 import chat as _chat
+        from ..services import contacts_chat
 
+        if contacts_chat.owns(token):
+            return contacts_chat.act(verb, token, user)
         call = _chat._assistant.confirm_action if verb == "confirm" else _chat._assistant.cancel_action
         return call(token, user_id=_chat.assistant_user_id(user), tokens=_chat._live_tokens(user))
 
@@ -169,6 +223,13 @@ def _chat_message(status: int) -> str:
     return _chat._MESSAGES.get(status, _chat._MESSAGES[502])
 
 
+def _open_error_code(exc: AssistantError) -> str:
+    """Ochilmagan oqim uchun izdagi xato kodi - veb chatdagi qoida."""
+    from ..api.v1 import chat as _chat
+
+    return _chat.open_error_code(exc)
+
+
 def _stt_message(status: int) -> str:
     from ..api.v1 import stt as _stt
 
@@ -181,6 +242,22 @@ def _action_message(status: int) -> str:
     return _actions._MESSAGES.get(status, _actions._MESSAGES[502])
 
 
+def _proposal_outcome(verb: str, result: dict[str, Any]) -> str | None:
+    """Taklif holati izga - veb ilovadagi AYNI qoida (`actions.proposal_outcome`)."""
+    from ..api.v1 import actions as _actions
+
+    return _actions.proposal_outcome(verb, result)
+
+
+def _assistant_proposal(token: str) -> bool:
+    """Taklif holati (`turns.proposal_status`) faqat YORDAMCHI takliflari uchun
+    yangilanadi - veb ilovadagi `/actions` bilan bir xil qoida. Xodimlar
+    ma'lumotnomasi taklifi (`ct_`) Venera'ning o'zida bajariladi."""
+    from ..services import contacts_chat
+
+    return not contacts_chat.owns(token)
+
+
 @dataclass
 class _Answer:
     parts: list[str] = field(default_factory=list)
@@ -188,6 +265,8 @@ class _Answer:
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     proposals: list[dict[str, Any]] = field(default_factory=list)
     failure: str | None = None
+    #: Savol izi uchun: oqim ochilmagan yoki o'rtada uzilgan bo'lsa - sababi.
+    error: BaseException | None = None
 
 
 class _Typing:
@@ -238,14 +317,21 @@ class VeneraBot:
         api: TelegramApi,
         links: LinkStore,
         *,
-        users: Callable[[], UserStore],
+        users: Callable[[], Directory | UserStore],
         backend: Backend | None = None,
         webapp_url: str = "",
         workers: int = 4,
         inline: bool = False,
         typing_every: float | None = _TYPING_EVERY,
+        mode: str = "polling",
+        webhook_url: str = "",
+        webhook_secret: str = "",
     ) -> None:
         self.api = api
+        #: Manzil yoki sir bo'lmasa webhook mumkin emas - `polling`.
+        self.mode = "webhook" if mode == "webhook" and webhook_url and webhook_secret else "polling"
+        self.webhook_url = webhook_url
+        self.webhook_secret = webhook_secret
         self.links = links
         self.users = users
         self.backend = backend or Backend()
@@ -270,12 +356,21 @@ class VeneraBot:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._prepared = False
-        self._state: dict[str, Any] = {"error": "", "error_at": None, "ok_at": None, "updates": 0}
+        self._state: dict[str, Any] = {"error": "", "error_at": None, "ok_at": None, "updates": 0,
+                                       "note": ""}
+        self._seen: OrderedDict[int, None] = OrderedDict()
+        self._seen_lock = threading.Lock()
+        self._webhook_set_at = 0.0
+        self._webhook_fails = 0
+        self._webhook: dict[str, Any] = {}
+        #: 409 lar vaqti - boshqa nusxa shu tokenni o'qiyotganining izi.
+        self._conflicts: deque[float] = deque(maxlen=2000)
+        self._conflict_log_at = 0.0
 
     # --- so'rov ipi ---------------------------------------------------------------
 
     def start(self) -> None:
-        self._thread = threading.Thread(target=self._run, name="tg-poll", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="tg-bot", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -296,9 +391,113 @@ class VeneraBot:
             "error": self._state["error"] or None,
             "error_at": _iso(self._state["error_at"]),
             "updates": self._state["updates"],
+            "mode": self.mode,
+            "note": self._state["note"] or None,
+            "webhook": dict(self._webhook) if self._webhook else None,
+            #: Oxirgi 10 daqiqada boshqa nusxa bilan to'qnashuvlar (409).
+            "conflicts_10min": sum(1 for t in list(self._conflicts) if time.time() - t <= 600),
         }
 
     def _run(self) -> None:
+        if self.mode == "webhook":
+            self._run_webhook()
+        if not self._stop.is_set():
+            # `polling` rejimi - yoki webhook ishlamay, zaxiraga qaytildi.
+            self._run_polling()
+
+    # --- webhook ----------------------------------------------------------------
+
+    def _run_webhook(self) -> None:
+        """Webhook'ni o'rnatadi va har daqiqada tekshiradi. Faqat to'xtatilganda
+        yoki `polling` ga qaytish kerak bo'lganda chiqadi."""
+        while not self._stop.is_set():
+            if not self._prepared:
+                self._prepare()
+            try:
+                if not self.check_webhook():
+                    return
+            except TelegramError as exc:
+                self._state["error"] = str(exc)
+                self._state["error_at"] = time.time()
+                log.warning("Telegram webhook tekshirilmadi: %s", exc)
+            except Exception:  # noqa: BLE001 - ip o'lmasligi kerak
+                log.exception("Telegram webhook: kutilmagan xato")
+            self._stop.wait(_WEBHOOK_CHECK)
+
+    def check_webhook(self, *, now: float | None = None) -> bool:
+        """Webhook o'z joyidami va Telegram unga yetib boryaptimi.
+
+        `False` - Telegram uzoq vaqt yetib bora olmadi va webhook O'CHIRILDI:
+        chaqiruvchi `polling` ga o'tadi (xabarlar Telegram navbatida kutib
+        turgan - yo'qolmaydi).
+        """
+        now = time.time() if now is None else now
+        info = self.api.get_webhook_info()
+        url = str(info.get("url") or "")
+        pending = int(info.get("pending_update_count") or 0)
+        error = str(info.get("last_error_message") or "")
+        error_at = float(info.get("last_error_date") or 0)
+        if url != self.webhook_url:
+            # Birinchi marta - yoki kimdir (boshqa nusxa) manzilni o'zgartirgan.
+            self._set_webhook(now, "o'rnatildi" if not self._webhook_set_at
+                              else "QAYTA o'rnatildi - manzil o'zgartirilgan edi")
+            return True
+        failing = bool(pending and error_at and error_at > self._webhook_set_at
+                       and now - error_at < 3 * _WEBHOOK_CHECK)
+        self._webhook = {"pending": pending, "last_error": error or None,
+                         "last_error_at": _iso(error_at) if error_at else None}
+        if not failing:
+            self._webhook_fails = 0
+            self._state["error"] = ""
+            self._state["ok_at"] = now
+            return True
+        self._webhook_fails += 1
+        self._state["error"] = f"Telegram webhook'ga yetib bora olmayapti: {error}"
+        self._state["error_at"] = now
+        if self._webhook_fails == 1 and ("401" in error or "403" in error):
+            # Sir mos kelmayapti - boshqa nusxa webhook'ni o'z siri bilan
+            # o'rnatgan bo'lishi mumkin. Bir marta qayta o'rnatamiz.
+            self._set_webhook(now, "QAYTA o'rnatildi - sir rad etilayotgan edi")
+            return True
+        if self._webhook_fails >= _WEBHOOK_FAILS:
+            log.error("Telegram webhook %d daqiqa ishlamadi (%s) - xabarlar yo'qolmasligi uchun "
+                      "polling'ga qaytildi", self._webhook_fails, error)
+            self.api.delete_webhook()
+            self.mode = "polling"
+            self._state["note"] = f"webhook ishlamadi ({error}) - polling'ga qaytildi"
+            return False
+        log.warning("Telegram webhook'ga yetib bora olmayapti (%d/%d): %s",
+                    self._webhook_fails, _WEBHOOK_FAILS, error)
+        return True
+
+    def _set_webhook(self, now: float, what: str) -> None:
+        self.api.set_webhook(self.webhook_url, secret=self.webhook_secret,
+                             allowed_updates=ALLOWED_UPDATES)
+        first = not self._webhook_set_at
+        self._webhook_set_at = now
+        self._webhook_fails = 0
+        self._webhook = {"pending": 0, "last_error": None, "last_error_at": None}
+        self._state["error"] = ""
+        self._state["ok_at"] = now
+        (log.info if first else log.warning)("Telegram webhook %s: %s", what, self.webhook_url)
+
+    def accept(self, update: dict[str, Any]) -> None:
+        """Webhook orqali kelgan yangilanish. Takrori tashlanadi."""
+        update_id = update.get("update_id")
+        if isinstance(update_id, int):
+            with self._seen_lock:
+                if update_id in self._seen:
+                    return
+                self._seen[update_id] = None
+                while len(self._seen) > _SEEN_UPDATES:
+                    self._seen.popitem(last=False)
+        self._state["updates"] += 1
+        self._state["ok_at"] = time.time()
+        self.dispatch(update)
+
+    # --- polling ------------------------------------------------------------------
+
+    def _run_polling(self) -> None:
         backoff = 1.0
         while not self._stop.is_set():
             if not self._prepared:
@@ -307,23 +506,48 @@ class VeneraBot:
                 self.poll_once()
                 backoff = 1.0
             except TelegramError as exc:
-                self._state["error"] = str(exc)
-                self._state["error_at"] = time.time()
-                if exc.code == 409:
-                    # Boshqa jarayon (yoki webhook) shu botni o'qiyapti.
-                    log.error("Telegram bot: %s - boshqa nusxa ishlayaptimi?", exc)
-                    wait = 30.0
-                elif exc.code in (401, 404):
-                    log.error("Telegram bot: token rad etildi (%s)", exc)
-                    wait = 300.0
-                else:
-                    log.warning("Telegram bot: %s", exc)
-                    wait = backoff
-                    backoff = min(backoff * 2, 30.0)
+                wait, backoff = self.poll_error(exc, backoff)
                 self._stop.wait(wait)
             except Exception:  # noqa: BLE001 - ip o'lmasligi kerak
                 log.exception("Telegram bot: kutilmagan xato")
                 self._stop.wait(5.0)
+
+    def poll_error(self, exc: TelegramError, backoff: float, *,
+                   now: float | None = None) -> tuple[float, float]:
+        """`getUpdates` xatosidan keyin: (qancha kutish, keyingi backoff).
+
+        409 IKKI XIL, va farqi muhim:
+
+          * "webhook is active" - webhook o'rnatilgan, polling umuman
+            ishlamaydi: kutamiz va aytamiz (qo'lda `deleteWebhook`);
+          * "terminated by other getUpdates request" - BOSHQA NUSXA shu
+            tokenni o'qiyapti (2026-09-24 da dev server). DARHOL qayta
+            so'raymiz: Telegram'da faqat oxirgi so'rov tirik qoladi, ya'ni
+            shu bilan ulanish bizga qaytadi va u nusxa xabarni ushlashga
+            deyarli ulgurmaydi. Butunlay to'xtatish - tokenni yangilash.
+        """
+        now = time.time() if now is None else now
+        text = f"{exc.description} {exc}".lower()
+        if exc.code == 409 and "webhook" in text:
+            self._state["error"] = str(exc)
+            self._state["error_at"] = now
+            log.error("Telegram bot: webhook o'rnatilgan - polling ishlamaydi, deleteWebhook kerak (%s)", exc)
+            return 30.0, backoff
+        if exc.code == 409:
+            self._conflicts.append(now)
+            if now - self._conflict_log_at >= 600:
+                self._conflict_log_at = now
+                log.warning("Telegram bot: boshqa nusxa ham shu tokenni o'qiyapti (409) - ulanish darhol "
+                            "qaytarib olinadi; butunlay to'xtatish uchun bot tokenini yangilang")
+            recent = sum(1 for t in self._conflicts if now - t <= 60)
+            return (_CONFLICT_SLOW if recent > _CONFLICT_BURST else _CONFLICT_RETRY), backoff
+        self._state["error"] = str(exc)
+        self._state["error_at"] = now
+        if exc.code in (401, 404):
+            log.error("Telegram bot: token rad etildi (%s)", exc)
+            return 300.0, backoff
+        log.warning("Telegram bot: %s", exc)
+        return backoff, min(backoff * 2, 30.0)
 
     def _prepare(self) -> None:
         """Bot nomi va buyruqlar menyusi - bir marta (yiqilsa keyin yana)."""
@@ -440,6 +664,11 @@ class VeneraBot:
             # Ulanganmi-yo'qmi - farqi yo'q: kamera yozuvi hech kimdan olinmaydi.
             self._reject_video(chat_id, msg)
             return
+        sent = msg.get("date")
+        if isinstance(sent, int) and time.time() - sent >= 5:
+            # Yuborilgandan ishlanguncha: yetkazish + navbat. Sekin javobni
+            # "GAPI mi, yordamchimi, Telegram mi" deb taxmin qilmaslik uchun.
+            log.info("Telegram xabari %d s kechikib ishlandi (%s)", int(time.time() - sent), self.mode)
         text = str(msg.get("text") or "").strip()
         if text.startswith("/") and len(text) > 1 and text[1].isalpha():
             self._command(chat_id, tg_id, text)
@@ -452,13 +681,17 @@ class VeneraBot:
         user = self._user_for(chat_id, link)
         if user is None:
             return
-        if isinstance(msg.get("voice"), dict):
-            self._voice(chat_id, tg_id, user, msg)
-        elif text:
-            self._ask(chat_id, tg_id, user, text)
-        else:
-            # Rasm, fayl, stiker, audio fayl... - ishlanmaydi.
-            self._note(chat_id, "Faqat matn va 🎙 ovozli xabar qabul qilinadi.")
+        # Hisob: shu xabar bo'yicha har tashqi chaqiruv (STT, Assistant,
+        # Telegram) shu odam va `bot` kanali bilan yoziladi. Bot HTTP dan
+        # kelmaydi - kanalni sarlavha emas, kodning o'zi aytadi.
+        with bind(user.actorId, "bot"):
+            if isinstance(msg.get("voice"), dict):
+                self._voice(chat_id, tg_id, user, msg)
+            elif text:
+                self._ask(chat_id, tg_id, user, text)
+            else:
+                # Rasm, fayl, stiker, audio fayl... - ishlanmaydi.
+                self._note(chat_id, "Faqat matn va 🎙 ovozli xabar qabul qilinadi.")
 
     def _reject_video(self, chat_id: int, msg: dict[str, Any]) -> None:
         """Video (kamera) - yuklab olinmaydi va chatdan o'chiriladi."""
@@ -486,7 +719,13 @@ class VeneraBot:
 
     def _user_for(self, chat_id: int, link: TelegramLink) -> AuthUser | None:
         """Ulanishdagi hisob HALI BORMI - har xabarda tekshiriladi: hisob
-        `users.yaml` dan olib tashlansa bot darhol to'xtashi kerak."""
+        `users.yaml` dan olib tashlansa bot darhol to'xtashi kerak.
+
+        Admin qarorlari veb ilovadagi bilan AYNI funksiyadan
+        (`admin_users.access`): rollar samarali, bloklangan odam esa
+        xushmuomala rad oladi. Bloklanganda ulanish UZILMAYDI - blok olib
+        tashlansa odam mini app'ni qayta ochmasdan davom etsin.
+        """
         stored = self.users().by_actor_id(link.actor_id)
         if stored is None:
             self.links.unlink(link.tg_id, actor_id=link.actor_id)
@@ -494,7 +733,12 @@ class VeneraBot:
             self._send(chat_id, "Venera hisobingiz topilmadi. Ilovani ochib qaytadan kiring.",
                        markup=render.app_button(self.webapp_url))
             return None
-        return stored.to_public()
+        verdict = admin_users.access(stored.to_public(), login=getattr(stored, "username", None))
+        if verdict.blocked:
+            log.info("Telegram: hisob bloklangan (%s) - savol qabul qilinmadi", link.actor_id)
+            self._note(chat_id, _BLOCKED)
+            return None
+        return verdict.user
 
     def _link_prompt(self, chat_id: int, state: str, *, force: bool = False) -> None:
         now = time.monotonic()
@@ -547,30 +791,61 @@ class VeneraBot:
 
     # --- savol -> javob -----------------------------------------------------------
 
-    def _ask(self, chat_id: int, tg_id: int, user: AuthUser, question: str) -> None:
+    def _ask(self, chat_id: int, tg_id: int, user: AuthUser, question: str, *,
+             stt: dict[str, Any] | None = None) -> None:
+        """`stt` - ovozli xabar bo'lsa: transkripsiya qancha vaqt olgani va
+        qaysi variant (izga nuqta bo'lib tushadi, savol undan KEYIN boshlanadi)."""
         limit = settings.hrm_assistant_max_question_chars
         if len(question) > limit:
             self._say(chat_id, f"Savol juda uzun ({len(question)} belgi) - {limit} belgigacha yozing.")
             return
         chat = self.links.chat_for(tg_id, idle_sec=settings.telegram_chat_idle_hours * 3600)
-        typing = _Typing(self.api, chat_id, self.typing_every).start()
-        holder = self._send(chat_id, "⏳ Javob tayyorlanmoqda…")
+        # SAVOL IZI (admin panel) - veb chatdagi bilan bir xil shakl.
+        rec = TurnRecorder(user, "bot", "bot", question, chat_id=chat, locale="uz",
+                           input_mode="voice" if stt else "text")
+        if stt:
+            rec.point("stt", **stt)
         try:
-            answer = self._collect(question, user, chat, chat_id, holder)
-        finally:
-            typing.stop()
-        self._deliver(chat_id, holder, answer)
+            with rec.bind():
+                typing = _Typing(self.api, chat_id, self.typing_every).start()
+                holder = self._send(chat_id, "⏳ Javob tayyorlanmoqda…")
+                try:
+                    answer = self._collect(question, user, chat, chat_id, holder, rec)
+                finally:
+                    typing.stop()
+                # Javobni Telegram'ga yetkazish ham izda: uzun javob bir
+                # necha xabarga bo'linadi va har biri tarmoq so'rovi.
+                with rec.span("telegram.deliver"):
+                    self._deliver(chat_id, holder, answer)
+        except BaseException as exc:
+            rec.finish("error", error=exc)
+            raise
+        rec.finish(error=answer.error)
 
     def _collect(self, question: str, user: AuthUser, chat: str, chat_id: int,
-                 holder: int | None) -> _Answer:
+                 holder: int | None, rec: TurnRecorder) -> _Answer:
         answer = _Answer()
         log.info("Telegram savol (%s): %d belgi", user.actorId, len(question))
         try:
-            stream = self.backend.stream(question, user, chat)
+            with rec.span("assistant.open") as info:
+                stream = self.backend.stream(question, user, chat)
+                info["requestId"] = stream.request_id
         except AssistantError as exc:
-            log.warning("Telegram savol (%s): %s", user.actorId, exc)
+            log.warning("Telegram savol (%s) [%s]: %s", user.actorId,
+                        getattr(exc, "reason", None) or "-", exc)
             answer.failure = _chat_message(exc.status)
+            # Veb chatdagi AYNI kod: `queue_full` / `upstream_unreachable` /
+            # `upstream_busy`, qolgani `open_failed`.
+            rec.error_code, answer.error = _open_error_code(exc), exc
+            # Ochilmagan savolda ham qaysi dvigatelga borilgani izda tursin -
+            # SHU ODAMNIKI (admin unga alohida versiya bergan bo'lishi mumkin).
+            engine_of = getattr(self.backend, "engine", None)
+            if callable(engine_of):
+                rec.update(engine=engine_of(user))
             return answer
+        # So'ralgan dvigatel (ma'lumotnoma javobida `None`); `done.engine`
+        # kelsa `rec.observe` uni haqiqatda javob bergani bilan almashtiradi.
+        rec.update(request_id=stream.request_id, engine=getattr(stream, "engine", None))
         frames = stream.frames
         stage_text, stage_at = "", 0.0
         try:
@@ -581,6 +856,8 @@ class VeneraBot:
                     continue
                 if not isinstance(frame, dict):
                     continue
+                # Izga - JSON qayta o'qilmaydi, tayyor lug'at beriladi.
+                rec.observe(frame)
                 kind = frame.get("type")
                 if kind == "token":
                     answer.parts.append(str(frame.get("text") or ""))
@@ -608,10 +885,15 @@ class VeneraBot:
             # Oqim o'rtasida uzildi - kelgan qism baribir ko'rsatiladi.
             log.warning("Telegram javob oqimi (%s): %s", user.actorId, exc)
             answer.failure = _chat_message(exc.status)
+            # Veb chatdagi kabi kod (`stream_broken`), ichki sabab esa nuqtada.
+            rec.point("assistant.broken", status=exc.status, error=redact(exc))
+            rec.error_code, answer.error = "stream_broken", exc
         finally:
             # Oqim OXIRIGACHA o'qilmagan bo'lsa ham yopiladi - yuqoridagi
-            # xizmat sloti faqat shunda bo'shaydi.
-            close = getattr(frames, "close", None)
+            # xizmat sloti faqat shunda bo'shaydi. `AnswerStream.close` -
+            # boshlanmagan oqimda ham slotni qaytaradi; u bo'lmasa (soxta
+            # oqim) - generatorning o'zi.
+            close = getattr(stream, "close", None) or getattr(frames, "close", None)
             if callable(close):
                 close()
             log.info("Telegram javob (%s): request_id=%s natija=%s", user.actorId,
@@ -668,12 +950,14 @@ class VeneraBot:
                 log.warning("Telegram ovozi olinmadi (%s): %s", user.actorId, exc)
                 self._say(chat_id, "Ovozli xabarni olib bo'lmadi - qaytadan yuboring.")
                 return
+            boshlandi = time.monotonic()
             try:
                 result = self.backend.transcribe(audio, str(voice.get("mime_type") or "audio/ogg"))
             except SttError as exc:
                 log.warning("Telegram STT (%s): %s", user.actorId, exc)
                 self._say(chat_id, _stt_message(exc.status))
                 return
+            stt_ms = int((time.monotonic() - boshlandi) * 1000)
         finally:
             typing.stop()
         text = (result.text or "").strip()
@@ -685,7 +969,10 @@ class VeneraBot:
             return
         note = "\n<i>(yozuv uzun - boshi olindi)</i>" if result.truncated else ""
         self._send(chat_id, f"🎙 <i>{esc(text)}</i>{note}", reply_to=msg.get("message_id"))
-        self._ask(chat_id, tg_id, user, text)
+        self._ask(chat_id, tg_id, user, text, stt={
+            "durMs": stt_ms, "audioSec": duration, "backend": result.backend or None,
+            "truncated": bool(result.truncated),
+        })
 
     # --- tugmalar -------------------------------------------------------------------
 
@@ -707,6 +994,13 @@ class VeneraBot:
             self._answer_cb(cq_id)
             return
         kind, _, rest = str(cq.get("data") or "").partition(":")
+        # Hisob: tugma bo'yicha chaqiruvlar (tasdiqlash, fayl) shu odam va
+        # `bot` kanali bilan yoziladi.
+        with bind(user.actorId, "bot"):
+            self._button(cq_id, chat_id, msg, user, kind, rest)
+
+    def _button(self, cq_id: str, chat_id: int, msg: dict[str, Any], user: AuthUser,
+                kind: str, rest: str) -> None:
         if kind == "a":
             verb, _, token = rest.partition(":")
             self._action(cq_id, chat_id, msg.get("message_id"), user, verb, token)
@@ -747,9 +1041,16 @@ class VeneraBot:
             except AssistantError as exc:
                 log.warning("Telegram amal %s (%s, %s): %s", what, user.actorId, token, exc)
                 self._answer_cb(cq_id, _action_message(exc.status), alert=True)
-                if exc.status == 404 and isinstance(message_id, int):
-                    self._clear_buttons(chat_id, message_id)
+                if exc.status == 404:
+                    # Veb ilovadagi kabi: xizmat tanimagan taklif - muddati o'tgan.
+                    if _assistant_proposal(token):
+                        set_proposal_status(token, "expired")
+                    if isinstance(message_id, int):
+                        self._clear_buttons(chat_id, message_id)
                 return
+            outcome = _proposal_outcome("confirm" if verb == "c" else "cancel", result)
+            if outcome and _assistant_proposal(token):
+                set_proposal_status(token, outcome)
             settled, text, toast = render.outcome(result)
             log.info("Telegram amal %s (%s): token=%s holat=%s ok=%s", what, user.actorId, token,
                      result.get("status"), result.get("ok"))

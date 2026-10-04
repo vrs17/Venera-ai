@@ -9,11 +9,12 @@ AYNI klientlarni ishlatadi: CRM sessiyasi va foydalanuvchi ulanishlari
 `refresh_token` ni rotatsiya qiladi (ikki nusxa bir-birini bekor qilardi),
 yuqoridagi xizmat va STT navbatlari esa umumiy bo'lishi kerak.
 
-NEGA LONG POLLING, webhook emas. Tashqaridan kiradigan yangi yo'l ochilmaydi
-(nginx ga tegilmaydi, maxfiy manzil kerak emas) - bot o'zi Telegram'ga
-boradi. Uvicorn BITTA jarayon; baribir ikkinchi nusxa (masalan qo'lda
-ishga tushirilgan sinov serveri) botni ikkinchi marta o'qimasligi uchun
-fayl qulfi bor - aks holda ikkalasi xabarlarni bir-biridan "o'g'irlardi".
+XABAR QANDAY KELADI - `runner.py` boshidagi izohga qara. Jonli tizimda
+WEBHOOK (`TELEGRAM_MODE=webhook`): bitta tokenni boshqa muhitdagi nusxa ham
+`getUpdates` bilan o'qiganda xabarlar bo'linib ketgan edi, webhook esa
+buning oldini oladi. `/api/v1/telegram/webhook` nginx `/api/` orqali o'tadi
+- nginx'ga tegilmagan. Bitta xost ichida ikkinchi nusxa botni ishga
+tushirmasligi uchun fayl qulfi ham bor.
 
 Kimning nomidan javob berish - `services/telegram_links.py` (ulanish faqat
 mini app orqali, `api/v1/telegram.py`).
@@ -28,7 +29,7 @@ from typing import Any
 
 from ..core.config import settings
 from ..schemas.auth import AuthUser
-from ..services.integrations.telegram import TelegramApi, TelegramError
+from ..services.integrations.telegram import TelegramApi, TelegramError, webhook_secret as _secret
 from ..services.telegram_links import LinkStore
 
 log = logging.getLogger(__name__)
@@ -58,11 +59,13 @@ def start() -> None:
         log.warning("Telegram bot ishga tushirilmadi: %s", _state["note"])
         return
 
-    from ..api.deps import get_user_store
+    from ..api.deps import get_directory
     from .runner import VeneraBot
 
-    _bot = VeneraBot(api, links, users=get_user_store, webapp_url=settings.telegram_webapp_url,
-                     workers=settings.telegram_workers)
+    # `get_directory`: SSO bilan kirganlar (`identities.json`) + `users.yaml`.
+    _bot = VeneraBot(api, links, users=get_directory, webapp_url=settings.telegram_webapp_url,
+                     workers=settings.telegram_workers, mode=settings.telegram_mode,
+                     webhook_url=settings.telegram_webhook_url, webhook_secret=webhook_secret())
     _bot.start()
     _state["note"] = ""
 
@@ -72,6 +75,22 @@ def stop() -> None:
     if _bot is not None:
         _bot.stop()
         _bot = None
+
+
+def webhook_secret() -> str:
+    """Webhook sarlavhasi uchun sir (`SECRET_KEY` + bot tokenidan)."""
+    return _secret(settings.telegram_bot_token, settings.secret_key)
+
+
+def feed(update: dict[str, Any]) -> bool:
+    """Webhook'dan kelgan yangilanishni botga beradi. `False` - bot webhook
+    rejimida ishlamayapti (endpoint 503 qaytaradi, Telegram keyin qayta
+    yuboradi)."""
+    current = _bot
+    if current is None or current.mode != "webhook":
+        return False
+    current.accept(update)
+    return True
 
 
 def username() -> str:

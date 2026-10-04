@@ -1,11 +1,12 @@
 // Chat endpoints.
 //
 //   streamAsk()  POST /api/v1/chat/stream  — the real answer, streamed
-//   askAi()      POST /api/v1/chat/ask     — the pipeline skeleton, one JSON
 //
-// Identity comes from the Bearer token in both cases; the body never carries
-// a user id. The streaming route is the one people use — the skeleton stays
-// so the trace view still works where the assistant is not configured.
+// Identity comes from the Bearer token; the body never carries a user id.
+//
+// `/chat/ask` (bir martalik JSON, pipeline izi) endi brauzerdan chaqirilmaydi:
+// uni faqat "dasturchi rejimi" ishlatardi, rejim olib tashlandi - savolning to'liq
+// izi admin panelida. Backend yo'li o'z joyida (boshqa klientlar, testlar).
 //
 // WHY NOT EventSource. It is GET-only and cannot send an Authorization
 // header, so the question would have to go in the query string and the
@@ -13,63 +14,61 @@
 // ReadableStream reads the same kind of stream over POST, with the token in a
 // header where it belongs.
 
-import { ApiError, apiFetch, BASE_URL, getToken } from './http'
-import type { ApiErrorResponse, ChatFrame, PipelineResponse, RetrievalStage } from '../types'
+import { ApiError, BASE_URL, getToken } from './http'
+import type { ApiErrorResponse, ChatFrame } from '../types'
 
-// `/ask` nests the router trace under `pipeline.*` and ships `chunks` instead of
-// `results`. Flatten + rename into the UI's PipelineResponse shape so the trace
-// view keeps working, and surface the top-level domain/answer.
-function normalizeAskResponse(raw: Record<string, unknown>): PipelineResponse {
-  const wrapper = (raw.pipeline ?? raw) as Record<string, unknown>
-  const rawRetrieval = wrapper.retrieval as Record<string, unknown> | null | undefined
-  let retrieval: RetrievalStage | null = null
-  if (rawRetrieval) {
-    const chunks = (rawRetrieval.chunks ?? rawRetrieval.results ?? []) as RetrievalStage['results']
-    const status = rawRetrieval.retrievalStatus as string | undefined
-    const message = rawRetrieval.message as string | undefined
-    retrieval = {
-      status,
-      collection: rawRetrieval.collection as string | undefined,
-      results: chunks,
-      seconds: rawRetrieval.seconds as number | undefined,
-      error: status && status !== 'OK' ? message || status : ((rawRetrieval.error as string | null | undefined) ?? null),
-    }
-  }
-  return {
-    finalStatus: (raw.finalStatus ?? wrapper.finalStatus) as PipelineResponse['finalStatus'],
-    domain: (raw.domain ?? null) as PipelineResponse['domain'],
-    domainReason: (raw.domainReason ?? null) as PipelineResponse['domainReason'],
-    guard: (wrapper.guard ?? null) as PipelineResponse['guard'],
-    intent: (wrapper.intent ?? null) as PipelineResponse['intent'],
-    orchestrator: (wrapper.orchestrator ?? null) as PipelineResponse['orchestrator'],
-    access: (wrapper.access ?? null) as PipelineResponse['access'],
-    retrieval,
-    answer: (raw.answer ?? null) as string | null,
-  }
+/** Backend analitikasi so'rovni shu sarlavha bo'yicha "web" kanaliga yozadi (apiFetch
+ *  ham yuboradi). Bu fayldagi to'g'ridan-to'g'ri fetch'lar ham yubormasa, web chat
+ *  admin panelda "API" bo'lib ko'rinardi. */
+const CLIENT_HEADER = 'X-Venera-Client'
+/** Javob sarlavhasi: backend shu savolga bergan kalit (`turns.id`). */
+const TURN_HEADER = 'X-Venera-Turn'
+
+function turnOf(response: Response): string | null {
+  return response.headers.get(TURN_HEADER)?.trim() || null
 }
 
-export async function askAi(question: string, signal?: AbortSignal): Promise<PipelineResponse> {
-  const raw = await apiFetch<Record<string, unknown>>('/api/v1/chat/ask', {
-    method: 'POST',
-    body: JSON.stringify({ question }),
-    signal,
-  })
-  return normalizeAskResponse(raw)
+/** Xato konverti (JSON) -> ApiError; tana JSON bo'lmasa - holat kodi bilan. */
+async function errorOf(response: Response, fallback: string): Promise<ApiError> {
+  let body: ApiErrorResponse | undefined
+  try {
+    body = (await response.json()) as ApiErrorResponse
+  } catch {
+    /* non-JSON error body */
+  }
+  return new ApiError(body?.message || `${fallback} (${response.status})`, body)
 }
 
 
 /** Frames arrive in this order: stage… sources, artifact?, token…, done.
  *  On failure an `error` frame comes instead of the tokens, then `done`. */
 export interface StreamOptions {
+  /** "Pro" - SHU xabar uchun. Default `standard`: u pulga tushadi va
+   *  odamning byudjetidan yeydi, shuning uchun hech qachon o'z-o'zidan
+   *  yuborilmaydi. Javob `done` kadrida `pro` bloki bilan qaytadi. */
+  mode?: 'standard' | 'pro'
   /** True while the voice panel is open, so the backend may send holding
    *  phrases to fill the wait. Left out entirely in text mode. */
   voice?: boolean
   /** UI locale — the holding phrase comes back in this language. */
   locale?: string
+  /** Yordamchi versiyasi (`v1` | `v2`) - FAQAT odamga tanlov berilgan bo'lsa
+   *  (`GET /chat/engines` -> `selectable`). Server uni ruxsat etilganlar ichida
+   *  bo'lsagina qabul qiladi, aks holda jimgina o'z default'ini ishlatadi.
+   *  Berilmasa - maydon umuman yuborilmaydi (eski xatti-harakat, Mini App ham shu). */
+  engine?: string | null
   /** Conversation key. Turns sharing it share the assistant's server-side
    *  memory, so follow-up questions ("va o'tgan oyda?") work. */
   chatId?: string | null
   signal?: AbortSignal
+  /** Sarlavhalar kelishi bilan (birinchi kadrdan OLDIN): backend bergan savol
+   *  kaliti. Javob tugamasdan "Xabar berish" ham shu kalitni bilsin. */
+  onTurn?: (turnId: string) => void
+}
+
+/** `streamAsk` natijasi: backend bergan savol kaliti (sarlavha bo'lmasa null). */
+export interface StreamResult {
+  turnId: string | null
 }
 
 /**
@@ -83,17 +82,20 @@ export async function streamAsk(
   question: string,
   onFrame: (frame: ChatFrame) => void,
   options: StreamOptions = {},
-): Promise<void> {
+): Promise<StreamResult> {
   const token = getToken()
   const response = await fetch(`${BASE_URL}/api/v1/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       Accept: 'application/x-ndjson',
+      [CLIENT_HEADER]: 'web',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({
       question,
+      // `standard` YUBORILMAYDI - u serverning o'z default'i.
+      mode: options.mode === 'pro' ? 'pro' : undefined,
       chatId: options.chatId ?? undefined,
       // VOICE MODE IS DECLARED BY THE CLIENT, and it has to be: the server
       // cannot know whether anyone is listening. Holding phrases (`hold`
@@ -101,22 +103,18 @@ export async function streamAsk(
       // already visible, so "One moment, checking" would be pure noise.
       voice: options.voice ?? undefined,
       locale: options.locale ?? undefined,
+      engine: options.engine || undefined,
     }),
     signal: options.signal,
   })
 
-  if (!response.ok) {
-    // The error envelope is JSON even here, so the same ApiError the rest of
-    // the app throws comes out of this path too and localizeApiError works.
-    let body: ApiErrorResponse | undefined
-    try {
-      body = (await response.json()) as ApiErrorResponse
-    } catch {
-      /* non-JSON error body */
-    }
-    throw new ApiError(body?.message || `Request failed (${response.status})`, body)
-  }
+  // The error envelope is JSON even here, so the same ApiError the rest of
+  // the app throws comes out of this path too and localizeApiError works.
+  if (!response.ok) throw await errorOf(response, 'Request failed')
   if (!response.body) throw new ApiError('Streaming unsupported')
+
+  const turnId = turnOf(response)
+  if (turnId) options.onTurn?.(turnId)
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -142,6 +140,7 @@ export async function streamAsk(
     // garbage collector, which would hold a slot on the assistant's queue.
     void reader.cancel().catch(() => {})
   }
+  return { turnId }
 }
 
 function emit(line: string, onFrame: (frame: ChatFrame) => void): void {
@@ -178,17 +177,9 @@ function emit(line: string, onFrame: (frame: ChatFrame) => void): void {
 export async function downloadFile(url: string, filename: string): Promise<void> {
   const token = getToken()
   const response = await fetch(`${BASE_URL}${url}`, {
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), Accept: '*/*' },
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), Accept: '*/*', [CLIENT_HEADER]: 'web' },
   })
-  if (!response.ok) {
-    let body: ApiErrorResponse | undefined
-    try {
-      body = (await response.json()) as ApiErrorResponse
-    } catch {
-      /* non-JSON error body */
-    }
-    throw new ApiError(body?.message || `Download failed (${response.status})`, body)
-  }
+  if (!response.ok) throw await errorOf(response, 'Download failed')
   const blob = await response.blob()
   const objectUrl = URL.createObjectURL(blob)
   try {

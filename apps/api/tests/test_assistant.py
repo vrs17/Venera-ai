@@ -12,6 +12,7 @@ from __future__ import annotations
 import http.client
 import io
 import json
+import re
 import urllib.error
 import urllib.request
 
@@ -28,6 +29,8 @@ from app.services.integrations.assistant import (
 
 BASE = "http://assistant.test"
 SECRET = "super-secret-value"
+#: Yordamchining oqim yo'li - versiyasiz yoki dvigatel bilan (`core/engines.py`).
+STREAM_PATH = re.compile(r"/api/(v[12]/)?chat/stream")
 
 
 def frame(**kw) -> bytes:
@@ -108,7 +111,9 @@ class FakeServer:
         if self.status:
             detail = f"body was {{'client_secret': '{SECRET}'}}" if self.echo_secret else "xato"
             raise _http_error(path, self.status, detail)
-        if path == "/api/chat/stream":
+        # Oqim yo'li dvigatelga bog'liq: `/api/chat/stream` (versiyasiz),
+        # `/api/v1/...` yoki `/api/v2/...` - endpoint kanalga qarab tanlaydi.
+        if STREAM_PATH.fullmatch(path):
             self.last = _NdjsonResponse(self.frames, self.response_headers,
                                         cut_after=self.cut_after,
                                         timeout_after=self.timeout_after)
@@ -275,9 +280,10 @@ def test_buzuq_qatorlar_tashlanadi(assistant, server):
         frame(type=42),                     # `type` satr emas
         b"\n",
         frame(type="token", text="ok"),
+        frame(type="done", route="rules"),
     ]
     frames = collect(assistant.stream("salom", user_id="venera:1"))
-    assert frames == [{"type": "token", "text": "ok"}]
+    assert frames == [{"type": "token", "text": "ok"}, {"type": "done", "route": "rules"}]
 
 
 def test_notanish_kadr_turi_otadi(assistant, server):
@@ -288,11 +294,19 @@ def test_notanish_kadr_turi_otadi(assistant, server):
 
 
 def test_oqim_chegarasi(assistant, server, monkeypatch):
-    """Cheksiz oqim serverni ham, brauzerni ham qulflab qo'yardi."""
+    """Cheksiz oqim serverni ham, brauzerni ham qulflab qo'yardi.
+
+    Chegarada to'xtash - javob CHALA qoldi degani: jim tugasa brauzer yarim
+    javobni to'liq deb ko'rsatardi, shuning uchun xato (chat.py uni xato
+    kadriga o'giradi)."""
     monkeypatch.setattr(mod, "_MAX_STREAM_BYTES", 200)
     server.frames = [frame(type="token", text="x" * 50) for _ in range(20)]
-    frames = collect(assistant.stream("salom", user_id="venera:1"))
+    frames: list[dict] = []
+    with pytest.raises(AssistantError) as exc:
+        for line in assistant.stream("salom", user_id="venera:1").frames:
+            frames.append(json.loads(line))
     assert 0 < len(frames) < 20
+    assert exc.value.status == 502
 
 
 # --- havolalar ------------------------------------------------------------
@@ -305,7 +319,7 @@ def test_ariza_havolalari_venera_yoliga_ogiriladi(assistant, server):
         docx_url=f"{BASE}/api/hr/artifacts/tok-A1/docx",
         pdf_url="/api/hr/artifacts/tok-A1/pdf",
         preview_url=f"{BASE}/api/hr/artifacts/tok-A1/preview",
-    )]
+    ), frame(type="done", route="hrm")]
     art = collect(assistant.stream("ariza", user_id="venera:1"))[0]
     assert art["docx_url"] == "/api/v1/chat/artifact/tok-A1/docx"
     assert art["pdf_url"] == "/api/v1/chat/artifact/tok-A1/pdf"
@@ -317,7 +331,8 @@ def test_ariza_kadri_ichma_ich_bolsa_ham(assistant, server):
     """Xizmat kadrni bir daraja pastga tushirsa havolalar JIMGINA ishlamay
     qo'yardi - shuning uchun ikkala shakl ham qo'llanadi."""
     server.frames = [frame(type="artifact", artifact={
-        "title": "Ariza", "docx_url": f"{BASE}/api/hr/artifacts/tok-B2/docx"})]
+        "title": "Ariza", "docx_url": f"{BASE}/api/hr/artifacts/tok-B2/docx"}),
+        frame(type="done", route="hrm")]
     art = collect(assistant.stream("ariza", user_id="venera:1"))[0]
     assert art["artifact"]["docx_url"] == "/api/v1/chat/artifact/tok-B2/docx"
 
@@ -325,14 +340,16 @@ def test_ariza_kadri_ichma_ich_bolsa_ham(assistant, server):
 def test_tanilmagan_ichki_havola_olib_tashlanadi(assistant, server):
     """Ochilmaydigan havolani ko'rsatishdan ko'ra ko'rsatmaslik yaxshi, va
     ichki topologiya tashqariga chiqmaydi."""
-    server.frames = [frame(type="artifact", docx_url=f"{BASE}/some/other/path")]
+    server.frames = [frame(type="artifact", docx_url=f"{BASE}/some/other/path"),
+                     frame(type="done", route="hrm")]
     art = collect(assistant.stream("ariza", user_id="venera:1"))[0]
     assert art["docx_url"] is None
 
 
 def test_tashqi_havola_saqlanadi(assistant, server):
     """Ichki bo'lmagan havolaga tegilmaydi."""
-    server.frames = [frame(type="artifact", docx_url="https://example.org/a.docx")]
+    server.frames = [frame(type="artifact", docx_url="https://example.org/a.docx"),
+                     frame(type="done", route="hrm")]
     art = collect(assistant.stream("ariza", user_id="venera:1"))[0]
     assert art["docx_url"] == "https://example.org/a.docx"
 
@@ -345,7 +362,7 @@ def test_jonli_kadr_shakli(assistant, server):
     server.frames = [frame(type="sources", items=[
         {"kind": "doc", "doc_id": "HR_045", "title": "ichki mehnat tartibi qoidalari",
          "section": "70", "page": 22, "preview_available": True},
-    ])]
+    ]), frame(type="done", route="rag")]
     items = collect(assistant.stream("salom", user_id="venera:1"))[0]["items"]
     assert items[0]["docUrl"] == "/api/v1/chat/doc/HR_045#page=22"
 
@@ -368,7 +385,7 @@ def test_yaroqsiz_hujjat_kaliti_havola_bermaydi(assistant, server):
     server.frames = [frame(type="sources", sources=[
         {"kind": "doc", "doc_id": "../../etc/passwd"},
         {"kind": "doc", "doc_id": ""},
-    ])]
+    ]), frame(type="done", route="rag")]
     sources = collect(assistant.stream("salom", user_id="venera:1"))[0]["sources"]
     assert all("docUrl" not in item for item in sources)
 
@@ -441,7 +458,10 @@ def test_oqim_ortasida_uzilish(assistant, server):
 def test_juda_katta_kadr_oqimni_toxtatadi(assistant, server, monkeypatch):
     monkeypatch.setattr(mod, "_MAX_LINE_BYTES", 32)
     server.frames = [frame(type="token", text="x" * 500), frame(type="done", route="rules")]
-    assert collect(assistant.stream("salom", user_id="venera:1")) == []
+    # Kadr tashlandi va `done` gacha yetilmadi - javob chala, ya'ni xato.
+    with pytest.raises(AssistantError) as exc:
+        collect(assistant.stream("salom", user_id="venera:1"))
+    assert exc.value.status == 502
 
 
 # --- navbat ---------------------------------------------------------------

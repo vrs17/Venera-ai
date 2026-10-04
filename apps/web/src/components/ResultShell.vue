@@ -1,53 +1,73 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
+import BrandSpark from './BrandSpark.vue'
 
+/**
+ * Yordamchi javobining ramkasi: kichik brend uchquni (faqat keng ekranda, ustun
+ * chetidan tashqarida - matn to'liq kenglikda qoladi) va ixtiyoriy holat qatori.
+ *
+ * Holat qatori - pufak/pill emas, belgi + bitta gap: "bloklandi", "ruxsat yo'q",
+ * "modul tayyor emas". Oddiy javobda umuman yo'q.
+ */
 defineProps<{
-  /** Null/omitted hides the status pill (user mode shows just the answer). */
-  badge?: { label: string; color: string; bg: string; border: string; icon: Component } | null
+  notice?: { text: string; tone: 'neutral' | 'warn' | 'crit'; icon: Component } | null
 }>()
 </script>
 
 <template>
-  <div :style="{ display: 'flex', gap: '12px', margin: '14px 0' }">
-    <div
-      :style="{
-        width: '28px',
-        height: '28px',
-        borderRadius: '50%',
-        background: 'var(--ink)',
-        color: 'var(--ink-contrast)',
-        fontSize: '13px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexShrink: 0,
-        marginTop: '2px',
-      }"
-    >
-      ✦
-    </div>
-    <div :style="{ flex: 1, minWidth: 0 }">
-      <div
-        v-if="badge"
-        class="glint glint-once"
-        :style="{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '8px',
-          fontSize: '12px',
-          fontWeight: 600,
-          color: badge.color,
-          background: badge.bg,
-          border: `1px solid ${badge.border}`,
-          borderRadius: '999px',
-          padding: '4px 10px 4px 8px',
-          marginBottom: '10px',
-        }"
-      >
-        <component :is="badge.icon" stroke="currentColor" />
-        {{ badge.label }}
-      </div>
+  <div class="shell">
+    <span class="shell__spark" aria-hidden="true"><BrandSpark :size="14" /></span>
+    <div class="shell__body">
+      <p v-if="notice" class="shell__notice" :class="`is-${notice.tone}`">
+        <component :is="notice.icon" :size="16" :stroke-width="1.75" aria-hidden="true" />
+        <span>{{ notice.text }}</span>
+      </p>
       <slot />
     </div>
   </div>
 </template>
+
+<style scoped>
+.shell {
+  position: relative;
+}
+.shell__spark {
+  display: none;
+  position: absolute;
+  top: 4px;
+  left: -36px;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  color: var(--brand);
+  user-select: none;
+}
+@media (min-width: 1120px) {
+  .shell__spark {
+    display: grid;
+  }
+}
+.shell__body {
+  min-width: 0;
+}
+.shell__notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+  color: var(--text-2);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+  font-weight: 500;
+}
+.shell__notice svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.shell__notice.is-warn svg {
+  color: var(--warn-text);
+}
+.shell__notice.is-crit svg {
+  color: var(--crit-text);
+}
+</style>

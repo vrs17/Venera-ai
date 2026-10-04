@@ -1,30 +1,59 @@
 <script setup lang="ts">
-import { ShieldIcon } from '../icons'
+import { ref } from 'vue'
+import { CircleAlert } from 'lucide-vue-next'
 
-/** Form-level error banner — shows validation or (once the API is wired) server
- *  errors such as "Invalid email or password". Hidden when message is empty. */
+/**
+ * Shakl darajasidagi xato: belgi + qizil matn, quti va fon yo'q (spec §4.1 - "jim").
+ * Bo'sh xabarda hech narsa chizilmaydi. `role=alert` - ekran o'quvchi darhol o'qiydi;
+ * maydonlardagi xatolar alert emas, shuning uchun e'lon bitta bo'ladi.
+ * Slot - xabar oxiridagi havola uchun (masalan, "CRM ni ochish").
+ */
 defineProps<{ message: string }>()
+defineSlots<{ default?(): unknown }>()
+
+const el = ref<HTMLElement | null>(null)
+// Kerak bo'lsa sahifa fokusni shu yerga ko'chiradi (tabindex=-1 - Tab tartibida emas).
+defineExpose({ focus: () => el.value?.focus() })
 </script>
 
 <template>
-  <div v-if="message" class="auth-error" role="alert">
-    <ShieldIcon :size="15" stroke="currentColor" />
-    <span>{{ message }}</span>
+  <div v-if="message" ref="el" class="auth-error" role="alert" tabindex="-1">
+    <CircleAlert class="auth-error__icon" :size="16" :stroke-width="1.75" aria-hidden="true" />
+    <p class="auth-error__text">
+      {{ message }}
+      <template v-if="$slots.default">{{ ' ' }}<slot /></template>
+    </p>
   </div>
 </template>
 
 <style scoped>
 .auth-error {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  font-size: 13px;
+  align-items: flex-start;
+  gap: var(--s-2);
+  color: var(--crit-text);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
   font-weight: 500;
-  line-height: 1.4;
-  color: var(--bad-fg);
-  background: var(--bad-bg);
-  border: 1px solid var(--bad-bd);
+  outline: none;
+}
+.auth-error__icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.auth-error__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.auth-error__text :slotted(a) {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+  white-space: nowrap;
+  transition: text-decoration-color var(--dur-1) var(--ease-out);
+}
+.auth-error__text :slotted(a:hover) {
+  text-decoration-color: currentColor;
 }
 </style>

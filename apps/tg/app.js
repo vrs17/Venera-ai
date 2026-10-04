@@ -112,7 +112,10 @@
 
   function authHeaders(extra) {
     const token = getToken();
-    const headers = Object.assign({ Accept: 'application/json', 'Accept-Language': 'uz' }, extra || {});
+    // `X-Venera-Client` - admin panel statistikasi uchun kanal: server web va
+    // mini app so'rovini boshqacha ajrata olmaydi (`core/channels.py`).
+    const headers = Object.assign({ Accept: 'application/json', 'Accept-Language': 'uz',
+                                    'X-Venera-Client': 'miniapp' }, extra || {});
     if (token) headers.Authorization = `Bearer ${token}`;
     return headers;
   }
@@ -203,8 +206,9 @@
   // =========================================================================
 
   const api = {
-    login: (email, password) =>
-      apiFetch('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+    // `username` - HRM/CRM (Keycloak) logini; kirgach ikkala ulanish o'zi ochiladi.
+    login: (username, password) =>
+      apiFetch('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
     me: () => apiFetch('/api/v1/auth/me'),
     logout: () => apiFetch('/api/v1/auth/logout', { method: 'POST' }),
     // Bot chati (Telegram'ning o'zi) shu hisobga ulanadi - `api/v1/telegram.py`.
@@ -391,7 +395,7 @@
     function stop() {
       if (stopped) return;
       stopped = true;
-      try { reader.cancel(); } catch (e) {}
+      try { reader.cancel().catch(() => {}); } catch (e) {}
       for (const source of sources) {
         source.onended = null;
         try { source.stop(); } catch (e) {}
@@ -722,7 +726,7 @@
    *  Oldindan kesish aniqroq xabar beradi. */
   const MAX_QUESTION_CHARS = 2000;
 
-  async function streamAsk(question, onFrame, signal) {
+  async function streamAsk(question, onFrame, signal, spoken) {
     const text = (question || '').trim().slice(0, MAX_QUESTION_CHARS);
     if (!text) throw new ApiError('Savol bo\'sh');
     const response = await fetch('/api/v1/chat/stream', {
@@ -732,7 +736,13 @@
       // `voice` - OVOZLI rejimdami. Server buni o'zi bilmaydi, shuning
       // uchun klient aytadi: faqat shunda kutish gaplari (`hold` kadrlari)
       // yuboriladi. Matnli rejimda ular shovqin bo'lardi.
-      body: JSON.stringify({ question: text, chatId: chatId(), voice: voiceOn, locale: 'uz' }),
+      // `input` - savol QANDAY kiritilgani (mikrofon yoki yozib), faqat
+      // admin paneldagi savol izi uchun: ovozli rejim default yoqiq, ya'ni
+      // `voice` yozilgan savolni ham "ovozli" qilib ko'rsatardi.
+      body: JSON.stringify({
+        question: text, chatId: chatId(), voice: voiceOn, locale: 'uz',
+        input: spoken ? 'voice' : 'text',
+      }),
     });
     if (!response.ok) throw await apiError(response);
 
@@ -773,8 +783,11 @@
       emit(buffer + decoder.decode());    // oxirgi kadr `\n` siz kelishi mumkin
     } finally {
       // Javob o'rtasida to'xtatilsa: ulanishni AJRATAMIZ, aks holda u
-      // assistant navbatida joyni band qilib turadi.
-      try { reader.cancel(); } catch (e) {}
+      // assistant navbatida joyni band qilib turadi. `cancel()` VA'DA
+      // qaytaradi va bekor qilingan (AbortError) oqimda u RAD ETILADI -
+      // `try` buni ushlamaydi, ya'ni har "To'xtatish" konsolga ushlanmagan
+      // xato chiqarardi. Shuning uchun `.catch`.
+      try { reader.cancel().catch(() => {}); } catch (e) {}
     }
   }
 
@@ -793,7 +806,7 @@
 
   const bootView = $('bootView'), authView = $('authView'), appView = $('appView');
   const bootText = $('bootText');
-  const loginForm = $('loginForm'), emailInput = $('email'), passwordInput = $('password'),
+  const loginForm = $('loginForm'), loginInput = $('login'), passwordInput = $('password'),
         loginBtn = $('loginBtn'), authError = $('authError'),
         signupLink = $('signupLink'), forgotLink = $('forgotLink');
   const orbWrap = $('orbWrap'), ripple = $('ripple'), logEmpty = $('logEmpty'),
@@ -819,12 +832,20 @@
     modePill.className = 'pill' + (kind ? ' ' + kind : '');
   }
 
-  /** Ekranda saqlanadigan xabarlar soni. Tarixdan ochilgan suhbat ham shu
-   *  qadar ko'rsatiladi (`/chats/{id}?limit=`). Avval 20 edi - tarixsiz
-   *  ilovada eski xabarga qaytishning ma'nosi yo'q edi. */
+  /** Tarixdan ochilgan suhbatning nechta xabari olinadi
+   *  (`/chats/{id}?limit=`). Avval 20 edi - tarixsiz ilovada eski xabarga
+   *  qaytishning ma'nosi yo'q edi. */
   const LOG_LIMIT = 200;
+  /** Ekranda saqlanadigan xabarlar soni - `LOG_LIMIT` dan 40 ta KO'P. Teng
+   *  bo'lsa 200 xabarli suhbat ochilgach birinchi yangi savoldanoq eng eski
+   *  xabarlar jimgina qirqila boshlardi. Chegara baribir qoladi: cheksiz
+   *  ro'yxat eski telefonda sahifani sekinlashtiradi. */
+  const LOG_KEEP = LOG_LIMIT + 40;
 
-  function msgEl(who, text) {
+  /** `at` - xabar vaqti (ms). Berilmasa hozirgi payt; `null` bo'lsa vaqt
+   *  KO'RSATILMAYDI (tizim eslatmalarida u ma'nosiz, javobga esa u oqim
+   *  tugagach `stampMessage` bilan qo'yiladi). */
+  function msgEl(who, text, at) {
     const el = document.createElement('div');
     el.className = 'msg ' + who;
     if (who !== 'system') {
@@ -834,20 +855,63 @@
       el.appendChild(w);
     }
     el.appendChild(document.createTextNode(text));
+    if (who !== 'system' && at !== null) stampMessage(el, at);
     return el;
   }
 
   function trimLog() {
-    while (log.children.length > LOG_LIMIT) log.removeChild(log.firstChild);
+    while (log.children.length > LOG_KEEP) log.removeChild(log.firstChild);
   }
 
-  function addMsg(who, text) {
-    const el = msgEl(who, text);
+  function addMsg(who, text, at) {
+    const el = msgEl(who, text, at);
     log.appendChild(el);
     logEmpty.hidden = true;
     log.scrollTop = log.scrollHeight;
     trimLog();
     return el;
+  }
+
+  /* --- Xabar vaqti: `apps/web/src/time.ts` ning qisqartmasi ---------------
+     Veb ilovada vaqt sichqoncha ustida ko'rinadi; bu yerda DOIM - sensorli
+     ekranda "ustiga olib borish" yo'q. O'zbek oy nomlari QO'LDA: brauzerning
+     `Intl` ma'lumotida o'zbek uchun oy nomi yo'q va u "M09 18" deb chiqaradi
+     (jonli ko'rilgan). Bugungi xabar uchun faqat soat ("11:39"), eskisi
+     uchun kun ham ("18-sentabr, 11:39"), o'tgan yilniki uchun yil ham. */
+  const UZ_MONTHS = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun',
+                     'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
+
+  function clockText(d) {
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
+  function whenText(ms) {
+    const d = new Date(ms), now = new Date();
+    const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
+      && d.getDate() === now.getDate();
+    if (sameDay) return clockText(d);
+    const day = d.getDate() + '-' + UZ_MONTHS[d.getMonth()];
+    if (d.getFullYear() === now.getFullYear()) return day + ', ' + clockText(d);
+    return day + ', ' + d.getFullYear() + '-yil, ' + clockText(d);
+  }
+
+  /** ISO (serverdan) -> ms, buzuq bo'lsa `null`. */
+  function isoToMs(iso) {
+    if (!iso) return null;
+    const ms = Date.parse(iso);
+    return isFinite(ms) ? ms : null;
+  }
+
+  /** Xabarning OXIRIGA vaqt qo'yadi. Javobda - oqim TUGAGANDAN keyin:
+   *  darhol qo'yilgan vaqt kadrlar bilan keladigan matnning USTIDA qolardi. */
+  function stampMessage(el, at) {
+    const t = document.createElement('time');
+    t.className = 'at';
+    const ms = at || Date.now();
+    t.dateTime = new Date(ms).toISOString();
+    t.textContent = whenText(ms);
+    el.appendChild(t);
+    return t;
   }
 
   /** Xato matni. Proksi yo'lidagi xatolarda (nginx 413/504) envelop bo'lmaydi,
@@ -1150,7 +1214,7 @@
         setState('confirm');
         return;
       }
-      ask(text, turn);
+      ask(text, turn, true);
     } catch (err) {
       if (err && err.name === 'AbortError') return;
       if (turn !== turnId) return;
@@ -1189,12 +1253,46 @@
   //: shu yerga bitta qator qo'shiladi.
   const LOOKUP_KINDS = ['hrm', 'crm'];
 
+  //: QONUNCHILIK manbasi (yordamchining v2 dvigateli, 2026-10-02): LEX.UZ
+  //: dagi modda - `url` bor, `doc_id` yo'q. Hujjat EMAS: u hujjat
+  //: ko'ruvchisiga (`/doc/...`) hech qachon yuborilmaydi, Telegram'ning
+  //: tashqi brauzerida ochiladi. Yorliq - yuqoridagi jamoa xatidagi, web va
+  //: bot bilan bir xil.
+  const LAW_KIND = 'law';
+  const LAW_LABEL = 'LEX.UZ · qonunchilik';
+
+  /** Qonun manbasi havolasi ochilsa bo'ladimi: faqat `https://`, login-parolsiz.
+   *  Server ham tekshiradi (`safe_source_url`); bu yerda IKKINCHI marta, chunki
+   *  manbalar `localStorage` dan ham qayta chiqadi (manbalar xotirasi). */
+  function lawUrl(url) {
+    if (typeof url !== 'string' || !url) return null;
+    try {
+      const u = new URL(url);
+      if (u.protocol !== 'https:' || u.username || u.password || !u.hostname) return null;
+      return u.href;
+    } catch (e) { return null; }
+  }
+
+  /** Tashqi havola: Telegram ichida - `openLink` (tashqi brauzer, Mini App
+   *  yopilmaydi); oddiy brauzerda sinashda - yangi oyna, `noopener` bilan
+   *  (ochilgan sahifa bizning oynaga qo'l cho'za olmasin). */
+  function openExternal(url) {
+    if (tg && typeof tg.openLink === 'function') {
+      try {
+        tg.openLink(url);
+        return;
+      } catch (e) { /* pastdagi zaxiraga */ }
+    }
+    const opened = window.open(url, '_blank', 'noopener,noreferrer');
+    if (opened) opened.opener = null;
+  }
+
   /** Manba qatorining ko'rinadigan nomi.
    *
    *  Ikki tur ATAYLAB har xil: hujjatda nom bor va u `[1]` bilan belgilanadi;
    *  jonli so'rovda esa ochiladigan narsa yo'q - u ma'lum bir paytda
    *  bo'lib o'tgan chaqiruv, shuning uchun nomi va nima qaytargani (digest)
-   *  aytiladi. */
+   *  aytiladi. Qonun moddasi - "LEX.UZ · qonunchilik: <modda>". */
   function sourceLabel(s, index) {
     const lookup = LOOKUP_KINDS.indexOf(String(s.kind)) >= 0;
     const mark = s.marker || (lookup ? '[T' + (index + 1) + ']' : '[' + (s.citation_index || index + 1) + ']');
@@ -1202,13 +1300,59 @@
       const what = s.tool || s.kind;
       return mark + ' ' + what + (s.digest ? ' - ' + s.digest : '');
     }
+    if (String(s.kind) === LAW_KIND) {
+      return mark + ' ' + LAW_LABEL + (s.title ? ': ' + s.title : '');
+    }
     const name = s.title || s.doc_id || 'hujjat';
     return mark + ' ' + name + (s.page ? ', ' + s.page + '-bet' : '');
   }
 
-  async function ask(question, turn) {
+  /** Javob ostidagi manbalar qatori. Ikki joyda kerak: javob kelganda va
+   *  suhbat tarixdan qayta ochilganda (12b-bo'lim, manbalar xotirasi).
+   *
+   *  Matn tugunlari bilan (`innerHTML` EMAS): sarlavha xizmatdan keladi, va
+   *  qonun moddasi bosiladigan havola bo'lishi kerak. Hujjatlar - avvalgidek
+   *  oddiy matn. */
+  function renderSources(el, docs) {
+    if (!docs || !docs.length) return;
+    const src = document.createElement('span');
+    src.className = 'src';
+    src.appendChild(document.createTextNode('Manbalar: '));
+    docs.forEach((s, index) => {
+      if (index) src.appendChild(document.createTextNode('  '));
+      const url = String(s.kind) === LAW_KIND ? lawUrl(s.url) : null;
+      if (!url) {
+        src.appendChild(document.createTextNode(sourceLabel(s, index)));
+        return;
+      }
+      const mark = s.marker || '[' + (s.citation_index || index + 1) + ']';
+      src.appendChild(document.createTextNode(mark + ' ' + LAW_LABEL + ': '));
+      const link = document.createElement('a');
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = s.title || LAW_LABEL;
+      // `.src` xira rangda - havola shu rangda, faqat tagiga chizilgan.
+      link.style.color = 'inherit';
+      link.style.textDecoration = 'underline';
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        openExternal(url);
+      });
+      src.appendChild(link);
+    });
+    el.appendChild(src);
+  }
+
+  /** `spoken` - savol mikrofondan kelgan (STT), yozilmagan. */
+  async function ask(question, turn, spoken) {
     setState('thinking');
-    const el = addMsg('venera', '');
+    // Kalit SHU YERDA olinadi: manbalar javob kelgan suhbat ostida eslab
+    // qolinadi, javob kelguncha ekranda boshqa suhbat ochilgan bo'lsa ham.
+    const chat = chatId();
+    let answerDocs = null;
+    // VAQTSIZ yaratiladi - vaqt javob tugagach, matnning ostiga qo'yiladi.
+    const el = addMsg('venera', '', null);
     const body = document.createElement('span');
     const cursor = document.createElement('span');
     cursor.className = 'cursor';
@@ -1258,10 +1402,8 @@
           // aynan shu qatorga qaraydi.
           const docs = list.filter((item) => LOOKUP_KINDS.indexOf(String(item.kind)) < 0);
           if (!docs.length) break;
-          const src = document.createElement('span');
-          src.className = 'src';
-          src.textContent = 'Manbalar: ' + docs.map(sourceLabel).join('  ');
-          el.appendChild(src);
+          answerDocs = docs;
+          renderSources(el, docs);
           break;
         }
         case 'artifact': {
@@ -1292,7 +1434,7 @@
     };
 
     try {
-      await streamAsk(question, onFrame, aborter ? aborter.signal : undefined);
+      await streamAsk(question, onFrame, aborter ? aborter.signal : undefined, spoken);
     } catch (err) {
       if (err && err.name === 'AbortError') { cursor.remove(); return; }
       if (turn !== turnId) return;
@@ -1313,8 +1455,16 @@
       // Qisman javobdan keyingi xato - IZOH, nosozlik emas.
       setNote(failure, 'warn');
     }
+    stampMessage(el);
 
     if (!answer) { setState('idle'); return; }
+    if (!failed) {
+      // Javob saqlandi, ya'ni suhbat endi serverda BOR. Manbalar SHU
+      // qurilmada eslab qolinadi (xizmat tarixi ularni saqlamaydi), varaq
+      // ochiq bo'lsa ro'yxat yangilanadi - yangi suhbat unda paydo bo'lsin.
+      rememberSources(chat, answer, answerDocs);
+      if (!historySheet.hidden) void loadChats();
+    }
     if (failed || !voiceOn) { setState('idle'); return; }
     await speak(answer, turn);
   }
@@ -1478,14 +1628,14 @@
 
   loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const email = emailInput.value.trim();
+    const username = loginInput.value.trim();
     const password = passwordInput.value;
-    if (!email || !password) return;
+    if (!username || !password) return;
     loginBtn.disabled = true;
     loginBtn.textContent = 'Kirilmoqda…';
     showAuthError('');
     try {
-      const result = await api.login(email, password);
+      const result = await api.login(username, password);
       setToken(result.token);
       passwordInput.value = '';
       enterApp(result.user);
@@ -1500,7 +1650,7 @@
   // Server hozircha 501 qaytaradi - uning O'Z xabarini ko'rsatamiz.
   signupLink.addEventListener('click', async () => {
     showAuthError('');
-    const email = emailInput.value.trim();
+    const email = loginInput.value.trim();
     try {
       await api.signup({ email, fullName: email });
       showAuthError('Ro\'yxatdan o\'tish so\'rovi yuborildi.');
@@ -1566,6 +1716,10 @@
     try { await api.logout(); } catch (e) { /* baribir chiqamiz */ }
     clearToken();
     drop(CHAT_KEY);
+    // Manbalar xotirasi ham: unda hujjat nomlari bor, va keyingi odam
+    // (umumiy qurilma) oldingisining izini ko'rmasin. Sessiya TUGAGANDA
+    // (`sessionExpired`) esa qoladi - odatda o'sha odam qayta kiradi.
+    forgetSources();
     resetHistory();
     user = null;
     teardown();
@@ -1663,6 +1817,20 @@
   }
 
   function renderHistory() {
+    // Nom tahrirlanayotgan bo'lsa QAYTA CHIZILMAYDI. Fon yangilanishi
+    // (`loadChats` - varaq ochilganda yoki javob kelganda) ro'yxatni qayta
+    // qurib, ochiq kiritish maydonini yo'q qilardi - odam yozayotgan nom
+    // jimgina yo'qolardi. Tahrir tugagach (`finish`) ro'yxat baribir
+    // chiziladi, ya'ni yangi ma'lumot yo'qolmaydi.
+    const field = histList.querySelector('.hist-input');
+    if (editingId && field && field.dataset.chat === editingId) return;
+    // Fokus qaysi qatorda edi - qayta qurilgach O'SHA suhbatning qatoriga
+    // qaytadi. Aks holda u `<body>` ga tushardi (masalan nom Enter bilan
+    // saqlangach) va klaviatura bilan yurgan odam ro'yxatning boshidan
+    // qayta boshlardi.
+    const had = document.activeElement;
+    const hadRow = had && had !== histList && histList.contains(had) ? had.closest('.hist-row') : null;
+    const focusId = hadRow ? hadRow.dataset.chat : null;
     histList.textContent = '';
     if (chatsState === 'loading' && !chats.length) {
       histList.appendChild(histMessage('Yuklanmoqda…'));
@@ -1698,11 +1866,20 @@
       }
       histList.appendChild(historyRow(chat, chat.chat_id === active));
     }
+    if (focusId && focusId !== editingId) {
+      for (const row of histList.children) {
+        if (row.dataset.chat !== focusId) continue;
+        const open = row.querySelector('.hist-open');
+        if (open) open.focus();
+        break;
+      }
+    }
   }
 
   function historyRow(chat, active) {
     const row = document.createElement('div');
     row.className = 'hist-row' + (active ? ' active' : '');
+    row.dataset.chat = chat.chat_id;
     if (editingId === chat.chat_id) {
       // Nomini o'zgartirish - qatorning o'zida. Enter va fokus ketishi
       // saqlaydi, Esc bekor qiladi. Enter'dan keyin blur ham keladi -
@@ -1713,6 +1890,7 @@
       field.maxLength = 80;
       field.value = chat.title || '';
       field.setAttribute('aria-label', 'Suhbat nomi');
+      field.dataset.chat = chat.chat_id;
       let done = false;
       const finish = (save) => {
         if (done) return;
@@ -1828,12 +2006,23 @@
       const detail = await chatsApi.open(id);
       if (request !== openRequest) return;
       const frag = document.createDocumentFragment();
+      const remembered = srcLoad();
       for (const m of (detail && detail.messages) || []) {
         const content = String((m && m.content) || '');
         if (!content.trim()) continue;
+        // Vaqt - SERVERNIKI. Yo'q yoki buzuq bo'lsa ko'rsatilmaydi: "hozir"
+        // deb qo'yish eski xabarni yangi qilib ko'rsatardi.
+        const at = isoToMs(m.created_at);
+        if (m.role === 'user') { frag.appendChild(msgEl('you', content, at)); continue; }
         // Saqlangan javobda iz yo'q, lekin `[T1]` va markdown belgilari bor -
-        // jonli javobdagi bilan AYNI tozalash.
-        frag.appendChild(m.role === 'user' ? msgEl('you', content) : msgEl('venera', forScreen(content)));
+        // jonli javobdagi bilan AYNI tozalash. Tartib ham jonlidagidek:
+        // matn, manbalar, vaqt.
+        const el = msgEl('venera', forScreen(content), null);
+        // Xizmat tarixi iqtiboslarni SAQLAMAYDI - ular shu qurilmada eslab
+        // qolingan bo'lsa qaytariladi (pastda, "Manbalar xotirasi").
+        renderSources(el, recallSources(id, content, remembered));
+        if (at !== null) stampMessage(el, at);
+        frag.appendChild(el);
       }
       log.insertBefore(frag, marker);
       marker.remove();
@@ -1960,6 +2149,64 @@
   historySheet.addEventListener('click', (e) => { if (e.target === historySheet) closeHistory(); });
   newChatBtn.addEventListener('click', startNewChat);
   histUndoBtn.addEventListener('click', () => { void undoDelete(); });
+
+  /* --- Manbalar xotirasi (`apps/web/src/sourcesCache.ts` nusxasi) ---------
+     Yordamchining tarixi har xabar uchun faqat rol, matn va vaqtni saqlaydi
+     - iqtiboslar YO'Q. Server tuzatilguncha ular SHU qurilmada eslab
+     qolinadi: suhbat kaliti + javob matnining boshi (120 belgi) bo'yicha.
+     Boshqa qurilmada (yoki vebda) ochilgan suhbatda manbalar bo'lmaydi.
+     Faqat hujjat nomi va beti - token yoki javob matni yozilmaydi. */
+  const SRC_KEY = 'venera_tg_sources';
+  /** Shuncha suhbatdan ortig'i - eng eskisi o'chiriladi (localStorage kichik). */
+  const SRC_MAX_CHATS = 60;
+
+  function srcLoad() {
+    try {
+      const raw = store(SRC_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return (parsed && typeof parsed === 'object') ? parsed : {};
+    } catch (e) { return {}; }
+  }
+
+  function srcSave(data) {
+    try { keep(SRC_KEY, JSON.stringify(data)); } catch (e) { /* to'lgan - eslanmaydi */ }
+  }
+
+  function srcKey(answer) {
+    return (answer || '').trim().slice(0, 120);
+  }
+
+  /** Javob keldi - manbalarini shu suhbat ostida eslab qol. */
+  function rememberSources(id, answer, docs) {
+    const key = srcKey(answer);
+    if (!id || !key || !docs || !docs.length) return;
+    const data = srcLoad();
+    const entry = (data[id] && Array.isArray(data[id].turns)) ? data[id] : { at: 0, turns: [] };
+    const i = entry.turns.findIndex((t) => t && t.key === key);
+    const turn = { key: key, docs: docs };
+    if (i >= 0) entry.turns[i] = turn; else entry.turns.push(turn);
+    entry.at = Date.now();
+    data[id] = entry;
+    const ids = Object.keys(data);
+    if (ids.length > SRC_MAX_CHATS) {
+      ids.sort((a, b) => ((data[a] && data[a].at) || 0) - ((data[b] && data[b].at) || 0));
+      for (const old of ids.slice(0, ids.length - SRC_MAX_CHATS)) delete data[old];
+    }
+    srcSave(data);
+  }
+
+  /** Qayta ochilgan javob uchun manbalar, bo'lsa. `data` - oldindan
+   *  o'qilgan xotira: suhbat ochilganda u HAR JAVOB uchun qayta o'qilmasin. */
+  function recallSources(id, answer, data) {
+    const entry = (data || srcLoad())[id];
+    if (!entry || !Array.isArray(entry.turns)) return null;
+    const key = srcKey(answer);
+    const turn = entry.turns.filter((t) => t && t.key === key)[0];
+    return turn && Array.isArray(turn.docs) ? turn.docs : null;
+  }
+
+  /** Chiqishda - hammasi (`logout`). */
+  function forgetSources() { drop(SRC_KEY); }
 
   // =========================================================================
   // 12c. Hujjatni yuklab olish - Telegram'ning o'z yuklab olgichi bilan
@@ -2092,7 +2339,7 @@
     aborter = new AbortController();
     const turn = ++turnId;
     addMsg('you', text);
-    ask(text, turn);
+    ask(text, turn, false);
     return true;
   }
 
@@ -2143,7 +2390,7 @@
   confirmYes.addEventListener('click', () => {
     if (state !== 'confirm' || !pendingQuestion) return;
     setNote('');
-    ask(pendingQuestion, turnId);
+    ask(pendingQuestion, turnId, true);
     pendingQuestion = '';
   });
   confirmNo.addEventListener('click', () => {

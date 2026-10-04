@@ -468,8 +468,9 @@ HRM connector'ini o'z ichida birlashtiradi, ya'ni Venera uchun bu BITTA
 endpoint.
 
 ```
-brauzer -> /api/v1/chat/stream (Venera)  ->  POST /api/chat/stream (Assistant)
+brauzer -> /api/v1/chat/stream (Venera)  ->  POST /api/{v1|v2}/chat/stream (Assistant)
                                               |-> hujjatlar (RAG, Qdrant)
+                                              |-> qonunchilik (LEX.UZ, v2)
                                               `-> HRM connector (hrm-mcp)
 ```
 
@@ -495,16 +496,83 @@ Bo'sh qolsa `/api/health` `degraded` bo'lib, "CHAT ISHLAMAYDI" deb aytadi va
 savol umuman yuborilmaydi - xizmat 401 qaytarardi va u foydalanuvchiga
 "sessiyangiz tugadi" bo'lib ko'rinardi.
 
+### Dvigatel: v1 / v2 (2026-10-02 dan)
+
+Xizmat ikki versiyali bo'ldi - so'rov va javob shakli bir xil, yo'l boshqa:
+
+| `HRM_ASSISTANT_ENGINE` | Yo'l | Nima |
+|---|---|---|
+| `v2` (default) | `/api/v2/chat/stream` | yangi: javobni model yozadi, Mehnat kodeksi moddalari LEX.UZ havolasi bilan, **"Pro"** |
+| `v1` | `/api/v1/chat/stream` | barqaror: 29-sentabrgacha bo'lgan javoblar |
+| bo'sh | `/api/chat/stream` | versiyasiz - xizmat default'i (bugun = v1). **Hozirgi prod shu yo'lda** |
+
+Kanal bo'yicha istisno: `HRM_ASSISTANT_ENGINE_BY_CHANNEL=miniapp=v1,bot=v1`
+(kanallar: `web`, `miniapp`, `bot`, `desktop`, `api`; kanal `X-Venera-Client`
+sarlavhasidan). Tarix (`/api/chats`), amallar, fayllar, hujjatlar va
+`/api/pro/quota` VERSIYASIZ - ikkala dvigatel uchun bitta. Noto'g'ri qiymat
+server'ni yiqitmaydi: `/api/health/detail` dagi `warnings` va
+`assistant.engine.problems` da ko'rinadi, o'rniga `v2` (yoki umumiy qiymat)
+ishlaydi. Qaysi kanal qaysi dvigatelda - `assistant.engine.byChannel`.
+
+**"Pro" faqat `v2` da.** Boshqa dvigatelda `mode: "pro"` yuqoriga
+YUBORILMAYDI (javob standart rejimda), `done` da `pro` bloki bo'lmaydi, savol
+izida esa "Pro: berilmadi, sabab `engine`". `GET /api/v1/pro/quota` javobida
+`engine` (so'rovchi kanalining dvigateli) va `available` (`v2` va byudjet
+o'qildi): `v2` bo'lmasa 200, `available: false`, yuqoriga borilmaydi.
+
+**Orqaga qaytarish:** `HRM_ASSISTANT_ENGINE=v1` (yoki bo'sh) va restart - kod
+o'zgarmaydi. Analitika omboridagi `turns.engine` ustuni (sxema v2) qoladi;
+eski kod uni e'tiborsiz qoldiradi.
+
 **Javob NDJSON oqimi**: har qatorda bitta kadr, kelishi bilan uzatiladi.
 
 | Kadr | Nima |
 |---|---|
 | `stage` | o'tkinchi holat ("Hujjatlar qidirilmoqda") - kutish paytida ko'rsatiladi |
-| `sources` | iqtiboslar (`[1]`) va HRM chaqiruvlari (`[T1]`). DIQQAT: jonli xizmat ro'yxatni `items` kalitida yuboradi, hujjatdagi bir martalik javobda esa `sources` - ikkalasi ham o'qiladi |
+| `sources` | iqtiboslar (`[1]`) va HRM chaqiruvlari (`[T1]`). DIQQAT: jonli xizmat ro'yxatni `items` kalitida yuboradi, hujjatdagi bir martalik javobda esa `sources` - ikkalasi ham o'qiladi. v2: `kind: "law"` - LEX.UZ dagi modda (`url`, `title`, `doc_id: null`) |
 | `artifact` | yaratilgan ariza fayli (DOCX/PDF) |
 | `token` | javob matni bo'laklari |
-| `done` | yakun: `route` (`rules`/`hrm`/`both`/`clarify`) |
+| `done` | yakun: `route` (`rules`/`hrm`/`both`/`clarify`); versiyalangan yo'lda `engine`, "Pro" so'ralganda `pro` |
 | `error` | tokenlar o'rniga: `code` va foydalanuvchiga xavfsiz `text` |
+
+**Qonunchilik havolasi tekshiriladi.** `kind: "law"` manbaning `url` i
+brauzerda havola bo'lib ochiladi, shuning uchun Venera FAQAT `https://` ni
+o'tkazadi: `javascript:`, `data:`, login-parolli va boshqa `http://` manzil
+`null` ga aylanadi (manbaning nomi qoladi), `http://lex.uz` esa `https` ga
+ko'tariladi. LEX.UZ dan boshqa `https` domen o'tadi, lekin jurnalga yoziladi
+("Manba havolasi LEX.UZ emas"). Qonun manbasi hujjat ko'ruvchisiga
+(`/api/v1/chat/doc/...`) HECH QACHON yo'naltirilmaydi.
+
+### Navbat: "Savol-javob xizmati band" (503)
+
+Venera yordamchiga bir vaqtda ko'pi bilan `HRM_ASSISTANT_MAX_CONCURRENT` ta
+oqim ochadi; oshsa savol yordamchiga BORMASDAN 503 oladi. 29-sentabrda prod
+shu navbat "oqib ketgani" sababli bir soatdan ko'p har savolga 503 berdi -
+yordamchiga birorta so'rov bormagan holda (klient tanadan oldin uzilsa oqim
+yopilmay, joy abadiy band qolardi). Endi:
+
+* joy oqim yopilganda, `AnswerStream.close()` da va oqim obyekti yig'ilganda
+  qaytadi (uchalasi ham idempotent);
+* navbat TO'LGANDA o'zini davolaydi: avval `gc.collect()` (yetib bo'lmaydigan
+  oqimlar halol yopiladi), keyin `HRM_ASSISTANT_TIMEOUT` + 30 s o'qilmagan
+  yoki `HRM_ASSISTANT_MAX_STREAM_SECONDS` + `TIMEOUT` + 30 s dan qari joylar
+  majburan qaytariladi - jurnalda ERROR: "N ta oqib ketgan joy qaytarib olindi";
+* bitta javob `HRM_ASSISTANT_MAX_STREAM_SECONDS` (600) dan uzoq yashamaydi (504).
+
+Sababi foydalanuvchiga bir xil ("xizmat band"), lekin jurnal va savol izida
+(`turns.error_code`) ALOHIDA:
+
+| `error_code` | Ma'nosi | Nima qilish |
+|---|---|---|
+| `queue_full` | BIZNING navbat to'la - yordamchiga borilmagan | `/api/health/detail` -> `assistant.slots` (band, eng eski joy, `reclaimed`) |
+| `upstream_unreachable` | yordamchiga ulanib bo'lmadi | tarmoq / `10.10.50.4:8080` / firewall |
+| `upstream_busy` | yordamchining O'ZI 503 qaytardi | yordamchi jamoasi |
+| `open_failed` | boshqa ochilish xatosi (401, 422, 5xx) | `http_status` va `error_text` ga qarang |
+
+Yordamchi holati uchun keshlangan "o'chiq" belgisi (circuit breaker) Venera'da
+YO'Q: har savol yordamchiga qayta urinadi, ya'ni u qaytishi bilan chat ham
+qaytadi. `UpstreamHealth` (STT/TTS) 30 s keshlanadi, lekin faqat tashxis
+uchun - so'rovlarni to'smaydi.
 
 `nginx` da alohida `location = /api/v1/chat/stream` bor: **buferlash va gzip
 o'chirilgan**. Aks holda nginx butun javobni yig'ib, oxirida bir yo'la
@@ -840,18 +908,32 @@ HRM/CRM savollari, yozuv amalini tasdiqlash (tugmalar), ariza fayli (DOCX
 chatga keladi, PDF tugma bilan), manba hujjati (`📄 [1]` tugmasi - PDF chatga
 keladi). Suhbatlar veb ilova va mini app tarixida ham ko'rinadi.
 
-**Qayerda ishlaydi.** API jarayoni ichida (`app/bot/`), long polling bilan -
-nginx ga tegilmaydi, tashqaridan yangi yo'l ochilmaydi. Alohida xizmat EMAS:
-bot `api/v1/chat.py` dagi AYNI klientlarni ishlatadi (CRM sessiyasi
+**Qayerda ishlaydi.** API jarayoni ichida (`app/bot/`), long polling bilan
+(`TELEGRAM_MODE=polling`) - nginx ga tegilmaydi. Alohida xizmat EMAS: bot
+`api/v1/chat.py` dagi AYNI klientlarni ishlatadi (CRM sessiyasi
 `refresh_token` ni rotatsiya qiladi - ikkinchi nusxa uni bekor qilardi).
-Ikkinchi API nusxasi (masalan qo'lda ishga tushirilgan sinov serveri) botni
-o'qimaydi: `data/telegram/poll.lock` fayl qulfi.
+Bitta xostda ikkinchi API nusxasi botni o'qimaydi: `data/telegram/poll.lock`.
+
+**Bitta token - bitta o'quvchi.** 2026-09-24 da boshqa muhitdagi (dev) server
+shu token bilan ishga tushdi: xabarlar ikkiga bo'lindi va dev nusxa - unda
+ulanishlar yo'q - odamdan qayta kirishni so'radi. Endi bot 409 ni ko'rishi
+bilan ulanishni DARHOL qaytarib oladi (u nusxa ~30 s kutadi), `/api/health/
+detail` esa `conflicts_10min` va ogohlantirishni ko'rsatadi. To'liq yechim:
+@BotFather'da `/revoke`, yangi tokenni faqat shu `.env` ga qo'yish.
+
+**Webhook** (`TELEGRAM_MODE=webhook`, `/api/v1/telegram/webhook`, sir
+sarlavhasi bilan) kodda bor, lekin jonli tizimda O'CHIQ: sinovda Telegram'ning
+`195.158.16.251` ga ulanishi ko'pincha birinchi urinishda "Connection timed
+out" bo'ldi va ovozli savol ~80 s kechikdi (GAPI 1.6 s, javob 7 s). Tarmoq
+tuzatilsa - bitta qator bilan yoqiladi. Polling'ga qaytishda webhook qo'lda
+o'chiriladi (`deleteWebhook`), aks holda `getUpdates` 409 oladi.
 
 **Hisobni ulash - faqat mini app orqali.** Odam botdagi "Venera" tugmasi bilan
 mini app'ni ochib kiradi; ilova `POST /api/v1/telegram/link` ga Telegram
 imzolagan `initData` ni yuboradi. Isbot ikkita: sessiya (kim kirgan) va
 imzo (kim ochgan) - `user.id` klientdan olinmaydi. Botda parol so'ralmaydi.
-Ulanish 30 kun yashaydi va faqat mini app ochilganda yangilanadi; mini
+Ulanish oxirgi faollikdan 30 kun yashaydi: mini app ochilishi ham, botdagi
+har savol ham uni yangilaydi - faol odamdan qayta kirish so'ralmaydi. Mini
 app'dan chiqish (`/unlink`) va botdagi `/logout` uni uzadi. Hisob
 `users.yaml` dan o'chirilsa - keyingi xabarda ulanish uziladi.
 
@@ -867,6 +949,55 @@ olmaydi (shaxsiy chatda media cheklovi yo'q). Rasm, fayl, stiker - faqat izoh.
 suhbat, `/app` mini app, `/help`, `/logout`. Faqat SHAXSIY chat - guruhda
 bot jim (javoblarda shaxsiy HR ma'lumoti bor).
 
-**Holat:** `/api/health/detail` -> `telegram` (ishlayaptimi, oxirgi muvaffaqiyatli
-so'rov, xato, ulanganlar soni). 409 xatosi = boshqa nusxa shu botni
-o'qiyapti. O'chirish: `.env` da `TELEGRAM_BOT_ENABLED=false` + restart.
+**Holat:** `/api/health/detail` (FAQAT ADMIN - `ADMIN_LOGINS` yoki admin panel
+orqali berilgan rol) -> `telegram` (ishlayaptimi, rejimi, oxirgi muvaffaqiyatli
+so'rov, xato, ulanganlar soni); admin panelning "Tizim" sahifasi ham shu
+tashxisdan botning HAQIQIY rejimini (`polling` / `webhook`) ko'rsatadi. 409
+xatosi = boshqa nusxa shu botni o'qiyapti. O'chirish: `.env` da `TELEGRAM_BOT_ENABLED=false` + restart.
+
+## Xodimlar ma'lumotnomasi (kontaktlar)
+
+F.I.SH, Telegram, telefon, email - `apps/api/data/contacts/contacts.db` (SQLite,
+gitignore'da, 600). Shaxsiy ma'lumot: jurnalga qiymatlar yozilmaydi, tashqi
+LLM ga yuborilmaydi - qidiruv Venera'ning o'zida (`services/contacts.py`).
+
+**Chatda (web, mini app, Telegram bot - bitta yo'l, `chat.open_stream`):**
+
+| Yozadi | Natija |
+|---|---|
+| "Azizov Boburning telefoni?" / "...ning telegrami", "emaili", "kontakti" | Javob ro'yxatdan, darhol |
+| "...ning telefonini +998901234567 ga o'zgartir" | Tasdiq kartasi -> saqlanadi |
+| "...ga telegram qo'sh: @username" | Tasdiq kartasi (bo'sh maydonni to'ldirish) |
+| "...ning telegramini o'chir" | Tasdiq kartasi (maydon tozalanadi) |
+| "...ning ismini Familiya Ism Otasi ga o'zgartir" | Tasdiq kartasi |
+| "Yangi xodim qo'sh: Familiya Ism, +998..., @user, email" | Tasdiq kartasi |
+| "...ni ro'yxatdan o'chir" | Tasdiq kartasi (yumshoq o'chirish) |
+
+Qiymat turi o'zidan aniqlanadi (`+998...` telefon, `@...` Telegram, `...@...`
+email). Ism imlosi farq qilsa ham topiladi (o'/oʻ, x/h, kirill, qo'shimchalar,
+bitta harf xatosi). Kartani CRM takliflari bilan BIR XIL UI ko'rsatadi
+(`connector: "xodimlar"`), tasdiqlash - `/api/v1/actions/{token}/confirm`
+(kalit `ct_` bilan boshlanadi, Venera'ning o'zida bajariladi).
+
+**Ruxsat:** qidirish - har qanday kirgan foydalanuvchi; taklif va tasdiqlash -
+`contacts_editor_roles` (default `ADMIN`), rol tasdiq paytida qayta
+tekshiriladi. Har o'zgarish `employee_changes` jadvaliga yoziladi (kim, qachon,
+maydon, eski -> yangi). Bir telefon/Telegram/email ikki xodimda bo'lmaydi;
+taklifdan keyin ma'lumot o'zgargan bo'lsa ustidan yozilmaydi.
+
+**Ommaviy yuklash / nusxa** (jadvaldan nusxalangan TSV yoki CSV, birinchi qator
+sarlavha):
+
+```bash
+cd ~/Venera/apps/api
+venv/bin/python -m app.tools.contacts_import royxat.tsv --dry-run
+venv/bin/python -m app.tools.contacts_import royxat.tsv
+venv/bin/python -m app.tools.contacts_import --export nusxa.csv
+```
+
+Qayta yuklash xavfsiz: email yoki F.I.SH bo'yicha topilgan xodimning faqat
+TO'LDIRILGAN maydonlari yangilanadi, bo'sh katak mavjud qiymatni o'chirmaydi,
+faylda yo'q xodim o'chirilmaydi. Birinchi yuklash: 2026-09-25, 77 xodim.
+
+**Cheklov:** ma'lumotnoma javoblari yuqoridagi xizmatga bormaydi, shuning
+uchun suhbatlar TARIXIDA saqlanmaydi (yuqoridagi xizmat ularni ko'rmaydi).

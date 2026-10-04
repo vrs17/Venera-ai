@@ -15,7 +15,7 @@ esa nima uchun ruxsat berilgani/berilmaganini aytadi.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -116,6 +116,8 @@ class AskRequest(BaseModel):
     """
 
     question: str
+    #: Klient tanlagan dvigatel - `StreamRequest.engine` bilan bir xil ma'no.
+    engine: str | None = None
 
 
 class StreamRequest(BaseModel):
@@ -142,10 +144,33 @@ class StreamRequest(BaseModel):
     #: buni klient aytadi, va default `false`: kadr QO'SHILGANI bilan
     #: eski klientlarning xatti-harakati o'zgarmaydi.
     voice: bool = False
+    #: Savol QANDAY kiritilgan: `voice` - mikrofondan (STT), `text` - yozib.
+    #: FAQAT savol izi uchun (admin panel: "ovozli" belgisi va ulushi).
+    #: Berilmasa `voice` dan olinadi - web'da ovoz paneli ochiq bo'lsa savol
+    #: gapirilgan, ya'ni ikkalasi bir narsa.
+    #:
+    #: NEGA ALOHIDA MAYDON. `voice` - "klient ovozli REJIMDA" (javob ovoz
+    #: chiqarib o'qiladi, kutish gaplari shunga qarab yuboriladi), savol qanday
+    #: kiritilgani emas. Mini App'da javobni o'qish default YOQIQ, ya'ni YOZIB
+    #: berilgan savol ham `voice: true` bilan keladi - izda hamma Mini App
+    #: savoli "ovozli" bo'lib ko'rinardi. Eski Mini App build'i bu maydonni
+    #: yubormaydi - u uchun avvalgi xulq.
+    input: Literal["text", "voice"] | None = None
     #: Interfeys tili - kutish gapi shu tilda bo'ladi.
     #: `uz-Cyrl` uchun gap lotin yozuvida keladi: u ESHITILADI, va TTS
     #: lotin yozuvida ishlaydi.
     locale: str = Field(default="uz", max_length=16)
+    #: "Pro" rejimi - SHU savol uchun (2026-09-29 dagi API).
+    #:
+    #: `pro` bo'lsa yuqoridagi yordamchi tashqi (hosted) modeldan
+    #: maslahat oladi - bu PULGA tushadi va odamning kunlik/haftalik/
+    #: oylik byudjetidan yeydi. Shuning uchun u HAR XABAR uchun alohida
+    #: va default `standard`: klient aytmasa hech narsa o'zgarmaydi va
+    #: savol tarmoqdan tashqariga chiqmaydi.
+    #:
+    #: `Literal` bilan qotirilgan: notanish qiymat 422 beradi va
+    #: yuqoridagi xizmatga bormaydi.
+    mode: Literal["standard", "pro"] = "standard"
 
     # `hrmEmployee` ATAYLAB YO'Q.
     #
@@ -161,6 +186,18 @@ class StreamRequest(BaseModel):
     # `user_id` kabi). Kelajakda kerak bo'lsa - masalan rahbar o'z
     # bo'ysunuvchisi haqida so'rasa - u huquq tekshiruvi bilan birga
     # qaytariladi, so'rov tanasidan emas.
+
+    #: Klient TANLAGAN dvigatel (`v1` | `v2`, `GET /chat/engines` dagi
+    #: `available` dan). Bu ISTAK, huquq emas: server uni faqat admin shu
+    #: odamga bergan versiyalar ichida bo'lsa qo'llaydi, aks holda JIMGINA
+    #: e'tiborsiz qoldiradi (`services/engine_control.py`).
+    #:
+    #: NEGA `Literal` EMAS (`mode` dan farqli). Noto'g'ri `mode` - klient
+    #: xatosi, 422 halol. Dvigatel esa admin ruxsatni olib tashlagan PAYTDA
+    #: ham klientda saqlanib qolgan bo'ladi, yoki katalogdan versiya
+    #: chiqariladi - shunda 422 odamning chatini sindirardi. Shuning uchun
+    #: istalgan satr qabul qilinadi va server o'zi hal qiladi.
+    engine: str | None = None
 
 
 class FileLinkRequest(BaseModel):
