@@ -23,8 +23,8 @@
 //
 // QA uchun `window.__tgStub`: `.back()` - Telegram'ning "Orqaga" tugmasini bosish,
 // `.setScheme('dark')` - themeChanged hodisasi, `.state()` - BackButton/MainButton/
-// closingConfirmation holati va oxirgi tebranishlar (`haptics`) - skrinshot
-// skriptlari tekshiradi.
+// closingConfirmation holati, oxirgi tebranishlar (`haptics`) va `openLink` ga
+// berilgan havolalar (`links`) - skrinshot skriptlari tekshiradi.
 
 import { readonly, ref } from 'vue'
 
@@ -280,6 +280,9 @@ const stubState = {
   closing: false,
   /** Stub'da tebranishlar jurnali - QA "bitta harakat - bitta tebranish" ni tekshiradi. */
   haptics: [] as string[],
+  /** Stub'da `openLink` havolalari: QA imzolangan hujjat havolasini shu yerdan olib,
+   *  o'zi ochib ko'radi (headless'da yangi oynani poylash shart emas). */
+  links: [] as string[],
 }
 function logHaptic(kind: string): void {
   if (sdk) return
@@ -405,6 +408,10 @@ export const haptic = {
 /** Tashqi havola (LEX.UZ, imzolangan fayl): Telegram ichida - `openLink`, ya'ni
  *  tashqi brauzer va Mini App YOPILMAYDI. Stub'da - yangi oyna, `noopener` bilan. */
 export function openLink(url: string): void {
+  if (!sdk) {
+    stubState.links.push(url)
+    if (stubState.links.length > 10) stubState.links.shift()
+  }
   if (sdk?.openLink) {
     try {
       sdk.openLink(url)

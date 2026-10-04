@@ -27,14 +27,18 @@ import { useTgSession } from '../useTgSession'
  */
 const props = withDefaults(defineProps<{ fromBrand?: boolean }>(), { fromBrand: false })
 const { t } = useI18n({ useScope: 'global' })
-const { login, lastLogin } = useTgSession()
+const { login, lastLogin, notice } = useTgSession()
 
 // "Qayta ulash" dan kelgan bo'lsa - login tayyor, faqat parol.
 const username = ref(lastLogin.value)
 const password = ref('')
 const reveal = ref(false)
 const busy = ref(false)
-const error = ref('')
+// Admin bloklagan (Telegram orqali kirish 403 qaytardi): sabab DARHOL ko'rinadi -
+// bo'sh forma odamni parol terishga, keyin "bloklangan" ni o'qishga majburlardi.
+const error = ref(notice.value === 'blocked' ? t('shell.auth.blocked') : '')
+// Bu xabar odamning xatosi emas: maydonlar qizil bo'lmaydi (bo'sh, lekin "noto'g'ri" emas).
+const errorIsNotice = ref(!!error.value)
 const setupHelp = ref(false)
 const crmUrl = ((import.meta.env.VITE_CRM_URL as string | undefined) ?? '').trim()
 
@@ -46,12 +50,14 @@ const valid = computed(() => username.value.trim().length > 0 && password.value.
 // Eski xato odam tuzata boshlashi bilan yo'qoladi.
 watch([username, password], () => {
   error.value = ''
+  errorIsNotice.value = false
   setupHelp.value = false
 })
 
 async function submit() {
   if (busy.value) return
   if (!valid.value) {
+    errorIsNotice.value = false
     error.value = t('tg.login.required')
     haptic.notify('error')
     ;(username.value.trim() ? passEl : userEl).value?.focus()
@@ -59,6 +65,7 @@ async function submit() {
   }
   busy.value = true
   error.value = ''
+  errorIsNotice.value = false
   setupHelp.value = false
   try {
     const res = await login(username.value.trim(), password.value)
@@ -126,7 +133,7 @@ onBeforeUnmount(() => {
             spellcheck="false"
             enterkeyhint="next"
             :placeholder="t('tg.login.usernamePlaceholder')"
-            :aria-invalid="error && !username.trim() ? 'true' : undefined"
+            :aria-invalid="error && !errorIsNotice && !username.trim() ? 'true' : undefined"
             @keydown.enter.prevent="onUserEnter"
           />
         </label>
@@ -144,7 +151,7 @@ onBeforeUnmount(() => {
               autocorrect="off"
               spellcheck="false"
               enterkeyhint="go"
-              :aria-invalid="error && !password ? 'true' : undefined"
+              :aria-invalid="error && !errorIsNotice && !password ? 'true' : undefined"
             />
             <button
               type="button"

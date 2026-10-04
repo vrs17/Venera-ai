@@ -8,8 +8,14 @@
 //      taniydi va ulanish muddati uzayadi.
 //   2. Telegram imzosi -> POST /telegram/session {initData} -> {token, user}.
 //      Token yo'qolgan bo'lsa (iOS WebView xotirasini tozalaydi, boshqa telefon) parol
-//      so'ramasdan qayta kirish. BACKEND'DA HALI YO'Q: 404/405/501 - jim o'tkazib
-//      yuboriladi. Javob shakli POST /auth/login niki bilan bir xil (LoginResponse).
+//      so'ramasdan qayta kirish. Javob shakli POST /auth/login niki (LoginResponse).
+//      Server javoblari (api/v1/telegram.py):
+//        401  imzo soxta/eskirgan (600 s), ulanmagan, ulanish muddati o'tgan - ATAYLAB
+//             bitta umumiy xabar; kirish ekrani, izohsiz
+//        403  hisob bloklangan - kirish ekrani BLOK XABARI bilan: aks holda odam
+//             parolni terib, shundan keyingina sababini bilardi
+//        429  daqiqasiga 6 urinishdan oshdi; 501 - bot sozlanmagan (dev) - kirish ekrani
+//      404/405 - eski backend (endpoint yo'q) - ham jim kirish ekrani.
 //   3. Kirish ekrani (HRM/CRM login + parol, Keycloak). Kirgach Telegram ulanadi -
 //      keyingi ochilishlar 1- yoki 2-yo'ldan o'tadi.
 //
@@ -19,6 +25,7 @@
 
 import { readonly, ref } from 'vue'
 import * as authApi from '../api/auth.api'
+import { authErrorKind } from '../api/errors'
 import { ApiError, apiFetch, clearToken, getToken, setToken } from '../api/http'
 import { useAuth } from '../composables/useAuth'
 import { usePro } from '../composables/usePro'
@@ -33,6 +40,11 @@ export type SessionPhase = 'boot' | 'login' | 'ready' | 'offline'
 const phase = ref<SessionPhase>('boot')
 /** "Qayta ulash" dan keyin kirish ekranida login tayyor turadi - faqat parol. */
 const lastLogin = ref('')
+/** Kirish ekrani ochilishdanoq ko'rsatadigan sabab. Hozircha faqat blok: admin
+ *  bloklagan odamga bo'sh forma ko'rsatsak, u parolni terib, keyingina "bloklangan"
+ *  ni ko'rardi. Odam muvaffaqiyatli kirsa yoki yozishni boshlasa - yo'qoladi. */
+export type SessionNotice = 'blocked' | null
+const notice = ref<SessionNotice>(null)
 
 /** Endpoint hali yo'q yoki bot sozlanmagan - xato emas, keyingi yo'lga o'tamiz. */
 function missing(err: unknown): boolean {
@@ -68,13 +80,22 @@ async function telegramSession(): Promise<boolean> {
     const auth = useAuth()
     auth.user.value = res.user
     auth.initialized.value = true
+    notice.value = null
     return true
   } catch (err) {
-    // 404/405/501 - hali yo'q; 400/401/403 - ulanmagan yoki imzo eskirgan. Ikkalasida
-    // ham kirish ekrani to'g'ri javob.
-    if (!missing(err)) console.debug('[tg] telegram/session', err instanceof ApiError ? err.status : err)
+    // 403 - imzo va ulanish to'g'ri, lekin admin bloklagan: sababni darhol aytamiz.
+    // Qolgani (401 ulanmagan/eskirgan, 429, 501, eski backend'da 404/405) - izohsiz
+    // kirish ekrani: server sababni ataylab aytmaydi.
+    if (err instanceof ApiError && err.status === 403) notice.value = 'blocked'
+    else if (!missing(err)) console.debug('[tg] telegram/session', err instanceof ApiError ? err.status : err)
     return false
   }
+}
+
+/** /auth/me "Hisob bloklangan" (401) degan bo'lsa - Telegram'siz ochilishda ham (dev,
+ *  initData yo'q) kirish ekrani sababni aytsin. */
+function noteBlocked(err: unknown): void {
+  if (authErrorKind(err) === 'blocked') notice.value = 'blocked'
 }
 
 async function boot(): Promise<void> {
@@ -93,6 +114,7 @@ async function boot(): Promise<void> {
         phase.value = 'offline'
         return
       }
+      noteBlocked(err)
       clearToken()
       auth.user.value = null
     }
@@ -116,6 +138,7 @@ async function login(username: string, password: string): Promise<LoginResponse>
     return res
   }
   await linkTelegram()
+  notice.value = null
   phase.value = 'ready'
   return res
 }
@@ -142,6 +165,7 @@ async function logout(): Promise<void> {
   await useAuth().logout()
   forgetLocalState()
   lastLogin.value = ''
+  notice.value = null
   phase.value = 'login'
 }
 
@@ -154,12 +178,15 @@ async function reconnect(): Promise<void> {
   lastLogin.value = auth.user.value?.email ?? ''
   await auth.logout()
   forgetLocalState()
+  notice.value = null
   phase.value = 'login'
 }
 
-/** Ish paytida 401 keldi (sessiya serverda bekor qilingan): avval Telegram orqali jim
- *  qayta kirishga urinamiz, bo'lmasa - kirish ekrani. */
-async function expire(): Promise<void> {
+/** Ish paytida 401 keldi (sessiya serverda bekor qilingan yoki hisob bloklangan):
+ *  avval Telegram orqali jim qayta kirishga urinamiz, bo'lmasa - kirish ekrani.
+ *  `err` - o'sha 401: "bloklangan" bo'lsa kirish ekrani sababni aytadi. */
+async function expire(err?: unknown): Promise<void> {
+  if (err !== undefined) noteBlocked(err)
   clearToken()
   useAuth().user.value = null
   if (await telegramSession()) return
@@ -168,5 +195,14 @@ async function expire(): Promise<void> {
 }
 
 export function useTgSession() {
-  return { phase: readonly(phase), lastLogin: readonly(lastLogin), boot, login, logout, reconnect, expire }
+  return {
+    phase: readonly(phase),
+    lastLogin: readonly(lastLogin),
+    notice: readonly(notice),
+    boot,
+    login,
+    logout,
+    reconnect,
+    expire,
+  }
 }

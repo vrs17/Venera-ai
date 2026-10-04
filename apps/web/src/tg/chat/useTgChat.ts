@@ -94,7 +94,7 @@ export function useTgChat() {
 
   function fail(err: unknown): string {
     // Sessiya serverda bekor qilingan - Telegram orqali jim tiklash yoki kirish ekrani.
-    if (err instanceof ApiError && err.status === 401) void session.expire()
+    if (err instanceof ApiError && err.status === 401) void session.expire(err)
     return localizeApiError(err, t)
   }
 

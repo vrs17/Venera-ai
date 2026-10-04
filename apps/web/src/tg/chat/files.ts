@@ -7,9 +7,10 @@
 // olmaydi. Shuning uchun server avval sessiya bilan 10 daqiqalik IMZOLANGAN havola
 // beradi (`POST .../link`), Telegram faylni shu havoladan tokensiz oladi.
 //
-//   ariza (DOCX/PDF)    POST /api/v1/chat/artifact/{token}/{kind}/link   - BOR
-//   iqtibos hujjati     POST /api/v1/chat/doc/{doc_id}/link              - HALI YO'Q
-//                       (javob ariza havolasi bilan bir xil: {url, filename, expiresIn})
+//   ariza (DOCX/PDF)    POST /api/v1/chat/artifact/{token}/{kind}/link
+//   iqtibos hujjati     POST /api/v1/chat/doc/{doc_id}/link
+//                       (javob ariza havolasi bilan bir xil: {url, filename, expiresIn};
+//                       PDF tashqi brauzerda `inline` ochiladi - o'qish uchun, saqlash emas)
 
 import { downloadFile as webDownload } from '../../api/chat.api'
 import { ApiError, apiFetch } from '../../api/http'
@@ -36,9 +37,10 @@ export async function saveArtifact(path: string, name: string): Promise<void> {
 }
 
 /** Iqtibos qilingan hujjat (PDF): imzolangan havola tashqi brauzerda - u PDF'ni
- *  o'zi ko'rsatadi (Mini App'da pdf.js yo'q - bundle yengil bo'lsin). Endpoint hali
- *  yo'q bo'lsa: Telegram'dan tashqarida (stub) web'dagi kabi sessiya bilan yuklab
- *  olinadi; Telegram ichida - `unsupported`, ekran "veb ilovada oching" deydi. */
+ *  o'zi ko'rsatadi (Mini App'da pdf.js yo'q - bundle yengil bo'lsin). Server 400
+ *  (kalit yaroqsiz) bersa - xato, ekran toast ko'rsatadi. 404/405/501 faqat eski
+ *  backend'da (endpoint yo'q): Telegram'dan tashqarida (stub) web'dagi kabi sessiya
+ *  bilan yuklab olinadi; Telegram ichida - `unsupported`, "veb ilovada oching". */
 export async function openCitedDoc(docId: string, docUrl: string | null | undefined, name: string): Promise<OpenOutcome> {
   try {
     const link = await apiFetch<FileLink>(`/api/v1/chat/doc/${encodeURIComponent(docId)}/link`, {
