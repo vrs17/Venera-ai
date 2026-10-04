@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="uz-Latn" class="tg-mini">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover: iPhone'da pastki "uy chizig'i" ostigacha chizamiz va
+         xavfsiz zonani o'zimiz (env() + Telegram safeAreaInset) hisoblaymiz.
+         interactive-widget=resizes-content: Android'da klaviatura chiqqanda layout
+         qisqaradi - kompozer klaviatura ustiga "minadi". user-scalable YOPILMAYDI:
+         ko'rish qiyin odam barmoq bilan kattalashtira olsin (iOS zoom'ga 16px shrift
+         bilan qarshi turamiz, taqiq bilan emas). -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="format-detection" content="telephone=no" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Venera</title>
+    <!-- Ilova JS'i kelguncha: jim uchqun. Faqat CSS - CSP inline skriptga ruxsat
+         bermaydi. Uslub Telegram SDK'dan OLDIN va SDK <body> OXIRIDA: SDK sekin
+         kelsa ham (mobil tarmoq) bu splash birinchi bo'yashda chiqadi - SDK <head>
+         da tursa, telegram.org javob bermaguncha sahifa umuman bo'yalmasdi. -->
+    <style>
+      html, body { margin: 0; height: 100%; }
+      html { background: #ffffff; }
+      @media (prefers-color-scheme: dark) { html { background: #0e0e0f; } }
+      html[style*='--tg-theme-bg-color'] { background: var(--tg-theme-bg-color); }
+      .tg-boot { position: fixed; inset: 0; display: grid; place-items: center; }
+      .tg-boot svg {
+        width: 28px;
+        height: 28px;
+        color: #ee5a24;
+        animation: tg-boot-in 240ms ease-out 300ms both, tg-boot-pulse 1.8s ease-in-out 540ms infinite;
+      }
+      @keyframes tg-boot-in { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes tg-boot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+      @media (prefers-reduced-motion: reduce) {
+        .tg-boot svg { animation: tg-boot-in 1ms linear 300ms both; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="tg-boot" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="currentColor">
+          <path d="M16 1.5c1.2 8.1 6.4 13.3 14.5 14.5-8.1 1.2-13.3 6.4-14.5 14.5C14.8 22.4 9.6 17.2 1.5 16 9.6 14.8 14.8 9.6 16 1.5Z" />
+        </svg>
+      </div>
+    </div>
+    <!-- Telegram SDK - CSP'da ruxsat etilgan YAGONA tashqi skript (nginx /tg/:
+         script-src 'self' https://telegram.org). Bloklovchi (async EMAS): ilova
+         moduli undan keyin bajariladi va `Telegram.WebApp` ni tayyor holda topadi -
+         initData, mavzu, tugmalar birinchi chizishdanoq to'g'ri. Ilova bo'lagi esa
+         parallel yuklanadi (brauzer oldindan ko'radi), ya'ni SDK uni kechiktirmaydi.
+         Telegram ichida baribir `ready()` gacha Telegram'ning o'z "yuklanmoqda"
+         pardasi turadi. Telegram'dan tashqarida ham yuklanadi (platform 'unknown') -
+         unda ilova o'z dev stub'iga o'tadi (src/tg/telegram.ts). -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script type="module" src="/src/tg/main.ts"></script>
+  </body>
+</html>

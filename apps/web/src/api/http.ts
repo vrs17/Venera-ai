@@ -41,6 +41,22 @@ export function clearToken(): void {
   }
 }
 
+// Kanal: backend analitikasi va DVIGATEL tanlovi (`HRM_ASSISTANT_ENGINE_BY_CHANNEL`)
+// so'rovni shu sarlavha bo'yicha ajratadi. Web - `web`; Telegram Mini App
+// (`src/tg/main.ts`) ishga tushganda `setClientChannel('miniapp')` chaqiradi.
+// Bitta joyda: Mini App ham ishlatadigan to'g'ridan-to'g'ri fetch'lar (`chat.api.ts`,
+// `tts.api.ts`) ham shuni o'qiydi - aks holda ular Mini App'dan "web" bo'lib ketardi.
+export const CLIENT_HEADER = 'X-Venera-Client'
+let channel = 'web'
+
+export function setClientChannel(value: 'web' | 'miniapp' | 'desktop'): void {
+  channel = value
+}
+
+export function clientChannel(): string {
+  return channel
+}
+
 export class ApiError extends Error {
   status?: number
   /** Machine-readable code from the envelope's `error` field (e.g. ACTOR_ACCESS_CONFLICT). */
@@ -75,7 +91,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     'Accept-Language': acceptLanguage(),
     // Kanal: backend analitikasi so'rovni shu sarlavha bo'yicha "web" deb yozadi
     // (Mini App `miniapp` yuboradi). Chaqiruvchi o'z qiymatini berishi mumkin.
-    'X-Venera-Client': 'web',
+    [CLIENT_HEADER]: channel,
     ...((options.headers as Record<string, string>) || {}),
   }
   if (options.body && !(options.body instanceof FormData)) {

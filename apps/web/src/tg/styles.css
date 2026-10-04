@@ -1,0 +1,311 @@
+/* Telegram Mini App - mobil ustqatlam. Tokenlar (styles/tokens.css) va asos (base.css)
+   USTIDAN, faqat `html.tg-mini` ostida: web ilovaga ta'sir qilmaydi (bu fayl faqat
+   tg-app.html dan yuklanadi).
+
+   1) MATN O'LCHAMI rem'da. Tokenlar px'da yozilgan, ya'ni tizimning "katta matn"
+      sozlamasi (yoki ildiz shrifti 200%) ularga ta'sir qilmasdi. Bu yerda ayni o'sha
+      qiymatlar rem'da: 16px ildizda o'zgarishsiz, kattalashtirilganda - matn ham.
+   2) XAVFSIZ ZONA: env(safe-area-inset-*) va Telegram'ning safeAreaInset +
+      contentSafeAreaInset (telegram.ts -> --tg-js-safe-*) dan KATTASI. Qo'shilmaydi:
+      oddiy rejimda ikkalasi ham bir xil uy chizig'ini aytadi.
+   3) BALANDLIK: ilova ramkasi ko'rinadigan oyna (visualViewport) bo'yida - layout.ts.
+      Klaviatura chiqqanda ramka qisqaradi va kompozer klaviatura ustida qoladi.
+   4) SHRIFT - tizimniki (SF Pro / Roboto / Segoe UI). Telegram'ning o'zi ham shu
+      shriftda: Mini App "begona" ko'rinmaydi, telefonda 100-200 KB Inter yuklanmaydi
+      va shrift kelganda matn qayta joylashmaydi (font-display: swap "sakrashi").
+      Inter faqat tizim shrifti nomi bilan topilmaydigan joyda (Linux ish stoli,
+      headless QA) - umumiy `system-ui` dan OLDIN, aks holda u yerda DejaVu chiqardi.
+      base.css dagi @font-face e'lonlari qoladi, lekin telefonda hech qaysi element
+      Inter'ga yetib bormagani uchun brauzer faylni YUKLAMAYDI (to'liq olib tashlash -
+      shriftlarni base.css dan alohida faylga ajratib, faqat web main.ts dan yuklash). */
+
+html.tg-mini {
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Roboto, 'Segoe UI', 'Inter Variable', system-ui, sans-serif;
+  --font-mono: var(--font-sans);
+
+  --fs-display: 2.5rem;
+  --lh-display: 2.75rem;
+  --fs-title-1: 1.75rem;
+  --lh-title-1: 2.125rem;
+  --fs-title-2: 1.25rem;
+  --lh-title-2: 1.75rem;
+  --fs-title-3: 1rem;
+  --lh-title-3: 1.5rem;
+  /* Yordamchi javobi 16/26 - telefonda 28 qator orasi "havoli" ko'rinadi. */
+  --fs-body-lg: 1rem;
+  --lh-body-lg: 1.625rem;
+  --fs-body: 0.9375rem;
+  --lh-body: 1.5rem;
+  --fs-body-sm: 0.875rem;
+  --lh-body-sm: 1.25rem;
+  --fs-caption: 0.75rem;
+  --lh-caption: 1rem;
+  --fs-mono: 0.78125rem;
+  --lh-mono: 1.125rem;
+
+  /* Bosh barmoq nishoni: Apple HIG / Material - kamida 44px. */
+  --tap: 44px;
+  /* YAGONA chekka: matn ekran chetidan 16px - kontent, oyna sarlavhasi, ro'yxat
+     qatorlari, qidiruv. Kompozer va yuqori panel "xrom" - 12px (ikkalasi bir xil). */
+  --tg-gutter: 16px;
+  --tg-chrome: 12px;
+
+  --tg-safe-top: max(env(safe-area-inset-top, 0px), var(--tg-js-safe-top, 0px));
+  --tg-safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--tg-js-safe-bottom, 0px));
+  --tg-safe-left: max(env(safe-area-inset-left, 0px), var(--tg-js-safe-left, 0px));
+  --tg-safe-right: max(env(safe-area-inset-right, 0px), var(--tg-js-safe-right, 0px));
+
+  /* iOS klaviatura egri chizig'i - ramka klaviatura bilan bir tezlikda qisqaradi. */
+  --ease-kb: cubic-bezier(0.38, 0.7, 0.125, 1);
+
+  height: 100%;
+  overflow: hidden;
+  /* iOS "rezina" tortishi butun sahifani siljitmasin - aylanish faqat ro'yxat ichida. */
+  overscroll-behavior: none;
+}
+
+/* Klaviatura ochiq: uy chizig'i klaviatura ostida qoldi - kompozer ostida 34px bo'sh
+   joy qoldirish ma'nosiz. */
+html.tg-mini.kb-open {
+  --tg-safe-bottom: 0px;
+}
+
+html.tg-mini body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  /* Telefonda bosilganda kulrang "chaqnash" va uzoq bosishdagi tizim menyusi
+     (rasm/havola) - ilova o'zining amallar menyusini ko'rsatadi. */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+/* Ilova ramkasi: ko'rinadigan oyna bo'yida (klaviatura hisobga olingan). iOS
+   WebView'da klaviatura sahifani "suradi" (visualViewport.offsetTop) - ramka unga
+   ergashadi, kompozer sakramaydi. */
+.tg-app {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: var(--app-h, 100%);
+  transform: translateY(var(--app-top, 0px));
+  transform-origin: 50% 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  transition:
+    scale var(--dur-3) var(--ease-sheet),
+    translate var(--dur-3) var(--ease-sheet),
+    border-radius var(--dur-3) var(--ease-sheet);
+}
+/* Klaviatura taxmini/tuzatishi (layout.ts) - faqat shu paytda balandlik silliq. */
+html.tg-mini.kb-anim .tg-app,
+html.tg-mini.kb-anim .v-sheet-root {
+  transition:
+    height 250ms var(--ease-kb),
+    scale var(--dur-3) var(--ease-sheet),
+    translate var(--dur-3) var(--ease-sheet),
+    border-radius var(--dur-3) var(--ease-sheet);
+}
+
+/* iOS: 16px dan kichik maydon fokuslanganda butun sahifa kattalashadi va Mini App
+   ichida uni qaytarib bo'lmaydi. Umumiy primitivlar (VTextarea, VInput) 14-15px -
+   shuning uchun bu yerda majburiy. `max()` - 200% matnda kichraymasin. */
+html.tg-mini input,
+html.tg-mini textarea,
+html.tg-mini select {
+  font-size: max(16px, 1rem) !important;
+}
+
+/* 44px belgili tugma: umumiy VIconButton'ning o'lchami (32-40) telefonda kichik.
+   Ko'rinishi o'sha (bitta oila), faqat nishon kattaroq. */
+html.tg-mini .v-icon-btn.tg-ib {
+  --ib-size: var(--tap);
+  border-radius: var(--r-full);
+}
+
+/* ── Pastki oynalar (VSheet) ─────────────────────────────────────────────── */
+
+/* Parda va panel ham ko'rinadigan oyna bo'yida - klaviatura ochiq paytda (qidiruv,
+   izoh) oyna klaviatura ostida qolib ketmasin. */
+html.tg-mini .v-sheet-root {
+  inset: auto;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: var(--app-h, 100%);
+  transform: translateY(var(--app-top, 0px));
+}
+html.tg-mini .tg-sheet.v-sheet {
+  max-height: calc(var(--app-h, 100dvh) - var(--tg-safe-top) - 8px);
+  padding-bottom: var(--tg-safe-bottom);
+  padding-left: var(--tg-safe-left);
+  padding-right: var(--tg-safe-right);
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -8px 40px -12px rgb(0 0 0 / 0.28);
+}
+/* To'liq bo'yli oyna (suhbatlar tarixi): ochilganda balandligi sakramaydi - qidiruv
+   natijasi kamaysa ham. Tepada 18px: ortdagi kichraygan ilova (chuqurlik) ko'rinib
+   turadi. Pastki xavfsiz zonani oynaning o'zi beradi (yopishqoq "Yangi suhbat"). */
+html.tg-mini .tg-sheet--full.v-sheet {
+  height: calc(var(--app-h, 100dvh) - var(--tg-safe-top) - 18px);
+  max-height: none;
+  padding-bottom: 0;
+}
+/* Guruhlangan ro'yxat (iOS sozlamalari): oyna foni kulrang, kartalar oq, chegarasiz. */
+html.tg-mini .tg-sheet--grouped.v-sheet {
+  background: var(--bg-subtle);
+}
+html.tg-mini[data-theme='dark'] .tg-sheet--grouped.v-sheet {
+  background: var(--bg);
+}
+html.tg-mini .tg-sheet .v-sheet__handle {
+  height: 24px;
+}
+html.tg-mini .tg-sheet .v-sheet__handle span {
+  width: 40px;
+  height: 5px;
+}
+/* Sarlavha matni 16px chekkada (tana bilan bir chiziqda), ✕ o'ng chetga yopishmaydi. */
+html.tg-mini .tg-sheet .v-sheet__head {
+  align-items: center;
+  padding: 12px 12px 8px 16px;
+}
+html.tg-mini .tg-sheet .v-sheet__title {
+  font-size: var(--fs-title-3);
+  line-height: var(--lh-title-3);
+}
+/* ✕: bosish maydoni 44px, ko'rinishi 32px doira (::before). */
+html.tg-mini .tg-sheet .v-sheet__close {
+  --ib-size: 44px;
+  margin: 0;
+  border-radius: var(--r-full);
+  background: transparent;
+  isolation: isolate;
+}
+html.tg-mini .tg-sheet .v-sheet__close::before {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  z-index: -1;
+  border-radius: var(--r-full);
+  background: var(--fill);
+}
+html.tg-mini .tg-sheet .v-sheet__close:active::before {
+  background: var(--fill-hover);
+}
+/* Tananing pastki chekkasi - oxirgi qator uy chizig'iga yopishmasin. */
+html.tg-mini .tg-sheet:not(.v-sheet--flush) .v-sheet__body {
+  padding: var(--s-1) var(--tg-gutter) var(--s-4);
+}
+
+/* Chuqurlik (sheet.ts): to'liq bo'yli oyna ochiq - ortdagi ilova kartaga aylanadi.
+   Harakat faqat `scale`/`translate` (alohida xossalar - klaviatura `transform` iga
+   tegmaydi). Kamaytirilgan harakat - umuman yo'q. */
+@media (prefers-reduced-motion: no-preference) {
+  html.tg-mini.sheet-depth body {
+    background: #000;
+  }
+  html.tg-mini.sheet-depth .tg-app {
+    scale: 0.94;
+    translate: 0 calc(var(--tg-safe-top) + 6px);
+    border-radius: 12px;
+  }
+}
+
+/* ── Toast'lar ───────────────────────────────────────────────────────────── */
+
+/* Kompozer USTIDA, ixcham "snackbar" (ChatScreen --tg-toast-bottom ni kompozer
+   balandligiga qarab qo'yadi). */
+html.tg-mini .v-toast-host {
+  left: calc(var(--s-3) + var(--tg-safe-left));
+  right: calc(var(--s-3) + var(--tg-safe-right));
+  bottom: calc(var(--app-bottom-gap, 0px) + var(--tg-toast-bottom, calc(var(--tg-safe-bottom) + 16px)));
+  width: auto;
+  max-width: none;
+  transform: none;
+}
+/* Oyna ochiq: kompozer yopiq - toast ekran pastida (backStack.ts `has-sheet`). */
+html.tg-mini.has-sheet .v-toast-host {
+  bottom: calc(var(--app-bottom-gap, 0px) + var(--tg-safe-bottom) + 12px);
+}
+/* Tarix oynasi: pastda yopishqoq "Yangi suhbat" (48 + 16) - "Bekor qilish" uni yopmasin. */
+html.tg-mini.has-sheet.sheet-depth .v-toast-host {
+  bottom: calc(var(--app-bottom-gap, 0px) + var(--tg-safe-bottom) + 72px);
+}
+html.tg-mini .v-toast {
+  border-radius: 14px;
+  min-height: 48px;
+}
+/* Telefonda ✕ ortiqcha: toast o'zi yopiladi, harakati ("Bekor qilish") yetarli. */
+html.tg-mini .v-toast__close {
+  display: none;
+}
+
+/* ── Markdown javob ──────────────────────────────────────────────────────── */
+
+/* Iqtibos chiplari barmoq uchun kattaroq: 11px'lik "[1]" telefonda deyarli bosilmaydi.
+   Ko'rinishi ixcham, bosish maydoni esa ::after bilan ~44px. */
+html.tg-mini .tg-answer .vmd-cite {
+  position: relative;
+  padding: 3px 7px;
+  margin: 0 0 0 0.2em;
+  font-size: 0.75rem;
+  border-radius: 7px;
+}
+html.tg-mini .tg-answer .vmd-cite::after {
+  content: '';
+  position: absolute;
+  inset: -10px -6px;
+}
+/* So'z + chip + tinish belgisi bir qatorda (chat/polish.ts): chip yoki "." yangi
+   qatorga yolg'iz tushmaydi. */
+html.tg-mini .tg-answer .tg-glue {
+  white-space: nowrap;
+}
+html.tg-mini .tg-answer .vmd :is(h1, h2, h3, h4) {
+  margin-top: var(--s-5);
+}
+html.tg-mini .tg-answer .vmd :is(ul, ol) {
+  padding-left: 20px;
+}
+/* Ikki ustunli "kalit - qiymat" jadvali: qiymat o'ngda, raqamlar tekis. */
+html.tg-mini .tg-answer .vmd tr > :is(td, th):last-child:nth-child(2) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Uzoq bosilgan xabar "ko'tarilgan" (ContextMenu) - asl joyi bo'sh turadi. */
+html.tg-mini .tg-lift-src {
+  opacity: 0;
+}
+
+/* ── Umumiy yordamchilar ─────────────────────────────────────────────────── */
+
+.tg-skel {
+  display: block;
+  border-radius: var(--r-sm);
+  background: linear-gradient(90deg, var(--fill) 0%, var(--fill-hover) 50%, var(--fill) 100%);
+  background-size: 200% 100%;
+  animation: tg-skel 1.4s ease-in-out infinite;
+}
+@keyframes tg-skel {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+/* Barmoq bilan bosiladigan hamma narsa: ikki marta bosib kattalashtirish kutilmasin
+   (300ms kechikish yo'q). `:where` - nol aniqlik: komponent o'zinikini (masalan surish
+   qatorining `pan-y`) bemalol beradi. */
+html.tg-mini :where(button, a, [role='button'], summary) {
+  touch-action: manipulation;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tg-skel {
+    animation: none;
+  }
+}

@@ -21,7 +21,7 @@
 // headerless 16-bit PCM and are scheduled by hand on an AudioContext, which
 // wants exactly that anyway.
 
-import { ApiError, BASE_URL, getToken } from './http'
+import { ApiError, BASE_URL, CLIENT_HEADER, clientChannel, getToken } from './http'
 import type { ApiErrorResponse } from '../types'
 
 /** Locales that have a voice today. The model is Uzbek-Latin only: `uz-Cyrl`
@@ -103,7 +103,8 @@ export async function speakStream(
       'Content-Type': 'application/json; charset=utf-8',
       Accept: 'audio/L16, */*',
       // Kanal statistikasi: sarlavhasiz so'rovni server "API" deb hisoblaydi.
-      'X-Venera-Client': 'web',
+      // Qiymat http.ts dan: web'da "web", Telegram Mini App'da "miniapp".
+      [CLIENT_HEADER]: clientChannel(),
       ...(turnId ? { 'X-Venera-Turn': turnId } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
@@ -357,7 +358,7 @@ export async function holdClip(clip: string, signal?: AbortSignal): Promise<Blob
   const token = getToken()
   try {
     const response = await fetch(`${BASE_URL}/api/v1/tts/hold/${encodeURIComponent(clip)}.wav`, {
-      headers: { 'X-Venera-Client': 'web', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { [CLIENT_HEADER]: clientChannel(), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       signal,
       // The clip never changes (the text is in the source), so let the
       // browser keep it: after the first wait it plays from disk.
