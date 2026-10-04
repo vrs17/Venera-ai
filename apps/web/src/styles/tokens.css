@@ -137,6 +137,11 @@
   --dur-1: 120ms;
   --dur-2: 180ms;
   --dur-3: 280ms;
+  /* Yon panel kengligi: ochish/yig'ish va tortib qo'yib yuborilgandan keyingi "joyiga
+     tushish". --dur-2 dan uzunroq - kenglik bilan birga butun kontent ham suriladi. */
+  --dur-panel: 240ms;
+  /* Tortish tutqichi chizig'i: sichqoncha chetdan shunchaki o'tib ketganda miltillamasin. */
+  --delay-hover: 150ms;
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
 
@@ -154,6 +159,7 @@
   --sidebar-w: 272px;
   --rail-w: 56px;
   --admin-nav-w: 232px;
+  --admin-rail-w: 64px;
 }
 
 @media (min-width: 768px) {
@@ -230,5 +236,6 @@
     --dur-1: 0ms;
     --dur-2: 0ms;
     --dur-3: 0ms;
+    --dur-panel: 0ms;
   }
 }

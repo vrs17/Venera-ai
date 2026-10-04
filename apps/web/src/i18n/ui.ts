@@ -86,6 +86,10 @@ const en = {
   dark: 'Dark',
   system: 'System',
   language: 'Language',
+  // panel chetini tortish (VResizeHandle)
+  panelWidth: 'Panel width',
+  panelResizeHint: 'Drag to resize · double-click to reset',
+  panelCollapsed: 'Collapsed',
 }
 
 const uz: Mirror<typeof en> = {
@@ -160,6 +164,9 @@ const uz: Mirror<typeof en> = {
   dark: 'Qorongʻi',
   system: 'Tizim',
   language: 'Til',
+  panelWidth: 'Panel kengligi',
+  panelResizeHint: 'Kengaytirish uchun torting · ikki marta bosing — asl holi',
+  panelCollapsed: 'Yigʻilgan',
 }
 
 const uzCyrl: Mirror<typeof en> = {
@@ -234,6 +241,9 @@ const uzCyrl: Mirror<typeof en> = {
   dark: 'Қоронғи',
   system: 'Тизим',
   language: 'Тил',
+  panelWidth: 'Панел кенглиги',
+  panelResizeHint: 'Кенгайтириш учун тортинг · икки марта босинг — асл ҳоли',
+  panelCollapsed: 'Йиғилган',
 }
 
 const ru: Mirror<typeof en> = {
@@ -308,6 +318,9 @@ const ru: Mirror<typeof en> = {
   dark: 'Тёмная',
   system: 'Системная',
   language: 'Язык',
+  panelWidth: 'Ширина панели',
+  panelResizeHint: 'Потяните, чтобы изменить ширину · двойной щелчок — сброс',
+  panelCollapsed: 'Свёрнута',
 }
 
 export const ui = { en, uz, 'uz-Cyrl': uzCyrl, ru }

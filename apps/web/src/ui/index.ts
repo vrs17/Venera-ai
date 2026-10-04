@@ -40,6 +40,7 @@ export { default as VMenuItem } from './VMenuItem.vue'
 export { default as VDialog } from './VDialog.vue'
 export { default as VSheet } from './VSheet.vue'
 export type { SheetCloseReason } from './VSheet.vue'
+export { default as VResizeHandle } from './VResizeHandle.vue'
 export { default as VToastHost } from './VToast.vue'
 export { useToast, toast } from './useToast'
 export type { ToastOptions, ToastTone, ToastAction, ToastItem } from './useToast'
@@ -51,6 +52,8 @@ export { useFocusTrap, useScrollLock, getTabbables } from './composables/useFocu
 export { useLayer, useClickOutside, LAYER_IGNORE_ATTR } from './composables/useClickOutside'
 export { useId } from './composables/useId'
 export { useMediaQuery, useIsPhone, useCanHover, usePrefersReducedMotion } from './composables/useMediaQuery'
+export { useResizablePanel } from './composables/useResizablePanel'
+export type { ResizablePanel, ResizablePanelOptions } from './composables/useResizablePanel'
 
 // data & charts
 export {

@@ -5,8 +5,11 @@ import { RouterView, useRoute, useRouter } from 'vue-router'
 import { Activity, ArrowLeft, Flag, LayoutDashboard, Menu, MessagesSquare, Search, Server, Users } from 'lucide-vue-next'
 import VCommandPalette from '../ui/VCommandPalette.vue'
 import VIconButton from '../ui/VIconButton.vue'
+import VResizeHandle from '../ui/VResizeHandle.vue'
 import VSheet from '../ui/VSheet.vue'
+import { useId } from '../ui/composables/useId'
 import { useIsPhone, useMediaQuery } from '../ui/composables/useMediaQuery'
+import { useResizablePanel } from '../ui/composables/useResizablePanel'
 import { useCommandPalette } from '../ui/useCommandPalette'
 import type { CommandGroup, CommandItem } from '../ui/useCommandPalette'
 import { fmtRelative } from '../ui/format'
@@ -18,9 +21,10 @@ import BrandSpark from '../components/BrandSpark.vue'
 import { useAdminMe } from './components/useAdminMe'
 
 /**
- * Admin qobig'i (spec §4.5): chap menyu (232px, 64px gacha yig'iladi), kontent
- * (max 1280, chetlari §1.5 bo'yicha), ⌘K buyruqlar palitrasi. Telefonda menyu
- * yuqori paneldagi tugmadan ochiladigan pastki sheet.
+ * Admin qobig'i (spec §4.5): chap menyu (232px, 64px gacha yig'iladi; ≥1120 da chetidan
+ * tortib 200-360px oralig'ida kengaytiriladi), kontent (max 1280, chetlari §1.5
+ * bo'yicha), ⌘K buyruqlar palitrasi. Telefonda menyu yuqori paneldagi tugmadan
+ * ochiladigan pastki sheet.
  *
  * Tokenlar va asos uslublari global (main.ts) - bu yerda import qilinmaydi.
  */
@@ -33,6 +37,7 @@ const palette = useCommandPalette()
 
 const isPhone = useIsPhone()
 const isTablet = useMediaQuery('(min-width: 768px) and (max-width: 1119.98px)')
+const isDesktop = useMediaQuery('(min-width: 1120px)')
 
 /* ---- yig'ilgan menyu: tanlov shu brauzerda eslab qolinadi ---- */
 
@@ -48,14 +53,32 @@ function readCollapsed(): boolean | null {
 const stored = ref<boolean | null>(readCollapsed())
 // Planshetda (768-1119) standart - yig'ilgan: kontentga joy kerak.
 const collapsed = computed(() => stored.value ?? isTablet.value)
-function toggleCollapsed() {
-  stored.value = !collapsed.value
+function setCollapsed(value: boolean) {
+  stored.value = value
   try {
-    localStorage.setItem(NAV_KEY, stored.value ? 'collapsed' : 'expanded')
+    localStorage.setItem(NAV_KEY, value ? 'collapsed' : 'expanded')
   } catch {
     /* saqlanmasa ham ishlayveradi */
   }
 }
+function toggleCollapsed() {
+  setCollapsed(!collapsed.value)
+}
+
+/* ---- menyu kengligi: chetidan tortiladi (faqat ≥1120), eslab qolinadi ----
+   200-360, standart 232 (tokens.css --admin-nav-w), ustun 64 (--admin-rail-w).
+   Planshetda tortib bo'lmaydi va menyu standart kenglikda ochiladi. */
+const navId = useId('admin-nav')
+const nav = useResizablePanel({
+  storageKey: 'venera_admin_nav_w',
+  min: 200,
+  max: 360,
+  initial: 232,
+  rail: 64,
+  collapsed: () => collapsed.value,
+  setCollapsed,
+  enabled: () => isDesktop.value,
+})
 
 /* ---- telefon menyusi ---- */
 
@@ -180,7 +203,7 @@ palette.register(
 </script>
 
 <template>
-  <div class="admin" :class="{ 'is-collapsed': collapsed && !isPhone }">
+  <div class="admin">
     <a class="admin__skip" href="#admin-main" @click.prevent="skipToMain">{{ t('admin.shell.skip') }}</a>
 
     <!-- telefon: menyu tugmasi, brend, qidiruv -->
@@ -194,9 +217,17 @@ palette.register(
       <VIconButton :icon="Search" :label="t('admin.nav.search')" @click="palette.open()" />
     </header>
 
-    <aside v-else class="admin__side">
+    <aside
+      v-else
+      :id="navId"
+      class="admin__side"
+      :class="{ 'is-resizing': nav.dragging.value }"
+      :style="nav.style.value"
+    >
       <div class="admin__side-inner">
-        <AdminNav :collapsed="collapsed" @toggle="toggleCollapsed" />
+        <AdminNav :collapsed="nav.folded.value" @toggle="toggleCollapsed" />
+        <!-- Yopishqoq ichki qism ichida: tutqich aylantirganda ham ekran bo'yi turadi. -->
+        <VResizeHandle v-if="nav.enabled.value" :panel="nav" :controls="navId" />
       </div>
     </aside>
 
@@ -216,15 +247,11 @@ palette.register(
 
 <style scoped>
 .admin {
-  --nav-w: var(--admin-nav-w);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   min-height: 100dvh;
   background: var(--bg);
   color: var(--text);
-}
-.admin.is-collapsed {
-  --nav-w: 64px;
 }
 
 /* Klaviatura uchun "asosiy qismga o'tish" - faqat fokusda ko'rinadi. */
@@ -248,13 +275,19 @@ palette.register(
 /* ---- chap panel ----
    Ustun (fon + chiziq) grid qatori bo'yi - uzun sahifada ham pastgacha davom etadi;
    ichidagi menyu esa yopishqoq (sticky) va ekran balandligida: aylantirganda joyida qoladi.
-   Ilgari ustunning o'zi 100dvh edi - sahifa uzun bo'lsa fon ekran tagida uzilib qolardi. */
+   Ilgari ustunning o'zi 100dvh edi - sahifa uzun bo'lsa fon ekran tagida uzilib qolardi.
+   Kenglik --panel-w dan (useResizablePanel): ochish/yig'ish silliq, tortish paytida esa
+   o'tish o'chadi - panel kursorga yopishib yursin. Kesish bu yerda EMAS (AdminNav o'zi
+   kesadi): `overflow` yopishqoq ichki qismni buzardi va tutqichni kesib qo'yardi. */
 .admin__side {
   z-index: var(--z-sidebar);
-  width: var(--nav-w);
+  width: var(--panel-w, var(--admin-nav-w));
   border-right: 1px solid var(--line);
   background: var(--bg-subtle);
-  transition: width var(--dur-2) var(--ease-out);
+  transition: width var(--dur-panel) var(--ease-out);
+}
+.admin__side.is-resizing {
+  transition: none;
 }
 .admin__side-inner {
   position: sticky;

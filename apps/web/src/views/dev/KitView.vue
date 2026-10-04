@@ -72,6 +72,7 @@ import {
   VMenuItem,
   VMeter,
   VPopover,
+  VResizeHandle,
   VSearchField,
   VSegmented,
   VSelect,
@@ -96,6 +97,7 @@ import {
   startOfDay,
   toISODate,
   useCommandPalette,
+  useResizablePanel,
   useToast,
 } from '../../ui'
 import type {
@@ -528,6 +530,21 @@ const rawFrames = [
 ]
 
 /* ================================================================ holatlar */
+
+// panel kengligi: chat/admin panellari kabi, lekin o'z kaliti bilan - ularning
+// eslab qolingan kengligiga tegmaydi.
+const kitPanelCollapsed = ref(false)
+const kitPanel = useResizablePanel({
+  storageKey: 'venera_kit_panel_w',
+  min: 160,
+  max: 320,
+  initial: 220,
+  rail: 56,
+  collapsed: () => kitPanelCollapsed.value,
+  setCollapsed: (value) => {
+    kitPanelCollapsed.value = value
+  },
+})
 
 // tugmalar
 const btnLoading = ref(false)
@@ -1159,7 +1176,7 @@ const isoToday = toISODate(today)
         <section id="display" class="kit-sec" aria-labelledby="h-display">
           <header class="kit-sec__head">
             <h2 id="h-display" class="t-title-2" tabindex="-1">Display</h2>
-            <p class="t-body-sm t-3">VBadge · VAvatar · VKbd · VDivider · VCopy</p>
+            <p class="t-body-sm t-3">VBadge · VAvatar · VKbd · VDivider · VCopy · VResizeHandle</p>
           </header>
 
           <div class="kit-spec">
@@ -1231,6 +1248,26 @@ const isoToday = toISODate(today)
                 <VCopy text="req_8f2c41d0" />
                 <VCopy :text="() => JSON.stringify(rawFrames, null, 2)" :label="t('ui.copy')" size="md" />
               </div>
+            </div>
+          </div>
+
+          <div class="kit-spec">
+            <p class="kit-spec__label">
+              VResizeHandle + useResizablePanel — drag · double-click resets · ← → (Shift) · Home · End · Enter folds ·
+              past min − 48 snaps to the rail
+            </p>
+            <div class="kit-split">
+              <div
+                id="kit-split-panel"
+                class="kit-split__panel"
+                :class="{ 'is-resizing': kitPanel.dragging.value }"
+                :style="kitPanel.style.value"
+              >
+                <VResizeHandle :panel="kitPanel" controls="kit-split-panel" />
+              </div>
+              <p class="kit-split__main t-body-sm t-3">
+                {{ kitPanel.folded.value ? t('ui.panelCollapsed') : `${kitPanel.width.value} px` }}
+              </p>
             </div>
           </div>
         </section>
@@ -2014,6 +2051,31 @@ const isoToday = toISODate(today)
   .kit-spec {
     padding: var(--s-4);
   }
+}
+/* VResizeHandle namunasi: panel + kontent, ochish/yig'ish - haqiqiy panellardagidek. */
+.kit-split {
+  display: flex;
+  height: 160px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.kit-split__panel {
+  position: relative;
+  flex: none;
+  width: var(--panel-w);
+  border-right: 1px solid var(--line);
+  background: var(--bg-subtle);
+  transition: width var(--dur-panel) var(--ease-out);
+}
+.kit-split__panel.is-resizing {
+  transition: none;
+}
+.kit-split__main {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  min-width: 0;
 }
 .kit-spec__label {
   font-size: var(--fs-caption);

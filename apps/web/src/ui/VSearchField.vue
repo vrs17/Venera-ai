@@ -139,7 +139,9 @@ onBeforeUnmount(() => {
 })
 
 defineExpose({
-  focus: () => inputEl()?.focus(),
+  // `options` - masalan `preventScroll`: maydon hali ochilayotgan (kesilgan) panelda
+  // turganda fokus panelni yon tomonga aylantirib yubormasin.
+  focus: (options?: FocusOptions) => inputEl()?.focus(options),
   blur: () => inputEl()?.blur(),
   select: () => inputEl()?.select(),
   /** Kutilayotgan `search` ni darhol yuborish. */

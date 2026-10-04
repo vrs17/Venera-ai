@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
@@ -42,6 +42,11 @@ import { useAdminMe } from './useAdminMe'
  * pastki sheet ichidagi aynan shu ro'yxat. Bitta komponent: ikkala joyda bandlar,
  * nishon va hisob menyusi bir xil ishlaydi.
  *
+ * Ochiq va yig'iq holat - BITTA tartib: belgilar ikkalasida bir xil x da (64px ustun
+ * markazida), yozuvlar so'nib, torayayotgan panel tomonidan kesiladi. Har band ichidagi
+ * qator ochiq panel kengligida (`--an-row-w`, AdminLayout beradigan --panel-content-w
+ * dan) - yig'ilish animatsiyasida yozuvlar qayta qisqarib "titramaydi".
+ *
  * Props:
  * - `variant`   - 'rail' (chap panel) | 'sheet' (telefon: katta nishonlar, yig'ish yo'q).
  * - `collapsed` - faqat 'rail': belgilar + tooltip.
@@ -68,6 +73,22 @@ const { user, logout } = useAuth()
 const palette = useCommandPalette()
 
 const mini = computed(() => props.variant === 'rail' && props.collapsed)
+
+// Yig'ish va yoyish - ikki xil tugma (o'ngdagi "yig'ish" va yig'iq ustundagi uchqun):
+// bosilgani yashirinadi (`inert` / disabled) va fokus <body> ga tushardi. Fokus shu
+// tugmalardan birida bo'lsa - yangi holatdagi juftiga o'tadi.
+const sparkBtn = ref<HTMLButtonElement | null>(null)
+const collapseBtn = ref<InstanceType<typeof VIconButton> | null>(null)
+async function toggle() {
+  const active = document.activeElement
+  const collapseEl = collapseBtn.value?.$el as HTMLElement | undefined
+  const hadFocus = !!active && (active === sparkBtn.value || active === collapseEl)
+  emit('toggle')
+  await nextTick()
+  if (!hadFocus) return
+  const next = mini.value ? sparkBtn.value : (collapseBtn.value?.$el as HTMLElement | undefined)
+  next?.focus({ preventScroll: true })
+}
 
 type NavKey = 'overview' | 'conversations' | 'reports' | 'users' | 'usage' | 'system'
 interface NavItem {
@@ -121,28 +142,36 @@ async function signOut() {
 
 <template>
   <nav class="an" :class="[`an--${variant}`, { 'is-mini': mini }]" :aria-label="t('admin.title')">
-    <!-- brend + yig'ish -->
+    <!-- brend + yig'ish. Uchqun hamma holatda shu joyda; yig'iq ustunda u "yoyish" tugmasi
+         (ustiga kelinganda belgisi almashadi), ochiq panelda - oddiy logotip. -->
     <div class="an__brand">
-      <VTooltip v-if="mini" :text="t('admin.nav.expand')" placement="right" :describe="false">
-        <button type="button" class="an__spark-btn" :aria-label="t('admin.nav.expand')" @click="emit('toggle')">
+      <VTooltip :text="t('admin.nav.expand')" placement="right" :disabled="!mini" :describe="false">
+        <button
+          ref="sparkBtn"
+          type="button"
+          class="an__spark-btn"
+          :disabled="!mini"
+          :aria-hidden="mini ? undefined : 'true'"
+          :aria-label="t('admin.nav.expand')"
+          @click="toggle"
+        >
           <span class="an__spark" aria-hidden="true"><BrandSpark :size="16" /></span>
           <PanelLeftOpen class="an__spark-alt" :size="20" :stroke-width="1.75" aria-hidden="true" />
         </button>
       </VTooltip>
-      <template v-else>
-        <span class="an__spark" aria-hidden="true"><BrandSpark :size="16" /></span>
-        <span class="an__word">Venera</span>
-        <span class="an__badge">{{ t('admin.title') }}</span>
+      <span class="an__word an__fade">Venera</span>
+      <span class="an__badge an__fade">{{ t('admin.title') }}</span>
+      <span v-if="variant === 'rail'" class="an__collapse an__block" :inert="mini">
         <VIconButton
-          v-if="variant === 'rail'"
-          class="an__collapse"
+          ref="collapseBtn"
+          class="an__collapse-btn"
           :icon="PanelLeftClose"
           :label="t('admin.nav.collapse')"
           size="sm"
           tooltip-placement="right"
-          @click="emit('toggle')"
+          @click="toggle"
         />
-      </template>
+      </span>
     </div>
 
     <!-- qidiruv (⌘K). Telefonda u yuqori paneldagi belgida - sheet yopilayotganda fokus
@@ -156,9 +185,11 @@ async function signOut() {
       :describe="false"
     >
       <button type="button" class="an__link an__search" aria-keyshortcuts="Control+K Meta+K" @click="palette.open()">
-        <span class="an__icon"><Search :size="20" :stroke-width="1.75" aria-hidden="true" /></span>
-        <span class="an__label" :class="{ 'sr-only': mini }">{{ t('admin.nav.search') }}</span>
-        <VKbd v-if="!mini" class="an__kbd" keys="mod+k" size="sm" />
+        <span class="an__row">
+          <span class="an__icon"><Search :size="20" :stroke-width="1.75" aria-hidden="true" /></span>
+          <span class="an__label an__fade">{{ t('admin.nav.search') }}</span>
+          <VKbd class="an__kbd an__fade" keys="mod+k" size="sm" aria-hidden="true" />
+        </span>
       </button>
     </VTooltip>
 
@@ -172,15 +203,17 @@ async function signOut() {
             :aria-current="item.match(route.path) ? 'page' : undefined"
             @click="emit('navigate')"
           >
-            <span class="an__icon">
-              <component :is="item.icon" :size="20" :stroke-width="1.75" aria-hidden="true" />
-              <span v-if="item.key === 'reports' && newReports > 0 && mini" class="an__dot" aria-hidden="true" />
+            <span class="an__row">
+              <span class="an__icon">
+                <component :is="item.icon" :size="20" :stroke-width="1.75" aria-hidden="true" />
+                <span v-if="item.key === 'reports' && newReports > 0" class="an__dot" aria-hidden="true" />
+              </span>
+              <span class="an__label an__fade">{{ t(`admin.nav.${item.key}`) }}</span>
+              <template v-if="item.key === 'reports' && newReports > 0">
+                <VBadge class="an__count an__fade" tone="brand" size="sm" aria-hidden="true">{{ countText }}</VBadge>
+                <span class="sr-only">, {{ t('admin.shell.newReports', { n: newReports }) }}</span>
+              </template>
             </span>
-            <span class="an__label" :class="{ 'sr-only': mini }">{{ t(`admin.nav.${item.key}`) }}</span>
-            <template v-if="item.key === 'reports' && newReports > 0">
-              <VBadge v-if="!mini" class="an__count" tone="brand" size="sm" aria-hidden="true">{{ countText }}</VBadge>
-              <span class="sr-only">, {{ t('admin.shell.newReports', { n: newReports }) }}</span>
-            </template>
           </RouterLink>
         </VTooltip>
       </li>
@@ -189,8 +222,10 @@ async function signOut() {
     <div class="an__foot">
       <VTooltip :text="t('admin.nav.backToChat')" placement="right" :disabled="!mini" :describe="false">
         <RouterLink to="/" class="an__link">
-          <span class="an__icon"><ArrowLeft :size="20" :stroke-width="1.75" aria-hidden="true" /></span>
-          <span class="an__label" :class="{ 'sr-only': mini }">{{ t('admin.nav.backToChat') }}</span>
+          <span class="an__row">
+            <span class="an__icon"><ArrowLeft :size="20" :stroke-width="1.75" aria-hidden="true" /></span>
+            <span class="an__label an__fade">{{ t('admin.nav.backToChat') }}</span>
+          </span>
         </RouterLink>
       </VTooltip>
 
@@ -203,12 +238,14 @@ async function signOut() {
               class="an__account"
               :aria-label="mini ? `${t('admin.nav.account')}: ${displayName}` : undefined"
             >
-              <VAvatar :name="displayName" :size="28" />
-              <span v-if="!mini" class="an__who">
-                <span class="an__who-name">{{ displayName }}</span>
-                <span v-if="user?.email && user.email !== displayName" class="an__who-sub">{{ user.email }}</span>
+              <span class="an__row an__row--account">
+                <VAvatar :name="displayName" :size="28" />
+                <span class="an__who an__fade">
+                  <span class="an__who-name">{{ displayName }}</span>
+                  <span v-if="user?.email && user.email !== displayName" class="an__who-sub">{{ user.email }}</span>
+                </span>
+                <ChevronsUpDown class="an__chev an__fade" :size="16" :stroke-width="1.75" aria-hidden="true" />
               </span>
-              <ChevronsUpDown v-if="!mini" class="an__chev" :size="16" :stroke-width="1.75" aria-hidden="true" />
             </button>
           </VTooltip>
         </template>
@@ -243,6 +280,8 @@ async function signOut() {
 
 <style scoped>
 .an {
+  /* Belgi 64px ustunning aynan markazida: (64 - 2·12 - 20) / 2 = 10px ichki chet. */
+  --an-ico-pad: calc((var(--admin-rail-w) - 2 * var(--s-3) - 20px) / 2);
   display: flex;
   flex-direction: column;
   gap: var(--s-1);
@@ -252,6 +291,12 @@ async function signOut() {
   overflow-x: hidden;
   overflow-y: auto;
 }
+/* Chap panel: qator mazmuni OCHIQ panel kengligida (AdminLayout --panel-content-w beradi;
+   tortish paytida u ham o'zgaradi; 1px - panelning o'ng chegarasi). Panel torayganda
+   bandlar (fon) u bilan torayadi, qator esa joyida qolib kesiladi. */
+.an--rail {
+  --an-row-w: calc(var(--panel-content-w, var(--admin-nav-w)) - 1px - 2 * var(--s-3));
+}
 .an--sheet {
   padding: 0;
   overflow: visible;
@@ -259,27 +304,25 @@ async function signOut() {
 
 /* ---- brend ---- */
 .an__brand {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--s-2);
+  gap: var(--s-0_5);
   height: 36px;
   margin-bottom: var(--s-4);
-  padding: 0 var(--s-1) 0 var(--s-2);
+  white-space: nowrap;
 }
 .an__spark {
   display: inline-flex;
-  flex: none;
-  justify-content: center;
-  width: 20px;
   color: var(--brand);
 }
 .an__word {
   font-size: var(--fs-body);
   font-weight: 600;
   letter-spacing: -0.011em;
-  white-space: nowrap;
 }
 .an__badge {
+  margin-left: var(--s-1_5);
   padding: 1px var(--s-1_5);
   border-radius: var(--r-xs);
   background: var(--fill);
@@ -287,22 +330,32 @@ async function signOut() {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-weight: 500;
-  white-space: nowrap;
 }
+/* O'ng chetga yopishgan: panel torayganda chet bilan birga suriladi va so'nadi. */
 .an__collapse {
-  margin-left: auto;
+  position: absolute;
+  top: 50%;
+  right: var(--s-1);
+  translate: 0 -50%;
+}
+.an__collapse-btn {
   color: var(--text-3);
 }
 
-/* Yig'ilgan panel: uchqun tugmasi, ustiga kelinganda "yoyish" belgisiga aylanadi. */
+/* Uchqun - ustun kengligidagi katak, markazi bandlar belgilari bilan bir chiziqda.
+   Yig'iq panelda tugma: ustiga kelinganda "yoyish" belgisiga aylanadi. */
 .an__spark-btn {
   position: relative;
   display: grid;
   place-items: center;
-  width: 40px;
+  flex: none;
+  width: calc(var(--admin-rail-w) - 2 * var(--s-3));
   height: 36px;
   border-radius: var(--r-sm);
   transition: background-color var(--dur-1) var(--ease-out);
+}
+.an__spark-btn:disabled {
+  cursor: default;
 }
 .an__spark-btn > * {
   grid-area: 1 / 1;
@@ -312,16 +365,16 @@ async function signOut() {
   opacity: 0;
   color: var(--text-2);
 }
-.an__spark-btn:hover,
-.an__spark-btn:focus-visible {
+.an__spark-btn:not(:disabled):hover,
+.an__spark-btn:not(:disabled):focus-visible {
   background: var(--fill-hover);
 }
-.an__spark-btn:hover .an__spark,
-.an__spark-btn:focus-visible .an__spark {
+.an__spark-btn:not(:disabled):hover .an__spark,
+.an__spark-btn:not(:disabled):focus-visible .an__spark {
   opacity: 0;
 }
-.an__spark-btn:hover .an__spark-alt,
-.an__spark-btn:focus-visible .an__spark-alt {
+.an__spark-btn:not(:disabled):hover .an__spark-alt,
+.an__spark-btn:not(:disabled):focus-visible .an__spark-alt {
   opacity: 1;
 }
 
@@ -337,10 +390,10 @@ async function signOut() {
 .an__link {
   display: flex;
   align-items: center;
-  gap: var(--s-3);
   width: 100%;
   height: 36px;
-  padding: 0 var(--s-2);
+  padding: 0;
+  overflow: hidden;
   border-radius: var(--r-sm);
   color: var(--text-2);
   font-size: var(--fs-body-sm);
@@ -363,6 +416,15 @@ async function signOut() {
 .an__link:focus-visible {
   outline-offset: -2px;
 }
+.an__row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex: none;
+  width: var(--an-row-w, 100%);
+  height: 100%;
+  padding: 0 var(--s-2) 0 var(--an-ico-pad);
+}
 .an__icon {
   position: relative;
   display: inline-flex;
@@ -381,7 +443,7 @@ async function signOut() {
 .an__count {
   flex: none;
 }
-/* Yig'ilgan panelda yangi xabarlar - belgi burchagida brend nuqtasi. */
+/* Yig'ilgan panelda yangi xabarlar - belgi burchagida brend nuqtasi (ochiqda - nishon). */
 .an__dot {
   position: absolute;
   top: -2px;
@@ -391,6 +453,11 @@ async function signOut() {
   border-radius: var(--r-full);
   background: var(--brand);
   box-shadow: 0 0 0 2px var(--bg-subtle);
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+.is-mini .an__dot {
+  opacity: 1;
 }
 
 /* ---- pastki qism ---- */
@@ -404,10 +471,10 @@ async function signOut() {
 .an__account {
   display: flex;
   align-items: center;
-  gap: var(--s-2);
   width: 100%;
   min-height: 44px;
-  padding: var(--s-1_5) var(--s-2) var(--s-1_5) var(--s-1_5);
+  padding: 0;
+  overflow: hidden;
   border-radius: var(--r-md);
   text-align: start;
   transition: background-color var(--dur-1) var(--ease-out);
@@ -418,6 +485,12 @@ async function signOut() {
 }
 .an__account:focus-visible {
   outline-offset: -2px;
+}
+/* Avatar markazi ham ustun markazida: 12 + 6 + 14 = 32px. */
+.an__row--account {
+  gap: var(--s-2);
+  height: auto;
+  padding: var(--s-1_5) var(--s-2) var(--s-1_5) var(--s-1_5);
 }
 .an__who {
   display: flex;
@@ -446,29 +519,28 @@ async function signOut() {
   color: var(--text-3);
 }
 
-/* ---- yig'ilgan (64px) ---- */
-.is-mini {
-  align-items: center;
-  padding-inline: var(--s-3);
+/* ---- yig'ish / ochish ----
+   Yozuvlar tez (--dur-1) so'nadi - kenglik animatsiyasi (--dur-panel) tugashini kutmaydi.
+   `an__fade` - band ichidagi yozuv: faqat shaffof (bandning nomi, ekran o'quvchi uni
+   ustunda ham o'qiydi). `an__block` - alohida tugma (yig'ish): so'ngach yashirinadi,
+   shablonda esa `inert` - Tab unga tushmaydi. */
+.an__fade {
+  transition: opacity var(--dur-1) var(--ease-out);
 }
-.is-mini .an__brand {
-  justify-content: center;
-  padding: 0;
+.is-mini .an__fade {
+  opacity: 0;
 }
-.is-mini .an__link {
-  justify-content: center;
-  width: 40px;
-  padding: 0;
+.an__block {
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    visibility 0s;
 }
-.is-mini .an__list,
-.is-mini .an__foot {
-  align-items: center;
-}
-.is-mini .an__account {
-  justify-content: center;
-  width: 40px;
-  min-height: 40px;
-  padding: 0;
+.is-mini .an__block {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    visibility 0s linear var(--dur-1);
 }
 
 /* ---- telefon sheet: barmoq uchun kattaroq nishonlar ---- */

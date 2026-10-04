@@ -8,7 +8,6 @@ import type { ThemePreference } from '../theme'
 import { LOCALES, setLocale } from '../i18n'
 import type { Locale } from '../i18n'
 import VAvatar from '../ui/VAvatar.vue'
-import VIconButton from '../ui/VIconButton.vue'
 import VMenu from '../ui/VMenu.vue'
 import VMenuItem from '../ui/VMenuItem.vue'
 import VTooltip from '../ui/VTooltip.vue'
@@ -22,6 +21,12 @@ import VTooltip from '../ui/VTooltip.vue'
  * VMenu ustida: klaviatura (↑ ↓, harf, Enter), Esc - preventDefault bilan (ChatView
  * yon panelni yig'ib yubormaydi), fokus trigger'ga qaytadi. Mavzu/til/kalitlar
  * tanlanganda menyu ochiq qoladi - natija shu yerning o'zida ko'rinsin.
+ *
+ * Trigger ikkala holatda BITTA tugma: panel yig'ilayotganda avatar joyida qoladi,
+ * ism va belgi so'nadi va kesiladi (ilgari ikki xil tugma almashardi - panel animatsiyasi
+ * o'rtasida avatar sakrardi, fokusdagi tugma esa DOM'dan chiqib ketardi). Qator
+ * kengligi ota beradigan `--sb-row-w` dan (ochiq panel bo'yicha) - ism qayta
+ * qisqarmaydi; berilmasa (drawer) - tugma kengligi.
  */
 const props = withDefaults(
   defineProps<{
@@ -69,14 +74,16 @@ const SHORT: Record<Locale, string> = { uz: 'Oʻz', 'uz-Cyrl': 'Ўз', ru: 'Ру
     :aria-label="t('chat.account')"
   >
     <template #trigger>
-      <VIconButton v-if="compact" size="lg" :label="name" tooltip-placement="right">
-        <VAvatar :name="name" :size="28" />
-      </VIconButton>
-      <button v-else type="button" class="acct">
-        <VAvatar :name="name" :size="28" />
-        <span class="acct__name">{{ name }}</span>
-        <ChevronsUpDown class="acct__chev" :size="16" :stroke-width="1.75" aria-hidden="true" />
-      </button>
+      <!-- VPopover `data-v-contents` o'ramalaridan o'tib, tugmaning o'zini trigger qiladi. -->
+      <VTooltip :text="name" placement="right" :disabled="!compact" :describe="false">
+        <button type="button" class="acct" :class="{ 'is-compact': compact }" :aria-label="compact ? name : undefined">
+          <span class="acct__row">
+            <VAvatar :name="name" :size="28" />
+            <span class="acct__name">{{ name }}</span>
+            <ChevronsUpDown class="acct__chev" :size="16" :stroke-width="1.75" aria-hidden="true" />
+          </span>
+        </button>
+      </VTooltip>
     </template>
 
     <div class="acct-head" role="presentation">
@@ -153,13 +160,23 @@ const SHORT: Record<Locale, string> = { uz: 'Oʻz', 'uz-Cyrl': 'Ўз', ru: 'Ру
 .acct {
   display: flex;
   align-items: center;
-  gap: var(--s-2);
   width: 100%;
   height: 48px;
-  padding: 0 var(--s-2);
+  padding: 0;
+  overflow: hidden;
   border-radius: var(--r-md);
   text-align: left;
   transition: background-color var(--dur-1) var(--ease-out);
+}
+/* Avatar markazi = belgilar ustuni markazi (8 + 6 + 14 = 28px): yig'iq ustunda ham shu joyda. */
+.acct__row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1_5);
+  flex: none;
+  width: var(--sb-row-w, 100%);
+  height: 100%;
+  padding: 0 var(--s-2) 0 var(--s-1_5);
 }
 @media (hover: hover) {
   .acct:hover {
@@ -182,6 +199,15 @@ const SHORT: Record<Locale, string> = { uz: 'Oʻz', 'uz-Cyrl': 'Ўз', ru: 'Ру
 .acct__chev {
   flex-shrink: 0;
   color: var(--text-3);
+}
+.acct__name,
+.acct__chev {
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+/* Yig'iq ustun: faqat avatar. Ism faqat shaffof (yashirilmaydi) - nom aria-label'da ham bor. */
+.acct.is-compact .acct__name,
+.acct.is-compact .acct__chev {
+  opacity: 0;
 }
 
 .acct-head {

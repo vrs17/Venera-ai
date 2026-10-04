@@ -35,6 +35,7 @@ import VSheet from '../ui/VSheet.vue'
 import VSkeleton from '../ui/VSkeleton.vue'
 import { toast } from '../ui/useToast'
 import { useIsPhone, useMediaQuery } from '../ui/composables/useMediaQuery'
+import { useResizablePanel } from '../ui/composables/useResizablePanel'
 import { isEditableTarget, matchesShortcut } from '../ui/useCommandPalette'
 
 // Kamdan-kam ochiladi - alohida bo'lak, chatning birinchi yuklanishiga qo'shilmaydi.
@@ -134,14 +135,29 @@ function closeVoice() {
 watch(voiceOpen, (open) => open && stopReading())
 
 // --- Yon panel ----------------------------------------------------------------
-// ≥1120 - sahifada (yig'iladi, holati eslab qolinadi); undan kichikda - chap
-// tomondan chiquvchi drawer (VSheet: fokus tuzog'i, parda, Esc).
+// ≥1120 - sahifada (yig'iladi, holati eslab qolinadi; chetidan tortib kengligi
+// o'zgartiriladi); undan kichikda - chap tomondan chiquvchi drawer (VSheet: fokus
+// tuzog'i, parda, Esc).
 const isDesktop = useMediaQuery('(min-width: 1120px)')
 const isPhone = useIsPhone()
 const sidebarOpen = ref(false)
 watch(isDesktop, (desktop) => desktop && (sidebarOpen.value = false))
 const collapsed = ref(readFlag('venera_sidebar_collapsed', false))
 watch(collapsed, (value) => writeFlag('venera_sidebar_collapsed', value))
+// Kenglik: 220-420, standart 272 (tokens.css --sidebar-w), ustun 56 (--rail-w). Yig'iq
+// holat baribir shu yerda (`collapsed`) - Esc ham, tortib yig'ish ham uni o'zgartiradi.
+const sidebarPanel = useResizablePanel({
+  storageKey: 'venera_sidebar_w',
+  min: 220,
+  max: 420,
+  initial: 272,
+  rail: 56,
+  collapsed: () => collapsed.value,
+  setCollapsed: (value) => {
+    collapsed.value = value
+  },
+  enabled: () => isDesktop.value,
+})
 
 // User vs developer chat UI. Developer mode adds the pipeline trace (when the
 // response has one) and a one-line route / timing / audit key under answers.
@@ -756,7 +772,8 @@ onBeforeUnmount(() => {
     <ChatSidebar
       v-if="isDesktop"
       mode="inline"
-      :collapsed="collapsed"
+      :collapsed="sidebarPanel.folded.value"
+      :resize="sidebarPanel"
       :user="user"
       :theme="theme"
       :dev-mode="devMode"

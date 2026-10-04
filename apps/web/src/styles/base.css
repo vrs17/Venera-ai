@@ -200,6 +200,16 @@ canvas {
   border: 0;
 }
 
+/* Panel chetini tortish paytida (useResizablePanel): kursor qaysi element ustida bo'lmasin
+   col-resize, matn belgilanib ketmaydi. Faqat <body> ga emas, `*` ga ham - tugma va
+   havolalarning o'z kursori (pointer) tortish paytida chiqib qolmasin. */
+body.is-col-resizing,
+body.is-col-resizing * {
+  cursor: col-resize !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
