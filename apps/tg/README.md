@@ -1,4 +1,11 @@
-# Venera - Telegram Mini App (`/tg/`)
+# Venera - Telegram Mini App (`/tg/`) - ESKI, ISHLATILMAYDI
+
+> **2026-10: `/tg/` endi yangi Mini App'ni beradi** - web kod bazasida
+> (`apps/web/tg-app.html`, `apps/web/src/tg/`), frontend image ichida yig'iladi
+> (`apps/web/deploy/nginx.container.conf`, `location /tg/`). Bu papka faqat QAYTARISH
+> (rollback) uchun saqlanadi: host mount `~/.local/share/venera-tg` hali systemd
+> unit'da turibdi. Barqaror davrdan keyin papka ham, mount ham olib tashlanadi.
+> Quyidagi matn - eski ilova qanday ishlagani haqida.
 
 Telegram bot'ining Mini App sahifasi. Ikkita fayl, build qadami YO'Q:
 
