@@ -121,6 +121,15 @@ export default defineConfig(({ mode }) => {
     // collapsing the paired `backdrop-filter` / `-webkit-backdrop-filter`
     // declarations down to just the prefixed one, which weakened the glass blur
     // in production. lightningcss honours browserslist and keeps both prefixes.
-    build: { cssMinify: 'lightningcss' },
+    build: {
+      cssMinify: 'lightningcss',
+      // Shriftlar HECH QACHON `data:` URL bo'lib CSS ichiga tikilmaydi. Vite 4 KB dan
+      // kichik fayllarni base64 qilib qo'yadi, va JetBrains Mono'ning 2 KB lik
+      // cyrillic-ext bo'lagi shunday bo'lib qolgan edi - prod CSP (`font-src 'self'`)
+      // uni bloklardi va Қ/Ғ/Ҳ boshqa shriftda chiqardi. CSP'ga `data:` qo'shish
+      // o'rniga fayl o'z URL'i bilan beriladi: siyosat qattiqligicha qoladi.
+      // Boshqa fayllar uchun `undefined` - Vite'ning odatiy chegarasi ishlayveradi.
+      assetsInlineLimit: (filePath: string) => (/\.(woff2?|ttf|otf|eot)$/i.test(filePath) ? false : undefined),
+    },
   }
 })
