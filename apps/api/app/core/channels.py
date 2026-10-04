@@ -48,8 +48,11 @@ _ALIASES = {
     "tgbot": "bot",
 }
 
-#: Mini app sahifasi shu yo'l ostida (`apps/tg`, nginx `location /tg/`).
-_MINIAPP_PREFIX = "/tg/"
+#: Mini app sahifalari shu yo'llar ostida: `/tg/` (eski `apps/tg`, almashtirishdan
+#: keyin - yangisi) va `/tg-beta/` (yangi Mini App sinovda; almashtirishdan keyin
+#: ham sinovchilarning eski tugmalari uchun qoladi). Sarlavhasiz so'rov (audio,
+#: rasm, eski build) shu `Referer` bilan keladi - statistikada `api` bo'lmasin.
+_MINIAPP_PREFIXES = ("/tg/", "/tg-beta/")
 
 _DEFAULT = "api"
 
@@ -67,8 +70,8 @@ def channel_of(request: Any) -> str:
     """So'rovning kanali. Tartib:
 
       1. `X-Venera-Client` - `web`, `miniapp` yoki `desktop` bo'lsa, o'sha;
-      2. aks holda `Referer` / `Origin` yo'li `/tg/` bilan boshlansa -
-         `miniapp`;
+      2. aks holda `Referer` / `Origin` yo'li `/tg/` yoki `/tg-beta/` bilan
+         boshlansa - `miniapp`;
       3. aks holda `api`.
 
     `request` - Starlette `Request` yoki `.headers` i bor istalgan obyekt.
@@ -101,4 +104,4 @@ def _header(headers: Any, name: str) -> str | None:
 
 def _is_miniapp(url: str) -> bool:
     path = urllib.parse.urlsplit(url.strip()).path or ""
-    return path == _MINIAPP_PREFIX.rstrip("/") or path.startswith(_MINIAPP_PREFIX)
+    return any(path == prefix.rstrip("/") or path.startswith(prefix) for prefix in _MINIAPP_PREFIXES)

@@ -127,8 +127,8 @@ def _session_channel(request: Request) -> str:
     """Kanal: klient aytgani, aytmasa - `miniapp`.
 
     Imzolangan `initData` faqat Telegram Mini App ichida bo'ladi. Sarlavhasiz
-    so'rov (eski build, `/tg-beta/` dagi `Referer` - `channels.py` uni tanimaydi)
-    ham shu yerdan keladi - statistikada `api` bo'lib ketmasin.
+    va `Referer` siz so'rov (eski build, `Referer` ni kesadigan WebView) ham
+    shu yerdan keladi - statistikada `api` bo'lib ketmasin.
     """
     declared = channel_of(request)
     return declared if declared in CLIENT_CHANNELS else "miniapp"

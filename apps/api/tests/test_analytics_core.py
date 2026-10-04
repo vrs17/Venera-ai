@@ -865,6 +865,12 @@ def _request(headers: dict[str, str]) -> Request:
     ({"Referer": "https://llm.brb-tech.uz/tg"}, "miniapp"),
     ({"X-Venera-Client": "boshqa", "Referer": "https://llm.brb-tech.uz/tg/index.html"}, "miniapp"),
     ({"Referer": "https://llm.brb-tech.uz/tgx/"}, "api"),
+    # Yangi Mini App (beta) - o'z yo'li ostida.
+    ({"Referer": "https://llm.brb-tech.uz/tg-beta/"}, "miniapp"),
+    ({"Referer": "https://llm.brb-tech.uz/tg-beta"}, "miniapp"),
+    ({"Referer": "https://llm.brb-tech.uz/tg-beta/?tg_init=x"}, "miniapp"),
+    ({"Referer": "https://llm.brb-tech.uz/tg-betax/"}, "api"),
+    ({"Referer": "https://llm.brb-tech.uz/tg-app.html"}, "api"),
     ({"Referer": "https://llm.brb-tech.uz/chat"}, "api"),
     ({"Origin": "https://llm.brb-tech.uz"}, "api"),
     ({"X-Venera-Client": "web", "Referer": "https://llm.brb-tech.uz/tg/"}, "web"),
