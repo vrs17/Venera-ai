@@ -719,7 +719,7 @@ function onOpenChange(v: boolean) {
                 <dd class="us-engine">{{ engineText(engine.effective[ch]) }}</dd>
               </div>
             </dl>
-            <div class="us-row us-row--tg">
+            <div class="us-row us-row--engine">
               <div class="us-engine-access">
                 <span class="us-engine-access__label">{{ t('admin.versions.access') }}</span>
                 <span v-if="engineAccessText" class="us-engine-access__value">{{ engineAccessText }}</span>
@@ -1105,6 +1105,21 @@ function onOpenChange(v: boolean) {
 .us-row--tg {
   grid-template-columns: minmax(0, 1fr) auto;
 }
+/* Versiya: matn va ikki tugma. Grid emas - tor ekranda tugmalar matnni 40px ga siqib
+   qo'ymasin ("Stand / art"), balki keyingi qatorga tushsin. */
+.us-row--engine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--s-3);
+  row-gap: var(--s-1);
+}
+.us-row--engine .us-engine-access {
+  flex: 1 1 10rem;
+}
+.us-row--engine .us-engine-acts {
+  margin-inline-start: auto;
+}
 .us-row__name {
   color: var(--text);
   font-size: var(--fs-body-sm);
@@ -1195,6 +1210,10 @@ function onOpenChange(v: boolean) {
   }
   .us-row {
     grid-template-columns: 40px minmax(0, 1fr) auto;
+  }
+  /* Yuqoridagi qoida ikki ustunli Telegram qatorini ham uch ustunga aylantirardi. */
+  .us-row--tg {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 }
 </style>

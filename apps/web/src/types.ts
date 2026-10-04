@@ -309,9 +309,10 @@ export interface UIExchange {
    *  Shown on hover, like a chat app; reopened chats take the stored time. */
   askedAt?: number | null
   answeredAt?: number | null
-  /** rules | hrm | crm | live | both | clarify — shown in developer mode. */
+  /** rules | hrm | crm | live | both | clarify. Chatda ko'rsatilmaydi (dasturchi rejimi olib
+   *  tashlandi) - savolning to'liq izi admin panelida. */
   route?: string | null
-  /** `done.engine` (v1 | v2) - dasturchi rejimidagi qatorda. */
+  /** `done.engine` (v1 | v2) - javob ostida, faqat odamga versiya tanlovi berilgan bo'lsa. */
   engine?: string | null
   /** Audit key: the same value is in the assistant's own log. */
   requestId?: string | null

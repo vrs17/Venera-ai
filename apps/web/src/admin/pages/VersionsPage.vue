@@ -282,6 +282,17 @@ function onSaved(row: EngineAccessRow) {
   })
 }
 
+// Oyna yopilganda fokus uni ochgan tugmaga qaytadi - lekin u tugma yo'qolishi mumkin:
+// birinchi ruxsat saqlandi (bo'sh holatdagi "Qo'shish" endi yo'q) yoki qator o'chirildi
+// (uning savatchasi ham). Shunda fokus `body` ga tushib, klaviatura va ekran o'quvchi
+// sahifa boshidan boshlardi - bo'lim sarlavhasida qolsin. Oyna yopilish animatsiyasi
+// tugagach (`after-leave`): undan oldin fokus hali yopilayotgan oynaning tugmasida.
+const accessHeading = ref<HTMLElement | null>(null)
+function keepAccessFocus() {
+  const active = document.activeElement
+  if (!active || active === document.body) accessHeading.value?.focus({ preventScroll: true })
+}
+
 function askRemove(r: EngineAccessRow) {
   const name = r.name || r.login || `#${r.actorId}`
   askConfirm({
@@ -408,7 +419,7 @@ function askRemove(r: EngineAccessRow) {
       <section class="vp-sec" aria-labelledby="vp-access">
         <div class="vp-sec__head">
           <div class="vp-sec__titles">
-            <h2 id="vp-access" class="vp-h2">{{ t('admin.versions.access') }}</h2>
+            <h2 id="vp-access" ref="accessHeading" class="vp-h2" tabindex="-1">{{ t('admin.versions.access') }}</h2>
             <p class="vp-sec__hint">{{ t('admin.versions.accessHint') }}</p>
           </div>
           <VButton v-if="accessRows.length" size="sm" :icon="Plus" @click="openAdd">{{ t('admin.versions.add') }}</VButton>
@@ -472,6 +483,7 @@ function askRemove(r: EngineAccessRow) {
       :preferred="publicEngine"
       :existing="accessRows"
       @saved="onSaved"
+      @after-leave="keepAccessFocus"
     />
 
     <VDialog
@@ -480,6 +492,7 @@ function askRemove(r: EngineAccessRow) {
       :title="confirm?.title"
       :description="confirm?.body"
       :dismissible="!confirmBusy"
+      @after-leave="keepAccessFocus"
     >
       <p v-if="confirmError" class="vp-err" role="alert">
         <CircleAlert :size="14" :stroke-width="1.75" aria-hidden="true" />

@@ -250,14 +250,21 @@ function actionDetail(e: AuditEntry): string {
       return ''
   }
 }
-function targetOf(e: AuditEntry): { to: ReturnType<typeof withFilters>; icon: Component; text: string } | null {
+function targetOf(
+  e: AuditEntry,
+): { to: ReturnType<typeof withFilters>; icon: Component; text: string; mono: boolean } | null {
   if (!e.targetId) return null
-  if (e.targetType === 'user') return { to: withFilters(`/admin/users/${e.targetId}`), icon: Users, text: `#${e.targetId}` }
-  if (e.targetType === 'report') {
-    return { to: withFilters(`/admin/reports/${e.targetId}`), icon: Flag, text: e.targetId.slice(0, 8) }
+  if (e.targetType === 'user') {
+    return { to: withFilters(`/admin/users/${e.targetId}`), icon: Users, text: `#${e.targetId}`, mono: true }
   }
-  // Versiya siyosati - bitta umumiy obyekt ("policy"): havola sahifaning o'ziga.
-  if (e.targetType === 'engine') return { to: withFilters('/admin/versions'), icon: GitBranch, text: e.targetId }
+  if (e.targetType === 'report') {
+    return { to: withFilters(`/admin/reports/${e.targetId}`), icon: Flag, text: e.targetId.slice(0, 8), mono: true }
+  }
+  // Versiya siyosati - bitta umumiy obyekt (`targetId: "policy"` - kod, odamga emas):
+  // sahifa nomi bilan, havola sahifaning o'ziga.
+  if (e.targetType === 'engine') {
+    return { to: withFilters('/admin/versions'), icon: GitBranch, text: t('admin.nav.versions'), mono: false }
+  }
   return null
 }
 
@@ -404,7 +411,7 @@ const auditColumns = computed<DataTableColumn<AuditEntry>[]>(() => [
           <template #cell-target="{ row }">
             <RouterLink v-if="targetOf(row as AuditEntry)" :to="targetOf(row as AuditEntry)!.to" class="sy-target">
               <component :is="targetOf(row as AuditEntry)!.icon" :size="14" :stroke-width="1.75" aria-hidden="true" />
-              <span class="t-mono">{{ targetOf(row as AuditEntry)!.text }}</span>
+              <span :class="{ 't-mono': targetOf(row as AuditEntry)!.mono }">{{ targetOf(row as AuditEntry)!.text }}</span>
             </RouterLink>
             <span v-else class="sy-none">—</span>
           </template>
