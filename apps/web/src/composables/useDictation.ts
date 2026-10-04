@@ -16,9 +16,9 @@
 // bekor, xato) BITTA yo'ldan - `onOutcome` - keladi: 120 s chegarasida yozuv
 // o'zi tugaydi va natija tugma bosilmasa ham shu yerga tushishi kerak.
 //
-// TO'LQIN. Har BAR_MS da bitta ustun: shu oynadagi RMS, desibelga o'tkazilgan
-// (quloq balandlikni logarifmik eshitadi - chiziqli RMS'da past ovoz ko'rinmay,
-// baland ovoz esa darhol shiftga urilardi). Darajalar reaktiv EMAS: ular
+// TO'LQIN. Har BAR_MS da bitta ustun: shu oynadagi RMS, quloqqa mos shkalada
+// (`levelOf` - chiziqli RMS'da past ovoz ko'rinmay qolardi, chiziqli desibelda
+// esa oddiy gap ham shiftga yaqin turardi). Darajalar reaktiv EMAS: ular
 // sekundiga ~14 marta keladi va canvas ularni o'zi o'qiydi - Vue'ga har biri
 // uchun qayta chizish kerak emas.
 
@@ -58,20 +58,29 @@ const MIN_MS = 400
  *  ishonch belgisini bermaydi va xona shovqinidan ham "so'z eshitib" qo'yadi. */
 const SPEECH_RMS = 0.045
 const SPEECH_WINDOW = 1024
-/** Desibel shkalasi. -56 dB va undan pasti - jim xona (nuqta), -10 dB - juda
- *  baland gap (to'liq ustun). Shovqin pasaytirgich yoqiq: jim xona odatda -60 dan
- *  past; avto-kuchaytirgichli oddiy gap -30..-15 atrofida - ustunlar yarmidan
- *  yuqori, lekin shiftga kamdan-kam uriladi (tinch ko'rinish). */
+/** Ustun bo'yi shkalasi. -56 dB va undan pasti - jim xona (nuqta); -6 dB -
+ *  to'liq ustun. O'LCHANGAN (Chromium, soxta mikrofonda haqiqiy o'zbekcha gap,
+ *  shu getUserMedia sozlamalari bilan): avto-kuchaytirgich gapni -18 dB atrofiga
+ *  (p50) tortadi, p90 -14 dB, boshidagi bir-ikki soniyada esa -7 dB gacha
+ *  "otib" yuboradi. Oldingi chiziqli desibel shkalasi (-56..-10) bilan oddiy gap
+ *  0.83-0.91 da, boshlanishi esa shiftda turardi - to'lqin bir xil baland
+ *  "panjara" bo'lib qolardi. */
 const DB_FLOOR = -56
-const DB_CEIL = -10
+const DB_FULL = -6
+/** Ustun bo'yi = amplitudaning kvadrat ildizi (desibelda: har 40 dB - 10 marta).
+ *  Bo'g'inlar orasidagi 4-6 dB farq ustunda 15-20% bo'lib ko'rinadi; oddiy gap
+ *  yarim bo'yda, baland bo'g'in ~0.8-0.9 da, past ovoz (-33 dB) ham ko'rinadi.
+ *  Pastdagi ayirma - jimlik aynan nuqta bo'lsin (0), xira ustuncha emas. */
+const LEVEL_ZERO = 10 ** ((DB_FLOOR - DB_FULL) / 40)
 /** Eng keng ekranni ham to'ldiradi (6 px qadam * 480 = 2880 px). */
 const MAX_BARS = 480
 
-/** RMS -> 0..1, quloqqa mos (desibel bo'yicha chiziqli). */
+/** RMS -> 0..1, quloqqa mos (yuqoridagi izoh). */
 export function levelOf(rms: number): number {
   if (!(rms > 0)) return 0
   const db = 20 * Math.log10(rms)
-  return Math.min(1, Math.max(0, (db - DB_FLOOR) / (DB_CEIL - DB_FLOOR)))
+  const amp = 10 ** ((db - DB_FULL) / 40)
+  return Math.min(1, Math.max(0, (amp - LEVEL_ZERO) / (1 - LEVEL_ZERO)))
 }
 
 /** Brauzer yoza oladigan konteyner. Safari'da webm yo'q. VoicePanel'dagi ro'yxat

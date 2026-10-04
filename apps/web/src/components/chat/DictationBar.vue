@@ -298,19 +298,36 @@ defineExpose({ focusDone })
   opacity: 0.22;
 }
 
-/* "Matnga aylantirilmoqda…" qotgan to'lqin ustida. Fon - karta sirti: matn
-   chiziqni kesib o'tadi, nuqtalar bilan aralashib o'qilmay qolmaydi. */
+/* "Matnga aylantirilmoqda…" qotgan to'lqin ustida. Fon - karta sirti va to'lqin
+   qutisining TO'LIQ balandligida: faqat matn qatoricha bo'lsa, baland ustunlar
+   uning ustidan va ostidan chiqib, matn "uzuq-uzuq chiziqlar" orasida qolardi
+   (telefonda to'lqin butun qatorni egallaydi - aynan shunday ko'rindi). Chetlari
+   yumshoq so'nadi: ustunlar keskin kesilmaydi. */
 .dict__status {
   position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
   max-width: 100%;
-  padding: 0 var(--s-2);
-  overflow: hidden;
-  background: var(--surface);
+  padding: 0 var(--s-5);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--surface) var(--s-4),
+    var(--surface) calc(100% - var(--s-4)),
+    transparent
+  );
   color: var(--text-3);
   font-size: var(--fs-body-sm);
   line-height: var(--lh-body-sm);
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Ellipsis ichki span'da: flex qutida `text-overflow` matnning o'ziga ishlaydi. */
+.dict__status > .dict__shimmer {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* ThinkingLoader'dagi yorug'lik: niqob matn bo'ylab yuradi, rang o'zgarmaydi. */
 .dict__shimmer {
