@@ -100,6 +100,64 @@ function tgMiniApp(): Plugin {
   }
 }
 
+// Yangi Telegram Mini App (tg-app.html -> src/tg/, web kod bazasida) - hozircha BETA:
+// `/tg-beta/` ostida, sinovchilar uni botdagi /beta orqali ochadi. Eski ilova
+// (yuqoridagi plugin, `apps/tg`) almashtirish tasdiqlanguncha `/tg/` da qoladi.
+//
+// Mini App'ga oid ikki ish BITTA plugin'da - keyin `/tg/` ga ko'chirish yoki olib
+// tashlash shu yerda va nginx'dagi bitta location'da bo'ladi:
+//   build       - ikkinchi kirish nuqtasi: dist/ ga index.html bilan birga tg-app.html
+//                 yig'iladi. Mini App o'z bo'laklari bilan - web'ning routeri, admin
+//                 qismi va pdf.js unga kirmaydi; umumiy kod (Vue, i18n, API) /assets/
+//                 dagi umumiy bo'laklarda, ikkala sahifa ularni bitta keshdan oladi.
+//   dev/preview - `/tg-beta/...` so'rovi `/tg-app.html` ga qayta yoziladi (nginx'dagi
+//                 `try_files /tg-app.html` kabi). Dev'da sahifani Vite o'zi o'zgartiradi,
+//                 ya'ni HMR ham ishlaydi; preview'da dist/tg-app.html beriladi.
+const TG_BETA_PATH = '/tg-beta'
+const TG_APP_HTML = '/tg-app.html'
+
+function tgBetaApp(): Plugin {
+  const handler: Connect.NextHandleFunction = (req, res, next) => {
+    const path = (req.url || '').split('?')[0]
+    // nginx kabi: `/tg-beta` -> `/tg-beta/`.
+    if (path === TG_BETA_PATH) {
+      res.statusCode = 301
+      res.setHeader('Location', `${TG_BETA_PATH}/`)
+      res.end()
+      return
+    }
+    // Ichki holat mashinasi, router yo'q: `/tg-beta/` ostidagi har qanday yo'l bitta
+    // sahifa. So'rov satri serverga kerak emas: dev stub uni brauzerdagi
+    // `location.search` dan o'qiydi (src/tg/telegram.ts).
+    if (path.startsWith(`${TG_BETA_PATH}/`)) req.url = TG_APP_HTML
+    next()
+  }
+
+  return {
+    name: 'venera-tg-beta-app',
+    config: () => ({
+      build: {
+        rolldownOptions: {
+          input: {
+            // `index` - web kirish nuqtasining bo'lak nomi avvalgidek qoladi.
+            index: resolve(__dirname, 'index.html'),
+            tg: resolve(__dirname, 'tg-app.html'),
+          },
+        },
+      },
+    }),
+    // Prefikssiz `use(handler)` - `use('/tg-beta', ...)` EMAS: connect prefiksli
+    // middleware'dan keyin `req.url` ga prefiksni QAYTA yopishtiradi, ya'ni qayta
+    // yozilgan yo'l `/tg-beta/tg-app.html` bo'lib qolardi.
+    configureServer(server: ViteDevServer) {
+      server.middlewares.use(handler)
+    },
+    configurePreviewServer(server: PreviewServer) {
+      server.middlewares.use(handler)
+    },
+  }
+}
+
 // CORS-free dev fallback: when VITE_API_BASE is left empty in .env, the fetch
 // call uses a relative URL and Vite forwards `/api` to the Spring Boot backend.
 // When VITE_API_BASE is set to an absolute URL, the proxy is unused and the
@@ -109,7 +167,7 @@ export default defineConfig(({ mode }) => {
   const target = env.VITE_API_TARGET || env.VITE_API_BASE || 'http://10.10.50.9:8080'
   const proxy = { '/api': target }
   return {
-    plugins: [vue(), releaseDownloads(), tgMiniApp()],
+    plugins: [vue(), releaseDownloads(), tgMiniApp(), tgBetaApp()],
     // host: true binds 0.0.0.0 so the dev server is reachable on the LAN
     // (http://<your-ip>:5173). Pinned port keeps the URL + firewall rule stable.
     server: { host: true, port: 5173, proxy },
