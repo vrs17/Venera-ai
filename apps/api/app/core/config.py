@@ -380,14 +380,33 @@ class Settings(BaseSettings):
     #: (`conftest.py`): aks holda har test yurishi jonli botga ulanib,
     #: odamlarning xabarlarini "yutib" yuborardi.
     telegram_bot_enabled: bool = True
+    #: Xabarlarni olish usuli: `webhook` - Telegram o'zi yuboradi; `polling` -
+    #: bot o'zi so'raydi (`getUpdates`).
+    #:
+    #: JONLI TIZIMDA `polling`, va sababi o'lchangan (2026-09-24). Webhook
+    #: sinaldi: Telegram'ning serverimizga (`195.158.16.251`) ulanishi ko'pincha
+    #: birinchi urinishda "Connection timed out" bo'lib, xabarlar 20 s - 2
+    #: daqiqa kechikdi. Polling'da ulanishni BIZ ochamiz (chiquvchi) - u tez.
+    #:
+    #: Bitta tokenni boshqa nusxa ham o'qisa (o'sha kuni dev serverda shunday
+    #: bo'ldi - xabarlar bo'linib, dev nusxa odamdan qayta kirishni so'radi),
+    #: polling ulanishni darhol qaytarib oladi (`runner.poll_error`). To'liq
+    #: yechim - @BotFather'da tokenni yangilash va faqat jonli `.env` ga
+    #: qo'yish.
+    #:
+    #: Webhook'ni faqat jonli `.env` da yoqish mumkin (`TELEGRAM_MODE=webhook`):
+    #: kod nusxalangan muhit default bilan webhook'ga tegmaydi.
+    telegram_mode: str = "polling"
+    #: Webhook manzili - ommaviy HTTPS; nginx `/api/` ni API'ga o'tkazadi.
+    telegram_webhook_url: str = "https://llm.brb-tech.uz/api/v1/telegram/webhook"
     #: Mini app manzili - "Venera ilovasini ochish" tugmasi shu yerga.
     telegram_webapp_url: str = "https://llm.brb-tech.uz/tg/"
     #: Telegram hisobi -> Venera hisobi. `data/` gitignore'da, 600, atomik.
     telegram_links_file: Path = BASE_DIR / "data" / "telegram" / "links.json"
-    #: Ulanish shuncha kun yashaydi va faqat MINI APP ochilganda (tirik
-    #: sessiya bilan) yangilanadi - bot bilan yozishish uni uzaytirmaydi.
-    #: Ya'ni odam oyiga kamida bir marta o'z sessiyasi bilan kiradi: bot
-    #: muddatsiz sessiyaga aylanmaydi.
+    #: Ulanish OXIRGI FAOLLIKDAN shuncha kun yashaydi: mini app ochilishi ham,
+    #: botdagi savol ham uni yangilaydi. Odam bir marta kiradi va botdan
+    #: foydalanib tursa qayta so'ralmaydi; faqat shuncha kun umuman
+    #: ishlatilmagan ulanish tugaydi.
     telegram_link_days: int = 30
     #: Mini app `initData` si shundan eski bo'lsa ulash rad etiladi. Ilova
     #: ochilgan zahoti ulanadi, ya'ni bir kun ochiq turgan varaqqa ham yetadi.
@@ -401,6 +420,14 @@ class Settings(BaseSettings):
     #: Bir vaqtda nechta xabar ishlanadi. Bitta odamning xabarlari esa
     #: KETMA-KET, navbat bilan.
     telegram_workers: int = 4
+
+    # --- Xodimlar ma'lumotnomasi (kontaktlar) ---
+    #: F.I.SH, Telegram, telefon, email - `services/contacts.py`. SHAXSIY
+    #: MA'LUMOT: `data/` gitignore'da, fayl 600.
+    contacts_db: Path = BASE_DIR / "data" / "contacts" / "contacts.db"
+    #: Qo'shish/o'zgartirish/o'chirishni TASDIQLAY oladigan rollar. Qidirish
+    #: va ko'rish - har qanday kirgan foydalanuvchiga ochiq.
+    contacts_editor_roles: list[str] = ["ADMIN"]
 
     # --- CORS ---
     #: Bo'sh bo'lsa CORS o'chirilgan: frontend nginx orqali BIR XIL originda

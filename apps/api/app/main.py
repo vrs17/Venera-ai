@@ -442,6 +442,12 @@ def _diagnostics() -> dict:
             warnings.append(f"Telegram bot xabar ololmayapti: {telegram['error']}")
         elif not telegram.get("running"):
             warnings.append(f"Telegram bot ishlamayapti: {telegram.get('note') or 'sabab jurnalda'}")
+        if telegram.get("conflicts_10min"):
+            warnings.append(
+                f"Telegram bot: boshqa nusxa ham shu tokenni o'qiyapti ({telegram['conflicts_10min']} "
+                "marta / 10 daq) - bot ulanishni qaytarib oladi, lekin xabar ba'zan o'sha nusxaga "
+                "tushishi mumkin; @BotFather'da tokenni yangilab, faqat jonli .env ga qo'ying"
+            )
 
     return {
         "status": "degraded" if warnings else "ok",

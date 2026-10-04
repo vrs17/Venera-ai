@@ -247,12 +247,40 @@ class TelegramApi:
         return self.upload("sendDocument", fields, file_field="document", filename=filename,
                            content=content, content_type=content_type)
 
+    def set_webhook(self, url: str, *, secret: str, allowed_updates: list[str]) -> Any:
+        """Telegram xabarlarni shu manzilga YUBORADI. `secret` har so'rovning
+        `X-Telegram-Bot-Api-Secret-Token` sarlavhasida keladi - endpoint uni
+        tekshiradi. Kutilayotgan xabarlar TASHLANMAYDI."""
+        return self.call("setWebhook", {"url": url, "secret_token": secret,
+                                        "allowed_updates": allowed_updates,
+                                        "drop_pending_updates": False})
+
+    def get_webhook_info(self) -> dict[str, Any]:
+        result = self.call("getWebhookInfo")
+        return result if isinstance(result, dict) else {}
+
+    def delete_webhook(self) -> Any:
+        return self.call("deleteWebhook", {"drop_pending_updates": False})
+
     def get_my_commands(self) -> list[dict[str, Any]]:
         result = self.call("getMyCommands")
         return result if isinstance(result, list) else []
 
     def set_my_commands(self, commands: list[dict[str, str]]) -> Any:
         return self.call("setMyCommands", {"commands": commands})
+
+
+def webhook_secret(bot_token: str, secret_key: str) -> str:
+    """Webhook sarlavhasi uchun sir - `SECRET_KEY` va bot tokenidan HMAC.
+
+    Saqlanmaydi va qayta ishga tushganda o'zgarmaydi; kalit almashsa sir ham
+    almashadi va bot ishga tushganda webhook yangi sir bilan qayta o'rnatiladi.
+    Telegram ruxsat bergan belgilar: `A-Z a-z 0-9 _ -` - hex mos keladi.
+    """
+    if not bot_token or not secret_key:
+        return ""
+    return hmac.new(secret_key.encode("utf-8"), b"venera-telegram-webhook:" + bot_token.encode("utf-8"),
+                    hashlib.sha256).hexdigest()
 
 
 def _json(raw: bytes) -> dict[str, Any]:
