@@ -810,3 +810,125 @@ def test_v2_ombor_v3_ga_otadi_malumot_joyida(tmp_path):
         assert control.load(database).policy == {"default": "v1"}
     finally:
         database.close_all()
+
+
+# ================================================================ sharh (2026-10-04): topilgan xatolar
+
+
+def test_soralgani_ishlaganining_ozi_bolsa_rad_etilmagan(db, monkeypatch):
+    """Yangi klient har savolda `current` ni yuborishi mumkin - bu rad etish
+    emas. Ilgari ruxsati yo'q odamning HAR savolida yolg'on `engine.ignored`
+    yozilardi."""
+    set_env(monkeypatch, default="v2")
+    assert not control.choose(person(6), "web", "v2").ignored
+    assert not control.choose(person(6), "web", " V2").ignored
+    assert control.choose(person(6), "web", "v1").ignored
+    assert control.choose(person(6), "web", "legacy").ignored
+    grant(db, 7, ["v1"])
+    assert not control.choose(person(7), "web", "v1").ignored
+    assert control.choose(person(7), "web", "v2").ignored
+    grant(db, 8, ["v1", "v2"])                      # default'siz - siyosatga ergashadi
+    assert not control.choose(person(8), "web", "v2").ignored
+    assert control.choose(person(8), "web", "v9").ignored
+
+    # Zahira yo'li (`resolve` yiqildi) ham shu qoida bilan.
+    def broken(*a, **kw):
+        raise RuntimeError("kutilmagan")
+
+    monkeypatch.setattr(control, "resolve", broken)
+    assert not control.choose(person(6), "web", "v2").ignored
+    assert control.choose(person(6), "web", "v1").ignored
+
+
+def test_oqimda_current_yuborilsa_izda_rad_etish_yoq(api, auth, upstream, db, monkeypatch):
+    set_env(monkeypatch, default="v2")
+    response = api.post("/api/v1/chat/stream", headers={**auth, "X-Venera-Client": "web"},
+                        json={"question": "savol", "engine": "v2"})
+    assert response.status_code == 200
+    turn_id = response.headers["x-venera-turn"]
+    [row] = turns(db, "SELECT engine FROM turns WHERE id=?", (turn_id,))
+    assert row["engine"] == "v2"
+    assert db.rows("SELECT 1 FROM turn_events WHERE turn_id=? AND name='engine.ignored'",
+                   (turn_id,)) == []
+
+
+def test_siyosat_vaqti_kalit_faqat_olib_tashlanganda_ham_yangilanadi(db):
+    """`policy.updatedAt/updatedBy` - oxirgi O'ZGARISH. Ilgari faqat kalit
+    o'chirilsa, sahifa eski vaqtni va boshqa adminni ko'rsatardi."""
+    from app.services.analytics.queries import iso
+
+    first, second = person(1), person(9)
+    control.put_policy(first, None, None, default="v1", channels={"web": "v2"}, now=1000.0)
+    view = control.put_policy(second, None, None, channels={"web": None}, now=2000.0)
+    assert (view["policy"]["default"], view["policy"]["channels"]) == ("v1", {})
+    assert (view["policy"]["updatedAt"], view["policy"]["updatedBy"]) == (
+        iso(2000.0), "u9@venera.uz")
+    # O'zgarishsiz so'rov vaqtni ham, muallifni ham siljitmaydi.
+    view = control.put_policy(first, None, None, default="v1", now=3000.0)
+    assert (view["policy"]["updatedAt"], view["policy"]["updatedBy"]) == (
+        iso(2000.0), "u9@venera.uz")
+    assert [r["action"] for r in audit(db)] == ["engine.policy", "engine.policy"]
+
+
+def test_buzuq_turdagi_ustun_hamma_qarorni_ochirmaydi(api, auth, db):
+    """Qo'lda yozilgan matnli vaqt ilgari `load` ni `TypeError` bilan
+    yiqitardi: HAMMA siyosat va HAMMA odamning ruxsati `.env` ga tushardi,
+    admin sahifalari esa 500 berardi."""
+    from app.services.analytics.queries import iso
+
+    db.execute("INSERT INTO engine_policy (key, value, updated_at, updated_by) "
+               "VALUES ('default', 'v1', 'kecha', 'qo''lda')")
+    db.execute("INSERT INTO engine_policy (key, value, updated_at, updated_by) "
+               "VALUES ('channel:bot', 'v2', 5.0, 'a@venera.uz')")
+    db.execute("INSERT INTO engine_access (actor_id, engines, default_engine, note, updated_at, "
+               "updated_by) VALUES (?, '[\"v1\", \"v2\"]', 'v2', x'41', 'bugun', 'b@venera.uz')",
+               (DEMO_ID,))
+    control.invalidate()
+    found = control.rules()
+    assert found.loaded and dict(found.policy) == {"default": "v1", "channel:bot": "v2"}
+    assert control.effective_engine(DEMO_ID, "web") == "v2", "ruxsat joyida"
+    assert control.effective_engine(None, "web") == "v1", "siyosat joyida"
+
+    response = api.get("/api/v1/admin/engines", headers=auth)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["policy"]["updatedAt"], body["policy"]["updatedBy"]) == (iso(5.0), "a@venera.uz")
+    [row] = body["access"]
+    assert (row["engines"], row["updatedAt"], row["updatedBy"]) == (
+        ["v1", "v2"], None, "b@venera.uz")
+    assert isinstance(row["note"], str)
+    assert api.get(f"/api/v1/admin/users/{DEMO_ID}", headers=auth).status_code == 200
+
+
+def test_eski_kod_v3_omborni_ochsa_ishlaydi(tmp_path, monkeypatch):
+    """Deploy orqaga qaytarilsa: v2 kodi v3 faylni ochadi - sxemani
+    tushirmaydi, o'z jadvallari bilan ishlaydi; yangi kod qaytganda admin
+    qarorlari joyida."""
+    from app.services.analytics import db as db_module
+
+    path = tmp_path / "v3" / "venera.db"
+    path.parent.mkdir()
+    new = Database(path)
+    try:
+        new.execute("INSERT INTO engine_policy (key, value) VALUES ('default', 'v1')")
+    finally:
+        new.close_all()
+
+    monkeypatch.setattr(db_module, "MIGRATIONS", MIGRATIONS[:2])
+    monkeypatch.setattr(db_module, "SCHEMA_VERSION", 2)
+    old = Database(path)
+    try:
+        assert old.version() == 3
+        old.execute("INSERT INTO turns (id, started_at, channel, question, status, engine) "
+                    "VALUES ('t1', 1.0, 'web', 'savol', 'ok', 'v1')")
+        assert old.scalar("SELECT COUNT(*) FROM turns") == 1
+    finally:
+        old.close_all()
+
+    monkeypatch.undo()
+    again = Database(path)
+    try:
+        assert again.version() == SCHEMA_VERSION == 3
+        assert dict(control.load(again).policy) == {"default": "v1"}
+    finally:
+        again.close_all()

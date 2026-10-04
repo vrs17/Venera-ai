@@ -28,7 +28,16 @@ mumkin: v1, v2", "hozirgisi: legacy" degan, o'zi bilan zid javob ketardi.
 KLIENT TANLOVI HUQUQ EMAS. `requested` - faqat istak: ruxsat etilmagan
 qiymat JIMGINA e'tiborsiz qoladi (xato emas). Aks holda eski klient yoki
 qo'lda yasalgan so'rov chatni sindirardi; sinov versiyasini esa faqat admin
-bergan odam ochadi.
+bergan odam ochadi. So'ralgani baribir ishlaydiganining o'zi bo'lsa (klient
+`current` ni qaytarib yuborsa) - bu rad etish EMAS (`ignored` yo'q): aks
+holda izda har savolda yolg'on `engine.ignored` nuqtasi paydo bo'lardi.
+
+KANAL - HUQUQ EMAS. Kanal `X-Venera-Client` dan (`core/channels.py`), uni
+har kim yoza oladi: odam boshqa kanalning "hamma uchun" versiyasiga sarlavha
+bilan o'ta oladi (`bot` dan tashqari - u sarlavhada qabul qilinmaydi). Kanal
+siyosati - versiyani kanal-kanal YOYISH vositasi, cheklov emas. Sinov
+versiyasini faqat bir guruhga ochish kerak bo'lsa - `engine_access`
+(odamga beriladi, token bo'yicha), kanal siyosati emas.
 
 KESH 5 SONIYA (`CACHE_TTL`). Qoida har savolda o'qiladi - bot va web
 oqimlari omborga har gal bormasin. Admin yozuvi shu jarayonda keshni DARHOL
@@ -136,6 +145,24 @@ def _ordered(engines: Iterable[str]) -> tuple[str, ...]:
     return tuple(engine for engine in _engines.CATALOG_IDS if engine in wanted)
 
 
+def _ts(value: object) -> float | None:
+    """Vaqt ustuni -> son. Qo'lda buzilgan qiymat (matn) - `None`. Aks holda
+    `load` dagi solishtirish `TypeError` berib, BUTUN qarorlarni (hamma
+    odamlarning ruxsati bilan) tashlab `.env` ga tushirardi - bitta buzuq
+    qator uchun hamma sinovchi o'z versiyasini yo'qotardi."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _text(value: object) -> str | None:
+    """Matn ustuni (`note`, `updated_by`) - satr yoki `None`: javob sxemasi
+    (`EngineAccessRow`) son qabul qilmaydi, admin sahifasi 500 bermasin."""
+    if value is None or isinstance(value, str):
+        return value
+    return str(value)
+
+
 def _grant_of(row: Mapping[str, Any]) -> Grant | None:
     """Qator -> `Grant`. Qo'lda buzilgan qator (JSON emas, katalogda yo'q
     versiyalar) - `None`: odam umumiy siyosatda qoladi, taxmin qilib unga
@@ -159,9 +186,9 @@ def _grant_of(row: Mapping[str, Any]) -> Grant | None:
         actor_id=actor_id,
         engines=engines,
         default_engine=default if default in engines else None,
-        note=row.get("note"),
-        updated_at=row.get("updated_at"),
-        updated_by=row.get("updated_by"),
+        note=_text(row.get("note")),
+        updated_at=_ts(row.get("updated_at")),
+        updated_by=_text(row.get("updated_by")),
     )
 
 
@@ -178,9 +205,9 @@ def load(db: Database) -> Rules:
                         key, row["value"])
             continue
         policy[key] = engine
-        at = row["updated_at"]
+        at = _ts(row["updated_at"])
         if at is not None and (updated_at is None or at > updated_at):
-            updated_at, updated_by = at, row["updated_by"]
+            updated_at, updated_by = at, _text(row["updated_by"])
     access: dict[int, Grant] = {}
     for row in db.rows("SELECT * FROM engine_access"):
         grant = _grant_of(row)
@@ -246,7 +273,8 @@ class Choice:
 
     `source` - qaysi bo'g'in hal qildi: requested | user | channel | default
     | env. `available` - odam tanlay oladigan dvigatellar (versiya berilmagan
-    bo'lsa faqat `engine`). `ignored` - klient so'radi, lekin ruxsat yo'q."""
+    bo'lsa faqat `engine`). `ignored` - klient so'radi, lekin boshqasi ishladi
+    (ruxsat yo'q yoki notanish qiymat)."""
 
     engine: str
     source: str
@@ -288,7 +316,6 @@ def resolve(user: AuthUser | int | None, channel: str | None, requested: object 
     grant = data.access.get(actor) if actor is not None else None
     name = normalize_channel(channel, default=None)
     wanted = _engines.catalog_id(requested)
-    asked = requested is not None and requested != ""
 
     if grant is not None:
         allowed, many = grant.engines, len(grant.engines) > 1
@@ -296,23 +323,32 @@ def resolve(user: AuthUser | int | None, channel: str | None, requested: object 
             return Choice(wanted, "requested", allowed, many)
         own = grant.default_engine or (allowed[0] if len(allowed) == 1 else None)
         if own is not None:
-            return Choice(own, "user", allowed, many, ignored=asked)
+            return Choice(own, "user", allowed, many, ignored=_ignored(requested, own))
         engine, source = _public(name, data)
         if engine not in allowed:
             engine, source = allowed[0], "user"
-        return Choice(engine, source, allowed, many, ignored=asked)
+        return Choice(engine, source, allowed, many, ignored=_ignored(requested, engine))
 
     engine, source = _public(name, data)
-    return Choice(engine, source, (engine,), False, ignored=asked)
+    return Choice(engine, source, (engine,), False, ignored=_ignored(requested, engine))
 
 
-def _env_choice(channel: str | None, asked: bool) -> Choice:
+def _ignored(requested: object, engine: str) -> bool:
+    """Klient so'radi, lekin BOSHQA dvigatel ishladi. So'ragani ishlaganining
+    o'zi bo'lsa - rad etish emas (modul izohi): yangi klient har savolda
+    `current` ni yuborishi mumkin va izda yolg'on nuqta bo'lmasin."""
+    if requested is None or requested == "":
+        return False
+    return _engines.catalog_id(requested) != engine
+
+
+def _env_choice(channel: str | None, requested: object) -> Choice:
     """Eng oxirgi zahira: faqat `.env` (u ham yiqilsa - kod default'i)."""
     try:
         engine = _engines.engine_for(channel)
     except Exception:                                       # noqa: BLE001
         engine = _engines.DEFAULT_ENGINE
-    return Choice(engine, "env", (engine,), False, ignored=asked)
+    return Choice(engine, "env", (engine,), False, ignored=_ignored(requested, engine))
 
 
 def choose(user: AuthUser | int | None, channel: str | None,
@@ -323,7 +359,7 @@ def choose(user: AuthUser | int | None, channel: str | None,
     except Exception:                                       # noqa: BLE001
         log_limited("engine_control.resolve", "Dvigatel tanlanmadi - .env ishlatildi",
                     exc_info=True)
-        return _env_choice(channel, requested is not None and requested != "")
+        return _env_choice(channel, requested)
 
 
 def effective_engine(user: AuthUser | int | None, channel: str | None,
@@ -520,6 +556,13 @@ def put_policy(admin: AuthUser, identities: Any, users: Any, *, default: Any = _
                             "value=excluded.value, updated_at=excluded.updated_at, "
                             "updated_by=excluded.updated_by",
                             (key, value, now, by))
+                # `policy.updatedAt/updatedBy` - SIYOSATNING oxirgi o'zgarishi
+                # (`load` qatorlarning eng yangisini oladi). Faqat kalit
+                # o'chirilganda yangi qator yo'q: qolganlarini belgilamasak,
+                # sahifa eski vaqtni va boshqa adminni "oxirgi o'zgartirgan"
+                # deb ko'rsatardi. Har kalitning o'z tarixi - auditda.
+                conn.execute("UPDATE engine_policy SET updated_at = ?, updated_by = ?",
+                             (now, by))
                 _admin.write_audit(conn, admin, "engine.policy", "engine", "policy", {
                     "from": _policy_shape(before), "to": _policy_shape(after)}, ts=now)
     except AdminError:
