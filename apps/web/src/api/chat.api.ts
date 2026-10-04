@@ -14,13 +14,13 @@
 // ReadableStream reads the same kind of stream over POST, with the token in a
 // header where it belongs.
 
-import { ApiError, BASE_URL, getToken } from './http'
+import { ApiError, BASE_URL, CLIENT_HEADER, clientChannel, getToken } from './http'
 import type { ApiErrorResponse, ChatFrame } from '../types'
 
-/** Backend analitikasi so'rovni shu sarlavha bo'yicha "web" kanaliga yozadi (apiFetch
- *  ham yuboradi). Bu fayldagi to'g'ridan-to'g'ri fetch'lar ham yubormasa, web chat
- *  admin panelda "API" bo'lib ko'rinardi. */
-const CLIENT_HEADER = 'X-Venera-Client'
+/* Kanal sarlavhasi (`X-Venera-Client`) - http.ts dagi `clientChannel()`: web'da
+   "web", Telegram Mini App'da "miniapp". Bu fayldagi to'g'ridan-to'g'ri fetch'lar ham
+   yubormasa, so'rov admin panelda "API" bo'lib ko'rinardi va dvigatel noto'g'ri
+   tanlanardi. */
 /** Javob sarlavhasi: backend shu savolga bergan kalit (`turns.id`). */
 const TURN_HEADER = 'X-Venera-Turn'
 
@@ -89,7 +89,7 @@ export async function streamAsk(
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       Accept: 'application/x-ndjson',
-      [CLIENT_HEADER]: 'web',
+      [CLIENT_HEADER]: clientChannel(),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({
@@ -177,7 +177,7 @@ function emit(line: string, onFrame: (frame: ChatFrame) => void): void {
 export async function downloadFile(url: string, filename: string): Promise<void> {
   const token = getToken()
   const response = await fetch(`${BASE_URL}${url}`, {
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), Accept: '*/*', [CLIENT_HEADER]: 'web' },
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), Accept: '*/*', [CLIENT_HEADER]: clientChannel() },
   })
   if (!response.ok) throw await errorOf(response, 'Download failed')
   const blob = await response.blob()

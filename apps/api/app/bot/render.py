@@ -15,7 +15,23 @@ oddiy matn emas, Telegram HTML'i (`parse_mode=HTML`):
   * qonunchilik manbasi (`kind: "law"`, v2) - "Manbalar" ichida "LEX.UZ ·
     qonunchilik" yorlig'i bilan HAVOLA (`<a href>`): u tekshirilgan `https`
     manzil va LEX.UZ dagi moddaga olib boradi. Hujjat ko'ruvchisiga (`d:`
-    tugmasi) HECH QACHON yo'naltirilmaydi - u faqat `doc_id` uchun.
+    tugmasi) HECH QACHON yo'naltirilmaydi - u faqat `doc_id` uchun;
+  * "Manbalar" - QISQA izohlar ro'yxati: javobda iqtibos qilinganlari
+    (`cited`), `FOOTNOTES_MAX` tagacha, uzun nom qisqartiriladi. Telefonda
+    javobning o'zi manbalar ostida ko'milib ketmasin.
+
+TUGMALAR (`callback_data`, 64 BAYTGACHA - Telegram chegarasi):
+
+    d:<doc_id>          "Hujjatni ochish" - imzolangan havola yuboriladi
+    f:<d|p>:<kalit>     ariza faylining boshqa ko'rinishi
+    a:<c|x>:<kalit>     taklifni tasdiqlash / rad etish
+    r:<turnId>          "⚑" - javob haqida xabar berish (sabablar ochiladi)
+    r:<turnId>:<sabab>  sabab tanlandi (`REPORT_REASONS`); `-` - bekor,
+                        `=` - allaqachon yuborilgan
+
+Tugma ma'lumotiga ISHONILMAYDI: o'zgartirilgan Telegram klienti istalgan
+`callback_data` yubora oladi. Shuning uchun bu yerda faqat SHAKL
+tekshiriladi (`parse_report`), egalik esa chaqiruvchida (`runner`).
 
 Telegram HTML'i QATTIQ: yopilmagan yoki kesishgan teg butun xabarni rad
 ettiradi. Shuning uchun har qator alohida o'giriladi va teglari tekshiriladi
@@ -47,7 +63,31 @@ LAW_KIND = "law"
 LAW_LABEL = "LEX.UZ · qonunchilik"
 
 #: Tugma `callback_data` si 64 BAYTGACHA.
-_CALLBACK_MAX = 64
+CALLBACK_MAX = 64
+#: Izohlar ro'yxatida shundan ko'p manba ko'rsatilmaydi - qolgani "yana N ta".
+FOOTNOTES_MAX = 6
+#: Manba nomi shundan uzun bo'lsa qisqartiriladi (telefon ekranida 2 qator).
+_TITLE_MAX = 90
+#: Hujjat tugmalari: shundan ko'p bo'lsa qisqa yorliq ("📄 [3]") va 3 tadan qator.
+_DOC_ROWS_FULL = 3
+
+#: "Xabar berish" sabablari: tugmadagi QISQA kod -> `schemas/reports.REASONS`
+#: dagi kalit -> yorliq. Yorliqlar veb ilovadagi bilan bir xil
+#: (`apps/web/src/i18n/report.ts`, uz). Kod bitta harf - tugma ma'lumoti
+#: 64 baytga bemalol sig'sin.
+REPORT_REASONS: tuple[tuple[str, str, str], ...] = (
+    ("w", "wrong", "Notoʻgʻri"),
+    ("i", "incomplete", "Toʻliq emas"),
+    ("o", "outdated", "Eskirgan"),
+    ("u", "unsafe", "Xavfli"),
+    ("b", "other", "Boshqa"),
+)
+REPORT_CODES = {code: reason for code, reason, _ in REPORT_REASONS}
+#: "⚑" ochilgandagi "Bekor" va yuborilgandan keyingi belgi.
+REPORT_CANCEL = "-"
+REPORT_DONE = "="
+#: Savol kaliti - `TurnRecorder.turn_id` (uuid4 hex, 32 belgi).
+_TURN = re.compile(r"[0-9a-f]{32}")
 #: Yuqoridagi xizmat kalitlari uchun ruxsat etilgan belgilar
 #: (`assistant._SAFE_KEY` bilan bir xil).
 SAFE_KEY = re.compile(r"[\w.~:-]{1,128}")
@@ -318,16 +358,70 @@ def law_line(source: dict[str, Any], index: int) -> str:
     return f"{esc(mark)} {esc(LAW_LABEL)}: {link}" if title else f"{esc(mark)} {link}"
 
 
-def sources_block(docs: list[dict[str, Any]]) -> str:
-    lines = [law_line(doc, i) if doc.get("kind") == LAW_KIND else esc(source_label(doc, i))
-             for i, doc in enumerate(docs)]
+def _number(source: dict[str, Any], index: int) -> int:
+    """Manbaning iqtibos raqami: `marker` ("[2]") -> `citation_index` -> tartib."""
+    found = re.search(r"\d{1,3}", str(source.get("marker") or ""))
+    if found:
+        return int(found.group())
+    cited_at = source.get("citation_index")
+    if isinstance(cited_at, int) and not isinstance(cited_at, bool) and cited_at > 0:
+        return cited_at
+    return index + 1
+
+
+def cited(docs: list[dict[str, Any]], body: str) -> list[dict[str, Any]]:
+    """Javob matnida iqtibos qilingan manbalar (`[1]`, `[2]`) - qisqa javob
+    ostida o'nta "ehtimol kerak" hujjat turmasin.
+
+    Javobda birorta ham iqtibos bo'lmasa yoki iqtiboslar hech bir manbaga mos
+    kelmasa - HAMMASI (manba yo'qolgandan ortiqchasi yaxshi). Raqam OLDINDAN
+    `marker` ga yoziladi: saralangandan keyin tartib raqami siljiydi va
+    "[3]" manbasi "[2]" bo'lib qolardi. Bir xil raqam ikki marta kelsa
+    (bir hujjatning ikki bo'lagi) - bittasi.
+    """
+    numbered: list[tuple[int, dict[str, Any]]] = []
+    seen: set[int] = set()
+    for index, doc in enumerate(docs):
+        number = _number(doc, index)
+        if number in seen:
+            continue
+        seen.add(number)
+        numbered.append((number, doc if doc.get("marker") else {**doc, "marker": f"[{number}]"}))
+    marks = {int(m) for m in re.findall(r"\[(\d{1,3})\]", answer_body(body or ""))}
+    picked = [doc for number, doc in numbered if number in marks]
+    return picked or [doc for _, doc in numbered]
+
+
+def _short(text: str, limit: int = _TITLE_MAX) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
+def sources_block(docs: list[dict[str, Any]], *, most: int = FOOTNOTES_MAX) -> str:
+    """Izohlar: "📚 Manbalar" va har manba bitta qisqa qator. LEX.UZ -
+    bosiladigan havola (`law_line`), ichki hujjat - nomi va beti (uni
+    "Hujjatni ochish" tugmasi ochadi). `most` dan ortig'i - "yana N ta"."""
+    lines = []
+    for i, doc in enumerate(docs[:most]):
+        item = {**doc, "title": _short(str(doc["title"]))} if doc.get("title") else doc
+        lines.append(law_line(item, i) if doc.get("kind") == LAW_KIND else esc(source_label(item, i)))
+    if len(docs) > most:
+        lines.append(f"<i>… yana {len(docs) - most} ta manba - Venera ilovasida</i>")
     return "📚 <b>Manbalar</b>\n" + "\n".join(lines)
 
 
-def doc_buttons(docs: list[dict[str, Any]], *, most: int = 9) -> dict[str, Any] | None:
-    """Har hujjat uchun tugma - bosilsa PDF'ning o'zi shu chatga keladi.
-    Qonunchilik manbasi tugma OLMAYDI: u PDF emas, havolasi matnning o'zida."""
-    buttons: list[dict[str, str]] = []
+def doc_rows(docs: list[dict[str, Any]], *, most: int = 6) -> list[list[dict[str, str]]]:
+    """Ichki hujjatlar uchun "Hujjatni ochish" tugmalari (`d:<doc_id>`).
+
+    Bosilganda bot IMZOLANGAN, qisqa muddatli havola yuboradi (`runner`):
+    bank hujjatining o'zi Telegram serverlariga yuklanmaydi. Qonunchilik
+    manbasi tugma OLMAYDI: u hujjat emas, havolasi izohning o'zida.
+
+    Bitta hujjat - "📄 Hujjatni ochish"; bir nechta - raqami bilan, har biri
+    alohida qatorda; ko'p bo'lsa (`_DOC_ROWS_FULL` dan ortiq) - qisqa
+    "📄 [n]" va 3 tadan qator, aks holda klaviatura ekranni egallab olardi.
+    """
+    picked: list[tuple[str, str]] = []
     seen: set[str] = set()
     for index, doc in enumerate(docs):
         if doc.get("kind") == LAW_KIND:
@@ -336,28 +430,116 @@ def doc_buttons(docs: list[dict[str, Any]], *, most: int = 9) -> dict[str, Any] 
         if not isinstance(doc_id, str) or not SAFE_KEY.fullmatch(doc_id) or doc_id in seen:
             continue
         data = f"d:{doc_id}"
-        if len(data.encode()) > _CALLBACK_MAX:
+        if len(data.encode()) > CALLBACK_MAX:
             continue
         seen.add(doc_id)
-        mark = doc.get("marker") or f"[{doc.get('citation_index') or index + 1}]"
-        buttons.append({"text": f"📄 {mark}", "callback_data": data})
-        if len(buttons) >= most:
+        picked.append((f"[{_number(doc, index)}]", data))
+        if len(picked) >= most:
             break
-    if not buttons:
+    if not picked:
+        return []
+    if len(picked) == 1:
+        return [[{"text": "📄 Hujjatni ochish", "callback_data": picked[0][1]}]]
+    if len(picked) <= _DOC_ROWS_FULL:
+        return [[{"text": f"📄 {mark} Hujjatni ochish", "callback_data": data}]
+                for mark, data in picked]
+    buttons = [{"text": f"📄 {mark}", "callback_data": data} for mark, data in picked]
+    return [buttons[i:i + 3] for i in range(0, len(buttons), 3)]
+
+
+def keyboard(rows: list[list[dict[str, Any]]]) -> dict[str, Any] | None:
+    """Qatorlar -> `reply_markup`; qator yo'q - `None` (tugmasiz xabar)."""
+    return {"inline_keyboard": rows} if rows else None
+
+
+def doc_buttons(docs: list[dict[str, Any]], *, most: int = 6) -> dict[str, Any] | None:
+    """`doc_rows` - tayyor klaviatura sifatida (yoki `None`)."""
+    return keyboard(doc_rows(docs, most=most))
+
+
+def url_button(label: str, url: str) -> dict[str, Any] | None:
+    """Brauzerda ochiladigan havola tugmasi - faqat `https`."""
+    if not isinstance(url, str) or not url.startswith("https://"):
         return None
-    return {"inline_keyboard": [buttons[i:i + 3] for i in range(0, len(buttons), 3)]}
+    return {"inline_keyboard": [[{"text": label, "url": url}]]}
+
+
+# --- "Xabar berish" (⚑) --------------------------------------------------------
+
+
+def report_row(turn_id: str) -> list[dict[str, str]]:
+    """Javob ostidagi "⚑" - bosilsa sabablar ochiladi."""
+    return [{"text": "⚑", "callback_data": f"r:{turn_id}"}]
+
+
+def report_reason_rows(turn_id: str) -> list[list[dict[str, str]]]:
+    """Sabablar (veb ilovadagi tartibda) va "Bekor" - 2 tadan qator."""
+    buttons = [{"text": label, "callback_data": f"r:{turn_id}:{code}"}
+               for code, _, label in REPORT_REASONS]
+    buttons.append({"text": "Bekor", "callback_data": f"r:{turn_id}:{REPORT_CANCEL}"})
+    return [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+
+
+def report_done_row(turn_id: str) -> list[dict[str, str]]:
+    """Yuborilgandan keyin: qayta bosilsa faqat "allaqachon yuborilgan"."""
+    return [{"text": "✓ Yuborildi", "callback_data": f"r:{turn_id}:{REPORT_DONE}"}]
+
+
+def parse_report(rest: str) -> tuple[str, str] | None:
+    """`r:` dan keyingi qism -> (savol kaliti, amal). Amal: `""` - sabablarni
+    ochish, `REPORT_CODES` kaliti - yuborish, `-` - bekor, `=` - yuborilgan.
+
+    Faqat SHAKL: kalit aynan 32 hex, amal ro'yxatdan. Savol kimniki ekanini
+    chaqiruvchi tekshiradi - tugma ma'lumoti soxta bo'lishi mumkin.
+    """
+    if not isinstance(rest, str) or len(rest.encode()) > CALLBACK_MAX:
+        return None
+    turn_id, sep, action = rest.partition(":")
+    if not _TURN.fullmatch(turn_id):
+        return None
+    if not sep:
+        return turn_id, ""
+    if action in REPORT_CODES or action in (REPORT_CANCEL, REPORT_DONE):
+        return turn_id, action
+    return None
+
+
+def swap_report_rows(markup: Any, rows: list[list[dict[str, Any]]]) -> dict[str, Any] | None:
+    """Xabar klaviaturasidagi "⚑" qatorlarini (`r:` tugmali) `rows` bilan
+    almashtiradi; qolgan qatorlar ("Hujjatni ochish") o'z joyida qoladi.
+
+    `markup` - tugma bosilgan xabarning Telegram'dagi klaviaturasi
+    (`callback_query.message.reply_markup`). Shakli buzuq bo'lsa - faqat
+    `rows`. Notanish tugmalar tashlanadi: faqat matnli va `callback_data`,
+    `url` yoki `web_app` li tugma qayta yuboriladi.
+    """
+    kept: list[list[dict[str, Any]]] = []
+    board = markup.get("inline_keyboard") if isinstance(markup, dict) else None
+    for row in board if isinstance(board, list) else []:
+        if not isinstance(row, list):
+            continue
+        clean = [b for b in row if isinstance(b, dict) and isinstance(b.get("text"), str)
+                 and any(k in b for k in ("callback_data", "url", "web_app"))]
+        if not clean or any(str(b.get("callback_data") or "").startswith("r:") for b in clean):
+            continue
+        kept.append(clean)
+    return keyboard(kept + rows)
 
 
 def file_button(kind: str, token: str) -> dict[str, Any] | None:
     """Ariza faylining boshqa ko'rinishi uchun tugma ("PDF")."""
     data = f"f:{'p' if kind == 'pdf' else 'd'}:{token}"
-    if len(data.encode()) > _CALLBACK_MAX or not SAFE_ARTIFACT.fullmatch(token):
+    if len(data.encode()) > CALLBACK_MAX or not SAFE_ARTIFACT.fullmatch(token):
         return None
     return {"inline_keyboard": [[{"text": f"📄 {kind.upper()} ko'rinishida", "callback_data": data}]]}
 
 
-def app_button(url: str, label: str = "Venera ilovasini ochish") -> dict[str, Any] | None:
-    """Mini app'ni ochadigan tugma (faqat shaxsiy chatda ishlaydi)."""
+#: Mini app tugmasi - ulanmagan odamga, `/start` va `/logout` dan keyin.
+APP_LABEL = "Venera'ni ochish"
+
+
+def app_button(url: str, label: str = APP_LABEL) -> dict[str, Any] | None:
+    """Mini app'ni ochadigan tugma (`web_app` - faqat shaxsiy chatda ishlaydi)."""
     if not url:
         return None
     return {"inline_keyboard": [[{"text": label, "web_app": {"url": url}}]]}
@@ -411,7 +593,7 @@ def proposal_card(proposal: dict[str, Any]) -> str:
 
 def proposal_buttons(token: str) -> dict[str, Any] | None:
     """[Rad etish] [Tasdiqlash]. Kalit tugmaga sig'masa `None`."""
-    if not SAFE_KEY.fullmatch(token or "") or len(f"a:c:{token}".encode()) > _CALLBACK_MAX:
+    if not SAFE_KEY.fullmatch(token or "") or len(f"a:c:{token}".encode()) > CALLBACK_MAX:
         return None
     return {"inline_keyboard": [[
         {"text": "✖️ Rad etish", "callback_data": f"a:x:{token}"},

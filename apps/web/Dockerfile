@@ -22,7 +22,9 @@ RUN npm ci
 # Source, then build. .env.production (committed) sets VITE_API_BASE="" => the
 # bundle calls relative /api; the backend URL is NOT baked into the JS.
 COPY . .
-RUN npm run build && test -f dist/index.html
+# tg-app.html - Telegram Mini App sahifasi (nginx /tg-beta/ uni `try_files` bilan
+# beradi): yo'q bo'lsa image yig'ilmaydi, prod'da jim 404 bo'lib chiqmaydi.
+RUN npm run build && test -f dist/index.html && test -f dist/tg-app.html
 
 # ---------------------------- serve ----------------------------
 FROM ${NGINX_IMAGE} AS serve

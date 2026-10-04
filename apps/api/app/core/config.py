@@ -442,8 +442,19 @@ class Settings(BaseSettings):
     telegram_mode: str = "polling"
     #: Webhook manzili - ommaviy HTTPS; nginx `/api/` ni API'ga o'tkazadi.
     telegram_webhook_url: str = "https://llm.brb-tech.uz/api/v1/telegram/webhook"
-    #: Mini app manzili - "Venera ilovasini ochish" tugmasi shu yerga.
+    #: Mini app manzili - "Venera'ni ochish" tugmasi shu yerga.
     telegram_webapp_url: str = "https://llm.brb-tech.uz/tg/"
+    #: YANGI mini app - BETA (`/tg-beta/`). Hamma uchun almashtirilguncha
+    #: eski ilova `/tg/` da qoladi, sinovchilar esa yangisini botdagi `/beta`
+    #: buyrug'i bilan ochadi (`app/bot/runner.py`). Bo'sh - `/beta` yopiq.
+    telegram_webapp_beta_url: str = "https://llm.brb-tech.uz/tg-beta/"
+    #: `/beta` kimga ochiq: ADMIN rolidagilar VA shu ro'yxat - vergul (yoki
+    #: bo'shliq) bilan loginlar, harf registriga qaramaydi. `admin_logins`
+    #: dagi qoida: SSO hisobi FAQAT LOGINI bilan (emailni odam Keycloak'da
+    #: o'zi o'zgartira oladi), `users.yaml` dagi hisob - emaili bilan. Bu
+    #: huquq emas, faqat beta manzili ko'rsatiladi: yangi ilova ham o'sha
+    #: Venera kirishini talab qiladi.
+    miniapp_beta_logins: str = ""
     #: Telegram hisobi -> Venera hisobi. `data/` gitignore'da, 600, atomik.
     telegram_links_file: Path = BASE_DIR / "data" / "telegram" / "links.json"
     #: Ulanish OXIRGI FAOLLIKDAN shuncha kun yashaydi: mini app ochilishi ham,

@@ -15,6 +15,15 @@ class TelegramLinkRequest(BaseModel):
     initData: str = Field(min_length=1, max_length=8192)
 
 
+class TelegramSessionRequest(TelegramLinkRequest):
+    """`POST /telegram/session` - parolsiz kirish, faqat `initData` bilan.
+
+    Bu yerda `Authorization` YO'Q: Venera hisobi ilgari parol bilan kirilganda
+    yaratilgan ULANISHDAN (`services/telegram_links.py`) olinadi, Telegram
+    hisobi esa shu satrning imzosidan. Ulanish yo'q - sessiya ham yo'q.
+    """
+
+
 class TelegramLinkResult(BaseModel):
     linked: bool = True
     #: `new` | `refreshed` | `switched` (boshqa Venera hisobidan o'tkazildi).

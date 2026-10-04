@@ -41,6 +41,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ...core import engines as _engines
 from ...core.channels import channel_of
+from ...core.channels import normalize as normalize_channel
 from ...core.config import ollama_key_now, platform_tokens, settings
 from ...core.errors import bad_request, error_status
 from ...schemas.auth import AuthUser
@@ -54,6 +55,7 @@ from ...services.integrations.assistant import (
     AssistantClient,
     AssistantError,
     artifact_ref_ok,
+    doc_ref_ok,
 )
 from ...services import contacts_chat
 from ...services.hold import HoldVoices, keyword_topic, pick
@@ -790,13 +792,21 @@ def doc(
 
 
 def _file(open_it, user: AuthUser | str, what: str, *,
-          disposition: str | None = None, headers: dict[str, str] | None = None) -> StreamingResponse:
-    """Fayl oqimi uchun umumiy qobiq - uchala endpoint uchun bir xil."""
+          disposition: str | Callable[[str], str] | None = None,
+          headers: dict[str, str] | None = None) -> StreamingResponse:
+    """Fayl oqimi uchun umumiy qobiq - uchala endpoint uchun bir xil.
+
+    `disposition` funksiya bo'lsa - u javob turini (`Content-Type`) oladi:
+    havola orqali ochilgan hujjat faqat haqiqatan PDF bo'lsa `inline` bo'ladi,
+    tur esa fayl olingandan keyingina ma'lum.
+    """
     who = user if isinstance(user, str) else user.email
     try:
         content_type, filename, chunks = open_it()
     except AssistantError as exc:
         raise _fail(exc, user, what) from exc
+    if callable(disposition):
+        disposition = disposition(content_type)
 
     def body():
         try:
@@ -845,6 +855,16 @@ _LINK_KINDS = ("docx", "pdf")
 #: Telegram Web (`web.telegram.org/k`, `/a`) faylni brauzer ichida `fetch`
 #: bilan oladi, ya'ni CORS kerak - rasmiy hujjat talabi.
 _TELEGRAM_WEB = "https://web.telegram.org"
+#: Iqtibos hujjati havolasining turi (`kind`). Ariza turlaridan (`_LINK_KINDS`)
+#: ATAYLAB alohida: ariza imzosi (`art`) hujjat sifatida ochilmasin va aksincha.
+_DOC_KIND = "doc"
+#: Havola bo'yicha javobning qo'shimcha sarlavhalari - ariza ham, hujjat ham.
+_LINK_HEADERS = {
+    "Access-Control-Allow-Origin": _TELEGRAM_WEB,
+    "Access-Control-Expose-Headers": "Content-Disposition",
+    # Havola manzilda turadi - u boshqa saytga Referer bilan chiqmasin.
+    "Referrer-Policy": "no-referrer",
+}
 
 
 def _download_name(requested: str | None, kind: str) -> str:
@@ -856,11 +876,12 @@ def _download_name(requested: str | None, kind: str) -> str:
     return f"{base or 'hujjat'}.{kind}"
 
 
-def _attachment(filename: str) -> str:
+def _attachment(filename: str, *, inline: bool = False) -> str:
     """`Content-Disposition` - RFC 6266: ASCII nom + `filename*` (UTF-8).
 
     Faqat `filename="..."` yetmaydi: sarlavhalar latin-1 da ketadi va
     o'zbekcha `ʻ` yoki kirill harfli nom javobni 500 ga aylantirardi.
+    `inline` - brauzer faylni saqlamasdan o'zi ko'rsatsin (faqat PDF hujjat).
     """
     stem, _, ext = filename.rpartition(".")
     ascii_stem = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode("ascii")
@@ -868,8 +889,12 @@ def _attachment(filename: str) -> str:
     # ko'rinishi) o'rniga "hujjat.docx".
     ascii_stem = re.sub(r"[^A-Za-z0-9.' _-]+", "_", ascii_stem).strip(" ._") or "hujjat"
     ascii_name = f"{ascii_stem}.{ext}"
-    return (f'attachment; filename="{ascii_name}"; '
+    return (f'{"inline" if inline else "attachment"}; filename="{ascii_name}"; '
             f"filename*=UTF-8''{urllib.parse.quote(filename, safe='')}")
+
+
+def _is_pdf(content_type: str | None) -> bool:
+    return (content_type or "").split(";", 1)[0].strip().lower() == "application/pdf"
 
 
 @router.post("/artifact/{token}/{kind}/link", response_model=FileLink)
@@ -897,6 +922,52 @@ def artifact_link(
     return FileLink(url=f"/api/v1/chat/file/{signed}", filename=filename, expiresIn=_FILE_LINK_TTL)
 
 
+def doc_link(doc_id: str, actor_id: int, filename: str | None = None, *,
+             channel: str = "miniapp", ttl: int = _FILE_LINK_TTL) -> FileLink:
+    """Iqtibos hujjatiga (PDF) tokensiz ochiladigan imzolangan havola.
+
+    Mini App (`POST /doc/{doc_id}/link`) va bot ("Hujjatni ochish" tugmasi)
+    BITTA yo'ldan imzolaydi - imzo, `aud` va fayl yo'li ariza havolasi bilan
+    bir xil (`/file/{signed}`). `ch` - kim so'radi: havola sessiyasiz ochiladi,
+    hisobda esa kanal to'g'ri tursin. Hujjat bu yerda OLINMAYDI.
+
+    `ValueError` - kalit yo'lga qo'yib bo'lmaydigan (`doc_ref_ok`).
+    """
+    if not doc_ref_ok(doc_id):
+        raise ValueError("hujjat kaliti yaroqsiz")
+    ttl = int(ttl)
+    name = _download_name(filename, "pdf")
+    now = int(time.time())
+    signed = jwt.encode(
+        {"aud": _FILE_AUDIENCE, "iat": now, "exp": now + ttl, "kind": _DOC_KIND,
+         "doc": doc_id, "fn": name, "uid": actor_id, "ch": channel},
+        settings.secret_key, algorithm="HS256",
+    )
+    return FileLink(url=f"/api/v1/chat/file/{signed}", filename=name, expiresIn=ttl)
+
+
+@router.post("/doc/{doc_id}/link", response_model=FileLink)
+def doc_file_link(
+    request: Request,
+    body: FileLinkRequest | None = None,
+    doc_id: str = Path(max_length=128, description="Iqtibos qilingan hujjat kaliti"),
+    user: AuthUser = Depends(current_user),
+) -> FileLink:
+    """Telegram uchun: iqtibos hujjatini tashqi brauzerda ochadigan 10 daqiqalik havola.
+
+    `GET /doc/{doc_id}` `Authorization` so'raydi, Telegram'ning `openLink`
+    (tashqi brauzer) esa uni yubora olmaydi - ariza havolasidagi AYNI muammo,
+    AYNI yechim. Hujjat yo'q bo'lsa buni ochishning o'zi aytadi (404).
+    """
+    try:
+        link = doc_link(doc_id, user.actorId, body.filename if body else None,
+                        channel=channel_of(request))
+    except ValueError as exc:
+        raise bad_request("Bu hujjatni ochib bo'lmaydi") from exc
+    log.info("Hujjat havolasi (%s): %d s", user.actorId, link.expiresIn)
+    return link
+
+
 @router.api_route("/file/{signed}", methods=["GET", "HEAD"], response_class=StreamingResponse)
 def file_by_link(signed: str = Path(max_length=4096, description="`/link` bergan imzo")) -> StreamingResponse:
     """Imzolangan havola bo'yicha fayl - SESSIYASIZ (Telegram yuklab olgichi uchun).
@@ -906,18 +977,21 @@ def file_by_link(signed: str = Path(max_length=4096, description="`/link` bergan
     try:
         claims = jwt.decode(signed, settings.secret_key, algorithms=["HS256"],
                             audience=_FILE_AUDIENCE,
-                            options={"require": ["exp", "aud", "art", "kind"]})
+                            options={"require": ["exp", "aud", "kind"]})
     except jwt.ExpiredSignatureError as exc:
         raise error_status(410, "Havola muddati tugagan - chatdan qayta yuklab oling") from exc
     except jwt.PyJWTError as exc:
         # Buzilgan, boshqa kalit bilan imzolangan yoki kirish tokeni - farqi
         # tashqariga aytilmaydi.
         raise error_status(404, "Fayl topilmadi") from exc
-    kind, token = str(claims["kind"]), str(claims["art"])
-    if kind not in _LINK_KINDS:
+    kind = str(claims["kind"])
+    who = f"havola:{claims.get('uid', '?')}"
+    if kind == _DOC_KIND:
+        return _doc_by_link(claims, who)
+    token = claims.get("art")
+    if kind not in _LINK_KINDS or not isinstance(token, str):
         raise error_status(404, "Fayl topilmadi")
     filename = _download_name(str(claims.get("fn") or ""), kind)
-    who = f"havola:{claims.get('uid', '?')}"
     log.info("Fayl havola orqali (%s): %s", who, kind)
     # Sessiya yo'q, lekin kimligi imzoda (`uid`), havolani esa faqat mini app
     # so'raydi - yuklab olish hisobda egasi va kanali bilan tursin.
@@ -925,12 +999,30 @@ def file_by_link(signed: str = Path(max_length=4096, description="`/link` bergan
         return _file(
             lambda: _assistant.fetch_artifact(token, kind), who, "artifact",
             disposition=_attachment(filename),
-            headers={
-                "Access-Control-Allow-Origin": _TELEGRAM_WEB,
-                "Access-Control-Expose-Headers": "Content-Disposition",
-                # Havola manzilda turadi - u boshqa saytga Referer bilan chiqmasin.
-                "Referrer-Policy": "no-referrer",
-            },
+            headers=_LINK_HEADERS,
+        )
+
+
+def _doc_by_link(claims: dict, who: str) -> StreamingResponse:
+    """Havola bo'yicha iqtibos hujjati (`doc_link` imzolagan).
+
+    PDF - `inline`, qolgani `attachment`. Havola tashqi brauzerda ochiladi va
+    odam hujjatni O'QISHI kerak: `attachment` bo'lsa telefon brauzeri uni
+    "yuklab olish" ga aylantirib, faylni qidirtirardi. Faqat PDF, chunki uni
+    brauzerning o'z (alohida) ko'ruvchisi ochadi va `nosniff` turni qotiradi;
+    xizmat boshqa tur (masalan HTML) bersa, u Venera originida sahifa bo'lib
+    ochilmasin - `_file` dagi qoida.
+    """
+    doc_id = claims.get("doc")
+    if not isinstance(doc_id, str) or not doc_ref_ok(doc_id):
+        raise error_status(404, "Fayl topilmadi")
+    filename = _download_name(str(claims.get("fn") or ""), "pdf")
+    log.info("Hujjat havola orqali (%s)", who)
+    with bind(claims.get("uid"), normalize_channel(claims.get("ch"), default="miniapp")):
+        return _file(
+            lambda: _assistant.fetch_doc(doc_id), who, "doc",
+            disposition=lambda content_type: _attachment(filename, inline=_is_pdf(content_type)),
+            headers=_LINK_HEADERS,
         )
 
 

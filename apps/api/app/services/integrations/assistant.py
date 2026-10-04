@@ -852,6 +852,13 @@ def artifact_ref_ok(token: str, kind: str) -> bool:
     return kind in ARTIFACT_KINDS and bool(_ARTIFACT_URL.fullmatch(f"/api/hr/artifacts/{token}/{kind}"))
 
 
+def doc_ref_ok(doc_id: str) -> bool:
+    """Iqtibos hujjati kaliti yo'lga qo'yishga yaroqlimi - `fetch_doc` bilan
+    BIR XIL qoida (`_SAFE_KEY`). Telegram havolasi (`chat.py`) imzolashdan
+    oldin shu bilan tekshiradi: yaroqsiz kalitga havola berilmasin."""
+    return isinstance(doc_id, str) and bool(_SAFE_KEY.fullmatch(doc_id))
+
+
 def _rewrite_artifact(frame: dict[str, Any], base_url: str) -> None:
     """Ichki fayl havolalarini Venera yo'llariga o'giradi.
 

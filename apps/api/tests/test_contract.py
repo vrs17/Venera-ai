@@ -224,3 +224,45 @@ def test_admin_dvigatel_sxemalari_types_ts_ga_mos():
     assert set(UserEngine.model_fields) == USER_ENGINE_FIELDS
     assert set(UserEngineAccess.model_fields) == USER_ENGINE_ACCESS_FIELDS
     assert "engine" in AdminUserDetail.model_fields
+
+
+# --- Telegram Mini App (`apps/web/src/tg/**`) ----------------------------------------
+#
+# Mini App o'z turlarini `src/tg` ichida e'lon qiladi: `FileLink`
+# (`src/tg/chat/files.ts`) va `/telegram/session` javobi - `LoginResponse`
+# (`src/tg/useTgSession.ts`, `types.ts`). So'rov - faqat `initData`.
+
+# src/tg/chat/files.ts: FileLink
+FILE_LINK_FIELDS = {"url", "filename", "expiresIn"}
+# src/tg/useTgSession.ts: { initData }
+TELEGRAM_SESSION_REQUEST_FIELDS = {"initData"}
+# src/tg/chat/files.ts: { filename } (ixtiyoriy)
+FILE_LINK_REQUEST_FIELDS = {"filename"}
+
+
+def test_mini_app_sxemalari_mos():
+    from app.schemas.chat import FileLink, FileLinkRequest
+    from app.schemas.telegram import TelegramSessionRequest
+
+    assert set(FileLink.model_fields) == FILE_LINK_FIELDS
+    assert set(FileLinkRequest.model_fields) == FILE_LINK_REQUEST_FIELDS
+    assert set(TelegramSessionRequest.model_fields) == TELEGRAM_SESSION_REQUEST_FIELDS
+
+
+def test_telegram_sessiya_javobi_login_bilan_bir_xil(client, monkeypatch):
+    """Mini App tokenni `/auth/login` dagidek saqlaydi - shakl AYNAN bir xil."""
+    import app.bot as bot_module
+    from app.core.config import settings
+    from tests.test_telegram_bot import BOT_TOKEN, TG_ID, sign_init
+
+    monkeypatch.setattr(settings, "telegram_bot_token", BOT_TOKEN)
+    bot_module.links.link(TG_ID, 1)
+    body = client.post("/api/v1/telegram/session",
+                       json={"initData": sign_init({"id": TG_ID})}).json()
+    assert set(body) == LOGIN_FIELDS, "LoginResponse maydonlari mos kelmadi"
+    assert set(body["user"]) == AUTH_USER_FIELDS
+
+
+def test_hujjat_havolasi_javobi_mos(client, auth):
+    body = client.post("/api/v1/chat/doc/HR_045/link", json={"filename": "x"}, headers=auth).json()
+    assert set(body) == FILE_LINK_FIELDS

@@ -140,6 +140,27 @@ class LinkStore:
             self._write()
         return result
 
+    def touch(self, tg_id: int, actor_id: int, *, now: float | None = None) -> bool:
+        """Faqat muddatni yangilaydi - ulanish HALI SHU hisobniki va tirik bo'lsa.
+
+        `link` dan farqi: yo'q, muddati o'tgan yoki boshqa hisobga o'tgan
+        ulanishni QAYTA YARATMAYDI. Telegram orqali kirish (`POST
+        /telegram/session`) shu bilan yangilaydi: tekshiruv va yozuv orasida
+        admin "hamma joydan chiqarish" ni bossa yoki odam o'zi chiqsa, uzilgan
+        ulanish jimgina tirilib qolmasin. `False` - ulanish endi yo'q.
+        """
+        now = time.time() if now is None else now
+        with self._lock:
+            self._reload()
+            entry = self._links.get(str(tg_id))
+            if not isinstance(entry, dict) or entry.get("actor_id") != actor_id:
+                return False
+            if now - float(entry.get("seen_at") or 0) > self.ttl:
+                return False
+            entry["seen_at"] = max(float(entry.get("seen_at") or 0), now)
+            self._write()
+        return True
+
     def unlink(self, tg_id: int, *, actor_id: int | None = None) -> bool:
         """Uzadi. `actor_id` berilsa - faqat o'sha hisobga ulangan bo'lsa
         (mini app'dan chiqish BOSHQA odamning ulanishini uzmasligi uchun)."""
