@@ -63,9 +63,12 @@ def start() -> None:
     from .runner import VeneraBot
 
     # `get_directory`: SSO bilan kirganlar (`identities.json`) + `users.yaml`.
+    # `sync_commands=True` - buyruqlar menyusi FAQAT shu yerda (jonli ishga
+    # tushish) yoziladi va faqat Telegram'dagisi farq qilsa (`sync_menu`).
     _bot = VeneraBot(api, links, users=get_directory, webapp_url=settings.telegram_webapp_url,
                      workers=settings.telegram_workers, mode=settings.telegram_mode,
-                     webhook_url=settings.telegram_webhook_url, webhook_secret=webhook_secret())
+                     webhook_url=settings.telegram_webhook_url, webhook_secret=webhook_secret(),
+                     beta_url=settings.telegram_webapp_beta_url, sync_commands=True)
     _bot.start()
     _state["note"] = ""
 

@@ -42,14 +42,34 @@ ADMIN PANEL IZI esa veb chatdagi bilan bir xil (`services/analytics`):
 har savol `turns` ga kanal `bot`, tur `bot` bilan yoziladi - kadrlar,
 manbalar, vaqtlar va natija. Bu jurnal emas, ADMIN uchun ruxsatli ombor
 (saqlash muddati `analytics_retention_days`).
+
+JAVOB KO'RINISHI. Javob matni - qisqa; ostida izohlar ("📚 Manbalar":
+faqat iqtibos qilinganlari, LEX.UZ - bosiladigan havola) va tugmalar:
+ichki hujjat uchun "📄 Hujjatni ochish" (bosilganda IMZOLANGAN, 10
+daqiqalik havola keladi - bank hujjati Telegram serverlariga yuklanmaydi)
+va "⚑" - javob haqida xabar berish (veb ilovadagi AYNI shikoyat xizmati,
+`services/reports.py`, kanal `bot`, chegara ham o'sha).
+
+FAQAT SHAXSIY CHAT. Javoblarda shaxsiy HR ma'lumoti bor: guruhda bot hech
+narsaga javob bermaydi. Unga murojaat qilinsa (buyruq, `@nom`, uning
+xabariga javob, guruhga qo'shilish) - bitta qisqa "faqat shaxsiy chatda"
+izohi (`_GROUP_EVERY` da bir marta), qolgan hammasi jim.
+
+"PRO" BOTDA YO'Q: savol har doim standart rejimda ketadi (`Backend.stream`).
+
+BETA. Yangi mini app `/tg-beta/` da sinovda: `/beta` buyrug'i faqat ADMIN
+rolidagilarga va `MINIAPP_BETA_LOGINS` dagilarga uning tugmasini beradi,
+qolganlarga "bunday buyruq yo'q" - boshqa buyruqlardan farqi bilinmaydi.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
+import urllib.parse
 
 from collections import OrderedDict, deque
 from collections.abc import Callable
@@ -60,7 +80,7 @@ from typing import Any
 
 from ..core.config import settings
 from ..schemas.auth import AuthUser
-from ..services import admin_users
+from ..services import admin_users, analytics
 from ..services.analytics import TurnRecorder, bind, redact, set_proposal_status
 from ..services.integrations.assistant import AssistantError
 from ..services.integrations.telegram import TelegramApi, TelegramError
@@ -106,23 +126,42 @@ _STAGE_EVERY = 1.5
 #: "yozmoqda..." holati 5 s yashaydi - shundan oldin yangilanadi.
 _TYPING_EVERY = 4.5
 _TYPING_LIMIT = 180.0
+#: Botdagi savol rejimi - har doim standart ("Pro" yo'q, `Backend.stream`).
+BOT_MODE = "standard"
 #: Ariza fayli uchun chegara (`assistant._MAX_FILE_BYTES` bilan bir xil):
 #: undan katta fayl u yerda JIMGINA kesiladi, kesilgan hujjat yuborilmaydi.
 _MAX_FILE = 25 * 1024 * 1024
 
-#: Bot menyusidagi buyruqlar. `/start` ro'yxatda yo'q - uni Telegram o'zi
-#: yuboradi.
+#: Guruhdagi "faqat shaxsiy chatda" izohi bitta guruhga shundan tez
+#: takrorlanmaydi (soniya): guruhda botni chaqiraverish shovqin bo'lmasin.
+_GROUP_EVERY = 600.0
+#: Javob kaliti -> (egasi, suhbat): "⚑" bosilganda egalikni tekshirish uchun.
+#: Asosiy manba - analitika ombori (`turns`); bu xotiradagi nusxa analitika
+#: o'chiq bo'lsa ham ishlashi uchun. Qayta ishga tushsa - faqat ombor.
+_TURNS_KEPT = 2000
+
+#: Bot menyusidagi buyruqlar (`setMyCommands`). `/beta` ATAYLAB yo'q - u
+#: faqat sinovchilarga, menyuda esa hamma ko'radi. `/app`, `/chiqish`,
+#: `/yangi` - eski nomlar, ishlayveradi, lekin menyuda yo'q.
 COMMANDS = [
-    {"command": "new", "description": "Yangi suhbat boshlash"},
-    {"command": "app", "description": "Venera ilovasini ochish"},
-    {"command": "help", "description": "Yordam"},
+    {"command": "start", "description": "Venera'ni ochish"},
+    {"command": "new", "description": "Yangi suhbat"},
+    {"command": "help", "description": "Bot nima qila oladi"},
     {"command": "logout", "description": "Hisobni botdan uzish"},
 ]
 
 _INTRO = (
     "Salom! Men <b>Venera</b> - HRM va CRM bo'yicha yordamchiman.\n\n"
-    "Shu chatda ishlash uchun Venera hisobingizni ulang: pastdagi tugma bilan "
-    "Venera ilovasini oching va kiring. Ulangach shu yerga xabar keladi."
+    "Boshlash uchun pastdagi tugma bilan Venera'ni oching va ish loginingiz "
+    "bilan <b>bir marta</b> kiring. Shundan keyin savollarni shu chatda "
+    "yozaverasiz - qayta kirish so'ralmaydi."
+)
+#: Guruhda: bitta qisqa izoh, boshqa hech narsa.
+_GROUP_ONLY = "Venera faqat shaxsiy chatda ishlaydi."
+_UNKNOWN = "Bunday buyruq yo'q. Yordam: /help"
+_BETA = (
+    "🧪 Venera mini app'ining <b>yangi (beta)</b> versiyasi. Kamchilik ko'rsangiz, "
+    "javob ostidagi ⚑ yoki ilovadagi «Xabar berish» orqali yozing."
 )
 _EXPIRED = (
     "Bot {days} kun ishlatilmagani uchun xavfsizlik maqsadida ulanish tugadi. "
@@ -131,17 +170,14 @@ _EXPIRED = (
 #: Admin panelda bloklangan hisob. Sabab va kim bloklagani AYTILMAYDI -
 #: faqat nima qilish kerakligi.
 _BLOCKED = "Hisobingiz bloklangan. Administratorga murojaat qiling."
+#: 3-4 qator: bot nima qila oladi. Batafsili - ilovada.
 _HELP = (
     "<b>Venera</b> - HRM va CRM bo'yicha yordamchi.\n\n"
-    "• Savolni yozing yoki 🎙 ovozli xabar yuboring - javobni matn bilan beraman.\n"
-    "• Faqat matn va ovoz: video (kamera) qabul qilinmaydi va chatdan o'chiriladi.\n"
-    "• HRM yoki CRM da biror narsani o'zgartirish kerak bo'lsa, avval taklif "
-    "ko'rsataman: faqat <b>Tasdiqlash</b> ni bossangiz bajariladi.\n"
-    "• Hujjat tayyorlansa, faylning o'zini shu yerga yuboraman.\n"
-    "• Suhbatlar veb ilova va mini app tarixida ham ko'rinadi.\n\n"
-    "/new - yangi suhbat\n"
-    "/app - Venera ilovasini ochish\n"
-    "/logout - hisobni botdan uzish"
+    "• Savolni yozing yoki 🎙 ovozli xabar yuboring - qisqa javob va manbalari shu yerda.\n"
+    "• HRM/CRM da o'zgartirish kerak bo'lsa, avval taklif ko'rsataman - faqat "
+    "<b>Tasdiqlash</b> dan keyin bajariladi.\n"
+    "• Javob noto'g'ri bo'lsa - ostidagi ⚑ tugmasi bilan xabar bering.\n\n"
+    "/new - yangi suhbat · /start - Venera'ni ochish · /logout - botdan chiqish"
 )
 
 
@@ -154,6 +190,26 @@ def welcome_text(user: AuthUser, *, again: bool = False) -> str:
         "bo'yicha javobni shu yerda beraman.\n\n"
         "/new - yangi suhbat · /help - yordam"
     )
+
+
+def beta_logins() -> frozenset[str]:
+    """`settings.miniapp_beta_logins` - kichik harfda (vergul/bo'shliq bilan)."""
+    raw = str(getattr(settings, "miniapp_beta_logins", "") or "")
+    return frozenset(part.strip().lower() for part in re.split(r"[,\s;]+", raw) if part.strip())
+
+
+def beta_allowed(user: AuthUser, login: str | None) -> bool:
+    """`/beta` shu odamga ochiqmi: ADMIN roli (samarali, `admin_users.access`
+    dan) yoki `MINIAPP_BETA_LOGINS` da.
+
+    `login` - SSO logini; berilsa FAQAT u solishtiriladi (emailni odam
+    Keycloak'da o'zi o'zgartira oladi), `None` - `users.yaml` hisobi, u
+    yerda email loginning o'zi (`admin_users.is_bootstrap` qoidasi).
+    """
+    if admin_users.ADMIN in user.roles:
+        return True
+    value = user.email if login is None else login
+    return bool(value) and str(value).strip().lower() in beta_logins()
 
 
 class Backend:
@@ -175,8 +231,15 @@ class Backend:
         # Dvigatel - SHU ODAMNING `bot` kanalidagisi (`effective_engine`):
         # admin unga alohida versiya bergan bo'lsa o'sha, bo'lmasa bot
         # kanali siyosati, oxiri `.env`. Botda tanlov tugmasi yo'q - odam
-        # o'z default'ida. "Pro" botda yo'q.
-        return _chat.open_stream(question, user, chat_id, channel="bot")
+        # o'z default'ida (`engine=None`).
+        #
+        # "PRO" BOTDA YO'Q - ATAYLAB va ochiq yozilgan (`BOT_MODE`): har Pro
+        # savol pulga tushadi va odamning byudjetidan yeydi, botda esa
+        # uni tanlash, qolganini ko'rsatish va "Pro javob" belgisi yo'q.
+        # Default'ga tayanilmaydi - `open_stream` default'i o'zgarsa ham
+        # bot standart rejimda qolsin (`test_bot_ux.py` tekshiradi).
+        return _chat.open_stream(question, user, chat_id, channel="bot", mode=BOT_MODE,
+                                 engine=None)
 
     def engine(self, user: AuthUser | None = None) -> str:
         """Bot kanalining dvigateli (shu odam uchun) - savol izi uchun
@@ -199,10 +262,24 @@ class Backend:
 
         return _chat._assistant.fetch_artifact(token, kind)
 
-    def doc(self, doc_id: str):
+    def doc_link(self, doc_id: str, user: AuthUser, filename: str | None):
+        """"Hujjatni ochish": imzolangan, qisqa muddatli havola (`FileLink`,
+        nisbiy `url`). Mini app'dagi `POST /chat/doc/{id}/link` bilan BITTA
+        imzolovchi (`chat.doc_link`) - kanal `bot`, ochilishi hisobda shunday
+        tursin. Hujjat bu yerda olinmaydi. `ValueError` - kalit yaroqsiz."""
         from ..api.v1 import chat as _chat
 
-        return _chat._assistant.fetch_doc(doc_id)
+        return _chat.doc_link(doc_id, user.actorId, filename, channel="bot")
+
+    def history(self, chat_id: str, user: AuthUser) -> Any:
+        """Shikoyat surati uchun suhbat tarixi - `POST /reports` dagi AYNI
+        chaqiruv: odamning O'Z kaliti bilan (boshqa odamning suhbati 404).
+        Telemetriyada savollar bo'lsa umuman chaqirilmaydi."""
+        from ..api.v1 import chat as _chat
+        from ..services import reports as _reports
+
+        return _chat._assistant.get_chat(chat_id, user_id=_chat.assistant_user_id(user),
+                                         limit=_reports.SNAPSHOT_TURNS * 2)
 
     def transcribe(self, audio: bytes, content_type: str) -> Transcript:
         from ..api.v1 import stt as _stt
@@ -304,6 +381,20 @@ def is_video(msg: dict[str, Any]) -> bool:
     return isinstance(document, dict) and str(document.get("mime_type") or "").lower().startswith("video/")
 
 
+def _origin(url: str) -> str:
+    """`https://llm.brb-tech.uz/tg/` -> `https://llm.brb-tech.uz`: imzolangan
+    nisbiy havolani to'liq manzilga aylantirish uchun. Faqat `https` -
+    Telegram tugmasidagi havola shifrsiz bo'lmasin; aks holda `""`."""
+    try:
+        parts = urllib.parse.urlsplit(url or "")
+        host = parts.hostname
+    except ValueError:
+        return ""
+    if parts.scheme != "https" or not host or parts.username or parts.password:
+        return ""
+    return f"https://{parts.netloc}"
+
+
 def _iso(epoch: float | None) -> str | None:
     return datetime.fromtimestamp(epoch, timezone.utc).isoformat() if epoch else None
 
@@ -326,8 +417,16 @@ class VeneraBot:
         mode: str = "polling",
         webhook_url: str = "",
         webhook_secret: str = "",
+        beta_url: str = "",
+        sync_commands: bool = False,
     ) -> None:
         self.api = api
+        #: `/beta` tugmasi manzili (yangi mini app). Bo'sh - `/beta` hech kimga yo'q.
+        self.beta_url = beta_url
+        #: Buyruqlar menyusini Telegram'ga yozish (`setMyCommands`) - FAQAT
+        #: jonli ishga tushishda (`app.bot.start`). Testlar va boshqa
+        #: nusxalar menyuga tegmaydi.
+        self.sync_commands = sync_commands
         #: Manzil yoki sir bo'lmasa webhook mumkin emas - `polling`.
         self.mode = "webhook" if mode == "webhook" and webhook_url and webhook_secret else "polling"
         self.webhook_url = webhook_url
@@ -352,6 +451,12 @@ class VeneraBot:
         #: berish uchun. Faqat xotirada - qayta ishga tushsa nom umumiy bo'ladi.
         self._titles: OrderedDict[str, str] = OrderedDict()
         self._titles_lock = threading.Lock()
+        #: Hujjat kaliti -> nomi: havola xabari va fayl nomi uchun.
+        self._doc_titles: OrderedDict[str, str] = OrderedDict()
+        #: Javob kaliti -> (actor_id, suhbat) - `_TURNS_KEPT` izohi.
+        self._turns: OrderedDict[str, tuple[int, str]] = OrderedDict()
+        self._turns_lock = threading.Lock()
+        self._group_at: dict[int, float] = {}
         self._offset: int | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -550,16 +655,36 @@ class VeneraBot:
         return backoff, min(backoff * 2, 30.0)
 
     def _prepare(self) -> None:
-        """Bot nomi va buyruqlar menyusi - bir marta (yiqilsa keyin yana)."""
+        """Bot nomi - bir marta (yiqilsa keyin yana); keyin buyruqlar menyusi."""
         try:
             self.username = str(self.api.get_me().get("username") or "")
-            if self.api.get_my_commands() != COMMANDS:
-                self.api.set_my_commands(COMMANDS)
-                log.info("Telegram bot: buyruqlar menyusi yangilandi")
-            self._prepared = True
-            log.info("Telegram bot ishga tushdi: @%s", self.username)
         except TelegramError as exc:
             log.warning("Telegram bot tayyorlanmadi: %s", exc)
+            return
+        self._prepared = True
+        log.info("Telegram bot ishga tushdi: @%s", self.username)
+        if self.sync_commands:
+            self.sync_menu()
+
+    def sync_menu(self) -> bool:
+        """Buyruqlar menyusi `COMMANDS` bilan bir xil bo'lsin. IDEMPOTENT:
+        Telegram'dagi ro'yxat allaqachon shu bo'lsa hech narsa yozilmaydi.
+
+        Xato botni TO'XTATMAYDI - menyu qulaylik, savol-javob esa usiz ham
+        ishlaydi. Natija: menyu yangilandimi.
+        """
+        try:
+            if self.api.get_my_commands() == COMMANDS:
+                return False
+            self.api.set_my_commands(COMMANDS)
+        except TelegramError as exc:
+            log.warning("Telegram bot: buyruqlar menyusi yangilanmadi: %s", exc)
+            return False
+        except Exception:  # noqa: BLE001 - ip o'lmasligi kerak
+            log.exception("Telegram bot: buyruqlar menyusi - kutilmagan xato")
+            return False
+        log.info("Telegram bot: buyruqlar menyusi yangilandi")
+        return True
 
     def poll_once(self, timeout: int = 25) -> int:
         updates = self.api.get_updates(self._offset, timeout=timeout)
@@ -653,9 +778,17 @@ class VeneraBot:
         chat = msg.get("chat") or {}
         sender = msg.get("from") or {}
         # FAQAT shaxsiy chat. Javoblarda shaxsiy HR ma'lumoti bor - guruhga
-        # qo'shilgan bot u yerda gapirmasligi kerak. Jim: guruhdagi har
-        # xabarga "men bu yerda ishlamayman" deyish shovqin bo'lardi.
-        if chat.get("type") != "private" or sender.get("is_bot"):
+        # qo'shilgan bot u yerda hech narsa ishlamaydi (ulanish ham
+        # tekshirilmaydi). Botga murojaat qilingan bo'lsa - bitta qisqa
+        # izoh; qolgan xabarlar jim: har xabarga javob shovqin bo'lardi.
+        if chat.get("type") != "private":
+            # Boshqa botlarga javob yo'q - ikki bot bir-birining xabariga
+            # javob berib "suhbatlashib" qolmasin.
+            if (chat.get("type") in ("group", "supergroup") and not sender.get("is_bot")
+                    and self._addressed(msg)):
+                self._group_note(chat.get("id"), msg.get("message_id"))
+            return
+        if sender.get("is_bot"):
             return
         chat_id, tg_id = chat.get("id"), sender.get("id")
         if not isinstance(chat_id, int) or not isinstance(tg_id, int):
@@ -693,6 +826,49 @@ class VeneraBot:
                 # Rasm, fayl, stiker, audio fayl... - ishlanmaydi.
                 self._note(chat_id, "Faqat matn va 🎙 ovozli xabar qabul qilinadi.")
 
+    def _addressed(self, msg: dict[str, Any]) -> bool:
+        """Guruhdagi xabar SHU botga qaratilganmi: buyruq (`/help` yoki
+        `/help@shu_bot`; boshqa botga `@` bilan - yo'q), matnda `@shu_bot`,
+        shu botning xabariga javob yoki botning guruhga qo'shilishi.
+
+        Bot nomi (`getMe`) hali noma'lum bo'lsa - faqat `@` siz buyruq.
+        """
+        name = self.username.lower()
+        text = str(msg.get("text") or msg.get("caption") or "")
+        if text.startswith("/") and len(text) > 1 and text[1].isalpha():
+            _, _, mention = text.split(maxsplit=1)[0].partition("@")
+            return not mention or (bool(name) and mention.lower() == name)
+        if not name:
+            return False
+        if re.search(rf"@{re.escape(name)}(?!\w)", text, re.IGNORECASE):
+            return True
+
+        def ours(who: Any) -> bool:
+            return (isinstance(who, dict) and bool(who.get("is_bot"))
+                    and str(who.get("username") or "").lower() == name)
+
+        reply = msg.get("reply_to_message")
+        if isinstance(reply, dict) and ours(reply.get("from")):
+            return True
+        members = msg.get("new_chat_members")
+        return isinstance(members, list) and any(ours(m) for m in members)
+
+    def _group_note(self, chat_id: Any, message_id: Any) -> None:
+        """"Faqat shaxsiy chatda" - guruhga `_GROUP_EVERY` da bir marta.
+        Tugma shaxsiy chatni ochadi (bot nomi ma'lum bo'lsa)."""
+        if not isinstance(chat_id, int):
+            return
+        now = time.monotonic()
+        if now - self._group_at.get(chat_id, -_GROUP_EVERY) < _GROUP_EVERY:
+            return
+        self._group_at[chat_id] = now
+        if len(self._group_at) > 2000:
+            self._group_at.clear()
+        markup = (render.url_button("Shaxsiy chatni ochish", f"https://t.me/{self.username}")
+                  if re.fullmatch(r"\w{3,64}", self.username) else None)
+        log.info("Telegram: guruhda murojaat - faqat shaxsiy chat izohi")
+        self._send(chat_id, esc(_GROUP_ONLY), markup=markup, reply_to=message_id)
+
     def _reject_video(self, chat_id: int, msg: dict[str, Any]) -> None:
         """Video (kamera) - yuklab olinmaydi va chatdan o'chiriladi."""
         message_id = msg.get("message_id")
@@ -718,6 +894,10 @@ class VeneraBot:
         self._say(chat_id, text)
 
     def _user_for(self, chat_id: int, link: TelegramLink) -> AuthUser | None:
+        found = self._account(chat_id, link)
+        return found[0] if found else None
+
+    def _account(self, chat_id: int, link: TelegramLink) -> tuple[AuthUser, str | None] | None:
         """Ulanishdagi hisob HALI BORMI - har xabarda tekshiriladi: hisob
         `users.yaml` dan olib tashlansa bot darhol to'xtashi kerak.
 
@@ -725,6 +905,8 @@ class VeneraBot:
         (`admin_users.access`): rollar samarali, bloklangan odam esa
         xushmuomala rad oladi. Bloklanganda ulanish UZILMAYDI - blok olib
         tashlansa odam mini app'ni qayta ochmasdan davom etsin.
+
+        Natija: (samarali foydalanuvchi, SSO logini yoki `None` - zahira hisob).
         """
         stored = self.users().by_actor_id(link.actor_id)
         if stored is None:
@@ -733,12 +915,13 @@ class VeneraBot:
             self._send(chat_id, "Venera hisobingiz topilmadi. Ilovani ochib qaytadan kiring.",
                        markup=render.app_button(self.webapp_url))
             return None
-        verdict = admin_users.access(stored.to_public(), login=getattr(stored, "username", None))
+        login = getattr(stored, "username", None)
+        verdict = admin_users.access(stored.to_public(), login=login)
         if verdict.blocked:
             log.info("Telegram: hisob bloklangan (%s) - savol qabul qilinmadi", link.actor_id)
             self._note(chat_id, _BLOCKED)
             return None
-        return verdict.user
+        return verdict.user, login
 
     def _link_prompt(self, chat_id: int, state: str, *, force: bool = False) -> None:
         now = time.monotonic()
@@ -765,11 +948,14 @@ class VeneraBot:
                 return
             user = self._user_for(chat_id, link)
             if user is not None:
-                self._send(chat_id, welcome_text(user, again=True))
+                self._send(chat_id, welcome_text(user, again=True),
+                           markup=render.app_button(self.webapp_url))
         elif name == "help":
-            self._send(chat_id, _HELP)
-            if link is None:
-                self._link_prompt(chat_id, state, force=True)
+            # Ulanmagan odamga - BITTA xabar: yordam va ilova tugmasi.
+            self._send(chat_id, _HELP,
+                       markup=render.app_button(self.webapp_url) if link is None else None)
+        elif name == "beta":
+            self._beta(chat_id, link)
         elif name in ("new", "yangi"):
             if link is None:
                 self._link_prompt(chat_id, state, force=True)
@@ -777,17 +963,39 @@ class VeneraBot:
                 self._send(chat_id, "🆕 Yangi suhbat boshlandi. Savolingizni yozing yoki "
                                     "ovozli xabar yuboring.")
         elif name == "app":
+            # Eski nom (menyuda endi `/start`) - ishlayveradi.
             self._send(chat_id, "Venera ilovasi - ovozli suhbat va suhbatlar tarixi:",
                        markup=render.app_button(self.webapp_url))
         elif name in ("logout", "chiqish"):
             if self.links.unlink(tg_id):
                 log.info("Telegram: ulanish bot orqali uzildi (%s)", link.actor_id if link else "-")
-                self._send(chat_id, "Hisobingiz botdan uzildi. Qayta ulash uchun Venera ilovasini "
+                self._send(chat_id, "Hisobingiz botdan uzildi. Qayta ulash uchun Venera'ni "
                                     "oching.", markup=render.app_button(self.webapp_url))
             else:
                 self._send(chat_id, "Hisob ulanmagan.")
         else:
-            self._send(chat_id, "Bunday buyruq yo'q. Yordam: /help")
+            self._send(chat_id, _UNKNOWN)
+
+    def _beta(self, chat_id: int, link: TelegramLink | None) -> None:
+        """`/beta` - yangi mini app tugmasi, FAQAT sinovchilarga.
+
+        Ulanmagan yoki ruxsati yo'q odamga - noma'lum buyruqdagi AYNAN o'sha
+        javob: beta borligi ham bilinmasin. Manzil sozlanmagan bo'lsa ham
+        shunday - sinovchiga ochiladigan narsa yo'q. Bloklangan yoki
+        o'chirilgan hisobga `_account` o'z izohini aytadi.
+        """
+        found = self._account(chat_id, link) if link is not None else None
+        if found is None:
+            if link is None:
+                self._send(chat_id, _UNKNOWN)
+            return          # bloklangan / hisob yo'q - `_account` o'zi aytdi
+        user, login = found
+        markup = render.app_button(self.beta_url, "🧪 Beta'ni ochish")
+        if markup is None or not beta_allowed(user, login):
+            self._send(chat_id, _UNKNOWN)
+            return
+        log.info("Telegram: /beta (%s)", user.actorId)
+        self._send(chat_id, _BETA, markup=markup)
 
     # --- savol -> javob -----------------------------------------------------------
 
@@ -813,10 +1021,13 @@ class VeneraBot:
                     answer = self._collect(question, user, chat, chat_id, holder, rec)
                 finally:
                     typing.stop()
+                # "⚑" bosilganda egalikni tekshirish uchun (analitika o'chiq
+                # bo'lsa ham) - javob chiqishidan OLDIN.
+                self._remember_turn(rec.turn_id, user.actorId, chat)
                 # Javobni Telegram'ga yetkazish ham izda: uzun javob bir
                 # necha xabarga bo'linadi va har biri tarmoq so'rovi.
                 with rec.span("telegram.deliver"):
-                    self._deliver(chat_id, holder, answer)
+                    self._deliver(chat_id, holder, answer, turn_id=rec.turn_id)
         except BaseException as exc:
             rec.finish("error", error=exc)
             raise
@@ -900,7 +1111,12 @@ class VeneraBot:
                      stream.request_id, stream.outcome or "-")
         return answer
 
-    def _deliver(self, chat_id: int, holder: int | None, answer: _Answer) -> None:
+    def _deliver(self, chat_id: int, holder: int | None, answer: _Answer, *,
+                 turn_id: str | None = None) -> None:
+        """Javob: matn bloklari, izohlar ("📚 Manbalar") va OXIRGI xabar
+        ostida tugmalar - "📄 Hujjatni ochish" va "⚑". "⚑" faqat haqiqiy
+        javob ostida: xato yoki bo'sh javob haqida xabar berishning ma'nosi
+        yo'q (u izda xato bo'lib turibdi)."""
         if holder:
             try:
                 self.api.delete_message(chat_id, holder)
@@ -908,10 +1124,17 @@ class VeneraBot:
                 self._edit(chat_id, holder, "✓")
         body = "".join(answer.parts).strip()
         blocks = render.to_blocks(body) if body else []
-        markup = None
+        rows: list[list[dict[str, Any]]] = []
         if blocks and answer.docs:
-            blocks.append(render.sources_block(answer.docs))
-            markup = render.doc_buttons(answer.docs)
+            shown = render.cited(answer.docs, body)
+            blocks.append(render.sources_block(shown))
+            rows = render.doc_rows(shown)
+            self._remember_titles(shown)
+        # Kalit shakli tekshiriladi: tugma ma'lumoti `parse_report` dan o'tmasa,
+        # bosilganda baribir "eskirgan" bo'lardi - unday tugma chiqmasin.
+        if blocks and turn_id and render.parse_report(turn_id):
+            rows.append(render.report_row(turn_id))
+        markup = render.keyboard(rows)
         if not blocks:
             if answer.failure:
                 blocks = ["⚠️ " + esc(answer.failure)]
@@ -981,6 +1204,11 @@ class VeneraBot:
         msg = cq.get("message") or {}
         chat = msg.get("chat") or {}
         tg_id = (cq.get("from") or {}).get("id")
+        if chat.get("type") not in (None, "private"):
+            # Guruhdagi xabar tugmasi (bot u yerda tugma yubormaydi - bu
+            # nusxa yoki soxta so'rov): hech narsa bajarilmaydi.
+            self._answer_cb(cq_id, _GROUP_ONLY)
+            return
         if chat.get("type") != "private" or not isinstance(tg_id, int) or not isinstance(chat.get("id"), int):
             self._answer_cb(cq_id)
             return
@@ -1018,10 +1246,155 @@ class VeneraBot:
             if not render.SAFE_KEY.fullmatch(rest):
                 self._answer_cb(cq_id, "Tugma eskirgan", alert=True)
                 return
-            self._answer_cb(cq_id, "Hujjat yuklanmoqda…")
-            self._send_doc(chat_id, rest)
+            self._open_doc(cq_id, chat_id, msg.get("message_id"), user, rest)
+        elif kind == "r":
+            self._report(cq_id, chat_id, msg, user, rest)
         else:
             self._answer_cb(cq_id, "Tugma eskirgan", alert=True)
+
+    # --- "Hujjatni ochish" ------------------------------------------------------
+
+    def _open_doc(self, cq_id: str, chat_id: int, reply_to: Any, user: AuthUser,
+                  doc_id: str) -> None:
+        """Imzolangan havola - YANGI xabar, "📄 Hujjatni ochish" URL tugmasi bilan.
+
+        NEGA HAVOLA, fayl emas: PDF chatga yuborilsa bank hujjati Telegram
+        serverlarida abadiy qoladi. Havola esa qisqa muddatli
+        (`chat.doc_link`) va hujjat Venera'dan ochiladi. NEGA tugma
+        bosilganda, javob bilan birga emas: javob ostidagi havola 10
+        daqiqada eskirardi - tugma esa har bosilganda yangi havola beradi.
+        Hujjatni ko'rish huquqi veb ilovadagi bilan bir xil: har qanday
+        ulangan xodim (`GET /chat/doc/{id}` ham faqat sessiya so'raydi).
+        """
+        with self._titles_lock:
+            title = self._doc_titles.get(doc_id) or doc_id
+        # Havola to'liq manzil bo'lishi kerak (Telegram tugmasi) - ommaviy
+        # manzil mini app manzilidan (`https` bo'lmasa - havola berilmaydi).
+        origin = _origin(self.webapp_url)
+        link = None
+        if origin:
+            try:
+                link = self.backend.doc_link(doc_id, user, title)
+            except ValueError:
+                self._answer_cb(cq_id, "Tugma eskirgan", alert=True)
+                return
+            except Exception:  # noqa: BLE001 - tugma javobsiz qolmasin
+                log.exception("Telegram: hujjat havolasi yasalmadi (%s)", user.actorId)
+        path = str(getattr(link, "url", "") or "")
+        markup = render.url_button("📄 Hujjatni ochish", origin + path if path.startswith("/") else "")
+        if markup is None:
+            self._answer_cb(cq_id, "Hujjatni hozir ochib bo'lmadi - Venera ilovasida oching.",
+                            alert=True)
+            return
+        self._answer_cb(cq_id)
+        minutes = max(1, int(getattr(link, "expiresIn", 600) or 600) // 60)
+        log.info("Telegram: hujjat havolasi (%s), %d daq", user.actorId, minutes)
+        self._send(chat_id, f"📄 <b>{esc(title)}</b>\n<i>Havola {minutes} daqiqa ishlaydi - "
+                            "keyin tugmani javob ostidan qayta bosing.</i>",
+                   markup=markup, reply_to=reply_to)
+
+    def _remember_titles(self, docs: list[dict[str, Any]]) -> None:
+        with self._titles_lock:
+            for doc in docs:
+                doc_id, title = doc.get("doc_id"), doc.get("title")
+                if isinstance(doc_id, str) and isinstance(title, str) and title.strip():
+                    self._doc_titles[doc_id] = title.strip()[:200]
+                    self._doc_titles.move_to_end(doc_id)
+            while len(self._doc_titles) > 500:
+                self._doc_titles.popitem(last=False)
+
+    # --- "⚑" - javob haqida xabar berish -----------------------------------------
+
+    def _remember_turn(self, turn_id: str, actor_id: int, chat: str) -> None:
+        with self._turns_lock:
+            self._turns[turn_id] = (actor_id, chat)
+            while len(self._turns) > _TURNS_KEPT:
+                self._turns.popitem(last=False)
+
+    def _turn_owner(self, turn_id: str, actor_id: int) -> tuple[bool, str | None]:
+        """Javob SHU ODAMNIKIMI: (ha/yo'q, uning suhbati).
+
+        Tugma ma'lumoti soxta bo'lishi mumkin - kalit HECH QACHON o'z-o'zidan
+        ishonchli emas. Avval xotira (shu jarayon bergan javob), keyin
+        analitika ombori (`turns`: egasi, kanal `bot`). Ikkalasida ham yo'q -
+        yo'q: tasdiqlanmagan kalit bilan shikoyat yaratilmaydi.
+        """
+        with self._turns_lock:
+            known = self._turns.get(turn_id)
+        if known is not None:
+            return known[0] == actor_id, known[1]
+        try:
+            analytics.flush(2.0)
+            row = analytics.get_db().row(
+                "SELECT actor_id, chat_id, channel FROM turns WHERE id = ?", (turn_id,))
+        except Exception:  # noqa: BLE001 - ombor nosozligi "yo'q" degani
+            log.warning("Telegram: javob egasi tekshirilmadi", exc_info=True)
+            return False, None
+        if row is None or row.get("actor_id") != actor_id or row.get("channel") != "bot":
+            return False, None
+        return True, row.get("chat_id")
+
+    def _report(self, cq_id: str, chat_id: int, msg: dict[str, Any], user: AuthUser,
+                rest: str) -> None:
+        parsed = render.parse_report(rest)
+        message_id = msg.get("message_id")
+        if parsed is None or not isinstance(message_id, int):
+            self._answer_cb(cq_id, "Tugma eskirgan", alert=True)
+            return
+        turn_id, action = parsed
+        if action == render.REPORT_DONE:
+            self._answer_cb(cq_id, "Xabar allaqachon yuborilgan")
+            return
+        owned, chat = self._turn_owner(turn_id, user.actorId)
+        if not owned:
+            log.warning("Telegram: begona yoki noma'lum javob haqida xabar (%s) - rad etildi",
+                        user.actorId)
+            self._answer_cb(cq_id, "Bu javob haqida xabar berib bo'lmaydi", alert=True)
+            return
+        current = msg.get("reply_markup")
+        if action == "":
+            self._set_buttons(chat_id, message_id, render.swap_report_rows(
+                current, render.report_reason_rows(turn_id)))
+            self._answer_cb(cq_id, "Nima noto'g'ri?")
+            return
+        if action == render.REPORT_CANCEL:
+            self._set_buttons(chat_id, message_id, render.swap_report_rows(
+                current, [render.report_row(turn_id)]))
+            self._answer_cb(cq_id)
+            return
+        key = f"r:{turn_id}"
+        with self._busy_lock:
+            if key in self._busy:
+                self._answer_cb(cq_id, "Yuborilmoqda…")
+                return
+            self._busy.add(key)
+        try:
+            self._submit_report(cq_id, chat_id, message_id, current, user, turn_id, chat,
+                                render.REPORT_CODES[action])
+        finally:
+            with self._busy_lock:
+                self._busy.discard(key)
+
+    def _submit_report(self, cq_id: str, chat_id: int, message_id: int, current: Any,
+                       user: AuthUser, turn_id: str, chat: str | None, reason: str) -> None:
+        """Veb ilovadagi AYNI xizmat (`reports.create`): surat telemetriyadan
+        (shu odamning shu suhbatdagi savollari), bo'lmasa suhbat tarixidan;
+        chegara ham o'sha (soatiga 20 ta, odam bo'yicha - veb va bot birga)."""
+        from ..services import reports as _reports
+
+        history = getattr(self.backend, "history", None)
+        try:
+            _reports.create(
+                user, channel="bot", chat_id=chat, turn_id=turn_id, reason=reason,
+                upstream=(lambda cid: history(cid, user)) if callable(history) else None,
+            )
+        except _reports.ReportError as exc:
+            log.info("Telegram: xabar qabul qilinmadi (%s): %s", user.actorId, exc.status)
+            self._answer_cb(cq_id, str(exc), alert=True)
+            return
+        self._set_buttons(chat_id, message_id, render.swap_report_rows(
+            current, [render.report_done_row(turn_id)]))
+        self._answer_cb(cq_id, "Rahmat, yuborildi")
 
     def _action(self, cq_id: str, chat_id: int, message_id: Any, user: AuthUser,
                 verb: str, token: str) -> None:
@@ -1104,9 +1477,6 @@ class VeneraBot:
         self._upload(chat_id, lambda: self.backend.artifact(token, kind),
                      _download_name(title, kind), caption=caption, markup=markup, what="Hujjat")
 
-    def _send_doc(self, chat_id: int, doc_id: str) -> None:
-        self._upload(chat_id, lambda: self.backend.doc(doc_id), None, what="Manba hujjati")
-
     def _upload(self, chat_id: int, open_it: Callable[[], Any], filename: str | None, *,
                 caption: str | None = None, markup: dict[str, Any] | None = None,
                 what: str = "Hujjat") -> None:
@@ -1160,6 +1530,14 @@ class VeneraBot:
         except TelegramError as exc:
             if not exc.not_modified:
                 log.debug("Telegram tahrirlanmadi: %s", exc)
+
+    def _set_buttons(self, chat_id: int, message_id: int, markup: dict[str, Any] | None) -> None:
+        """Xabar tugmalarini almashtiradi (`None` - olib tashlaydi)."""
+        try:
+            self.api.edit_reply_markup(chat_id, message_id, markup)
+        except TelegramError as exc:
+            if not exc.not_modified:
+                log.debug("Telegram tugmalari almashtirilmadi: %s", exc)
 
     def _clear_buttons(self, chat_id: int, message_id: int) -> None:
         try:

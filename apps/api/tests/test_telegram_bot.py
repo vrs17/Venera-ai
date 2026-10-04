@@ -11,6 +11,8 @@ import json
 import time
 import urllib.parse
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.bot import render
@@ -243,6 +245,9 @@ class FakeBackend:
         self.transcript: Transcript | Exception = Transcript(text="bugun kech qoldimmi", backend="gapi")
         self.audio: list[tuple[bytes, str]] = []
         self.files: list[tuple[str, str]] = []
+        self.links: list[tuple[str, int, str]] = []
+        self.link_error: Exception | None = None
+        self.histories: list[tuple[str, int]] = []
 
     def stream(self, question, user, chat_id):
         if self.open_error:
@@ -269,9 +274,17 @@ class FakeBackend:
         ctype = "application/pdf" if kind == "pdf" else "application/octet-stream"
         return ctype, f"{token}.{kind}", iter([b"PK" * 10])
 
-    def doc(self, doc_id):
-        self.files.append(("doc", doc_id))
-        return "application/pdf", f"{doc_id}.pdf", iter([b"%PDF-1.4"])
+    def doc_link(self, doc_id, user, filename):
+        """`chat.doc_link` o'rnida - imzo o'rniga belgi (haqiqiysi `test_bot_ux.py` da)."""
+        self.links.append((doc_id, user.actorId, filename))
+        if isinstance(self.link_error, Exception):
+            raise self.link_error
+        return SimpleNamespace(url=f"/api/v1/chat/file/SIGNED-{doc_id}", filename=f"{filename}.pdf",
+                               expiresIn=600)
+
+    def history(self, chat_id, user):
+        self.histories.append((chat_id, user.actorId))
+        return {"chat_id": chat_id, "messages": []}
 
     def transcribe(self, audio, content_type):
         self.audio.append((audio, content_type))
@@ -306,8 +319,9 @@ def test_ulanmagan_odamga_korsatma_va_ilova_tugmasi(world):
     bot.handle_update(text_update("yana"))          # takror - jim (1 daqiqa)
     assert len(tg.sent()) == 1
     first = tg.sent()[0]
-    assert "hisobingizni ulang" in first["text"]
-    assert first["reply_markup"]["inline_keyboard"][0][0]["web_app"]["url"] == "https://llm.brb-tech.uz/tg/"
+    assert "bir marta" in first["text"]
+    button = first["reply_markup"]["inline_keyboard"][0][0]
+    assert button == {"text": "Venera'ni ochish", "web_app": {"url": "https://llm.brb-tech.uz/tg/"}}
     assert backend.questions == []
 
 
@@ -341,7 +355,9 @@ def test_savol_javob_matn_bilan(world):
     answer = tg.sent()[1]
     assert answer["text"] == ("<b>Ta'til</b>\n• <b>21 kun</b> asosiy ta'til [1].\n\n"
                               "📚 <b>Manbalar</b>\n[1] Ichki mehnat tartibi, 22-bet")
-    assert answer["reply_markup"] == {"inline_keyboard": [[{"text": "📄 [1]", "callback_data": "d:HR_045"}]]}
+    doc_row, report_row = answer["reply_markup"]["inline_keyboard"]
+    assert doc_row == [{"text": "📄 Hujjatni ochish", "callback_data": "d:HR_045"}]
+    assert report_row[0]["text"] == "⚑" and report_row[0]["callback_data"].startswith("r:")
     # Keyingi savol - o'sha suhbatda.
     bot.handle_update(text_update("rahmat"))
     assert backend.questions[1][2] == chat
@@ -492,15 +508,21 @@ def test_ariza_fayli_chatga_keladi(world):
     assert doc["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == f"f:p:{token}"
     bot.handle_update(callback(f"f:p:{token}"))
     assert tg.sent("send_document")[1]["filename"] == "Ta'til arizasi shablon.pdf"
+    # Manba hujjati esa FAYL bo'lib kelmaydi - imzolangan havola (`test_bot_ux.py`).
     bot.handle_update(callback("d:HR_045"))
-    assert tg.sent("send_document")[2]["filename"] == "HR_045.pdf"
+    assert len(tg.sent("send_document")) == 2 and backend.links == [("HR_045", 1, "HR_045")]
 
 
 def test_buyruqlar_menyusi_va_offset(world):
     bot, tg, links, backend, _ = world
     tg.get_updates = lambda offset, timeout=25: [text_update("/help"), {"update_id": 9}]
     bot._prepare()
-    assert tg.commands == COMMANDS and bot.username == "venera_test_bot"
+    # Menyu faqat jonli ishga tushishda yoziladi (`sync_commands`) - test nusxasida yo'q.
+    assert tg.commands == [] and not tg.sent("set_my_commands") and bot.username == "venera_test_bot"
+    bot.sync_commands = True
+    bot._prepared = False
+    bot._prepare()
+    assert tg.commands == COMMANDS
     assert bot.poll_once() == 2 and bot._offset == 10
     assert "Venera" in tg.texts()[0]
 

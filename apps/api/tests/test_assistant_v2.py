@@ -369,7 +369,7 @@ def test_bot_qonun_manbasini_havola_bilan_korsatadi():
     assert (f'[2] LEX.UZ · qonunchilik: <a href="{LEX}">{LAW_TITLE}</a>') in block
     # Hujjat ko'ruvchisi tugmasi FAQAT hujjatga - qonun moddasiga yo'q.
     buttons = render.doc_buttons(docs)
-    assert buttons == {"inline_keyboard": [[{"text": "📄 [1]", "callback_data": "d:HR_045"}]]}
+    assert buttons == {"inline_keyboard": [[{"text": "📄 Hujjatni ochish", "callback_data": "d:HR_045"}]]}
     # Telegram belgilashni rad etsa - teglarsiz, lekin manzil ko'rinib turadi.
     assert f"{LAW_TITLE} ({LEX})" in render.plain(block)
     # Xabarlarga bo'linganda teg butun qoladi.
@@ -416,7 +416,9 @@ def test_bot_javobida_qonun_havolasi(tmp_path):
     answer = tg.sent()[-1]
     assert f'<a href="{LEX}">' in answer["text"] and "LEX.UZ · qonunchilik" in answer["text"]
     datas = [b["callback_data"] for row in answer["reply_markup"]["inline_keyboard"] for b in row]
-    assert datas == ["d:HR_045"], "qonun moddasi /doc ga yo'naltirilmaydi"
+    # "⚑" (`r:`) - javob haqida xabar berish; hujjat tugmasi (`d:`) faqat hujjatga.
+    assert [d for d in datas if not d.startswith("r:")] == ["d:HR_045"], \
+        "qonun moddasi /doc ga yo'naltirilmaydi"
 
 
 # ================================================================ navbat: oqib ketgan joy
