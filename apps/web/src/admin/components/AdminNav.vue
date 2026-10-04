@@ -159,8 +159,10 @@ async function signOut() {
           <PanelLeftOpen class="an__spark-alt" :size="20" :stroke-width="1.75" aria-hidden="true" />
         </button>
       </VTooltip>
-      <span class="an__word an__fade">Venera</span>
-      <span class="an__badge an__fade">{{ t('admin.title') }}</span>
+      <span class="an__title an__fade">
+        <span class="an__word">Venera</span>
+        <span class="an__badge">{{ t('admin.title') }}</span>
+      </span>
       <span v-if="variant === 'rail'" class="an__collapse an__block" :inert="mini">
         <VIconButton
           ref="collapseBtn"
@@ -316,13 +318,37 @@ async function signOut() {
   display: inline-flex;
   color: var(--brand);
 }
+/* Nom + "Admin" nishoni. Tor panelda (200px) nishon o'ngdagi yig'ish tugmasi ostiga
+   kirib qolardi. Endi u sig'masa keyingi qatorga o'tadi va bitta qator balandligidagi
+   quti uni kesadi (flex-wrap) - px chegara ham, JS ham kerak emas, har tilda nishonning
+   o'z kengligi bo'yicha. */
+.an__title {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  /* 8px - ilgarigi 2px (brend oralig'i) + 6px (nishon chap cheti) bilan bir xil. */
+  column-gap: var(--s-2);
+  min-width: 0;
+  height: var(--lh-body);
+  overflow: hidden;
+  overflow: clip;
+}
+/* Chap panelda kenglik OCHIQ panel bo'yicha (qatorlardagi --an-row-w kabi): uchqun
+   katagi va yig'ish tugmasi joyi (32px + o'ng chet 4px + 4px oraliq) ayirilgan. Panel
+   bilan torayganda nishon yig'ilish animatsiyasi o'rtasida "sakrab" yo'qolmasin - u
+   faqat tortib toraytirilganda (ochiq kenglik o'zgarganda) yashirinadi. */
+.an--rail .an__title {
+  flex: none;
+  width: calc(var(--an-row-w) - (var(--admin-rail-w) - 2 * var(--s-3)) - var(--s-0_5) - 32px - 2 * var(--s-1));
+}
 .an__word {
   font-size: var(--fs-body);
+  line-height: var(--lh-body);
   font-weight: 600;
   letter-spacing: -0.011em;
 }
 .an__badge {
-  margin-left: var(--s-1_5);
   padding: 1px var(--s-1_5);
   border-radius: var(--r-xs);
   background: var(--fill);
