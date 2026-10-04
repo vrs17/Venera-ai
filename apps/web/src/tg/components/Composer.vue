@@ -62,6 +62,14 @@ function resize() {
 }
 onMounted(resize)
 watch(value, resize, { flush: 'post' })
+// Diktovka paytida textarea O'RNIDA to'lqin turadi (v-if), ya'ni yozuv tugaganda u
+// QAYTA yaratiladi - aytilgan matn bilan bir tikda. v-model qiymatni yangi elementga
+// o'zining `mounted` ilgagida qo'yadi, yuqoridagi post-watcher'dan KEYIN: o'lchov bo'sh
+// maydonni o'lchab, uzun gap bir qatorda yashirinib qolardi. Element almashganda
+// o'lchov flush tugagunicha (qiymat joyiga tushgunicha) kechiktiriladi.
+watch(taRef, (el) => {
+  if (el) void nextTick(resize)
+})
 
 function trySend() {
   if (!hasText.value) return
