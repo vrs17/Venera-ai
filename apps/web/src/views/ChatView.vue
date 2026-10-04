@@ -102,6 +102,11 @@ const wakeEnabled = ref(readFlag(WAKE_STORAGE_KEY, true))
 watch(wakeEnabled, (value) => writeFlag(WAKE_STORAGE_KEY, value))
 const wakeSupported = computed(() => WAKE_LOCALES.includes(String(locale.value)))
 
+/** Kompozerda ovoz bilan yozilyapti (InputDock xabar beradi). Mikrofon o'shaniki:
+ *  "Salom Venera" shu paytda to'xtab turadi - aks holda diktovkani ham eshitib,
+ *  uni serverga "uyg'otish so'zi" deb yuborar va yozuv o'rtasida panelni ochardi. */
+const dictating = ref(false)
+
 const {
   active: wakeActive,
   blocked: wakeBlocked,
@@ -109,7 +114,7 @@ const {
 } = useWakeWord({
   enabled: wakeEnabled,
   locale: computed(() => String(locale.value)),
-  paused: voiceOpen,
+  paused: computed(() => voiceOpen.value || dictating.value),
   onWake: () => {
     voiceOpen.value = true
   },
@@ -119,10 +124,9 @@ function toggleWake() {
   wakeEnabled.value = !wakeEnabled.value
 }
 
-function openVoice() {
-  voiceOpen.value = true
-}
-
+// Jonli ovozli suhbat hozircha FAQAT "Salom Venera" bilan ochiladi: kompozerdagi
+// mikrofon endi ovoz bilan yozadi (InputDock), panelni ochmaydi. Suhbat
+// tugmasi keyinroq qaytadi - panel va uning kodi o'z joyida.
 function closeVoice() {
   voiceOpen.value = false
 }
@@ -857,7 +861,7 @@ onBeforeUnmount(() => {
         <!-- Yozish maydoni DOIM shu joyda (salomlashuvda ham) - yuborilganda qayta
              yaratilmaydi, fokus saqlanadi; salomlashuvda CSS uni markazga qo'yadi. -->
         <div ref="composerEl" class="chat-composer">
-          <InputDock ref="dock" :phase="phase" :send="send" :stop="stop" @conversation="openVoice" />
+          <InputDock ref="dock" :phase="phase" :send="send" :stop="stop" @dictating="dictating = $event" />
         </div>
       </div>
 

@@ -25,6 +25,17 @@ const en = {
   underMinute: 'Under a minute left',
   fit: 'Fit to width',
   voiceHint: 'Tap the orb and speak',
+  // Ovoz bilan yozish (kompozerdagi mikrofon): matn maydonga tushadi, o'zi yuborilmaydi.
+  dictate: {
+    start: 'Dictate',
+    recording: 'Voice recording',
+    done: 'Done',
+    transcribing: 'Converting to text…',
+    noSpeech: 'No voice heard',
+    started: 'Recording. Press Enter to finish, Esc to cancel.',
+    inserted: 'Text added to your message',
+    cancelled: 'Recording cancelled',
+  },
 }
 
 const uz: Mirror<typeof en> = {
@@ -46,6 +57,16 @@ const uz: Mirror<typeof en> = {
   underMinute: 'Bir daqiqadan kam qoldi',
   fit: 'Kenglikka moslash',
   voiceHint: 'Sharni bosing va gapiring',
+  dictate: {
+    start: 'Ovoz bilan yozish',
+    recording: 'Ovoz yozuvi',
+    done: 'Tayyor',
+    transcribing: 'Matnga aylantirilmoqda…',
+    noSpeech: 'Ovoz eshitilmadi',
+    started: 'Yozib olinmoqda. Tugatish uchun Enter, bekor qilish uchun Esc.',
+    inserted: 'Matn xabarga qoʻshildi',
+    cancelled: 'Yozuv bekor qilindi',
+  },
 }
 
 const uzCyrl: Mirror<typeof en> = {
@@ -67,6 +88,16 @@ const uzCyrl: Mirror<typeof en> = {
   underMinute: 'Бир дақиқадан кам қолди',
   fit: 'Кенгликка мослаш',
   voiceHint: 'Шарни босинг ва гапиринг',
+  dictate: {
+    start: 'Овоз билан ёзиш',
+    recording: 'Овоз ёзуви',
+    done: 'Тайёр',
+    transcribing: 'Матнга айлантирилмоқда…',
+    noSpeech: 'Овоз эшитилмади',
+    started: 'Ёзиб олинмоқда. Тугатиш учун Enter, бекор қилиш учун Esc.',
+    inserted: 'Матн хабарга қўшилди',
+    cancelled: 'Ёзув бекор қилинди',
+  },
 }
 
 const ru: Mirror<typeof en> = {
@@ -88,6 +119,16 @@ const ru: Mirror<typeof en> = {
   underMinute: 'Осталось меньше минуты',
   fit: 'По ширине',
   voiceHint: 'Нажмите на шар и говорите',
+  dictate: {
+    start: 'Голосовой ввод',
+    recording: 'Запись голоса',
+    done: 'Готово',
+    transcribing: 'Преобразую в текст…',
+    noSpeech: 'Голос не слышно',
+    started: 'Идёт запись. Enter — закончить, Esc — отменить.',
+    inserted: 'Текст добавлен в сообщение',
+    cancelled: 'Запись отменена',
+  },
 }
 
 export const composer = { en, uz, 'uz-Cyrl': uzCyrl, ru }
