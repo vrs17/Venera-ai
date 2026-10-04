@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronsUpDown, Code, Ear, Globe, LogOut, Monitor, MonitorDown, Moon, Shield, Sun, SunMoon } from 'lucide-vue-next'
+import { ChevronsUpDown, Ear, Globe, LogOut, Monitor, MonitorDown, Moon, Shield, Sun, SunMoon } from 'lucide-vue-next'
 import type { AuthUser } from '../types'
 import type { ThemePreference } from '../theme'
 import { LOCALES, setLocale } from '../i18n'
@@ -15,7 +15,7 @@ import VTooltip from '../ui/VTooltip.vue'
 /**
  * Hisob va sozlamalar - yon panel pastidagi YAGONA kirish nuqtasi (yig'iq panelda -
  * avatar). Menyu: kim kirgan (faqat o'qish - kimlik sessiyadan, bu yerda hech narsa
- * tahrirlanmaydi), mavzu va til (segmentli tanlov), dasturchi rejimi va "Salom Venera",
+ * tahrirlanmaydi), mavzu va til (segmentli tanlov), "Salom Venera",
  * admin panel (faqat ADMIN), desktop ilova, chiqish.
  *
  * VMenu ustida: klaviatura (↑ ↓, harf, Enter), Esc - preventDefault bilan (ChatView
@@ -35,7 +35,6 @@ const props = withDefaults(
     compact?: boolean
     /** Saqlangan tanlov (yorug' / qorong'i / tizim), yechilgan mavzu emas. */
     theme: ThemePreference
-    devMode: boolean
     wake: boolean
     wakeSupported: boolean
     wakeDistorted?: boolean
@@ -46,7 +45,6 @@ const props = withDefaults(
 )
 const emit = defineEmits<{
   setTheme: [theme: ThemePreference]
-  toggleDevMode: []
   toggleWake: []
   openDesktop: []
   logout: []
@@ -137,9 +135,6 @@ const SHORT: Record<Locale, string> = { uz: 'Oʻz', 'uz-Cyrl': 'Ўз', ru: 'Ру
     </div>
     <VMenuItem kind="separator" />
 
-    <VMenuItem kind="checkbox" :icon="Code" :checked="devMode" @select="emit('toggleDevMode')">
-      {{ t('developerMode') }}
-    </VMenuItem>
     <!-- "Salom Venera" faqat uyg'otish so'zi bor tillarda: boshqasida kalit hech narsa qilmasdi. -->
     <VMenuItem v-if="wakeSupported" kind="checkbox" :icon="Ear" :checked="wake" @select="emit('toggleWake')">
       {{ t('wakeWord') }}

@@ -192,6 +192,34 @@ export interface ProQuota {
   available: boolean
 }
 
+/* ── Yordamchi versiyasini tanlash (2026-10-04) ──────────────────────────
+ *
+ * Qaysi versiya ishlashini ADMIN PANEL hal qiladi (umumiy, kanal bo'yicha yoki
+ * odamga alohida). Odamga bir nechta versiya berilgan bo'lsagina u o'zi tanlay
+ * oladi (`selectable`) - tanlov `/chat/stream` tanasidagi `engine` bilan ketadi.
+ * Nom va tavsif bu yerda YO'Q: ular tarjimalarda (`chat.engines.*`), server faqat
+ * kalit va imkoniyatlarni beradi. `schemas/engines.py` nusxasi.
+ */
+
+/** schemas/engines.py: EngineInfo - katalogdagi bitta versiya. */
+export interface EngineInfo {
+  id: AssistantEngine | (string & {})
+  /** "Pro" rejimi bor (bugun faqat `v2`). */
+  pro: boolean
+  /** Javobda LEX.UZ qonunchilik manbalari bor. */
+  law: boolean
+}
+
+/** schemas/engines.py: EngineChoice - `GET /api/v1/chat/engines` (kanal -
+ *  `X-Venera-Client` sarlavhasidan). `selectable: false` - tanlov yo'q, UI hech
+ *  narsa ko'rsatmaydi. `available` - tanlasa bo'ladiganlar (tanlov yo'q bo'lsa `[current]`). */
+export interface EngineChoice {
+  current: AssistantEngine | (string & {})
+  selectable: boolean
+  available: string[]
+  catalog: EngineInfo[]
+}
+
 /** Javob bilan kelgan `pro` bloki (`done` kadrida). Faqat "pro" so'ralgan
  *  turlarda bo'ladi. */
 export interface ProInfo {

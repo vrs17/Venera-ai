@@ -2,7 +2,7 @@
 import { computed, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { CalendarDays, CircleAlert, Lock, LogOut, RotateCcw, Unlink, Unplug, UserX } from 'lucide-vue-next'
+import { CalendarDays, CircleAlert, Lock, LogOut, Pencil, RotateCcw, Trash2, Unlink, Unplug, UserX } from 'lucide-vue-next'
 import VAvatar from '../../ui/VAvatar.vue'
 import VBadge from '../../ui/VBadge.vue'
 import VButton from '../../ui/VButton.vue'
@@ -22,15 +22,17 @@ import { useCommandPalette } from '../../ui/useCommandPalette'
 import { useToast } from '../../ui/useToast'
 import { useAuth } from '../../composables/useAuth'
 import { useChats } from '../../composables/useChats'
-import { disconnectUserConnector, getUser, signOutUser, unlinkUserTelegram, updateUser } from '../api'
-import { KNOWN_ROLES } from '../types'
-import type { AdminConnector, AdminUser, AdminUserDetail, RangeParams } from '../types'
+import { deleteEngineAccess, disconnectUserConnector, getUser, signOutUser, unlinkUserTelegram, updateUser } from '../api'
+import { ENGINE_CHANNELS, ENGINES, KNOWN_ROLES } from '../types'
+import type { AdminConnector, AdminUser, AdminUserDetail, EngineAccessRow, RangeParams } from '../types'
 import { useAdminFilters } from '../useAdminFilters'
 import AdminError from '../components/AdminError.vue'
 import RelTime from '../components/RelTime.vue'
 import StatusDot from '../components/StatusDot.vue'
 import type { StatusTone } from '../components/StatusDot.vue'
 import { useAdminQuery } from '../components/useAdminQuery'
+import EngineAccessDialog from '../versions/EngineAccessDialog.vue'
+import { engineLabel } from '../versions/engineText'
 import UserAudit from './UserAudit.vue'
 import UserRecent from './UserRecent.vue'
 import { roleLabel } from './auditText'
@@ -42,7 +44,7 @@ export type UserPatch = Pick<AdminUser, 'roles' | 'rolesSource' | 'rolesLocked' 
 
 /**
  * Foydalanuvchi varag'i (spec §4.5.5): o'ngdan 560px panel, telefonda pastki sheet.
- * Sarlavha, davr statistikasi va bo'limlar: Rollar, Kirish, Ulanishlar, Telegram,
+ * Sarlavha, davr statistikasi va bo'limlar: Rollar, Kirish, Versiya, Ulanishlar, Telegram,
  * So'nggi faollik, Izoh, O'zgarishlar. Har bir o'zgarish - toast va audit yozuvi
  * (audit server yozadi; varaq keyin jimgina yangilanadi va yozuv ro'yxatda chiqadi).
  *
@@ -456,6 +458,51 @@ function askUnlink() {
   })
 }
 
+/* ---------------------------------------------------------------- versiya */
+
+// Shu odamga hozir qaysi versiya ishlaydi (kanal bo'yicha) va unga alohida nima berilgan.
+// Muharrir - "Versiyalar" sahifasidagi AYNI oyna (bir xil maydonlar va tekshiruv).
+const engine = computed(() => detail.value?.engine ?? null)
+const engineText = (id: string) => engineLabel(id, t, te)
+const engineEditorOpen = ref(false)
+const engineAccessText = computed(() => {
+  const a = engine.value?.access
+  if (!a || !a.engines.length) return null
+  const list = a.engines.join(', ')
+  return a.defaultEngine && a.engines.length > 1
+    ? `${list} · ${t('admin.versions.defaultEngine')}: ${a.defaultEngine}`
+    : list
+})
+// Faqat tarixda qolgan odam (hisobi manbada yo'q) - unga yangi ruxsat berish ma'nosiz.
+const canGrant = computed(() => base.value?.source !== 'telemetry' || !!engine.value?.access)
+
+function onEngineSaved(row: EngineAccessRow) {
+  const id = row.actorId
+  q.mutate((d) =>
+    d.actorId === id && d.engine
+      ? { ...d, engine: { ...d.engine, access: { engines: row.engines, defaultEngine: row.defaultEngine } } }
+      : d,
+  )
+  // Kanal bo'yicha "hozir" va audit server hisoblaydi - jimgina qayta so'raymiz.
+  refreshDetail()
+}
+
+function askRemoveEngine() {
+  const id = props.actorId
+  if (id === null) return
+  askConfirm({
+    title: t('admin.versions.removeTitle', { name: name.value }),
+    body: t('admin.versions.removeBodyShort'),
+    action: t('admin.versions.remove'),
+    danger: true,
+    run: async () => {
+      await deleteEngineAccess(id)
+      q.mutate((d) => (d.actorId === id && d.engine ? { ...d, engine: { ...d.engine, access: null } } : d))
+      done('admin.versions.accessRemoved')
+    },
+  })
+}
+
 /* ---------------------------------------------------------------- izoh */
 
 const NOTE_MAX = 500
@@ -511,6 +558,7 @@ watch(
     noteBase.value = ''
     noteError.value = null
     confirmOpen.value = false
+    engineEditorOpen.value = false
   },
 )
 
@@ -661,6 +709,47 @@ function onOpenChange(v: boolean) {
           <VSkeleton v-else :lines="2" />
         </section>
 
+        <!-- versiya: eski server bu maydonni bermaydi - bo'lim umuman chizilmaydi -->
+        <section v-if="!detail || engine" class="us-sec" :aria-labelledby="`${uid}-engine`">
+          <h3 :id="`${uid}-engine`" class="us-h3">{{ t('admin.versions.section') }}</h3>
+          <template v-if="engine">
+            <dl class="us-kv">
+              <div v-for="ch in ENGINE_CHANNELS" :key="ch">
+                <dt>{{ t(`admin.channel.${ch}`) }}</dt>
+                <dd class="us-engine">{{ engineText(engine.effective[ch]) }}</dd>
+              </div>
+            </dl>
+            <div class="us-row us-row--tg">
+              <div class="us-engine-access">
+                <span class="us-engine-access__label">{{ t('admin.versions.access') }}</span>
+                <span v-if="engineAccessText" class="us-engine-access__value">{{ engineAccessText }}</span>
+                <span v-else class="us-engine-access__none">{{ t('admin.versions.general') }}</span>
+              </div>
+              <span class="us-row__action us-engine-acts">
+                <VButton
+                  v-if="engine.access"
+                  variant="ghost"
+                  size="sm"
+                  :icon="Trash2"
+                  @click="askRemoveEngine"
+                >
+                  {{ t('admin.versions.remove') }}
+                </VButton>
+                <VButton
+                  v-if="canGrant"
+                  variant="ghost"
+                  size="sm"
+                  :icon="Pencil"
+                  @click="engineEditorOpen = true"
+                >
+                  {{ engine.access ? t('admin.versions.edit') : t('admin.versions.grant') }}
+                </VButton>
+              </span>
+            </div>
+          </template>
+          <VSkeleton v-else :lines="2" />
+        </section>
+
         <!-- ulanishlar -->
         <section class="us-sec" :aria-labelledby="`${uid}-conn`">
           <h3 :id="`${uid}-conn`" class="us-h3">{{ t('admin.user.connections') }}</h3>
@@ -763,6 +852,16 @@ function onOpenChange(v: boolean) {
       </template>
     </div>
   </VSheet>
+
+  <EngineAccessDialog
+    v-if="actorId !== null"
+    v-model:open="engineEditorOpen"
+    :person="{ actorId, name: base?.name ?? null, login: base?.login ?? base?.email ?? null }"
+    :initial="engine?.access ?? null"
+    :engines="[...ENGINES]"
+    :preferred="engine?.effective.web ?? null"
+    @saved="onEngineSaved"
+  />
 
   <VDialog
     v-model:open="confirmOpen"
@@ -1039,6 +1138,40 @@ function onOpenChange(v: boolean) {
 }
 .us-row__action {
   justify-self: end;
+}
+
+/* versiya */
+.us-engine {
+  font-variant-numeric: tabular-nums;
+}
+.us-engine-access {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.us-engine-access__label {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+}
+.us-engine-access__value {
+  color: var(--text);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+  overflow-wrap: anywhere;
+}
+.us-engine-access__none {
+  color: var(--text-2);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+}
+.us-engine-acts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-1);
 }
 
 .us-none {

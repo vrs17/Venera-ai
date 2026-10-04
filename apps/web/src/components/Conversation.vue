@@ -22,7 +22,8 @@ import CopyButton from './CopyButton.vue'
 const props = withDefaults(
   defineProps<{
     exchanges: ChatExchange[]
-    devMode: boolean
+    /** Odam versiyani tanlay oladi - javoblarda qaysi versiya javob bergani ko'rinsin. */
+    showEngine?: boolean
     busy?: boolean
     /** Hozir yozilayotgan javob. */
     streamingId?: string | null
@@ -32,7 +33,7 @@ const props = withDefaults(
     /** Suhbat kaliti - almashsa, keyingi chizishda darhol oxiriga. */
     chatKey?: string
   }>(),
-  { busy: false, streamingId: null, reportedKeys: () => new Set<string>(), canTrace: false, chatKey: '' },
+  { showEngine: false, busy: false, streamingId: null, reportedKeys: () => new Set<string>(), canTrace: false, chatKey: '' },
 )
 const emit = defineEmits<{ regenerate: [id: string]; report: [id: string]; scrolled: [away: boolean] }>()
 const { t, locale } = useI18n({ useScope: 'global' })
@@ -149,7 +150,7 @@ watch(
           </div>
           <PipelineResult
             :exchange="ex"
-            :dev-mode="devMode"
+            :show-engine="showEngine"
             :busy="busy"
             :streaming="ex.id === streamingId"
             :latest="i === exchanges.length - 1"

@@ -9,10 +9,10 @@
 // ittifoqi + `(string & {})`: tahrirlovchi takliflarni ko'rsatadi, lekin serverga yangi
 // qiymat qo'shilsa (masalan, yangi kanal) tur buzilmaydi - UI uni "noma'lum" deb chizadi.
 
-import type { AuthUser } from '../types'
+import type { AuthUser, EngineInfo } from '../types'
 import type { ReportMessage, ReportReason } from '../features/report/report.api'
 
-export type { ReportMessage, ReportReason }
+export type { ReportMessage, ReportReason, EngineInfo }
 
 /* ------------------------------------------------------------------ lug'atlar */
 
@@ -468,7 +468,8 @@ export interface AuditEntry {
   adminActorId: number | null
   adminName: string | null
   /** user.roles | user.block | user.unblock | user.note | user.signout |
-   *  user.connector.disconnect | user.telegram.unlink | report.status | report.note */
+   *  user.connector.disconnect | user.telegram.unlink | report.status | report.note |
+   *  engine.policy | engine.access.set | engine.access.remove */
   action: string
   targetType: string | null
   targetId: string | null
@@ -484,6 +485,9 @@ export interface AdminUserDetail extends AdminUser {
   recentTurns: TurnSummary[]
   audit: AuditEntry[]
   note: string | null
+  /** Shu odamga hozir qaysi versiya ishlaydi va unga alohida nima berilgan.
+   *  Ixtiyoriy: versiyalar boshqaruvidan oldingi server bermaydi - bo'lim chizilmaydi. */
+  engine?: UserEngine | null
 }
 
 /** types.ts: AdminUserUpdate - yuborilmagan maydon o'zgarmaydi.
@@ -503,6 +507,102 @@ export interface SignoutResult {
 /** types.ts: TelegramUnlinked */
 export interface TelegramUnlinked {
   unlinked: number
+}
+
+/* ------------------------------------------------------------------ versiyalar */
+
+/** "Versiyalar" sahifasidagi kanallar - server `effective` ni aynan shular uchun beradi.
+ *  `desktop` va `api` siyosatda bor, lekin bugun ulardan savol deyarli kelmaydi. */
+export const ENGINE_CHANNELS = ['web', 'miniapp', 'bot'] as const
+export type EngineChannel = (typeof ENGINE_CHANNELS)[number]
+
+/** types.ts: EnginePolicy - admin saqlagan umumiy siyosat. `channels` da faqat admin
+ *  AYTGAN kanallar; yo'q kanal - `default` ga, u ham bo'lmasa `.env` ga tushadi.
+ *  `source: env` - admin hali hech narsa saqlamagan. */
+export interface EnginePolicy {
+  default: string | null
+  channels: Partial<Record<Channel | (string & {}), string>>
+  source: 'admin' | 'env' | (string & {})
+  updatedAt: string | null
+  updatedBy: string | null
+}
+
+/** types.ts: EnvDefaults - `.env` dagi boshlang'ich qiymatlar. `default: ''` -
+ *  versiyasiz yo'l (favqulodda chiqish, panelda tanlanmaydi). */
+export interface EnvDefaults {
+  default: string
+  channels: Partial<Record<Channel | (string & {}), string>>
+}
+
+/** types.ts: EffectiveEngines - alohida versiya berilmagan odam uchun HOZIR nima ishlaydi. */
+export interface EffectiveEngines {
+  web: string
+  miniapp: string
+  bot: string
+}
+
+/** types.ts: EngineUsage - oxirgi 7 kun. `engine: "default"` - versiyasi yozilmagan savollar. */
+export interface EngineUsage {
+  engine: Engine | 'default' | (string & {})
+  turns: number
+  errors: number
+  medianTtftMs: number | null
+  users: number
+}
+
+/** types.ts: EngineAccessRow - odamga alohida berilgan versiyalar. */
+export interface EngineAccessRow {
+  actorId: number
+  name: string
+  login: string | null
+  /** Kamida bitta; bir nechta bo'lsa odam chatda o'zi tanlaydi. */
+  engines: string[]
+  /** `null` - tanlamasa umumiy siyosat (ro'yxat ichida bo'lsa) yoki ro'yxatning birinchisi. */
+  defaultEngine: string | null
+  note: string | null
+  updatedAt: string | null
+  updatedBy: string | null
+}
+
+/** types.ts: AdminEngines - `GET /admin/engines` va `PUT .../policy` javobi. */
+export interface AdminEngines {
+  catalog: EngineInfo[]
+  policy: EnginePolicy
+  envDefaults: EnvDefaults
+  effective: EffectiveEngines
+  stats: EngineUsage[]
+  access: EngineAccessRow[]
+}
+
+/** types.ts: EnginePolicyUpdate - QO'SHILADIGAN o'zgarish: yuborilmagan maydon va kanal
+ *  o'zgarmaydi, `null` - kalitni o'chiradi (keyingi bo'g'inga qaytadi). */
+export interface EnginePolicyUpdate {
+  default?: string | null
+  channels?: Partial<Record<Channel | (string & {}), string | null>>
+}
+
+/** types.ts: EngineAccessUpdate. `note` yuborilmasa eskisi qoladi, `null`/`""` - o'chiriladi. */
+export interface EngineAccessUpdate {
+  engines: string[]
+  defaultEngine: string | null
+  note?: string | null
+}
+
+/** types.ts: EngineAccessRemoved - qator yo'q bo'lsa `false` (xato emas). */
+export interface EngineAccessRemoved {
+  removed: boolean
+}
+
+/** types.ts: UserEngineAccess */
+export interface UserEngineAccess {
+  engines: string[]
+  defaultEngine: string | null
+}
+
+/** types.ts: UserEngine - `AdminUserDetail.engine`. */
+export interface UserEngine {
+  effective: EffectiveEngines
+  access: UserEngineAccess | null
 }
 
 /* ------------------------------------------------------------------ tizim */

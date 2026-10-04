@@ -37,7 +37,6 @@ const props = withDefaults(
     /** Faqat inline: kenglik boshqaruvi (ChatView'dagi `useResizablePanel`). */
     resize?: ResizablePanel | null
     theme: ThemePreference
-    devMode: boolean
     wake: boolean
     wakeSupported: boolean
     wakeDistorted?: boolean
@@ -53,7 +52,6 @@ const emit = defineEmits<{
   openChat: [id: string]
   close: []
   setTheme: [theme: ThemePreference]
-  toggleDevMode: []
   toggleWake: []
   openDesktop: []
   logout: []
@@ -201,14 +199,12 @@ async function expandToSearch() {
           :compact="folded"
           :user="user"
           :theme="theme"
-          :dev-mode="devMode"
           :wake="wake"
           :wake-supported="wakeSupported"
           :wake-distorted="wakeDistorted"
           :wake-blocked="wakeBlocked"
           :is-admin="isAdmin"
           @set-theme="emit('setTheme', $event)"
-          @toggle-dev-mode="emit('toggleDevMode')"
           @toggle-wake="emit('toggleWake')"
           @open-desktop="emit('openDesktop')"
           @logout="emit('logout')"

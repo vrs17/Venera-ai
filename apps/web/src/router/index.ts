@@ -41,6 +41,7 @@ const adminRoutes: RouteRecordRaw = {
     { path: 'users', name: 'admin-users', component: () => import('../admin/pages/UsersPage.vue') },
     { path: 'users/:id', name: 'admin-user', component: () => import('../admin/pages/UsersPage.vue'), props: true },
     { path: 'usage', name: 'admin-usage', component: () => import('../admin/pages/UsagePage.vue') },
+    { path: 'versions', name: 'admin-versions', component: () => import('../admin/pages/VersionsPage.vue') },
     { path: 'system', name: 'admin-system', component: () => import('../admin/pages/SystemPage.vue') },
   ],
 }

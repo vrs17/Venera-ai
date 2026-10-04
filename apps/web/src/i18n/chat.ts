@@ -34,12 +34,21 @@ const en = {
   stopped: 'Stopped',
   greetingAnon: 'How can I help?',
   thread: 'Conversation',
-  traceEmpty: 'No pipeline trace returned.',
-  noChunks: 'No chunks returned.',
   // Qonun moddasi (v2): `{site}` - odatda LEX.UZ.
   lawCaption: '{site} · legislation',
   lawOpen: 'Open in a new tab',
-  engine: 'engine {v}',
+  // Yordamchi versiyasi (kompozerdagi "v2 ▾"): faqat odamga tanlov berilgan bo'lsa ko'rinadi.
+  // `v1`/`v2` - nomi, `*Desc` - bitta qator; noma'lum versiya - faqat kaliti ("v3").
+  engines: {
+    label: 'Assistant version',
+    pill: 'Assistant version: {v}',
+    v1: 'Stable',
+    v2: 'New',
+    v1Desc: 'Verified answers with document citations',
+    v2Desc: 'Written by the model: Labour Code and LEX.UZ',
+    answeredBy: 'Answered by {v}',
+    switched: 'Next answers: {v}',
+  },
 }
 
 const uz: Mirror<typeof en> = {
@@ -69,11 +78,18 @@ const uz: Mirror<typeof en> = {
   stopped: 'Toʻxtatildi',
   greetingAnon: 'Nima yordam kerak?',
   thread: 'Suhbat',
-  traceEmpty: 'Pipeline izi qaytmadi.',
-  noChunks: 'Parchalar qaytmadi.',
   lawCaption: '{site} · qonunchilik',
   lawOpen: 'Yangi oynada ochish',
-  engine: 'versiya {v}',
+  engines: {
+    label: 'Yordamchi versiyasi',
+    pill: 'Yordamchi versiyasi: {v}',
+    v1: 'Barqaror',
+    v2: 'Yangi',
+    v1Desc: 'Tasdiqlangan javoblar, hujjat iqtiboslari',
+    v2Desc: 'Model yozadi: Mehnat kodeksi va LEX.UZ',
+    answeredBy: '{v} javob berdi',
+    switched: 'Keyingi javoblar: {v}',
+  },
 }
 
 const uzCyrl: Mirror<typeof en> = {
@@ -103,11 +119,18 @@ const uzCyrl: Mirror<typeof en> = {
   stopped: 'Тўхтатилди',
   greetingAnon: 'Нима ёрдам керак?',
   thread: 'Суҳбат',
-  traceEmpty: 'Pipeline изи қайтмади.',
-  noChunks: 'Парчалар қайтмади.',
   lawCaption: '{site} · қонунчилик',
   lawOpen: 'Янги ойнада очиш',
-  engine: 'версия {v}',
+  engines: {
+    label: 'Ёрдамчи версияси',
+    pill: 'Ёрдамчи версияси: {v}',
+    v1: 'Барқарор',
+    v2: 'Янги',
+    v1Desc: 'Тасдиқланган жавоблар, ҳужжат иқтибослари',
+    v2Desc: 'Модел ёзади: Меҳнат кодекси ва LEX.UZ',
+    answeredBy: '{v} жавоб берди',
+    switched: 'Кейинги жавоблар: {v}',
+  },
 }
 
 const ru: Mirror<typeof en> = {
@@ -137,11 +160,18 @@ const ru: Mirror<typeof en> = {
   stopped: 'Остановлено',
   greetingAnon: 'Чем помочь?',
   thread: 'Диалог',
-  traceEmpty: 'Трасса не получена.',
-  noChunks: 'Фрагменты не получены.',
   lawCaption: '{site} · законодательство',
   lawOpen: 'Открыть в новой вкладке',
-  engine: 'движок {v}',
+  engines: {
+    label: 'Версия ассистента',
+    pill: 'Версия ассистента: {v}',
+    v1: 'Стабильная',
+    v2: 'Новая',
+    v1Desc: 'Проверенные ответы, цитаты из документов',
+    v2Desc: 'Пишет модель: Трудовой кодекс и LEX.UZ',
+    answeredBy: 'Ответ: {v}',
+    switched: 'Следующие ответы: {v}',
+  },
 }
 
 export const chat = { en, uz, 'uz-Cyrl': uzCyrl, ru }

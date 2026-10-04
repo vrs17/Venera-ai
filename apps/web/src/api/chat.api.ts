@@ -1,11 +1,12 @@
 // Chat endpoints.
 //
 //   streamAsk()  POST /api/v1/chat/stream  — the real answer, streamed
-//   askAi()      POST /api/v1/chat/ask     — the pipeline skeleton, one JSON
 //
-// Identity comes from the Bearer token in both cases; the body never carries
-// a user id. The streaming route is the one people use — the skeleton stays
-// so the trace view still works where the assistant is not configured.
+// Identity comes from the Bearer token; the body never carries a user id.
+//
+// `/chat/ask` (bir martalik JSON, pipeline izi) endi brauzerdan chaqirilmaydi:
+// uni faqat "dasturchi rejimi" ishlatardi, rejim olib tashlandi - savolning to'liq
+// izi admin panelida. Backend yo'li o'z joyida (boshqa klientlar, testlar).
 //
 // WHY NOT EventSource. It is GET-only and cannot send an Authorization
 // header, so the question would have to go in the query string and the
@@ -14,61 +15,7 @@
 // header where it belongs.
 
 import { ApiError, BASE_URL, getToken } from './http'
-import type { ApiErrorResponse, ChatFrame, PipelineResponse, RetrievalStage } from '../types'
-
-// `/ask` nests the router trace under `pipeline.*` and ships `chunks` instead of
-// `results`. Flatten + rename into the UI's PipelineResponse shape so the trace
-// view keeps working, and surface the top-level domain/answer.
-function normalizeAskResponse(raw: Record<string, unknown>): PipelineResponse {
-  const wrapper = (raw.pipeline ?? raw) as Record<string, unknown>
-  const rawRetrieval = wrapper.retrieval as Record<string, unknown> | null | undefined
-  let retrieval: RetrievalStage | null = null
-  if (rawRetrieval) {
-    const chunks = (rawRetrieval.chunks ?? rawRetrieval.results ?? []) as RetrievalStage['results']
-    const status = rawRetrieval.retrievalStatus as string | undefined
-    const message = rawRetrieval.message as string | undefined
-    retrieval = {
-      status,
-      collection: rawRetrieval.collection as string | undefined,
-      results: chunks,
-      seconds: rawRetrieval.seconds as number | undefined,
-      error: status && status !== 'OK' ? message || status : ((rawRetrieval.error as string | null | undefined) ?? null),
-    }
-  }
-  return {
-    finalStatus: (raw.finalStatus ?? wrapper.finalStatus) as PipelineResponse['finalStatus'],
-    domain: (raw.domain ?? null) as PipelineResponse['domain'],
-    domainReason: (raw.domainReason ?? null) as PipelineResponse['domainReason'],
-    guard: (wrapper.guard ?? null) as PipelineResponse['guard'],
-    intent: (wrapper.intent ?? null) as PipelineResponse['intent'],
-    orchestrator: (wrapper.orchestrator ?? null) as PipelineResponse['orchestrator'],
-    access: (wrapper.access ?? null) as PipelineResponse['access'],
-    retrieval,
-    answer: (raw.answer ?? null) as string | null,
-  }
-}
-
-/** `/ask` natijasi va backend bergan savol kaliti (`X-Venera-Turn`). */
-export type AskResult = PipelineResponse & { turnId: string | null }
-
-export async function askAi(question: string, signal?: AbortSignal): Promise<AskResult> {
-  // apiFetch emas: u javob sarlavhalarini bermaydi, bizga esa `X-Venera-Turn` kerak.
-  const token = getToken()
-  const response = await fetch(`${BASE_URL}/api/v1/chat/ask`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      Accept: 'application/json',
-      [CLIENT_HEADER]: 'web',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({ question }),
-    signal,
-  })
-  if (!response.ok) throw await errorOf(response, 'Request failed')
-  const raw = (await response.json()) as Record<string, unknown>
-  return { ...normalizeAskResponse(raw), turnId: turnOf(response) }
-}
+import type { ApiErrorResponse, ChatFrame } from '../types'
 
 /** Backend analitikasi so'rovni shu sarlavha bo'yicha "web" kanaliga yozadi (apiFetch
  *  ham yuboradi). Bu fayldagi to'g'ridan-to'g'ri fetch'lar ham yubormasa, web chat
@@ -105,6 +52,11 @@ export interface StreamOptions {
   voice?: boolean
   /** UI locale — the holding phrase comes back in this language. */
   locale?: string
+  /** Yordamchi versiyasi (`v1` | `v2`) - FAQAT odamga tanlov berilgan bo'lsa
+   *  (`GET /chat/engines` -> `selectable`). Server uni ruxsat etilganlar ichida
+   *  bo'lsagina qabul qiladi, aks holda jimgina o'z default'ini ishlatadi.
+   *  Berilmasa - maydon umuman yuborilmaydi (eski xatti-harakat, Mini App ham shu). */
+  engine?: string | null
   /** Conversation key. Turns sharing it share the assistant's server-side
    *  memory, so follow-up questions ("va o'tgan oyda?") work. */
   chatId?: string | null
@@ -151,6 +103,7 @@ export async function streamAsk(
       // already visible, so "One moment, checking" would be pure noise.
       voice: options.voice ?? undefined,
       locale: options.locale ?? undefined,
+      engine: options.engine || undefined,
     }),
     signal: options.signal,
   })

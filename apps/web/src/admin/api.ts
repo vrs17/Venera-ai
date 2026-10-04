@@ -9,6 +9,7 @@ import { apiFetch } from '../api/http'
 import type {
   AdminChatPage,
   AdminConnector,
+  AdminEngines,
   AdminMe,
   AdminOverview,
   AdminSearch,
@@ -18,6 +19,10 @@ import type {
   AdminUserDetail,
   AdminUserList,
   AdminUserUpdate,
+  EngineAccessRemoved,
+  EngineAccessRow,
+  EngineAccessUpdate,
+  EnginePolicyUpdate,
   RangeParams,
   ReportDetail,
   ReportPage,
@@ -61,7 +66,7 @@ function get<T>(path: string, params?: object, signal?: AbortSignal): Promise<T>
   return apiFetch<T>(`${BASE}${path}${buildQuery(params)}`, { signal })
 }
 
-function send<T>(method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
+function send<T>(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
   return apiFetch<T>(`${BASE}${path}`, {
     method,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -140,6 +145,29 @@ export function disconnectUserConnector(actorId: number, platform: string): Prom
 
 export function unlinkUserTelegram(actorId: number): Promise<TelegramUnlinked> {
   return send<TelegramUnlinked>('DELETE', `/users/${seg(actorId)}/telegram`)
+}
+
+/* ---- yordamchi versiyalari ---- */
+
+/** Katalog, umumiy siyosat (va `.env` boshlang'ichi), hozir nima ishlaydi, 7 kunlik
+ *  statistika va alohida ruxsatlar - bitta so'rovda (sahifa kichik, filtr yo'q). */
+export function getEngines(signal?: AbortSignal): Promise<AdminEngines> {
+  return get<AdminEngines>('/engines', undefined, signal)
+}
+
+/** "Hammaga" va kanal sozlamalari. Javob - yangi to'liq holat (sahifa shu bilan yangilanadi). */
+export function putEnginePolicy(body: EnginePolicyUpdate): Promise<AdminEngines> {
+  return send<AdminEngines>('PUT', '/engines/policy', body)
+}
+
+/** Odamga versiyalar (yaratish ham, o'zgartirish ham). Katalogda yo'q odam - 404. */
+export function putEngineAccess(actorId: number, body: EngineAccessUpdate): Promise<EngineAccessRow> {
+  return send<EngineAccessRow>('PUT', `/engines/access/${seg(actorId)}`, body)
+}
+
+/** Odam umumiy siyosatga qaytadi. Ikki marta bosish zararsiz (`removed: false`). */
+export function deleteEngineAccess(actorId: number): Promise<EngineAccessRemoved> {
+  return send<EngineAccessRemoved>('DELETE', `/engines/access/${seg(actorId)}`)
 }
 
 /* ---- foydalanish, tizim ---- */

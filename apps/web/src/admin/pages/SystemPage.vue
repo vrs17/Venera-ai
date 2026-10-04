@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
-import { AudioLines, Bot, Flag, KeyRound, Mic, ScrollText, TriangleAlert, Users, Waypoints } from 'lucide-vue-next'
+import { AudioLines, Bot, Flag, GitBranch, KeyRound, Mic, ScrollText, TriangleAlert, Users, Waypoints } from 'lucide-vue-next'
 import VBadge from '../../ui/VBadge.vue'
 import VCard from '../../ui/VCard.vue'
 import VDataTable from '../../ui/VDataTable.vue'
@@ -23,6 +23,7 @@ import StatusDot from '../components/StatusDot.vue'
 import UserCell from '../components/UserCell.vue'
 import { fmtBytes } from '../components/units'
 import { useAdminQuery } from '../components/useAdminQuery'
+import { grantText, policyDiff } from '../users/auditText'
 
 // "Tizim" (spec §4.5.7): har bir tashqi bog'liqlikning holati (`/api/health/detail`
 // bilan bir xil tashxis), sozlamalar (faqat yoqilgan/o'chiq - qiymatlar hech qachon
@@ -239,6 +240,12 @@ function actionDetail(e: AuditEntry): string {
     case 'user.note':
     case 'report.note':
       return str(d.preview) ?? ''
+    case 'engine.access.set':
+      return `${grantText(d.from)} → ${grantText(d.to)}`
+    case 'engine.access.remove':
+      return grantText(d.from)
+    case 'engine.policy':
+      return policyDiff(d.from, d.to, (k) => t(k), (k) => te(k))
     default:
       return ''
   }
@@ -249,6 +256,8 @@ function targetOf(e: AuditEntry): { to: ReturnType<typeof withFilters>; icon: Co
   if (e.targetType === 'report') {
     return { to: withFilters(`/admin/reports/${e.targetId}`), icon: Flag, text: e.targetId.slice(0, 8) }
   }
+  // Versiya siyosati - bitta umumiy obyekt ("policy"): havola sahifaning o'ziga.
+  if (e.targetType === 'engine') return { to: withFilters('/admin/versions'), icon: GitBranch, text: e.targetId }
   return null
 }
 

@@ -8,6 +8,7 @@ import {
   ArrowLeft,
   ChevronsUpDown,
   Flag,
+  GitBranch,
   LayoutDashboard,
   LogOut,
   MessagesSquare,
@@ -90,7 +91,7 @@ async function toggle() {
   next?.focus({ preventScroll: true })
 }
 
-type NavKey = 'overview' | 'conversations' | 'reports' | 'users' | 'usage' | 'system'
+type NavKey = 'overview' | 'conversations' | 'reports' | 'users' | 'usage' | 'versions' | 'system'
 interface NavItem {
   key: NavKey
   path: string
@@ -112,6 +113,8 @@ const items: NavItem[] = [
   { key: 'reports', path: '/admin/reports', icon: Flag, match: under('/admin/reports') },
   { key: 'users', path: '/admin/users', icon: Users, match: under('/admin/users') },
   { key: 'usage', path: '/admin/usage', icon: Activity, match: under('/admin/usage') },
+  // Yordamchi versiyalari - "Foydalanish" va "Tizim" orasida: sozlama, lekin kundalik.
+  { key: 'versions', path: '/admin/versions', icon: GitBranch, match: under('/admin/versions') },
   { key: 'system', path: '/admin/system', icon: Server, match: under('/admin/system') },
 ]
 

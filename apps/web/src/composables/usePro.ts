@@ -13,6 +13,12 @@
 // `available !== true` - kalit umuman YO'Q: bosilsa ham backend "pro" ni
 // v1 ga yubormasdi, odam esa "Pro so'radim" deb o'ylab qolardi. So'rov
 // yiqilsa ham yashirin: dvigatelni bilmasdan "bor" deyish - taxmin.
+//
+// VERSIYA TANLOVIGA ERGASHADI (2026-10-04). Odamga tanlov berilgan bo'lsa
+// (`useEngines`), byudjet TANLANGAN versiya bo'yicha so'raladi (`?engine=`) va
+// kalit faqat javob AYNAN shu versiya uchun kelgan bo'lsa ko'rinadi: v2 -> v1
+// almashganda eski "v2 da Pro bor" javobi bir lahza ham kalitni ushlab turmasin
+// (aks holda "pro" so'rovi v1 ga ketardi).
 
 import { computed, readonly, ref, watch } from 'vue'
 import { proQuota } from '../api/pro.api'
@@ -29,7 +35,11 @@ const enabled = ref(read() === '1')
 const quota = ref<ProQuota | null>(null)
 const loading = ref(false)
 const loadFailed = ref(false)
-let inflight: Promise<void> | null = null
+/** Qaysi versiya uchun so'ralgan: `null` - server default'i (tanlov yo'q, Mini App). */
+const wantEngine = ref<string | null>(null)
+let inflight: { engine: string | null; done: Promise<void> } | null = null
+// Versiya tez almashsa, eski so'rovning javobi yangisini bosib ketmasin.
+let seq = 0
 
 function read(): string | null {
   try {
@@ -52,8 +62,12 @@ function lowest(w: ProWindows | undefined): number {
   return Math.min(w.day ?? 0, w.week ?? 0, w.month ?? 0)
 }
 
-/** Shu kanalda "Pro" bormi (v2 va byudjet o'qildi). Faqat ochiq `true`. */
-const available = computed(() => quota.value?.available === true)
+/** Shu kanalda "Pro" bormi (v2 va byudjet o'qildi). Faqat ochiq `true`. Versiya
+ *  tanlangan bo'lsa - javob o'sha versiya uchun bo'lishi ham shart (`quota.engine`). */
+const available = computed(
+  () =>
+    quota.value?.available === true && (wantEngine.value === null || quota.value.engine === wantEngine.value),
+)
 
 /** Eng tor oynada nechta qolgan - hisoblagichda shu ko'rsatiladi. Oy
  *  bo'yicha 400 qolgani kunlik 0 ni yumshatmaydi. */
@@ -74,24 +88,34 @@ watch(exhausted, (spent) => {
   if (spent) enabled.value = false
 })
 
-function load(): Promise<void> {
-  if (inflight) return inflight
+/** `engine` - odam tanlagan versiya (`useEngines().requestEngine`); berilmasa -
+ *  server default'i (eski xatti-harakat). */
+function load(engine: string | null = null): Promise<void> {
+  wantEngine.value = engine
+  if (inflight && inflight.engine === engine) return inflight.done
+  const id = ++seq
   loading.value = true
-  inflight = (async () => {
+  const done = (async () => {
     try {
-      quota.value = await proQuota()
+      const res = await proQuota(engine)
+      if (id !== seq) return
+      quota.value = res
       loadFailed.value = false
     } catch {
+      if (id !== seq) return
       // Kalit KO'RINMAYDI (`available` - faqat ochiq `true`): qaysi dvigatel
       // ishlashini bilmasdan "Pro bor" deyish - taxmin, v1 da esa "pro"
       // baribir yuborilmasdi. Keyingi ochilishda qayta so'raladi.
       loadFailed.value = true
     } finally {
-      loading.value = false
-      inflight = null
+      if (id === seq) {
+        loading.value = false
+        inflight = null
+      }
     }
   })()
-  return inflight
+  inflight = { engine, done }
+  return done
 }
 
 /** Javob keldi: xizmat aytgan qoldiqni olamiz (qayta so'ramasdan).
@@ -123,8 +147,12 @@ function noteAnswer(pro: ProInfo | null | undefined): void {
 
 /** Chiqishda: keyingi odam boshqa byudjet bilan keladi. */
 function reset(): void {
+  seq += 1
+  inflight = null
   quota.value = null
   loadFailed.value = false
+  loading.value = false
+  wantEngine.value = null
 }
 
 export function usePro() {

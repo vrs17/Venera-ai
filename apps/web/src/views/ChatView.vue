@@ -9,6 +9,7 @@ import { ApiError } from '../api/http'
 import { copyText } from '../clipboard'
 import { useAuth } from '../composables/useAuth'
 import { usePro } from '../composables/usePro'
+import { useEngines } from '../composables/useEngines'
 import { provisionalTitle, useChats } from '../composables/useChats'
 import { useWakeWord, WAKE_LOCALES, WAKE_STORAGE_KEY } from '../composables/useWakeWord'
 import { warmGreeting } from '../api/greeting'
@@ -51,6 +52,9 @@ const { user, logout } = useAuth()
 // shu yerda yangilanadi: javob bilan kelgan `pro.remaining` qayta
 // so'rashdan aniqroq va bepul.
 const pro = usePro()
+// Yordamchi versiyasi (v1/v2): admin odamga tanlov bergan bo'lsa kompozerda "v2 ▾"
+// chiqadi va tanlov har savol bilan ketadi. Tanlov yo'q - hech narsa o'zgarmaydi.
+const engines = useEngines()
 // Iqtibos qilingan hujjat - chat yonidagi panel. Manba ro'yxati ochadi.
 const { doc: viewerDoc, close: closeViewer } = useDocViewer()
 // Suhbatlar tarixi (yon panel). Ro'yxat serverdan; bu ekran faqat qaysi
@@ -159,10 +163,6 @@ const sidebarPanel = useResizablePanel({
   enabled: () => isDesktop.value,
 })
 
-// User vs developer chat UI. Developer mode adds the pipeline trace (when the
-// response has one) and a one-line route / timing / audit key under answers.
-const devMode = ref(readFlag('venera_dev_mode', false))
-watch(devMode, (value) => writeFlag('venera_dev_mode', value))
 // Imperative, non-reactive (the React useRef equivalent) — a plain let, not a ref.
 let abortController: AbortController | null = null
 
@@ -374,22 +374,49 @@ onMounted(() => {
   if (owner) void chats.load(owner)
 })
 // Byudjet bir marta yuklanadi; keyin har javob bilan o'zi yangilanadi
-// (`pro.noteAnswer`), ya'ni qayta so'rashning hojati yo'q.
+// (`pro.noteAnswer`), ya'ni qayta so'rashning hojati yo'q. Versiya tanlovi bor odamda
+// esa tanlov o'zgarganda qayta so'raladi (pastda) - "Pro" kaliti versiyaga ergashadi.
 onMounted(() => {
-  if (user.value) void pro.load()
+  if (user.value) void pro.load(engines.requestEngine.value)
 })
+
+// Versiyalar: sahifa ochilganda va boshqa odam kirganda (shu tabda chiqib-kirish).
+// `immediate` - onMounted o'rniga: kirish bilan birinchi so'rov bir joyda.
+watch(
+  () => user.value?.actorId ?? null,
+  (id) => {
+    if (id !== null) void engines.load(id)
+  },
+  { immediate: true },
+)
+// Tanlov o'zgardi (yoki versiyalar endi keldi) -> "Pro" byudjeti shu versiya bo'yicha.
+// Javob kelguncha kalit yashirin (`usePro.available` versiyani tekshiradi): v1 ga
+// o'tilganda eski "v2 da Pro bor" holati bir lahza ham qolmasin.
+// `choice` - versiyalar yuklangan: chiqishdagi `reset()` (null) eski odamning tokeni
+// bilan yana bir byudjet so'rovini yubormasin.
+watch(engines.requestEngine, (engine, prev) => {
+  if (user.value && engines.choice.value && engine !== prev) void pro.load(engine)
+})
+// Odam tabga qaytdi: admin shu orada versiya bergan yoki olgan bo'lishi mumkin. Arzon
+// GET, lekin daqiqasiga bir martadan ko'p emas - tab almashtirib turish so'rov yog'dirmasin.
+let enginesCheckedAt = Date.now()
+function onVisible() {
+  if (document.visibilityState !== 'visible' || !user.value) return
+  if (Date.now() - enginesCheckedAt < 60_000) return
+  enginesCheckedAt = Date.now()
+  void engines.load(user.value.actorId)
+}
+onMounted(() => document.addEventListener('visibilitychange', onVisible))
+onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible))
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
-
-function toggleDevMode() {
-  devMode.value = !devMode.value
-}
 
 async function onLogout() {
   abortController?.abort()
   stopReading()
-  // Keyingi kirgan odam boshqa "Pro" byudjeti bilan keladi.
+  // Keyingi kirgan odam boshqa "Pro" byudjeti va boshqa versiyalar bilan keladi.
   pro.reset()
+  engines.reset()
   // Ochiq hujjat (HRM/CRM manbasi bo'lishi mumkin) keyingi kirgan odamga qolmasin.
   closeViewer()
   // The list belongs to this person; the next login must not see it — nor the
@@ -511,7 +538,7 @@ function runPipeline(id: string, question: string, mode: 'standard' | 'pro' = 's
           route: frame.route ?? null,
           stage: null,
           ...(frame.request_id ? { requestId: frame.request_id } : {}),
-          // Qaysi dvigatel (v1/v2) javob berdi - dasturchi qatorida.
+          // Qaysi dvigatel (v1/v2) javob berdi - tanlov bor odamga javob ostida.
           ...(frame.engine ? { engine: String(frame.engine) } : {}),
         })
         // "Pro" natijasi: ishlatildimi, nechta qoldi, berilmagan bo'lsa
@@ -547,6 +574,9 @@ function runPipeline(id: string, question: string, mode: 'standard' | 'pro' = 's
     signal: controller.signal,
     // Only the client knows whether anyone is listening.
     voice: voiceOpen.value,
+    // Odam tanlagan versiya - faqat tanlov bor bo'lsa (aks holda `null`, maydon
+    // yuborilmaydi). Server uni ruxsat etilganlar ichida bo'lsagina oladi.
+    engine: engines.requestEngine.value,
     locale: String(locale.value),
     // Sarlavhalar bilan keladi - javob tugamasdan ham "Xabar berish" kalitni bilsin.
     onTurn: (turnId) => {
@@ -776,7 +806,6 @@ onBeforeUnmount(() => {
       :resize="sidebarPanel"
       :user="user"
       :theme="theme"
-      :dev-mode="devMode"
       :wake="wakeEnabled"
       :wake-supported="wakeSupported"
       :wake-distorted="wakeDistorted"
@@ -786,7 +815,6 @@ onBeforeUnmount(() => {
       @new-chat="newChat"
       @open-chat="openHistory"
       @set-theme="setTheme"
-      @toggle-dev-mode="toggleDevMode"
       @toggle-wake="toggleWake"
       @open-desktop="desktopOpen = true"
       @logout="onLogout"
@@ -807,7 +835,6 @@ onBeforeUnmount(() => {
         mode="drawer"
         :user="user"
         :theme="theme"
-        :dev-mode="devMode"
         :wake="wakeEnabled"
         :wake-supported="wakeSupported"
         :wake-distorted="wakeDistorted"
@@ -817,7 +844,6 @@ onBeforeUnmount(() => {
         @open-chat="openHistory"
         @close="sidebarOpen = false"
         @set-theme="setTheme"
-        @toggle-dev-mode="toggleDevMode"
         @toggle-wake="toggleWake"
         @open-desktop="desktopOpen = true"
         @logout="onLogout"
@@ -865,7 +891,7 @@ onBeforeUnmount(() => {
         <Conversation
           v-else
           :exchanges="exchanges"
-          :dev-mode="devMode"
+          :show-engine="engines.selectable.value"
           :busy="phase !== 'idle'"
           :streaming-id="streamingId"
           :reported-keys="reportedKeys"

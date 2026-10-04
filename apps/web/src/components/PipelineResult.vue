@@ -3,10 +3,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
 import { CircleAlert, Clock, Lock, ShieldAlert } from 'lucide-vue-next'
-import type { MsgKey } from '../i18n'
 import type { ChatExchange } from './chat/types'
 import ResultShell from './ResultShell.vue'
-import TraceStages from './TraceStages.vue'
 import ThinkingLoader from './ThinkingLoader.vue'
 import MessageActions from './MessageActions.vue'
 import MarkdownMessage from './MarkdownMessage.vue'
@@ -21,13 +19,17 @@ import VTooltip from '../ui/VTooltip.vue'
  * xato > to'xtatilgan > kutilmoqda > tayyor.
  *
  * Tayyor javob tartibi: (kerak bo'lsa) holat qatori, matn, "to'xtatildi" belgisi,
- * ogohlantirish, tasdiq kartasi, fayl va manbalar, "Pro" natijasi, amallar. Dasturchi rejimida
- * oxirida bitta mono qator: yo'nalish, vaqt, audit kaliti.
+ * ogohlantirish, tasdiq kartasi, fayl va manbalar, "Pro" natijasi, amallar.
+ *
+ * Dasturchi rejimi (pipeline izi, mono qator) olib tashlandi: savolning to'liq izi
+ * admin panelida ("Savol izi"), oddiy odamga esa texnik qator faqat shovqin edi.
  */
 const props = withDefaults(
   defineProps<{
     exchange: ChatExchange
-    devMode: boolean
+    /** Odam versiyani o'zi tanlay oladi: qaysi versiya javob berganini amallar qatorida
+     *  kichik yozuv bilan ko'rsatamiz - ikki versiyani solishtirayotgan odam adashmasin. */
+    showEngine?: boolean
     /** Istalgan so'rov ketmoqda - "Qayta yaratish" o'chiq. */
     busy?: boolean
     /** Aynan SHU javob hozir yozilmoqda: kursor, amallar hali yo'q. */
@@ -38,29 +40,11 @@ const props = withDefaults(
     /** ADMIN: amallarda savol izi havolasi. */
     canTrace?: boolean
   }>(),
-  { busy: false, streaming: false, latest: false, reported: false, canTrace: false },
+  { showEngine: false, busy: false, streaming: false, latest: false, reported: false, canTrace: false },
 )
 const emit = defineEmits<{ regenerate: []; report: [] }>()
 
 const { t } = useI18n({ useScope: 'global' })
-
-/** Dasturchi qatoridagi holat nomi. Noma'lum `READY_*` - "Tayyor" (yiqilmaydi). */
-const STATUS_LABEL: Record<string, MsgKey> = {
-  READY_FOR_HR_RAG: 'statusReady',
-  READY_FOR_PUBLIC_RAG: 'statusReady',
-  READY_FOR_OPENAI: 'statusReady',
-  PUBLIC_RAG_NO_RELEVANT_CONTEXT: 'statusNoContext',
-  RAG_DOMAIN_NOT_READY: 'statusModuleNotReady',
-  STOP_ACCESS_DENIED: 'statusAccessDenied',
-  STOP_UNSAFE: 'statusBlocked',
-}
-
-const DOMAIN_LABEL: Record<string, MsgKey> = {
-  HR: 'domainHR',
-  PUBLIC_DOMAIN: 'domainPublic',
-  PUBLIC_GENERAL: 'domainGeneral',
-  FUTURE_DOMAIN: 'domainFuture',
-}
 
 // Guard/access `reason` matnlari backenddan keladi (u yerda allaqachon tarjima
 // qilingan); bu yerdagi matnlar - faqat backend sabab bermasa.
@@ -105,23 +89,10 @@ const finished = computed(() => !!props.exchange.response && !props.streaming)
 const canReport = computed(() => finished.value && !!(answer.value || props.exchange.proposal))
 const traceId = computed(() => (props.canTrace ? (props.exchange.turnId ?? null) : null))
 
-const devMeta = computed(() => {
-  if (!props.devMode) return []
-  const ex = props.exchange
-  const r = ex.response
-  const parts: string[] = []
-  if (r) {
-    const status = STATUS_LABEL[r.finalStatus]
-    parts.push(status ? t(status) : String(r.finalStatus))
-    const domain = r.domain ? DOMAIN_LABEL[r.domain] : undefined
-    if (r.domain) parts.push(domain ? t(domain) : String(r.domain))
-  }
-  if (ex.route) parts.push(t('answerRoute', { route: ex.route }))
-  if (ex.engine) parts.push(t('chat.engine', { v: ex.engine }))
-  if (ex.durationMs != null) parts.push(t('roundTrip', { n: (ex.durationMs / 1000).toFixed(2) }))
-  if (ex.requestId) parts.push(ex.requestId)
-  return parts
-})
+// Javob bergan versiya (`done.engine`). Faqat tanlov bor odamga - qolganlarga bitta
+// versiya bor, yozuv hech narsa aytmaydi. Tarixdan ochilgan javobda yo'q (server
+// xabar bo'yicha versiyani saqlamaydi) - u holda yozuv ham yo'q, taxmin qilinmaydi.
+const engineTag = computed(() => (props.showEngine ? (props.exchange.engine?.trim() || null) : null))
 </script>
 
 <template>
@@ -194,15 +165,11 @@ const devMeta = computed(() => {
         :trace-id="traceId"
         @regenerate="emit('regenerate')"
         @report="emit('report')"
-      />
-
-      <!-- Dasturchi rejimi: to'liq iz (faqat /ask yo'lida bor) yoki bitta mono qator. -->
-      <div v-if="devMode && exchange.response.guard" class="res__trace">
-        <TraceStages :response="exchange.response" :default-open="true" />
-      </div>
-      <p v-if="devMeta.length" class="res__dev">
-        <span v-for="(part, i) in devMeta" :key="i">{{ part }}</span>
-      </p>
+      >
+        <VTooltip v-if="engineTag" :text="t('chat.engines.answeredBy', { v: engineTag })">
+          <span class="res__engine" tabindex="0">{{ engineTag }}</span>
+        </VTooltip>
+      </MessageActions>
     </ResultShell>
   </div>
 </template>
@@ -245,9 +212,6 @@ const devMeta = computed(() => {
 .res :deep(.res__acts) {
   margin-top: var(--s-2);
 }
-.res__trace {
-  margin-top: var(--s-4);
-}
 .res__pro {
   display: inline-flex;
   align-items: center;
@@ -274,15 +238,16 @@ const devMeta = computed(() => {
   --badge-bg: transparent;
   box-shadow: inset 0 0 0 1px var(--line);
 }
-.res__dev {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-1) var(--s-3);
-  margin-top: var(--s-2);
-  color: var(--text-3);
+/* Versiya yozuvi: vaqt yonida, eng jim rangda - e'tibor talab qilmaydi, faqat
+   kerak bo'lganda o'qiladi. Mono shrift: "v1"/"v2" bir xil kenglikda. */
+.res__engine {
+  padding: 0 var(--s-1);
+  border-radius: var(--r-xs);
+  color: var(--text-4);
   font-family: var(--font-mono);
-  font-size: var(--fs-mono);
-  line-height: var(--lh-mono);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  cursor: default;
 }
 
 /* Amallar: sichqonchali qurilmada javob ustida (yoki fokus ichida) ko'rinadi, oxirgi

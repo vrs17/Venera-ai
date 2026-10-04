@@ -14,11 +14,12 @@ import { useDictation } from '../composables/useDictation'
 import type { DictationOutcome, DictationStartFailure } from '../composables/useDictation'
 import ComposerMenu from './ComposerMenu.vue'
 import DictationBar from './chat/DictationBar.vue'
+import EnginePicker from './chat/EnginePicker.vue'
 
 /**
  * Yozish maydoni (spec §4.3): suzuvchi karta - matn, ostida bitta qator boshqaruv:
- * chapda "+" (ulanishlar, fayl) va "Pro" kaliti, o'ngda mikrofon (ovoz bilan yozish)
- * va yuborish.
+ * chapda "+" (ulanishlar, fayl), versiya ("v2 ▾" - faqat odamga tanlov berilgan bo'lsa)
+ * va "Pro" kaliti, o'ngda mikrofon (ovoz bilan yozish) va yuborish.
  * Javob yozilayotganda yuborish o'rnini "To'xtatish" egallaydi.
  *
  * Mikrofon HECH QAYERGA OLIB BORMAYDI: u shu kartaning ichida ovozni yozib oladi
@@ -282,6 +283,8 @@ defineExpose({ focus: () => taRef.value?.focus({ preventScroll: true }) })
       />
       <div class="dock__bar">
         <ComposerMenu />
+        <!-- Versiya: "Pro" dan oldin - Pro shu tanlovga bog'liq (v1 da Pro yo'q). -->
+        <EnginePicker />
         <!-- pointerdown.prevent: kalit bosilganda fokus matnda qoladi (yuborish kabi). -->
         <VTooltip v-if="proAvailable">
           <template #content>
