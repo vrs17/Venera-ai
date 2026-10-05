@@ -5,24 +5,24 @@ let entrancePlayed = false
 </script>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUpdate, onUpdated, ref } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { CalendarDays, ChevronRight, Clock3, History, ListChecks, Scale } from 'lucide-vue-next'
+import { ChevronRight, Clock3, History, ListChecks } from 'lucide-vue-next'
 import BrandSpark from '../../components/BrandSpark.vue'
 import { formatWhen } from '../../time'
 import { SUGGESTIONS } from '../i18n'
 import type { SuggestionKey } from '../i18n'
 
 /**
- * Yangi suhbat: salomlashuv va 2x2 taklif kartalari - BOSH BARMOQ ZONASIDA, ya'ni
- * ekranning pastida, kompozerning ustida. Telefonni bir qo'lda ushlagan odam ekran
- * tepasiga yetmaydi; kartalar yuqorida tursa, ularni bosish uchun ikkinchi qo'l kerak.
+ * Yangi suhbat: salomlashuv bo'sh joyning O'RTASIDA (eni va bo'yi bo'yicha), ikki taklif
+ * kartasi esa BOSH BARMOQ ZONASIDA - ekran pastida, kompozerning ustida. Telefonni bir
+ * qo'lda ushlagan odam ekran tepasiga yetmaydi: bosiladigan narsa pastda qoladi, faqat
+ * o'qiladigan salomlashuv esa bo'sh ekranni to'ldiradi (pastga yopishib qolmaydi).
  *
  * KARTALAR GORIZONTAL (belgi chapda, matn o'ngda, 64px): 320px ekranda ham (iPhone SE,
- * "Display Zoom", Android "katta shrift") ikki ustun sig'adi va to'rt karta bosh barmoq
- * zonasidan chiqib ketmaydi. Matn kattalashtirilsa (200%) - o'zi bir ustunga o'tadi,
- * karta bo'yi matn bilan o'sadi (bo'sh "teshik" yo'q).
+ * "Display Zoom", Android "katta shrift") ikki ustun sig'adi. Matn kattalashtirilsa
+ * (200%) - o'zi bir ustunga o'tadi, karta bo'yi matn bilan o'sadi (bo'sh "teshik" yo'q).
  *
  * "DAVOM ETTIRISH" - kartalar ustida bitta jim qator: oxirgi suhbat nomi va vaqti.
  * Tarixni ochishning eng ko'p sababi - kechagi suhbatni davom ettirish; endi u ekran
@@ -47,10 +47,8 @@ const animate = !entrancePlayed
 entrancePlayed = true
 
 const ICONS: Record<SuggestionKey, Component> = {
-  leave: CalendarDays,
   late: Clock3,
   tasks: ListChecks,
-  probation: Scale,
 }
 
 function partOfDay(hour: number): 'morning' | 'day' | 'evening' {
@@ -72,13 +70,39 @@ const resumeWhen = computed(() => {
 function pick(key: SuggestionKey) {
   emit('pick', t(`tg.suggest.${key}.q`))
 }
+
+/* Salomlashuv markazda turgani uchun pastda nimadir paydo bo'lsa ("davom ettirish"
+   qatori sekin tarmoqda kech keladi - ChatScreen 400 ms kutadi, keyin baribir ochadi)
+   u bir kadrda ~26px yuqoriga sakrardi. FLIP: yangilanishdan oldingi joyini eslab,
+   hero'ni eski joyidan yangisiga SURAMIZ. Hero qutisining o'zi joyida qoladi (u bo'sh
+   joyni to'ldiradi, faqat qisqaradi) - shuning uchun siljish ichidagi sarlavhadan o'lchanadi. */
+const heroRef = ref<HTMLElement | null>(null)
+const helloRef = ref<HTMLElement | null>(null)
+let helloTopBefore: number | null = null
+onBeforeUpdate(() => {
+  helloTopBefore = helloRef.value ? helloRef.value.getBoundingClientRect().top : null
+})
+onUpdated(() => {
+  const before = helloTopBefore
+  helloTopBefore = null
+  const hero = heroRef.value
+  const hello = helloRef.value
+  if (before === null || !hero || !hello || typeof hero.animate !== 'function') return
+  const dy = before - hello.getBoundingClientRect().top
+  if (Math.abs(dy) < 1 || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  // --dur-3 / --ease-out (tokens.css): Web Animations CSS o'zgaruvchisini o'qimaydi.
+  hero.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], {
+    duration: 280,
+    easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+  })
+})
 </script>
 
 <template>
   <section class="welcome" :class="{ 'is-anim': animate, 'is-dim': dim }" :aria-disabled="dim ? 'true' : undefined">
-    <div class="welcome__hero">
+    <div ref="heroRef" class="welcome__hero">
       <span class="welcome__spark" aria-hidden="true"><BrandSpark :size="22" /></span>
-      <h2 class="welcome__hello">{{ hello }}</h2>
+      <h2 ref="helloRef" class="welcome__hello">{{ hello }}</h2>
       <p class="welcome__lead">{{ t('tg.welcome.lead') }}</p>
     </div>
 
@@ -110,12 +134,19 @@ function pick(key: SuggestionKey) {
 </template>
 
 <style scoped>
+/* Bo'lim butun ustunni egallaydi; salomlashuv (hero) qolgan bo'sh joyni oladi va
+   mazmunini uning o'rtasiga qo'yadi. "O'rta" haqiqiy bo'lishi uchun hero ustidagi va
+   ostidagi bo'shliq teng: tepada `.chat__col` s-4 + shu yerdagi s-1 = 20px, pastda
+   bo'lim gap'i s-5 = 20px. Tenglik tepadagi chekkani KAMAYTIRIB qilingan, hero'ga
+   pastki chekka qo'shib emas: joy tor bo'lsa (past ekran, yotiq telefon, katta shrift)
+   hero mazmun bo'yigacha qisqaradi, ustun pastga yopishib aylanadi va har ortiqcha piksel
+   salomlashuvni yuqori panel ostiga ko'proq yashirardi. */
 .welcome {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: var(--s-5);
-  margin-top: auto;
-  padding: var(--s-6) 0 var(--s-2);
+  padding: var(--s-1) 0 var(--s-2);
   transition: opacity var(--dur-2) var(--ease-out);
 }
 .welcome.is-dim {
@@ -124,9 +155,12 @@ function pick(key: SuggestionKey) {
 }
 .welcome__hero {
   display: flex;
+  flex: 1;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: center;
   padding: 0 var(--s-1);
+  text-align: center;
 }
 .welcome__spark {
   display: grid;
@@ -144,6 +178,11 @@ function pick(key: SuggestionKey) {
   font-weight: 600;
   letter-spacing: -0.022em;
   text-wrap: balance;
+  /* Bo'linmaydigan uzun so'z (uzun ism, ism yo'q bo'lsa email'ning boshi) markazda
+     turgani uchun IKKI chetdan ham ekrandan chiqib ketardi - birinchi harflar kesilib.
+     Sig'masa so'z o'rtasidan bo'linadi, kenglik ustundan oshmaydi. */
+  max-width: 100%;
+  overflow-wrap: break-word;
 }
 .welcome__lead {
   margin-top: var(--s-1);
@@ -294,9 +333,6 @@ html[data-theme='dark'] .card {
   .welcome__hello {
     font-size: 1.375rem;
     line-height: 1.75rem;
-  }
-  .welcome {
-    padding-top: var(--s-3);
   }
 }
 

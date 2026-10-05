@@ -46,10 +46,8 @@ const en = {
     resume: 'Continue: {title}',
   },
   suggest: {
-    leave: { label: 'Vacation days left', hint: 'HRM', q: 'How many vacation days do I have left?' },
     late: { label: 'Was I late today?', hint: 'Attendance', q: 'Was I late for work today?' },
     tasks: { label: 'My tasks', hint: 'CRM', q: 'What are my CRM tasks?' },
-    probation: { label: 'Probation period', hint: 'Labour code', q: 'What is the maximum probation period?' },
   },
   chat: {
     copied: 'Answer copied',
@@ -162,10 +160,8 @@ const uz: Mirror<typeof en> = {
     resume: 'Davom ettirish: {title}',
   },
   suggest: {
-    leave: { label: 'Taʼtil qoldigʻi', hint: 'HRM', q: 'Taʼtilimdan necha kun qoldi?' },
     late: { label: 'Bugun kechikdimmi?', hint: 'Davomat', q: 'Bugun ishga kechikdimmi?' },
     tasks: { label: 'Vazifalarim', hint: 'CRM', q: 'CRM dagi vazifalarim qaysilar?' },
-    probation: { label: 'Sinov muddati', hint: 'Mehnat kodeksi', q: 'Sinov muddati eng koʻpi bilan qancha?' },
   },
   chat: {
     copied: 'Javob nusxalandi',
@@ -278,10 +274,8 @@ const uzCyrl: Mirror<typeof en> = {
     resume: 'Давом эттириш: {title}',
   },
   suggest: {
-    leave: { label: 'Таътил қолдиғи', hint: 'HRM', q: 'Таътилимдан неча кун қолди?' },
     late: { label: 'Бугун кечикдимми?', hint: 'Давомат', q: 'Бугун ишга кечикдимми?' },
     tasks: { label: 'Вазифаларим', hint: 'CRM', q: 'CRM даги вазифаларим қайсилар?' },
-    probation: { label: 'Синов муддати', hint: 'Меҳнат кодекси', q: 'Синов муддати энг кўпи билан қанча?' },
   },
   chat: {
     copied: 'Жавоб нусхаланди',
@@ -394,10 +388,8 @@ const ru: Mirror<typeof en> = {
     resume: 'Продолжить: {title}',
   },
   suggest: {
-    leave: { label: 'Остаток отпуска', hint: 'HRM', q: 'Сколько дней отпуска у меня осталось?' },
     late: { label: 'Было ли опоздание сегодня?', hint: 'Посещаемость', q: 'Было ли у меня опоздание сегодня?' },
     tasks: { label: 'Мои задачи', hint: 'CRM', q: 'Какие у меня задачи в CRM?' },
-    probation: { label: 'Срок испытания', hint: 'Трудовой кодекс', q: 'Какой максимальный испытательный срок?' },
   },
   chat: {
     copied: 'Ответ скопирован',
@@ -485,8 +477,8 @@ export function installTgMessages(): void {
   for (const { code } of LOCALES) i18n.global.mergeLocaleMessage(code, { tg: tgMessages[code] })
 }
 
-/** Takliflar tartibi - 2x2 kartalar shu tartibda. */
-export const SUGGESTIONS = ['leave', 'late', 'tasks', 'probation'] as const
+/** Takliflar tartibi - kartalar (odatda bir qatorda ikkita) shu tartibda. */
+export const SUGGESTIONS = ['late', 'tasks'] as const
 export type SuggestionKey = (typeof SUGGESTIONS)[number]
 
 /** Nomi tarjimada bor so'rov asboblari (`tg.tools.*`). Boshqasi - "Tizim ma'lumoti":

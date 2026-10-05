@@ -76,6 +76,15 @@ const resume = computed(() => {
   return { id: c.chat_id, title: c.title, at }
 })
 
+/* Salomlashuv bo'sh joyning O'RTASIDA: "davom ettirish" qatori keyin qo'shilsa, u bir
+   kadrda ~26px yuqoriga sakrardi (kirish animatsiyasi tugab bo'lgach). Shuning uchun
+   yangi suhbat ekrani suhbatlar ro'yxati kelgunicha kutadi - odatda 100-300 ms; sekin
+   tarmoqda RESUME_WAIT_MS dan keyin baribir chiqadi (bo'sh ekran uzoq turmasin). Keyingi
+   "Yangi suhbat" larda ro'yxat allaqachon bor - kutish yo'q. */
+const RESUME_WAIT_MS = 400
+const resumeWaitOver = ref(false)
+const welcomeReady = computed(() => resumeWaitOver.value || chats.loaded.value || chats.loadFailed.value)
+
 /* ── Aylantirish ─────────────────────────────────────────────────────────── */
 const scroller = ref<HTMLElement | null>(null)
 const column = ref<HTMLElement | null>(null)
@@ -282,6 +291,7 @@ let offSettings: () => void = () => {}
 onMounted(() => {
   const owner = user.value ? String(user.value.actorId) : null
   if (owner) void chats.load(owner)
+  setTimeout(() => (resumeWaitOver.value = true), RESUME_WAIT_MS)
   void pro.load()
   offSettings = onSettingsButton(() => (settingsOpen.value = true))
 
@@ -324,14 +334,16 @@ onBeforeUnmount(() => {
 
     <main ref="scroller" class="chat__scroll" @scroll.passive="onScroll">
       <div ref="column" class="chat__col" :class="{ 'is-welcome': welcome }">
-        <TgWelcome
-          v-if="welcome"
-          :name="firstName"
-          :dim="dictating"
-          :resume="resume"
-          @pick="pickSuggestion"
-          @resume="openFromHistory"
-        />
+        <template v-if="welcome">
+          <TgWelcome
+            v-if="welcomeReady"
+            :name="firstName"
+            :dim="dictating"
+            :resume="resume"
+            @pick="pickSuggestion"
+            @resume="openFromHistory"
+          />
+        </template>
 
         <div v-else-if="historyLoading" class="chat__skeleton" aria-hidden="true">
           <span class="tg-skel chat__skel-q" />

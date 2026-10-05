@@ -50,91 +50,47 @@ function releaseDownloads(): Plugin {
   }
 }
 
-// Telegram Mini App (`apps/tg/`) - ikkita fayl, build yo'q. Production'da
-// uni nginx host'dan mount qilib `/tg/` ostida beradi
-// (deploy/nginx.container.conf); dev serverda esa hech kim bermasdi, ya'ni
-// Mini App'ni lokalda umuman ochib bo'lmasdi. Bu plugin o'sha ishni
-// takrorlaydi: http://<host>:5174/tg/ - va `/api` o'sha proxy orqali ketadi.
+// Telegram Mini App (tg-app.html -> src/tg/, web kod bazasida) `/tg/` ostida. `/tg-beta/`
+// - o'sha sahifaning o'zi: beta paytida sinovchilar botdagi /beta orqali ochgan tugma va
+// havolalar ishlashda davom etsin. Eski ikki faylli ilova (`apps/tg`) dev'da endi
+// berilmaydi - u faqat production'dagi qaytarish (rollback) yo'li sifatida saqlanadi.
 //
-// Production bundle'ga TA'SIR QILMAYDI (`apply: 'serve'`): fayllar dist/ ga
-// tushmaydi - ular obrazga ham kirmaydi, host'dan mount qilinadi.
-const TG_DIR = resolve(__dirname, '../tg')
-
-function tgMiniApp(): Plugin {
-  const handler: Connect.NextHandleFunction = (req, res, next) => {
-    // nginx kabi: `/tg` -> `/tg/`, aks holda `app.js` ildizdan qidirilardi.
-    if ((req.originalUrl || '').split('?')[0] === '/tg') {
-      res.statusCode = 301
-      res.setHeader('Location', '/tg/')
-      res.end()
-      return
-    }
-    // connect '/tg' prefiksini olib tashlaydi, req.url = '/' yoki '/app.js'.
-    const requested = decodeURIComponent((req.url || '/').split('?')[0])
-    const name = basename(requested) || 'index.html'
-    const file = resolve(TG_DIR, name)
-
-    if (!file.startsWith(TG_DIR) || !existsSync(file)) return next()
-    const stat = statSync(file)
-    if (!stat.isFile()) return next()
-
-    const type = name.endsWith('.js') ? 'text/javascript; charset=utf-8'
-      : name.endsWith('.html') ? 'text/html; charset=utf-8'
-      : 'application/octet-stream'
-    res.setHeader('Content-Type', type)
-    res.setHeader('Content-Length', String(stat.size))
-    // Production'dagi `/tg/` javobi bilan bir xil: har so'rovda diskdan.
-    res.setHeader('Cache-Control', 'no-cache')
-    createReadStream(file).pipe(res)
-  }
-
-  return {
-    name: 'venera-tg-mini-app',
-    apply: 'serve',
-    configureServer(server: ViteDevServer) {
-      server.middlewares.use('/tg', handler)
-    },
-    configurePreviewServer(server: PreviewServer) {
-      server.middlewares.use('/tg', handler)
-    },
-  }
-}
-
-// Yangi Telegram Mini App (tg-app.html -> src/tg/, web kod bazasida) - hozircha BETA:
-// `/tg-beta/` ostida, sinovchilar uni botdagi /beta orqali ochadi. Eski ilova
-// (yuqoridagi plugin, `apps/tg`) almashtirish tasdiqlanguncha `/tg/` da qoladi.
-//
-// Mini App'ga oid ikki ish BITTA plugin'da - keyin `/tg/` ga ko'chirish yoki olib
-// tashlash shu yerda va nginx'dagi bitta location'da bo'ladi:
+// Mini App'ga oid ikki ish BITTA plugin'da (nginx'da esa ikki location):
 //   build       - ikkinchi kirish nuqtasi: dist/ ga index.html bilan birga tg-app.html
 //                 yig'iladi. Mini App o'z bo'laklari bilan - web'ning routeri, admin
 //                 qismi va pdf.js unga kirmaydi; umumiy kod (Vue, i18n, API) /assets/
 //                 dagi umumiy bo'laklarda, ikkala sahifa ularni bitta keshdan oladi.
-//   dev/preview - `/tg-beta/...` so'rovi `/tg-app.html` ga qayta yoziladi (nginx'dagi
-//                 `try_files /tg-app.html` kabi). Dev'da sahifani Vite o'zi o'zgartiradi,
-//                 ya'ni HMR ham ishlaydi; preview'da dist/tg-app.html beriladi.
-const TG_BETA_PATH = '/tg-beta'
+//   dev/preview - `/tg/...` va `/tg-beta/...` so'rovi `/tg-app.html` ga qayta yoziladi
+//                 (nginx'dagi `try_files /tg-app.html` kabi). Dev'da sahifani Vite o'zi
+//                 o'zgartiradi, ya'ni HMR ham ishlaydi; preview'da dist/tg-app.html beriladi.
+const TG_PATHS = ['/tg', '/tg-beta']
 const TG_APP_HTML = '/tg-app.html'
 
-function tgBetaApp(): Plugin {
+function tgMiniApp(): Plugin {
   const handler: Connect.NextHandleFunction = (req, res, next) => {
     const path = (req.url || '').split('?')[0]
-    // nginx kabi: `/tg-beta` -> `/tg-beta/`.
-    if (path === TG_BETA_PATH) {
-      res.statusCode = 301
-      res.setHeader('Location', `${TG_BETA_PATH}/`)
-      res.end()
-      return
+    for (const base of TG_PATHS) {
+      // nginx kabi: `/tg` -> `/tg/`.
+      if (path === base) {
+        res.statusCode = 301
+        res.setHeader('Location', `${base}/`)
+        res.end()
+        return
+      }
+      // Ichki holat mashinasi, router yo'q: prefiks ostidagi har qanday yo'l bitta
+      // sahifa. So'rov satri serverga kerak emas: dev stub uni brauzerdagi
+      // `location.search` dan o'qiydi (src/tg/telegram.ts). `/tg-beta/` `/tg/` bilan
+      // boshlanmaydi, ya'ni ikki prefiks bir-birini ushlab qolmaydi.
+      if (path.startsWith(`${base}/`)) {
+        req.url = TG_APP_HTML
+        break
+      }
     }
-    // Ichki holat mashinasi, router yo'q: `/tg-beta/` ostidagi har qanday yo'l bitta
-    // sahifa. So'rov satri serverga kerak emas: dev stub uni brauzerdagi
-    // `location.search` dan o'qiydi (src/tg/telegram.ts).
-    if (path.startsWith(`${TG_BETA_PATH}/`)) req.url = TG_APP_HTML
     next()
   }
 
   return {
-    name: 'venera-tg-beta-app',
+    name: 'venera-tg-mini-app',
     config: () => ({
       build: {
         rolldownOptions: {
@@ -146,9 +102,9 @@ function tgBetaApp(): Plugin {
         },
       },
     }),
-    // Prefikssiz `use(handler)` - `use('/tg-beta', ...)` EMAS: connect prefiksli
+    // Prefikssiz `use(handler)` - `use('/tg', ...)` EMAS: connect prefiksli
     // middleware'dan keyin `req.url` ga prefiksni QAYTA yopishtiradi, ya'ni qayta
-    // yozilgan yo'l `/tg-beta/tg-app.html` bo'lib qolardi.
+    // yozilgan yo'l `/tg/tg-app.html` bo'lib qolardi.
     configureServer(server: ViteDevServer) {
       server.middlewares.use(handler)
     },
@@ -167,7 +123,7 @@ export default defineConfig(({ mode }) => {
   const target = env.VITE_API_TARGET || env.VITE_API_BASE || 'http://10.10.50.9:8080'
   const proxy = { '/api': target }
   return {
-    plugins: [vue(), releaseDownloads(), tgMiniApp(), tgBetaApp()],
+    plugins: [vue(), releaseDownloads(), tgMiniApp()],
     // host: true binds 0.0.0.0 so the dev server is reachable on the LAN
     // (http://<your-ip>:5173). Pinned port keeps the URL + firewall rule stable.
     server: { host: true, port: 5173, proxy },
