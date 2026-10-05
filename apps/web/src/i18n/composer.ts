@@ -33,7 +33,7 @@ const en = {
     transcribing: 'Converting to text…',
     noSpeech: 'No voice heard',
     started: 'Recording. Press Enter to finish, Esc to cancel.',
-    inserted: 'Text added to your message',
+    inserted: 'Message text updated',
     cancelled: 'Recording cancelled',
   },
 }
@@ -64,7 +64,7 @@ const uz: Mirror<typeof en> = {
     transcribing: 'Matnga aylantirilmoqda…',
     noSpeech: 'Ovoz eshitilmadi',
     started: 'Yozib olinmoqda. Tugatish uchun Enter, bekor qilish uchun Esc.',
-    inserted: 'Matn xabarga qoʻshildi',
+    inserted: 'Xabar matni yangilandi',
     cancelled: 'Yozuv bekor qilindi',
   },
 }
@@ -95,7 +95,7 @@ const uzCyrl: Mirror<typeof en> = {
     transcribing: 'Матнга айлантирилмоқда…',
     noSpeech: 'Овоз эшитилмади',
     started: 'Ёзиб олинмоқда. Тугатиш учун Enter, бекор қилиш учун Esc.',
-    inserted: 'Матн хабарга қўшилди',
+    inserted: 'Хабар матни янгиланди',
     cancelled: 'Ёзув бекор қилинди',
   },
 }
@@ -126,7 +126,7 @@ const ru: Mirror<typeof en> = {
     transcribing: 'Преобразую в текст…',
     noSpeech: 'Голос не слышно',
     started: 'Идёт запись. Enter — закончить, Esc — отменить.',
-    inserted: 'Текст добавлен в сообщение',
+    inserted: 'Текст сообщения обновлён',
     cancelled: 'Запись отменена',
   },
 }
