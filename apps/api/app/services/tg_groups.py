@@ -1,0 +1,285 @@
+"""Telegram guruh xabarlari ombori - guruh xulosasi uchun (`app/bot/groups.py`).
+
+NEGA SAQLANADI. Bot API botga guruh TARIXINI bermaydi: bot faqat kelayotgan
+xabarlarni ko'radi (guruhda administrator bo'lsa - hammasini). Ya'ni "oxirgi
+3 kun xulosasi" uchun xabarlarni o'zimiz yozib borishimiz kerak. Xulosa
+faqat guruh ro'yxatga (`telegram_groups`) qo'shilgandan KEYINGI xabarlarni
+qamraydi.
+
+NIMA SAQLANADI - faqat ro'yxatdagi guruhdan, faqat odamlarning xabarlari:
+matn yoki izoh (telefon, email, karta, tokenlar NIQOBLANGAN - `mask_text`),
+yuborgan odamning ismi va Telegram id si, javob qilingan xabar, mavzu
+(forum). Rasm, fayl, ovozning O'ZI saqlanmaydi - faqat turi (`[rasm]`).
+Boshqa odamning shaxsiy xabaridan forward qilingan matn ham saqlanmaydi.
+
+QANCHA - `telegram_group_days` (90) kun, keyin o'chiriladi (`purge`).
+`secure_delete`: o'chirilgan matn fayl ichida qolib ketmaydi.
+
+SQLite (`data/telegram/groups.db`, gitignore'da, 600) - kontaktlar ombori
+bilan bir xil yondashuv: alohida fayl, tahlil bazasiga tegmaydi.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import logging
+import os
+import re
+import sqlite3
+import stat
+import threading
+import time
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+log = logging.getLogger(__name__)
+
+#: Bitta xabar matni shundan uzun bo'lsa qisqartiriladi (Telegram chegarasi 4096).
+TEXT_MAX = 4000
+#: Ism shundan uzun bo'lsa qisqartiriladi.
+NAME_MAX = 64
+#: Eskilarni o'chirish shuncha vaqtda bir marta (xabar qo'shilganda).
+_PURGE_EVERY = 3600.0
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS messages (
+    chat_id    INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    thread_id  INTEGER,
+    date       INTEGER NOT NULL,
+    from_id    INTEGER,
+    from_name  TEXT NOT NULL DEFAULT '',
+    username   TEXT,
+    text       TEXT NOT NULL,
+    reply_to   INTEGER,
+    edited_at  INTEGER,
+    PRIMARY KEY (chat_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS messages_chat_date ON messages (chat_id, date);
+PRAGMA user_version = 1;
+"""
+
+# --- niqoblash ------------------------------------------------------------------
+
+#: Har biri qator ICHIDA ishlaydi - qator uzilishlari saqlanadi (xulosa uchun
+#: kerak). `analytics.redact` bunga to'g'ri kelmaydi: u bo'shliqlarni yig'adi.
+_MASKS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # Tokenlar va kalitlar (`analytics/meter.py` dagi shakllar).
+    (re.compile(r"(?i)\bbearer\s+[\w.~+/=-]+"), "Bearer <token>"),
+    (re.compile(r"eyJ[\w-]{8,}(?:\.[\w-]+){0,2}"), "<token>"),
+    (re.compile(r"\b\d{5,}:[\w-]{30,}"), "<token>"),
+    (re.compile(r"\b[0-9a-f]{32}\.[\w-]{16,}"), "<key>"),
+    (re.compile(r"(?i)\b((?:parol|пароль|password|passwd|token|secret|api[_-]?key)\s*[:=]\s*)\S+"),
+     r"\1***"),
+    # Email.
+    (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}"), "<email>"),
+    # Karta raqami: 16 raqam, guruhlab yoki yaxlit.
+    (re.compile(r"(?<!\d)(?:\d{4}[ -]?){3}\d{4}(?!\d)"), "<karta>"),
+    # Telefon: +998 bilan har qanday shaklda; usiz - faqat ajratilgan shaklda
+    # (`90 123 45 67`, `(90) 123-45-67`), aks holda har 9 xonali son
+    # (buyurtma raqami) telefon bo'lib qolardi.
+    (re.compile(r"(?<![\w+])\+?998[\s-]?\(?\d{2}\)?[\s-]?\d{3}[\s-]?\d{2}[\s-]?\d{2}(?!\d)"), "<telefon>"),
+    (re.compile(r"(?<![\w+])\(?\d{2}\)?[\s-]\d{3}[\s-]?\d{2}[\s-]?\d{2}(?!\d)"), "<telefon>"),
+)
+
+
+def mask_text(text: str) -> str:
+    """Telefon, email, karta va tokenlarni niqoblaydi, qatorlarni saqlaydi."""
+    for pattern, replacement in _MASKS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+# --- xabar -> yozuv --------------------------------------------------------------
+
+
+def sender_name(user: dict[str, Any]) -> str:
+    """Telegram ismi (`first_name last_name`), bo'lmasa `@username`."""
+    name = " ".join(str(user.get(k) or "").strip() for k in ("first_name", "last_name")).strip()
+    if not name and user.get("username"):
+        name = "@" + str(user["username"])
+    name = " ".join(name.split())
+    return name[:NAME_MAX] or "Noma'lum"
+
+
+def message_text(msg: dict[str, Any]) -> str:
+    """Saqlanadigan matn: matn yoki izoh, oldida turi (`[rasm]`, `[fayl: x.pdf]`).
+
+    Bo'sh satr - saqlanmaydi (stiker, xizmat xabari va h.k.). Boshqa odamning
+    SHAXSIY xabaridan forward qilingan bo'lsa matn olinmaydi - u guruh uchun
+    yozilmagan.
+    """
+    body = str(msg.get("text") or msg.get("caption") or "").strip()
+    kind = ""
+    if "photo" in msg:
+        kind = "[rasm]"
+    elif isinstance(msg.get("document"), dict):
+        name = str(msg["document"].get("file_name") or "").strip()[:80]
+        kind = f"[fayl: {name}]" if name else "[fayl]"
+    elif "voice" in msg:
+        kind = "[ovozli xabar]"
+    elif "video" in msg or "video_note" in msg:
+        kind = "[video]"
+    elif "audio" in msg:
+        kind = "[audio]"
+    elif isinstance(msg.get("poll"), dict):
+        kind = "[so'rovnoma]"
+        body = str(msg["poll"].get("question") or "").strip()
+    origin = msg.get("forward_origin")
+    if isinstance(origin, dict):
+        if origin.get("type") in ("user", "hidden_user"):
+            return "[forward qilingan xabar]"
+        title = str((origin.get("chat") or {}).get("title") or "").strip()[:60]
+        kind = " ".join(filter(None, (f"[forward: {title}]" if title else "[forward]", kind)))
+    text = f"{kind} {body}".strip() if kind else body
+    return mask_text(text)[:TEXT_MAX]
+
+
+@dataclass(frozen=True)
+class Row:
+    message_id: int
+    thread_id: int | None
+    date: int
+    from_id: int | None
+    from_name: str
+    username: str | None
+    text: str
+    reply_to: int | None
+
+
+# --- ombor -------------------------------------------------------------------------
+
+
+class GroupStore:
+    """Guruh xabarlari. Ip-xavfsiz: har chaqiruv o'z ulanishini ochadi."""
+
+    def __init__(self, path: Path, *, days: int = 90) -> None:
+        self.path = Path(path)
+        self.days = days if 1 <= days <= 365 else 90
+        self._lock = threading.Lock()
+        self._ready = False
+        self._purged_at = 0.0
+
+    def _connect(self) -> sqlite3.Connection:
+        if not self._ready:
+            with self._lock:
+                if not self._ready:
+                    self.path.parent.mkdir(parents=True, exist_ok=True)
+                    conn = sqlite3.connect(self.path, timeout=10)
+                    try:
+                        conn.executescript(_SCHEMA)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                    # Ish yozishmalari: faqat egasi o'qiy oladi.
+                    os.chmod(self.path, stat.S_IRUSR | stat.S_IWUSR)
+                    self._ready = True
+        conn = sqlite3.connect(self.path, timeout=10)
+        conn.execute("PRAGMA secure_delete = ON")
+        return conn
+
+    @contextlib.contextmanager
+    def _tx(self):
+        conn = self._connect()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
+    def add(self, msg: dict[str, Any]) -> bool:
+        """Xabarni yozadi. Takror kelgani (qayta ishga tushganda) e'tiborsiz.
+        Natija: yozildimi."""
+        chat_id = (msg.get("chat") or {}).get("id")
+        message_id = msg.get("message_id")
+        if not isinstance(chat_id, int) or not isinstance(message_id, int) or message_id <= 0:
+            return False
+        text = message_text(msg)
+        if not text:
+            return False
+        sender = msg.get("from") or {}
+        reply = msg.get("reply_to_message")
+        reply_to = reply.get("message_id") if isinstance(reply, dict) else None
+        thread_id = msg.get("message_thread_id") if msg.get("is_topic_message") else None
+        if isinstance(reply_to, int) and reply_to == thread_id:
+            # Mavzuning o'ziga "javob" - bu oddiy xabar, javob emas.
+            reply_to = None
+        date = msg.get("date") if isinstance(msg.get("date"), int) else int(time.time())
+        with self._tx() as conn:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO messages (chat_id, message_id, thread_id, date, from_id,"
+                " from_name, username, text, reply_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (chat_id, message_id, thread_id if isinstance(thread_id, int) else None, date,
+                 sender.get("id") if isinstance(sender.get("id"), int) else None,
+                 sender_name(sender), str(sender.get("username") or "")[:NAME_MAX] or None,
+                 text, reply_to if isinstance(reply_to, int) else None),
+            )
+            added = cur.rowcount > 0
+        self._maybe_purge()
+        return added
+
+    def edit(self, msg: dict[str, Any]) -> bool:
+        """Tahrirlangan xabar - yangi matn. Saqlanmagan xabar qo'shilmaydi."""
+        chat_id = (msg.get("chat") or {}).get("id")
+        message_id = msg.get("message_id")
+        if not isinstance(chat_id, int) or not isinstance(message_id, int):
+            return False
+        text = message_text(msg)
+        if not text:
+            return False
+        edited = msg.get("edit_date") if isinstance(msg.get("edit_date"), int) else int(time.time())
+        with self._tx() as conn:
+            cur = conn.execute(
+                "UPDATE messages SET text = ?, edited_at = ? WHERE chat_id = ? AND message_id = ?",
+                (text, edited, chat_id, message_id))
+            return cur.rowcount > 0
+
+    def window(self, chat_id: int, since: float, until: float, *,
+               thread_id: int | None = None, limit: int = 3000) -> list[Row]:
+        """`[since, until)` dagi xabarlar, eskidan yangiga. `limit` dan ko'p
+        bo'lsa - ENG YANGILARI. `thread_id` - faqat shu mavzu (forum)."""
+        sql = ("SELECT message_id, thread_id, date, from_id, from_name, username, text, reply_to"
+               " FROM messages WHERE chat_id = ? AND date >= ? AND date < ?")
+        args: list[Any] = [chat_id, int(since), int(until)]
+        if thread_id is not None:
+            sql += " AND thread_id = ?"
+            args.append(thread_id)
+        sql += " ORDER BY date DESC, message_id DESC LIMIT ?"
+        args.append(limit)
+        with self._tx() as conn:
+            rows = conn.execute(sql, args).fetchall()
+        return [Row(*row) for row in reversed(rows)]
+
+    def first_date(self, chat_id: int) -> int | None:
+        """Shu guruhdan saqlangan eng eski xabar vaqti."""
+        with self._tx() as conn:
+            (value,) = conn.execute("SELECT MIN(date) FROM messages WHERE chat_id = ?",
+                                    (chat_id,)).fetchone()
+        return value
+
+    def count(self) -> int:
+        with self._tx() as conn:
+            (value,) = conn.execute("SELECT COUNT(*) FROM messages").fetchone()
+        return int(value)
+
+    def purge(self, now: float | None = None) -> int:
+        """`days` kundan eski xabarlarni o'chiradi. Natija: nechta."""
+        cutoff = int((time.time() if now is None else now) - self.days * 86400)
+        with self._tx() as conn:
+            cur = conn.execute("DELETE FROM messages WHERE date < ?", (cutoff,))
+            return cur.rowcount
+
+    def _maybe_purge(self) -> None:
+        now = time.monotonic()
+        if self._purged_at and now - self._purged_at < _PURGE_EVERY:
+            return
+        self._purged_at = now
+        try:
+            removed = self.purge()
+        except sqlite3.Error as exc:
+            log.warning("Guruh xabarlari: eskilari o'chirilmadi: %s", exc)
+            return
+        if removed:
+            log.info("Guruh xabarlari: %d ta eski xabar o'chirildi", removed)

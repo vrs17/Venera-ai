@@ -68,9 +68,24 @@ def start() -> None:
     _bot = VeneraBot(api, links, users=get_directory, webapp_url=settings.telegram_webapp_url,
                      workers=settings.telegram_workers, mode=settings.telegram_mode,
                      webhook_url=settings.telegram_webhook_url, webhook_secret=webhook_secret(),
-                     beta_url=settings.telegram_webapp_beta_url, sync_commands=True)
+                     beta_url=settings.telegram_webapp_beta_url, sync_commands=True,
+                     groups=_groups())
     _bot.start()
     _state["note"] = ""
+
+
+def _groups():
+    """Ro'yxatdagi guruhlar yordamchisi (`groups.py`). Ro'yxat bo'sh bo'lsa
+    ham yaratiladi - guruh `.env` ga keyin, qayta ishga tushirmasdan qo'shiladi."""
+    from ..core.config import ollama_key_now
+    from ..services.integrations.ollama import OllamaChat
+    from ..services.tg_groups import GroupStore
+    from .groups import GroupAssistant
+
+    writer = OllamaChat(settings.ollama_base_url, ollama_key_now,
+                        settings.telegram_group_model or settings.ollama_model)
+    store = GroupStore(settings.telegram_groups_db, days=settings.telegram_group_days)
+    return GroupAssistant(api, store, writer)
 
 
 def stop() -> None:
