@@ -10,7 +10,9 @@ NIMA SAQLANADI - faqat ro'yxatdagi guruhdan, faqat odamlarning xabarlari:
 matn yoki izoh (telefon, email, karta, tokenlar NIQOBLANGAN - `mask_text`),
 yuborgan odamning ismi va Telegram id si, javob qilingan xabar, mavzu
 (forum). Rasm, fayl, ovozning O'ZI saqlanmaydi - faqat turi (`[rasm]`).
-Boshqa odamning shaxsiy xabaridan forward qilingan matn ham saqlanmaydi.
+Forward qilingan xabar matni asl muallif nomi bilan saqlanadi
+(`[forward: Ism, 06.10 17:50] matn`): uni guruh a'zosi guruhga O'ZI ulashgan -
+guruhdagilar uni allaqachon ko'radi (2026-10-06 qarori; avval matnsiz edi).
 
 QANCHA - `telegram_group_days` (90) kun, keyin o'chiriladi (`purge`).
 `secure_delete`: o'chirilgan matn fayl ichida qolib ketmaydi.
@@ -31,11 +33,14 @@ import threading
 import time
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 log = logging.getLogger(__name__)
 
+_TZ = ZoneInfo("Asia/Tashkent")
 #: Bitta xabar matni shundan uzun bo'lsa qisqartiriladi (Telegram chegarasi 4096).
 TEXT_MAX = 4000
 #: Ism shundan uzun bo'lsa qisqartiriladi.
@@ -107,9 +112,8 @@ def sender_name(user: dict[str, Any]) -> str:
 def message_text(msg: dict[str, Any]) -> str:
     """Saqlanadigan matn: matn yoki izoh, oldida turi (`[rasm]`, `[fayl: x.pdf]`).
 
-    Bo'sh satr - saqlanmaydi (stiker, xizmat xabari va h.k.). Boshqa odamning
-    SHAXSIY xabaridan forward qilingan bo'lsa matn olinmaydi - u guruh uchun
-    yozilmagan.
+    Bo'sh satr - saqlanmaydi (stiker, xizmat xabari va h.k.). Forward -
+    asl muallif va vaqti bilan: model mazmunni o'sha odamga nisbat beradi.
     """
     body = str(msg.get("text") or msg.get("caption") or "").strip()
     kind = ""
@@ -129,12 +133,26 @@ def message_text(msg: dict[str, Any]) -> str:
         body = str(msg["poll"].get("question") or "").strip()
     origin = msg.get("forward_origin")
     if isinstance(origin, dict):
-        if origin.get("type") in ("user", "hidden_user"):
-            return "[forward qilingan xabar]"
-        title = str((origin.get("chat") or {}).get("title") or "").strip()[:60]
-        kind = " ".join(filter(None, (f"[forward: {title}]" if title else "[forward]", kind)))
+        kind = " ".join(filter(None, (_forward_label(origin), kind)))
     text = f"{kind} {body}".strip() if kind else body
     return mask_text(text)[:TEXT_MAX]
+
+
+def _forward_label(origin: dict[str, Any]) -> str:
+    """`[forward: Ism, 06.10 17:50]` - asl muallif (odam, yashirin odam,
+    guruh yoki kanal) va asl xabar vaqti, ma'lum bo'lsa."""
+    kind = origin.get("type")
+    if kind == "user" and isinstance(origin.get("sender_user"), dict):
+        who = sender_name(origin["sender_user"])
+    elif kind == "hidden_user":
+        who = " ".join(str(origin.get("sender_user_name") or "").split())
+    else:
+        chat = origin.get("chat") if kind == "channel" else origin.get("sender_chat")
+        who = " ".join(str((chat or {}).get("title") or "").split())
+    parts = [who[:60]] if who else []
+    if isinstance(origin.get("date"), int):
+        parts.append(datetime.fromtimestamp(origin["date"], _TZ).strftime("%d.%m %H:%M"))
+    return f"[forward: {', '.join(parts)}]" if parts else "[forward]"
 
 
 @dataclass(frozen=True)

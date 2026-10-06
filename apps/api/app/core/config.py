@@ -490,6 +490,11 @@ class Settings(BaseSettings):
     telegram_group_days: int = 90
     #: Guruh xulosasini yozadigan model (Ollama Cloud). Bo'sh - `ollama_model`.
     telegram_group_model: str = ""
+    #: Guruhdagi so'rovlar chegarasi, `soni/soniya`: bitta odamga va butun
+    #: guruhga. `.env` dan JONLI o'qiladi (`telegram_group_limits_now`).
+    #: Sinov paytida keng (2026-10-06: guruhda hamma administrator).
+    telegram_group_user_limit: str = "10/60"
+    telegram_group_limit: str = "120/3600"
 
     # --- Xodimlar ma'lumotnomasi (kontaktlar) ---
     #: F.I.SH, Telegram, telefon, email - `services/contacts.py`. SHAXSIY
@@ -611,6 +616,27 @@ def hrm_token_now() -> str:
 def crm_token_now() -> str:
     """CRM sessiya token'i."""
     return _env_token("crm_token", settings.crm_token)
+
+
+def _rate(raw: str, default: str) -> tuple[int, float]:
+    """`"10/60"` -> (10, 60.0). Noto'g'ri yozilgan bo'lsa - `default`."""
+    for value in (raw, default):
+        count, _, seconds = (value or "").strip().partition("/")
+        try:
+            parsed = (int(count), float(seconds))
+        except ValueError:
+            continue
+        if parsed[0] >= 1 and parsed[1] > 0:
+            return parsed
+    return 1, 60.0
+
+
+def telegram_group_limits_now() -> tuple[tuple[int, float], tuple[int, float]]:
+    """(odamga, guruhga) so'rov chegarasi - `.env` dan JONLI."""
+    return (
+        _rate(_env_token("telegram_group_user_limit"), settings.telegram_group_user_limit),
+        _rate(_env_token("telegram_group_limit"), settings.telegram_group_limit),
+    )
 
 
 def telegram_groups_now() -> frozenset[int]:

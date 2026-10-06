@@ -74,13 +74,14 @@ class FakeWriter:
         return self.answer
 
 
-def make_world(tmp_path, *, allowed=(GROUP,), clock=time.time):
+def make_world(tmp_path, *, allowed=(GROUP,), clock=time.time,
+               limits=lambda: ((10, 60.0), (120, 3600.0))):
     tg = GroupTelegram()
     store = GroupStore(tmp_path / "telegram" / "groups.db")
     writer = FakeWriter()
     ids = set(allowed)
     groups = GroupAssistant(tg, store, writer, allowed=lambda: frozenset(ids), inline=True,
-                            clock=clock)
+                            clock=clock, limits=limits)
     backend = FakeBackend()
     bot = VeneraBot(tg, LinkStore(tmp_path / "links.json"), users=lambda: None, backend=backend,
                     inline=True, typing_every=None, groups=groups)
@@ -212,10 +213,16 @@ def test_xabar_matni_turlari():
     assert message_text({"document": {"file_name": "plan.pdf"}}) == "[fayl: plan.pdf]"
     assert message_text({"voice": {}}) == "[ovozli xabar]"
     assert message_text({"sticker": {}}) == ""
-    personal = {"text": "maoshim kechikdi", "forward_origin": {"type": "user", "sender_user": {"id": 1}}}
-    assert message_text(personal) == "[forward qilingan xabar]"
+    sent = int(datetime(2026, 10, 6, 17, 50, tzinfo=TZ).timestamp())
+    person = {"text": "ertaga 16:00 da demo", "forward_origin": {
+        "type": "user", "date": sent, "sender_user": {"id": 1, "first_name": "Yusufxon", "last_name": "M"}}}
+    assert message_text(person) == "[forward: Yusufxon M, 06.10 17:50] ertaga 16:00 da demo"
+    hidden = {"text": "ok", "forward_origin": {"type": "hidden_user", "sender_user_name": "kaizen"}}
+    assert message_text(hidden) == "[forward: kaizen] ok"
     channel = {"text": "yangilik", "forward_origin": {"type": "channel", "chat": {"title": "BRB News"}}}
     assert message_text(channel) == "[forward: BRB News] yangilik"
+    photo = {"photo": [{}], "forward_origin": {"type": "chat", "sender_chat": {"title": "Dev"}}}
+    assert message_text(photo) == "[forward: Dev] [rasm]"
 
 
 # --- ombor ---------------------------------------------------------------------------------
@@ -276,6 +283,7 @@ def test_sorov_matni():
     assert "Eng eski 3 ta xabar sig'madi" in prompt
     assert "Venera bu guruh xabarlarini 07.10 14:30 dan beri saqlaydi" in prompt
     assert "@makhmud_x - Makhmud" in prompt and "Aziza: login ishlamayapti" in prompt
+    assert "Turi: SAVOL\nSo'rov: @makhmud_x nima qildi?" in prompt
     assert prompt.endswith("<<<XABARLAR-abcd\n[07.10 15:00] Makhmud: test\nXABARLAR-abcd>>>")
 
 
@@ -303,7 +311,7 @@ def test_xulosa(world):
     assert system == SYSTEM_PROMPT and op == "group_summary"
     assert "(oxirgi 24 soat)" in prompt and "Xabarlar: 2 ta." in prompt
     assert "Makhmud: Login sahifasi 500 xato beryapti" in prompt and "DVSIB-120" in prompt
-    assert "So'rov: Shu davr xulosasini tuz." in prompt and "CI" not in prompt
+    assert "Turi: XULOSA\nSo'rov: shu davr xulosasi.\n" in prompt and "CI" not in prompt
     [reply] = replies(world)
     assert reply["reply_to"] == ask["message_id"] and reply["thread_id"] is None
     assert reply["text"].startswith("📋 <b>Xulosa</b> · oxirgi 24 soat · 2 ta xabar")
@@ -375,16 +383,41 @@ def test_yordam_tugma_bilan(world):
 
 def test_chegara(tmp_path):
     clock = [time.time()]
-    world = make_world(tmp_path, clock=lambda: clock[0])
+    limits = [((3, 60.0), (5, 3600.0))]
+    world = make_world(tmp_path, clock=lambda: clock[0], limits=lambda: limits[0])
     send(world, gmsg("gap"))
-    for _ in range(7):
+    for _ in range(5):
         send(world, gmsg("/summary"))
-    assert len(world.writer.calls) == 5
+    assert len(world.writer.calls) == 3                            # odamga 3/daqiqa
     busy = [r for r in replies(world) if r["text"].startswith("⏳")]
     assert len(busy) == 1                                          # izoh bir marta
-    clock[0] += 601
+    clock[0] += 61
     send(world, gmsg("/summary"))
+    send(world, gmsg("/summary", user=AZIZA))
+    send(world, gmsg("/summary", user=AZIZA))                      # guruhga 5/soat
+    assert len(world.writer.calls) == 5
+    limits[0] = ((3, 60.0), (50, 3600.0))                          # .env o'zgardi - darhol
+    send(world, gmsg("/summary", user=AZIZA))
     assert len(world.writer.calls) == 6
+
+
+@pytest.mark.parametrize("user, group, expected", [
+    (None, None, ((10, 60.0), (120, 3600.0))),
+    ("20/60", "300/3600", ((20, 60.0), (300, 3600.0))),
+    ("o'n/daqiqa", "0/60", ((10, 60.0), (120, 3600.0))),           # buzuq - standart
+])
+def test_chegara_sozlamasi(tmp_path, monkeypatch, user, group, expected):
+    from app.core import config
+
+    env = tmp_path / ".env"
+    env.write_text("".join(f"{k}={v}\n" for k, v in (("TELEGRAM_GROUP_USER_LIMIT", user),
+                                                      ("TELEGRAM_GROUP_LIMIT", group)) if v))
+    monkeypatch.setattr(config, "_ENV_FILE", env)
+    config._token_cache.clear()
+    try:
+        assert config.telegram_group_limits_now() == expected
+    finally:
+        config._token_cache.clear()
 
 
 def test_anonim_admin_saqlanadi_sorov_bermaydi(world):
@@ -420,3 +453,12 @@ def test_navbatli_rejimda_guruh_shaxsiy_navbatga_tushmaydi(tmp_path):
     bot._pool.shutdown(wait=True)
     assert world.store.count() == 7 and bot._queues == {}
     assert all(not r["text"].startswith("⏳") for r in replies(world))
+
+
+def test_forward_matni_muallif_bilan_xulosaga_tushadi(world):
+    sent = int(time.time()) - 600
+    send(world, gmsg("Bankdegilar yana tel qildi, ertaga soat 16:00 ga ko'rsatamiz", forward_origin={
+        "type": "user", "date": sent, "sender_user": {"id": 7, "first_name": "Yusufxon"}}))
+    send(world, gmsg("/summary"))
+    [(_, prompt, _)] = world.writer.calls
+    assert f"Makhmud: [forward: Yusufxon, {datetime.fromtimestamp(sent, TZ):%d.%m %H:%M}] Bankdegilar" in prompt
