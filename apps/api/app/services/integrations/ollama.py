@@ -163,3 +163,79 @@ class HoldClassifier:
             # kerak degan signal.
             log.info("Tasnif rad etildi (ro'yxatda yo'q, %d belgi)", len(raw))
         return label
+
+
+class OllamaError(Exception):
+    """Matn yozilmadi: kalit yo'q, tarmoq, HTTP xato yoki bo'sh javob."""
+
+
+class OllamaChat:
+    """Ollama Cloud bilan MATN yozish - guruh xulosasi (`app/bot/groups.py`).
+
+    `HoldClassifier` dan farqi: bu yerda model gap YOZADI, va javob odamga
+    ko'rsatiladi. Shuning uchun xato yashirilmaydi - `OllamaError`, va
+    chaqiruvchi odamga "hozir bo'lmadi" deydi.
+
+    Kalit HAR CHAQIRUVDA olinadi (`key()` - odatda `ollama_key_now`): `.env`
+    dagi kalit almashsa xizmatni qayta ishga tushirish shart emas.
+
+    O'LCHANGAN (2026-10-06, jonli, sun'iy xabarlar): 4.7 ming belgi - 2.7 s,
+    47 ming belgi (~21 ming token, ~600 xabar) - 2.9 s.
+    """
+
+    def __init__(self, base_url: str, key, model: str, *,
+                 timeout: float = 90.0, max_concurrent: int = 2) -> None:
+        self.base_url = (base_url or "").rstrip("/")
+        self._key = key
+        self.model = model
+        self.timeout = timeout
+        self._slots = threading.BoundedSemaphore(max(1, max_concurrent))
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.base_url and self.model and self._key())
+
+    def complete(self, system: str, user: str, *, num_predict: int = 1200,
+                 temperature: float = 0.2, op: str = "group") -> str:
+        """Model javobi (markdown). Xato - `OllamaError`, kalit matnda yo'q."""
+        key = self._key() or ""
+        if not (self.base_url and self.model and key):
+            raise OllamaError("Ollama sozlanmagan")
+        body = json.dumps({
+            "model": self.model,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": user}],
+            "stream": False,
+            "options": {"temperature": temperature, "num_predict": num_predict},
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.base_url}/api/chat", data=body, method="POST",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        )
+        # Navbat: bir vaqtda `max_concurrent` tadan ko'p emas - qolganlari kutadi.
+        if not self._slots.acquire(timeout=self.timeout):
+            raise OllamaError("navbat to'la")
+        # Hisob: PULLIK tashqi xizmat. Matn yozilmaydi - faqat hajmi.
+        call = begin("ollama", op, units={"chars": len(system) + len(user)})
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            call.end("error", http_status=exc.code, error=f"Ollama HTTP {exc.code}")
+            raise OllamaError(f"Ollama HTTP {exc.code}") from exc
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            message = f"{type(exc).__name__}: {_safe(str(exc), key)}"
+            call.end("error", error=message)
+            raise OllamaError(message) from exc
+        finally:
+            self._slots.release()
+        content = str(((payload.get("message") or {}).get("content")) or "").strip()
+        units = {"chars": len(system) + len(user)}
+        for name, field in (("tokens_in", "prompt_eval_count"), ("tokens_out", "eval_count")):
+            if isinstance(payload.get(field), int):
+                units[name] = payload[field]
+        call.end("ok" if content else "error", http_status=200, units=units,
+                 error=None if content else "bo'sh javob")
+        if not content:
+            raise OllamaError("bo'sh javob")
+        return content

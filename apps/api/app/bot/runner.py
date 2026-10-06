@@ -50,10 +50,13 @@ daqiqalik havola keladi - bank hujjati Telegram serverlariga yuklanmaydi)
 va "⚑" - javob haqida xabar berish (veb ilovadagi AYNI shikoyat xizmati,
 `services/reports.py`, kanal `bot`, chegara ham o'sha).
 
-FAQAT SHAXSIY CHAT. Javoblarda shaxsiy HR ma'lumoti bor: guruhda bot hech
-narsaga javob bermaydi. Unga murojaat qilinsa (buyruq, `@nom`, uning
-xabariga javob, guruhga qo'shilish) - bitta qisqa "faqat shaxsiy chatda"
-izohi (`_GROUP_EVERY` da bir marta), qolgan hammasi jim.
+HR SAVOLLARI FAQAT SHAXSIY CHATDA. Javoblarda shaxsiy HR ma'lumoti bor:
+guruhda bot HR/CRM savoliga javob bermaydi. Oddiy guruhda unga murojaat
+qilinsa (buyruq, `@nom`, uning xabariga javob, guruhga qo'shilish) - bitta
+qisqa "faqat shaxsiy chatda" izohi (`_GROUP_EVERY` da bir marta), qolgan
+hammasi jim. RO'YXATDAGI guruhlarda (`telegram_groups`) esa yozishma
+xulosasi va yozishma bo'yicha savol bor - `groups.py`; u HRM/CRM ga
+murojaat qilmaydi.
 
 "PRO" BOTDA YO'Q: savol har doim standart rejimda ketadi (`Backend.stream`).
 
@@ -89,6 +92,7 @@ from ..services.telegram_links import LinkStore, TelegramLink
 from ..services.identities import Directory
 from ..services.users import UserStore
 from . import render
+from .groups import GroupAssistant
 from .render import esc
 
 log = logging.getLogger(__name__)
@@ -110,8 +114,9 @@ _WEBHOOK_FAILS = 5
 #: Telegram javobni olmay qolsa yangilanishni QAYTA yuboradi - shuncha
 #: oxirgi `update_id` eslab qolinadi va takrori tashlanadi.
 _SEEN_UPDATES = 2000
-#: Bot faqat shu turdagi yangilanishlarni oladi.
-ALLOWED_UPDATES = ["message", "callback_query"]
+#: Bot faqat shu turdagi yangilanishlarni oladi. `edited_message` - faqat
+#: ro'yxatdagi guruhlar uchun (`groups.py`); shaxsiy chatda e'tiborsiz.
+ALLOWED_UPDATES = ["message", "edited_message", "callback_query"]
 #: Boshqa nusxa bilan to'qnashuvda (409) qayta so'rash oralig'i. Ikkinchi
 #: nusxa har to'qnashuvdan keyin ~30 s kutadi, biz esa DARHOL qaytamiz - u
 #: ulanishni atigi bir necha yuz millisekund ushlab turadi. Nol emas: u ham
@@ -373,6 +378,10 @@ class _Typing:
         self._stop.set()
 
 
+def _is_group(msg: dict[str, Any]) -> bool:
+    return (msg.get("chat") or {}).get("type") in ("group", "supergroup")
+
+
 def is_video(msg: dict[str, Any]) -> bool:
     """Kamera/video xabari: dumaloq video, video, yoki fayl sifatidagi video."""
     if isinstance(msg.get("video_note"), dict) or isinstance(msg.get("video"), dict):
@@ -419,8 +428,11 @@ class VeneraBot:
         webhook_secret: str = "",
         beta_url: str = "",
         sync_commands: bool = False,
+        groups: GroupAssistant | None = None,
     ) -> None:
         self.api = api
+        #: Ro'yxatdagi guruhlar yordamchisi. `None` - hamma guruhda eski xulq.
+        self.groups = groups
         #: `/beta` tugmasi manzili (yangi mini app). Bo'sh - `/beta` hech kimga yo'q.
         self.beta_url = beta_url
         #: Buyruqlar menyusini Telegram'ga yozish (`setMyCommands`) - FAQAT
@@ -482,6 +494,8 @@ class VeneraBot:
         self._stop.set()
         if self._pool is not None:
             self._pool.shutdown(wait=False, cancel_futures=True)
+        if self.groups is not None:
+            self.groups.stop()
 
     @property
     def running(self) -> bool:
@@ -713,6 +727,15 @@ class VeneraBot:
             self._submit(lambda: self._on_callback(update["callback_query"]))
             return
         message = update.get("message")
+        if self.groups is not None:
+            # Guruh xabari shaxsiy navbatga TUSHMAYDI: guruh yozishmasi tez
+            # oqadi, navbat to'lsa guruhga "⏳ Oldingi xabarlaringizga..."
+            # ketardi. Saqlash tez, javob esa `groups` ning o'z iplarida.
+            group_msg = message if isinstance(message, dict) else update.get("edited_message")
+            if isinstance(group_msg, dict) and _is_group(group_msg):
+                edited = group_msg is not message
+                self._submit(lambda: self._on_group(group_msg, edited=edited))
+                return
         if not isinstance(message, dict):
             return
         chat_id = (message.get("chat") or {}).get("id")
@@ -773,20 +796,15 @@ class VeneraBot:
             self._on_callback(update["callback_query"])
         elif isinstance(update.get("message"), dict):
             self._on_message(update["message"])
+        elif isinstance(update.get("edited_message"), dict) and _is_group(update["edited_message"]):
+            self._on_group(update["edited_message"], edited=True)
 
     def _on_message(self, msg: dict[str, Any]) -> None:
         chat = msg.get("chat") or {}
         sender = msg.get("from") or {}
-        # FAQAT shaxsiy chat. Javoblarda shaxsiy HR ma'lumoti bor - guruhga
-        # qo'shilgan bot u yerda hech narsa ishlamaydi (ulanish ham
-        # tekshirilmaydi). Botga murojaat qilingan bo'lsa - bitta qisqa
-        # izoh; qolgan xabarlar jim: har xabarga javob shovqin bo'lardi.
         if chat.get("type") != "private":
-            # Boshqa botlarga javob yo'q - ikki bot bir-birining xabariga
-            # javob berib "suhbatlashib" qolmasin.
-            if (chat.get("type") in ("group", "supergroup") and not sender.get("is_bot")
-                    and self._addressed(msg)):
-                self._group_note(chat.get("id"), msg.get("message_id"))
+            if _is_group(msg):
+                self._on_group(msg)
             return
         if sender.get("is_bot"):
             return
@@ -853,6 +871,23 @@ class VeneraBot:
         members = msg.get("new_chat_members")
         return isinstance(members, list) and any(ours(m) for m in members)
 
+    def _on_group(self, msg: dict[str, Any], *, edited: bool = False) -> None:
+        """Guruh xabari. Ro'yxatdagi guruh - `groups` (saqlash, xulosa).
+        Qolganlari - FAQAT shaxsiy chat: HR javoblari guruhga chiqmaydi,
+        murojaat qilinsa bitta qisqa izoh, qolgan xabarlar jim (har xabarga
+        javob shovqin bo'lardi)."""
+        chat_id = (msg.get("chat") or {}).get("id")
+        if self.groups is not None and self.groups.allowed(chat_id):
+            if edited:
+                self.groups.on_edit(msg)
+            else:
+                self.groups.on_message(msg, username=self.username)
+            return
+        # Boshqa botlarga javob yo'q - ikki bot bir-birining xabariga javob
+        # berib "suhbatlashib" qolmasin.
+        if not edited and not (msg.get("from") or {}).get("is_bot") and self._addressed(msg):
+            self._group_note(chat_id, msg.get("message_id"))
+
     def _group_note(self, chat_id: Any, message_id: Any) -> None:
         """"Faqat shaxsiy chatda" - guruhga `_GROUP_EVERY` da bir marta.
         Tugma shaxsiy chatni ochadi (bot nomi ma'lum bo'lsa)."""
@@ -866,7 +901,9 @@ class VeneraBot:
             self._group_at.clear()
         markup = (render.url_button("Shaxsiy chatni ochish", f"https://t.me/{self.username}")
                   if re.fullmatch(r"\w{3,64}", self.username) else None)
-        log.info("Telegram: guruhda murojaat - faqat shaxsiy chat izohi")
+        # Guruh id si - uni `TELEGRAM_GROUPS` ga qo'shish uchun (nomi yozilmaydi).
+        log.info("Telegram: guruhda murojaat - faqat shaxsiy chat izohi (guruh %s ro'yxatda yo'q)",
+                 chat_id)
         self._send(chat_id, esc(_GROUP_ONLY), markup=markup, reply_to=message_id)
 
     def _reject_video(self, chat_id: int, msg: dict[str, Any]) -> None:

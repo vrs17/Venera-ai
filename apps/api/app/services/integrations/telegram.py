@@ -221,7 +221,10 @@ class TelegramApi:
     def get_updates(self, offset: int | None, *, timeout: int = 25) -> list[dict[str, Any]]:
         """Uzun so'rov (long polling). HTTP kutishi Telegram kutishidan UZUN
         bo'lishi shart - aks holda har bo'sh so'rov "timeout" xatosi bo'lardi."""
-        params: dict[str, Any] = {"timeout": timeout, "allowed_updates": ["message", "callback_query"]}
+        # `edited_message` - guruh xulosasi tahrirlangan matnni ko'rsin
+        # (`app/bot/groups.py`); shaxsiy chatda tahrir e'tiborsiz.
+        params: dict[str, Any] = {"timeout": timeout,
+                                  "allowed_updates": ["message", "edited_message", "callback_query"]}
         if offset is not None:
             params["offset"] = offset
         result = self.call("getUpdates", params, timeout=timeout + 15)
@@ -229,9 +232,12 @@ class TelegramApi:
 
     def send_message(self, chat_id: int, text: str, *, html: bool = True,
                      reply_markup: Mapping[str, Any] | None = None,
-                     reply_to: int | None = None) -> dict[str, Any]:
+                     reply_to: int | None = None, thread_id: int | None = None) -> dict[str, Any]:
         params: dict[str, Any] = {"chat_id": chat_id, "text": text,
                                   "link_preview_options": {"is_disabled": True}}
+        if thread_id is not None:
+            # Forum guruhidagi mavzu - javob o'sha mavzuga tushsin.
+            params["message_thread_id"] = thread_id
         if html:
             params["parse_mode"] = "HTML"
         if reply_markup:
@@ -262,8 +268,12 @@ class TelegramApi:
     def delete_message(self, chat_id: int, message_id: int) -> Any:
         return self.call("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
 
-    def send_chat_action(self, chat_id: int, action: str = "typing") -> Any:
-        return self.call("sendChatAction", {"chat_id": chat_id, "action": action})
+    def send_chat_action(self, chat_id: int, action: str = "typing", *,
+                         thread_id: int | None = None) -> Any:
+        params: dict[str, Any] = {"chat_id": chat_id, "action": action}
+        if thread_id is not None:
+            params["message_thread_id"] = thread_id
+        return self.call("sendChatAction", params)
 
     def answer_callback(self, callback_id: str, text: str = "", *, alert: bool = False) -> Any:
         params: dict[str, Any] = {"callback_query_id": callback_id}
@@ -302,12 +312,18 @@ class TelegramApi:
     def delete_webhook(self) -> Any:
         return self.call("deleteWebhook", {"drop_pending_updates": False})
 
-    def get_my_commands(self) -> list[dict[str, Any]]:
-        result = self.call("getMyCommands")
+    def get_my_commands(self, *, scope: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+        """`scope` - masalan `{"type": "chat", "chat_id": ...}` (bitta guruh
+        menyusi); yo'q bo'lsa - umumiy menyu."""
+        result = self.call("getMyCommands", {"scope": dict(scope)} if scope else None)
         return result if isinstance(result, list) else []
 
-    def set_my_commands(self, commands: list[dict[str, str]]) -> Any:
-        return self.call("setMyCommands", {"commands": commands})
+    def set_my_commands(self, commands: list[dict[str, str]], *,
+                        scope: Mapping[str, Any] | None = None) -> Any:
+        params: dict[str, Any] = {"commands": commands}
+        if scope:
+            params["scope"] = dict(scope)
+        return self.call("setMyCommands", params)
 
 
 def webhook_secret(bot_token: str, secret_key: str) -> str:

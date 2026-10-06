@@ -10,6 +10,7 @@ Default'lar LOKAL ISHLAB CHIQISH uchun xavfsiz bo'lishi kerak, prod uchun emas.
 
 from __future__ import annotations
 
+import re
 import threading
 
 from pathlib import Path
@@ -474,6 +475,21 @@ class Settings(BaseSettings):
     #: Bir vaqtda nechta xabar ishlanadi. Bitta odamning xabarlari esa
     #: KETMA-KET, navbat bilan.
     telegram_workers: int = 4
+    #: Venera ISHLAYDIGAN guruhlar - Telegram chat id lar, vergul yoki
+    #: bo'shliq bilan (`-1001234567890`). Bo'sh - hamma guruhda eski xulq:
+    #: "faqat shaxsiy chat" izohi. Ro'yxatdagi guruhda bot xabarlarni
+    #: saqlaydi va `/summary`, `/askvenera` ga javob beradi (`app/bot/groups.py`).
+    #:
+    #: `.env` dan JONLI o'qiladi (`telegram_groups_now`): guruh qo'shish uchun
+    #: xizmatni qayta ishga tushirish shart emas. Guruh id si jurnalda
+    #: ko'rinadi - ro'yxatda yo'q guruhda botga murojaat qilinganda.
+    telegram_groups: str = ""
+    #: Guruh xabarlari ombori. `data/` gitignore'da, fayl 600.
+    telegram_groups_db: Path = BASE_DIR / "data" / "telegram" / "groups.db"
+    #: Guruh xabarlari shuncha kun saqlanadi, keyin o'chiriladi.
+    telegram_group_days: int = 90
+    #: Guruh xulosasini yozadigan model (Ollama Cloud). Bo'sh - `ollama_model`.
+    telegram_group_model: str = ""
 
     # --- Xodimlar ma'lumotnomasi (kontaktlar) ---
     #: F.I.SH, Telegram, telefon, email - `services/contacts.py`. SHAXSIY
@@ -595,6 +611,22 @@ def hrm_token_now() -> str:
 def crm_token_now() -> str:
     """CRM sessiya token'i."""
     return _env_token("crm_token", settings.crm_token)
+
+
+def telegram_groups_now() -> frozenset[int]:
+    """Venera ishlaydigan guruhlar (`telegram_groups`) - `.env` dan JONLI.
+
+    Noto'g'ri yozilgan qism (son emas) tashlab ketiladi: bitta xato butun
+    ro'yxatni o'chirib qo'ymasin.
+    """
+    raw = _env_token("telegram_groups", settings.telegram_groups)
+    ids: set[int] = set()
+    for part in re.split(r"[\s,;]+", raw or ""):
+        try:
+            ids.add(int(part))
+        except ValueError:
+            continue
+    return frozenset(ids)
 
 
 #: `tokens` xaritasidagi nomlar -> `.env` kalitlari. Yuqoridagi xizmat
