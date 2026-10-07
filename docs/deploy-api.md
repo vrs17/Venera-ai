@@ -961,29 +961,13 @@ F.I.SH, Telegram, telefon, email - `apps/api/data/contacts/contacts.db` (SQLite,
 gitignore'da, 600). Shaxsiy ma'lumot: jurnalga qiymatlar yozilmaydi, tashqi
 LLM ga yuborilmaydi - qidiruv Venera'ning o'zida (`services/contacts.py`).
 
-**Chatda (web, mini app, Telegram bot - bitta yo'l, `chat.open_stream`):**
-
-| Yozadi | Natija |
-|---|---|
-| "Azizov Boburning telefoni?" / "...ning telegrami", "emaili", "kontakti" | Javob ro'yxatdan, darhol |
-| "...ning telefonini +998901234567 ga o'zgartir" | Tasdiq kartasi -> saqlanadi |
-| "...ga telegram qo'sh: @username" | Tasdiq kartasi (bo'sh maydonni to'ldirish) |
-| "...ning telegramini o'chir" | Tasdiq kartasi (maydon tozalanadi) |
-| "...ning ismini Familiya Ism Otasi ga o'zgartir" | Tasdiq kartasi |
-| "Yangi xodim qo'sh: Familiya Ism, +998..., @user, email" | Tasdiq kartasi |
-| "...ni ro'yxatdan o'chir" | Tasdiq kartasi (yumshoq o'chirish) |
-
-Qiymat turi o'zidan aniqlanadi (`+998...` telefon, `@...` Telegram, `...@...`
-email). Ism imlosi farq qilsa ham topiladi (o'/oʻ, x/h, kirill, qo'shimchalar,
-bitta harf xatosi). Kartani CRM takliflari bilan BIR XIL UI ko'rsatadi
-(`connector: "xodimlar"`), tasdiqlash - `/api/v1/actions/{token}/confirm`
-(kalit `ct_` bilan boshlanadi, Venera'ning o'zida bajariladi).
-
-**Ruxsat:** qidirish - har qanday kirgan foydalanuvchi; taklif va tasdiqlash -
-`contacts_editor_roles` (default `ADMIN`), rol tasdiq paytida qayta
-tekshiriladi. Har o'zgarish `employee_changes` jadvaliga yoziladi (kim, qachon,
-maydon, eski -> yangi). Bir telefon/Telegram/email ikki xodimda bo'lmaydi;
-taklifdan keyin ma'lumot o'zgargan bo'lsa ustidan yozilmaydi.
+**Chatda ISHLATILMAYDI (2026-10-07 dan).** Avval `services/contacts_chat.py`
+har savolni yordamchidan OLDIN kalit so'zlar bilan tekshirib, kontakt savoliga
+o'zi javob berar va tahrir kartasini ko'rsatar edi. Bu "CRMga task kiritib ber ...
+telegram ... <ism>" kabi savollarni kontakt tahririga aylantirib, yordamchiga
+umuman yetkazmadi - olib tashlandi. Endi kontakt savollari ("...ning telegrami",
+"@username kim?") yordamchiga ketadi, u ularni HRM orqali biladi (so'raganning
+HRM sessiyasi kerak). Ro'yxatning o'zi va quyidagi yuklash vositasi qoldi.
 
 **Ommaviy yuklash / nusxa** (jadvaldan nusxalangan TSV yoki CSV, birinchi qator
 sarlavha):
@@ -998,6 +982,3 @@ venv/bin/python -m app.tools.contacts_import --export nusxa.csv
 Qayta yuklash xavfsiz: email yoki F.I.SH bo'yicha topilgan xodimning faqat
 TO'LDIRILGAN maydonlari yangilanadi, bo'sh katak mavjud qiymatni o'chirmaydi,
 faylda yo'q xodim o'chirilmaydi. Birinchi yuklash: 2026-09-25, 77 xodim.
-
-**Cheklov:** ma'lumotnoma javoblari yuqoridagi xizmatga bormaydi, shuning
-uchun suhbatlar TARIXIDA saqlanmaydi (yuqoridagi xizmat ularni ko'rmaydi).

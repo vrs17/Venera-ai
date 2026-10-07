@@ -255,10 +255,7 @@ class Backend:
 
     def action(self, verb: str, token: str, user: AuthUser) -> dict[str, Any]:
         from ..api.v1 import chat as _chat
-        from ..services import contacts_chat
 
-        if contacts_chat.owns(token):
-            return contacts_chat.act(verb, token, user)
         call = _chat._assistant.confirm_action if verb == "confirm" else _chat._assistant.cancel_action
         return call(token, user_id=_chat.assistant_user_id(user), tokens=_chat._live_tokens(user))
 
@@ -329,15 +326,6 @@ def _proposal_outcome(verb: str, result: dict[str, Any]) -> str | None:
     from ..api.v1 import actions as _actions
 
     return _actions.proposal_outcome(verb, result)
-
-
-def _assistant_proposal(token: str) -> bool:
-    """Taklif holati (`turns.proposal_status`) faqat YORDAMCHI takliflari uchun
-    yangilanadi - veb ilovadagi `/actions` bilan bir xil qoida. Xodimlar
-    ma'lumotnomasi taklifi (`ct_`) Venera'ning o'zida bajariladi."""
-    from ..services import contacts_chat
-
-    return not contacts_chat.owns(token)
 
 
 @dataclass
@@ -1453,13 +1441,12 @@ class VeneraBot:
                 self._answer_cb(cq_id, _action_message(exc.status), alert=True)
                 if exc.status == 404:
                     # Veb ilovadagi kabi: xizmat tanimagan taklif - muddati o'tgan.
-                    if _assistant_proposal(token):
-                        set_proposal_status(token, "expired")
+                    set_proposal_status(token, "expired")
                     if isinstance(message_id, int):
                         self._clear_buttons(chat_id, message_id)
                 return
             outcome = _proposal_outcome("confirm" if verb == "c" else "cancel", result)
-            if outcome and _assistant_proposal(token):
+            if outcome:
                 set_proposal_status(token, outcome)
             settled, text, toast = render.outcome(result)
             log.info("Telegram amal %s (%s): token=%s holat=%s ok=%s", what, user.actorId, token,

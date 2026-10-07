@@ -500,9 +500,6 @@ class Settings(BaseSettings):
     #: F.I.SH, Telegram, telefon, email - `services/contacts.py`. SHAXSIY
     #: MA'LUMOT: `data/` gitignore'da, fayl 600.
     contacts_db: Path = BASE_DIR / "data" / "contacts" / "contacts.db"
-    #: Qo'shish/o'zgartirish/o'chirishni TASDIQLAY oladigan rollar. Qidirish
-    #: va ko'rish - har qanday kirgan foydalanuvchiga ochiq.
-    contacts_editor_roles: list[str] = ["ADMIN"]
 
     # --- Analitika va admin panel ---
     #: Har savol-javob izi, tashqi chaqiruvlar hisobi, shikoyatlar va admin

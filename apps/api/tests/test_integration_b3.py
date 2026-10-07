@@ -9,8 +9,6 @@ brauzer) ustida ko'rilgan narsalar:
     (maydonsiz) avvalgi xulq;
   * Mini App uchala savol yo'lida `input` ni aniq aytadi (mikrofon, past
     ishonchli transkriptni tasdiqlash, yozib yuborish);
-  * `contacts` oralig'i izda `answered` bilan - admin panel uni "ma'lumotnomadan
-    javob berildi / ma'lumotnoma savoli emas" deb ko'rsatadi;
   * soxta yuqori xizmat (`tools/dev_mock_upstream.py`) "Pro" ni jonli xizmat
     shaklida beradi: `GET /api/pro/quota` va `done.pro` (ishlatildi / kerak
     bo'lmadi / limit);
@@ -31,10 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from app.api.v1 import chat as chat_api
 from app.services import analytics
-from tests.test_contacts import people  # noqa: F401 - fikstura
-from tests.test_integration_merge import PERSON_Q, PHONE, _no_assistant
 from tests.test_pro import api, assistant, server  # noqa: F401 - fikstura
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -91,26 +86,6 @@ def test_mini_app_har_savol_yolida_inputni_aytadi():
     calls = re.findall(r"(?<![\w.])ask\(([^)]*)\);", src)
     assert len(calls) == 3, calls
     assert sorted(c.split(",")[-1].strip() for c in calls) == ["false", "true", "true"], calls
-
-
-# --- `contacts` oralig'i: admin izi uchun `answered` ----------------------------------
-
-
-def test_contacts_oraligi_javob_berilganini_aytadi(client, auth, people, db, monkeypatch):
-    monkeypatch.setattr(chat_api._assistant, "stream", _no_assistant)
-    r = client.post("/api/v1/chat/stream", headers=auth, json={"question": PERSON_Q})
-    assert r.status_code == 200 and PHONE in r.text
-    [event] = rows(db, "SELECT payload FROM turn_events WHERE turn_id=? AND name='contacts'",
-                   (r.headers["X-Venera-Turn"],))
-    assert json.loads(event["payload"])["answered"] is True
-
-
-def test_contacts_oraligi_yordamchi_savolida_false(api, auth, server, db):
-    r = api.post("/api/v1/chat/stream", headers=auth, json={"question": ASSIST_Q})
-    assert r.status_code == 200 and len(server.calls) == 1
-    [event] = rows(db, "SELECT payload FROM turn_events WHERE turn_id=? AND name='contacts'",
-                   (r.headers["X-Venera-Turn"],))
-    assert json.loads(event["payload"])["answered"] is False
 
 
 # --- soxta yuqori xizmat: "Pro" ----------------------------------------------------------
