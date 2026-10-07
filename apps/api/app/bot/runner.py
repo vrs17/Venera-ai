@@ -321,6 +321,12 @@ def _action_message(status: int) -> str:
     return _actions._MESSAGES.get(status, _actions._MESSAGES[502])
 
 
+def _expired_statuses() -> tuple[int, ...]:
+    from ..api.v1 import actions as _actions
+
+    return _actions.EXPIRED_STATUSES
+
+
 def _proposal_outcome(verb: str, result: dict[str, Any]) -> str | None:
     """Taklif holati izga - veb ilovadagi AYNI qoida (`actions.proposal_outcome`)."""
     from ..api.v1 import actions as _actions
@@ -1439,8 +1445,8 @@ class VeneraBot:
             except AssistantError as exc:
                 log.warning("Telegram amal %s (%s, %s): %s", what, user.actorId, token, exc)
                 self._answer_cb(cq_id, _action_message(exc.status), alert=True)
-                if exc.status == 404:
-                    # Veb ilovadagi kabi: xizmat tanimagan taklif - muddati o'tgan.
+                if exc.status in _expired_statuses():
+                    # Veb ilovadagi kabi: muddati o'tgan taklif (404 yoki 410).
                     set_proposal_status(token, "expired")
                     if isinstance(message_id, int):
                         self._clear_buttons(chat_id, message_id)

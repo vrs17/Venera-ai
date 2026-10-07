@@ -183,6 +183,15 @@ def test_api_topilmagan_taklif_404(api, auth, server):
     assert "muddati" in response.json()["message"]
 
 
+def test_api_muddati_otgan_taklif_410(api, auth, server):
+    # Xizmat 2026-10 dan muddati o'tgan taklifga aniq 410 beradi - bu "xizmat
+    # javob bermadi" (502) EMAS, odamga nima qilish kerakligi aytiladi.
+    server.status = 410
+    response = api.post(f"/api/v1/actions/{TOKEN}/confirm", headers=auth)
+    assert response.status_code == 410
+    assert "muddati tugagan" in response.json()["message"]
+
+
 def test_api_xizmat_xatosi_502(api, auth, server):
     server.status = 500
     response = api.post(f"/api/v1/actions/{TOKEN}/confirm", headers=auth)

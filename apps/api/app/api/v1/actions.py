@@ -36,12 +36,19 @@ router = APIRouter(prefix="/actions", tags=["actions"])
 _MESSAGES = {
     400: "Taklifni bajarib bo'lmadi",
     404: "Taklif topilmadi yoki muddati tugagan",
+    410: "Taklif muddati tugagan - savolni qayta bering va 15 daqiqa ichida tasdiqlang",
     422: "Taklifni bajarib bo'lmadi",
     501: "Savol-javob xizmati hali sozlanmagan",
     503: "Savol-javob xizmati band, biroz kutib qayta urinib ko'ring",
     504: "Javob juda uzoq cho'zildi",
     502: "Savol-javob xizmati javob bermadi",
 }
+
+#: Yuqoridagi xizmat taklifni "muddati o'tgan" deb javob beradigan holatlar: eskisi
+#: 404 (taklifni tanimadi), 2026-10 dan esa aniq `410 {"code": "expired"}`. 410
+#: ro'yxatda yo'qligida "Savol-javob xizmati javob bermadi" (502) chiqib, odam
+#: xizmat buzilgan deb o'ylardi. Web va bot (`bot/runner.py`) shu bitta qoidadan.
+EXPIRED_STATUSES = (404, 410)
 
 _TOKEN = Path(max_length=128, description="Yordamchi bergan taklif kaliti")
 
@@ -51,8 +58,8 @@ def _run(call, user: AuthUser, token: str, what: str, verb: str | None = None) -
         result = call()
     except AssistantError as exc:
         log.warning("Amal %s (%s, %s): %s", what, user.email, token, exc)
-        if verb and exc.status == 404:
-            # Xizmat taklifni tanimadi - muddati o'tgan (15 daqiqa).
+        if verb and exc.status in EXPIRED_STATUSES:
+            # Taklifning muddati o'tgan (15 daqiqa) - izda ham shunday.
             set_proposal_status(token, "expired")
         status = exc.status if exc.status in _MESSAGES else 502
         raise error_status(status, _MESSAGES[status]) from exc

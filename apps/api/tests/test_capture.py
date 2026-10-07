@@ -443,6 +443,7 @@ def test_ask_yoli_ham_izga_tushadi(client, auth, db):
     ("confirm", {"status": "error", "ok": False}, "failed"),
     ("cancel", {"status": "cancelled"}, "cancelled"),
     ("confirm", 404, "expired"),
+    ("confirm", 410, "expired"),
 ])
 def test_taklif_tasdiqlansa_izdagi_holati_yangilanadi(client, auth, upstream, db,
                                                       verb, reply, expected):
