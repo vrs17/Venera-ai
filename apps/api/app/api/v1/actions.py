@@ -21,7 +21,6 @@ from fastapi import APIRouter, Depends, Path
 from ...core.errors import error_status
 from ...schemas.actions import ActionResult
 from ...schemas.auth import AuthUser
-from ...services import contacts_chat
 from ...services.analytics import set_proposal_status
 from ...services.analytics.recorder import PROPOSAL_STATUSES
 from ...services.integrations.assistant import AssistantError
@@ -94,10 +93,6 @@ def _user_id(user: AuthUser) -> str:
 def confirm(token: str = _TOKEN, user: AuthUser = Depends(current_user)) -> ActionResult:
     """Taklifni BAJARISH. Faqat odam bosgandan keyin, faqat o'sha odam,
     bir marta, 15 daqiqa ichida - qolganini xizmat tekshiradi."""
-    if contacts_chat.owns(token):
-        # Xodimlar ma'lumotnomasi taklifi - Venera'ning o'zida (rol shu yerda
-        # qayta tekshiriladi).
-        return _run(lambda: contacts_chat.act("confirm", token, user), user, token, "tasdiqlash")
     return _run(
         lambda: _chat._assistant.confirm_action(
             token, user_id=_user_id(user), tokens=_chat._live_tokens(user)),
@@ -108,8 +103,6 @@ def confirm(token: str = _TOKEN, user: AuthUser = Depends(current_user)) -> Acti
 @router.post("/{token}/cancel", response_model=ActionResult)
 def cancel(token: str = _TOKEN, user: AuthUser = Depends(current_user)) -> ActionResult:
     """Taklifni RAD ETISH - endi tasdiqlab bo'lmaydi."""
-    if contacts_chat.owns(token):
-        return _run(lambda: contacts_chat.act("cancel", token, user), user, token, "rad etish")
     return _run(
         lambda: _chat._assistant.cancel_action(
             token, user_id=_user_id(user), tokens=_chat._live_tokens(user)),
@@ -120,6 +113,4 @@ def cancel(token: str = _TOKEN, user: AuthUser = Depends(current_user)) -> Actio
 @router.get("/{token}", response_model=ActionResult)
 def status(token: str = _TOKEN, user: AuthUser = Depends(current_user)) -> ActionResult:
     """Taklifning holati."""
-    if contacts_chat.owns(token):
-        return _run(lambda: contacts_chat.act("status", token, user), user, token, "holati")
     return _run(lambda: _chat._assistant.get_action(token), user, token, "holati")

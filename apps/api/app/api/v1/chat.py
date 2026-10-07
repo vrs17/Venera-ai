@@ -57,7 +57,6 @@ from ...services.integrations.assistant import (
     artifact_ref_ok,
     doc_ref_ok,
 )
-from ...services import contacts_chat
 from ...services.hold import HoldVoices, keyword_topic, pick
 from ...services.integrations.crm_auth import CrmAuth
 from ...services.integrations.ollama import HoldClassifier
@@ -487,11 +486,13 @@ def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
                 channel: str | None = "api", engine: str | None = None) -> AnswerStream:
     """Savol -> javob oqimi: web, mini app va Telegram bot BITTA yo'ldan.
 
-    Avval xodimlar ma'lumotnomasi (`services/contacts_chat.py`): kontakt
-    savoli yoki tahriri bo'lsa javob shu yerda tayyorlanadi va yuqoridagi
-    xizmatga BORMAYDI. Qolgan hamma savol - yordamchiga, SHU ODAM VA KANAL
-    uchun tanlangan dvigatelga (`effective_engine`: odamga berilgan versiya,
-    admin siyosati, oxiri `.env`).
+    HAR savol yordamchiga ketadi - SHU ODAM VA KANAL uchun tanlangan
+    dvigatelga (`effective_engine`: odamga berilgan versiya, admin siyosati,
+    oxiri `.env`). Venera savolni kalit so'zlar bo'yicha o'zi "ushlab" javob
+    BERMAYDI: xodimlar ma'lumotnomasi (`contacts_chat`) shunday qilardi va
+    "CRMga task kiritib ber ... telegram ... <ism>" kabi savolni kontakt
+    tahririga aylantirib, yordamchiga umuman yetkazmas edi. 2026-10-07 olib
+    tashlandi: kontakt savollarini endi yordamchining o'zi (HRM orqali) biladi.
 
     Qo'shimchalar (hammasi ixtiyoriy - bot ularsiz chaqiradi):
 
@@ -499,26 +500,17 @@ def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
         dvigatel shundan tanlanadi;
       * `engine` - klient tanlagan dvigatel. Faqat odamga ruxsat berilgan
         bo'lsa ishlaydi, aks holda JIMGINA e'tiborsiz (xato emas);
-      * `mode` - "Pro" (`/chat/stream` da klient aytadi). Kontakt javobiga
-        TEGMAYDI: ma'lumotnoma javobi byudjetdan yemaydi va `pro` bloki
-        bo'lmaydi. "Pro" FAQAT `v2` da: boshqa dvigatelda u JIMGINA
+      * `mode` - "Pro" (`/chat/stream` da klient aytadi). "Pro" FAQAT `v2` da: boshqa dvigatelda u JIMGINA
         tashlanadi (yuqoriga yuborilmaydi) va izga "so'ralgan, berilmagan,
         sabab `engine`" bo'lib yoziladi;
-      * `recorder` - savol izi (admin panel): `contacts`, `tokens`,
-        `assistant.open` oraliqlari shu yerda o'lchanadi;
-      * `before_upstream` - savol yordamchiga ketishi ANIQ bo'lganda,
-        ulanishdan OLDIN chaqiriladi. Web kutish rejasini shu yerda
-        boshlaydi: tasnif ulanish bilan parallel ketadi, kontakt javobida
-        esa kutish ovozi umuman kerak emas.
+      * `recorder` - savol izi (admin panel): `tokens` va `assistant.open`
+        oraliqlari shu yerda o'lchanadi;
+      * `before_upstream` - ulanishdan OLDIN chaqiriladi. Web kutish rejasini
+        shu yerda boshlaydi: tasnif ulanish bilan parallel ketadi.
 
     Ulanish SHU YERDA ochiladi, generator ichida emas: 400/501/503 shunda
     oddiy `AssistantError` bo'lib chaqiruvchiga chiqadi.
     """
-    with _span(recorder, "contacts") as info:
-        local = contacts_chat.answer(question, user)
-        info["answered"] = local is not None
-    if local is not None:
-        return local
     requested = engine
     choice = _engine_control.choose(user, channel, requested)
     engine = choice.engine
