@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, CircleAlert, PenLine, SquareKanban, TriangleAlert, Users, X } from 'lucide-vue-next'
-import { cancelAction, confirmAction } from '../../api/actions.api'
+import { cancelAction, confirmAction, isExpiredError, targetLabel } from '../../api/actions.api'
 import { localizeApiError } from '../../api/errors'
 import type { ActionProposal, ActionResult } from '../../types'
 import { uzApostrophes } from '../chat/polish'
@@ -36,15 +36,17 @@ const ICONS: Record<string, Component> = { crm: SquareKanban, hrm: Users }
 const icon = computed(() => ICONS[String(props.proposal.connector || '').toLowerCase()] ?? PenLine)
 const platform = computed(() => (props.proposal.connector || '').toUpperCase())
 
+// Muddati o'tgan taklif ham yakuniy (web `ActionCard` bilan bir xil): server baribir
+// rad etadi (410) - tugmani bosib xato o'qish shart emas.
 const settled = computed(() => {
   const s = result.value?.status
-  return s === 'executed' || s === 'cancelled' || s === 'expired' || s === 'failed'
+  return s === 'executed' || s === 'cancelled' || s === 'expired' || s === 'failed' || (!result.value && timedOut.value)
 })
 
 type Tone = 'good' | 'neutral' | 'warn' | 'crit'
 const outcome = computed<{ tone: Tone; label: string } | null>(() => {
   const r = result.value
-  if (!r) return null
+  if (!r) return timedOut.value ? { tone: 'warn', label: t('actionExpired') } : null
   if (r.status === 'executed' && r.ok !== false) return { tone: 'good', label: t('actionDone') }
   if (r.status === 'cancelled') return { tone: 'neutral', label: t('actionCancelled') }
   if (r.status === 'expired') return { tone: 'warn', label: t('actionExpired') }
@@ -68,7 +70,7 @@ function text(value: unknown): string {
   }
   return fix(String(value))
 }
-const target = computed(() => (props.proposal.target ? text(props.proposal.target) : ''))
+const target = computed(() => fix(targetLabel(props.proposal.target)))
 const changes = computed(() => (props.proposal.changes ?? []).filter((c) => c && (c.field || c.to !== undefined)))
 function hasFrom(from: unknown): boolean {
   return from !== undefined && from !== null && from !== ''
@@ -80,6 +82,8 @@ const expiresAt = computed(() => {
   return Number.isFinite(ms) ? ms : null
 })
 const now = ref(Date.now())
+// Muddat telefon soatida o'tdi (har 15 s tekshiriladi) - `settled` va `outcome` shunga qaraydi.
+const timedOut = computed(() => expiresAt.value !== null && now.value >= expiresAt.value)
 let tick: ReturnType<typeof setInterval> | undefined
 watch(
   () => expiresAt.value !== null && !settled.value,
@@ -93,7 +97,7 @@ onBeforeUnmount(() => clearInterval(tick))
 const expiryText = computed(() => {
   if (expiresAt.value === null) return ''
   const left = expiresAt.value - now.value
-  if (left <= 0) return t('actionExpired')
+  if (left <= 0) return ''
   if (left < 60_000) return t('tg.proposal.underMinute')
   return t('tg.proposal.minutes', { n: Math.ceil(left / 60_000) })
 })
@@ -113,8 +117,14 @@ async function run(kind: 'confirm' | 'cancel') {
     const tone = outcome.value?.tone
     if (kind === 'confirm') haptic.notify(tone === 'good' ? 'success' : tone === 'crit' ? 'error' : 'warning')
   } catch (err) {
-    error.value = localizeApiError(err, t)
-    haptic.notify('error')
+    // Muddati o'tgan (404/410) - xato emas, taklifning holati: "Muddati tugagan".
+    if (isExpiredError(err)) {
+      result.value = { token: props.proposal.token, status: 'expired' }
+      haptic.notify('warning')
+    } else {
+      error.value = localizeApiError(err, t)
+      haptic.notify('error')
+    }
   } finally {
     busy.value = null
   }

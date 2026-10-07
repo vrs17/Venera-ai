@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
 import { Check, PenLine, SquareKanban, TriangleAlert, Users } from 'lucide-vue-next'
-import { cancelAction, confirmAction } from '../api/actions.api'
+import { cancelAction, confirmAction, isExpiredError, targetLabel } from '../api/actions.api'
 import { localizeApiError } from '../api/errors'
 import type { ActionProposal, ActionResult } from '../types'
 import VBadge from '../ui/VBadge.vue'
@@ -33,16 +33,17 @@ const ICONS: Record<string, Component> = { crm: SquareKanban, hrm: Users }
 const icon = computed(() => ICONS[String(props.proposal.connector || '').toLowerCase()] ?? PenLine)
 const platform = computed(() => (props.proposal.connector || '').toUpperCase())
 
-/** Yakuniy holat: tugmalar yo'qoladi, natija qoladi. */
+/** Yakuniy holat: tugmalar yo'qoladi, natija qoladi. Muddati o'tgan taklif ham
+ *  yakuniy - server baribir rad etadi (410), tugmani bosib xato o'qish shart emas. */
 const settled = computed(() => {
   const s = result.value?.status
-  return s === 'executed' || s === 'cancelled' || s === 'expired' || s === 'failed'
+  return s === 'executed' || s === 'cancelled' || s === 'expired' || s === 'failed' || (!result.value && timedOut.value)
 })
 
 type Tone = 'good' | 'neutral' | 'warn' | 'crit'
 const outcome = computed<{ tone: Tone; label: string } | null>(() => {
   const r = result.value
-  if (!r) return null
+  if (!r) return timedOut.value ? { tone: 'warn', label: t('actionExpired') } : null
   // ok === false - platforma "bajarildi" desa ham natija yo'q: bu muvaffaqiyatsizlik.
   if (r.status === 'executed' && r.ok !== false) return { tone: 'good', label: t('actionDone') }
   if (r.status === 'cancelled') return { tone: 'neutral', label: t('actionCancelled') }
@@ -68,7 +69,7 @@ function text(value: unknown): string {
   }
   return String(value)
 }
-const target = computed(() => (props.proposal.target ? text(props.proposal.target) : ''))
+const target = computed(() => targetLabel(props.proposal.target))
 const changes = computed(() => (props.proposal.changes ?? []).filter((c) => c && (c.field || c.to !== undefined)))
 function hasFrom(from: unknown): boolean {
   return from !== undefined && from !== null && from !== ''
@@ -80,6 +81,9 @@ const expiresAt = computed(() => {
   return Number.isFinite(ms) ? ms : null
 })
 const now = ref(Date.now())
+/** Muddat brauzer soatida o'tdi (har 15 s tekshiriladi) - yoki tarixdan qayta
+ *  chizilgan eski karta. `settled` va `outcome` shunga qaraydi. */
+const timedOut = computed(() => expiresAt.value !== null && now.value >= expiresAt.value)
 let tick: ReturnType<typeof setInterval> | undefined
 watch(
   () => expiresAt.value !== null && !settled.value,
@@ -94,8 +98,8 @@ onBeforeUnmount(() => clearInterval(tick))
 const expiryText = computed(() => {
   if (expiresAt.value === null) return ''
   const left = expiresAt.value - now.value
-  // Muddat o'tdi - holatni server aytadi (tugma bosilsa "Muddati tugagan" keladi).
-  if (left <= 0) return t('actionExpired')
+  // Muddat o'tdi - karta yakunlanadi (`timedOut`), nishon "Muddati tugagan" deydi.
+  if (left <= 0) return ''
   if (left < 60_000) return t('composer.underMinute')
   return t('composer.minutesLeft', { n: Math.ceil(left / 60_000) })
 })
@@ -114,7 +118,9 @@ async function run(kind: 'confirm' | 'cancel') {
   try {
     result.value = await (kind === 'confirm' ? confirmAction : cancelAction)(props.proposal.token)
   } catch (err) {
-    error.value = localizeApiError(err, t)
+    // Muddati o'tgan (404/410) - xato emas, taklifning holati: "Muddati tugagan".
+    if (isExpiredError(err)) result.value = { token: props.proposal.token, status: 'expired' }
+    else error.value = localizeApiError(err, t)
   } finally {
     busy.value = null
   }

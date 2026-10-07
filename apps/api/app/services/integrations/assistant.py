@@ -1076,7 +1076,9 @@ def _mapped_errors(secret: str):
     except urllib.error.HTTPError as exc:
         status = exc.code
         detail = _redact(_detail(exc), secret)
-        mapped = status if status in (400, 404, 422, 503) else 502
+        # 410 - taklifning muddati o'tgan (`/api/actions/...`, 2026-10 dan): uni
+        # 502 ga ("xizmat javob bermadi") aylantirish odamni chalg'itardi.
+        mapped = status if status in (400, 404, 410, 422, 503) else 502
         raise AssistantError(f"Assistant {status}: {detail}", status=mapped,
                              reason="upstream_busy" if status == 503 else "upstream_http") from exc
     except urllib.error.URLError as exc:

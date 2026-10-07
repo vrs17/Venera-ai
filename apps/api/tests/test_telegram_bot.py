@@ -483,6 +483,12 @@ def test_rad_etish_va_eskirgan_taklif(world):
     alert = [kw for n, kw in tg.calls if n == "answer_callback"][-1]
     assert alert["alert"] and alert["text"] == "Taklif topilmadi yoki muddati tugagan"
     assert ("edit_reply_markup", {"chat_id": TG_ID, "message_id": 78, "reply_markup": None}) in tg.calls
+    # Xizmatning yangi javobi - 410 `expired`: xuddi shunday, aniq matn bilan.
+    backend.action_result = AssistantError("expired", status=410)
+    bot.handle_update(callback("a:c:" + "d" * 32, message_id=79))
+    alert = [kw for n, kw in tg.calls if n == "answer_callback"][-1]
+    assert alert["alert"] and "muddati tugagan" in alert["text"]
+    assert ("edit_reply_markup", {"chat_id": TG_ID, "message_id": 79, "reply_markup": None}) in tg.calls
 
 
 def test_tugma_ulanmagan_odamdan(world):
