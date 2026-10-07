@@ -153,11 +153,12 @@ function errorText(err: unknown): string {
   return localizeApiError(err, t)
 }
 
-/** Aytilgan matn qoralamaga QO'SHILADI - yozilgan gapni ovoz bilan davom ettirish mumkin. */
-function insert(text: string) {
-  const draft = value.value
-  if (!draft.trim()) value.value = text
-  else value.value = /\s$/.test(draft) ? `${draft}${text}` : `${draft} ${text}`
+/** Aytilgan matn maydondagi matnning O'RNIGA yoziladi. Odatiy holat: diktovka yomon
+ *  eshitildi - odam qayta aytadi va eski noto'g'ri matn yangisi bilan almashishi kerak
+ *  (qo'shilib ketsa, uni qo'lda o'chirish telefonda noqulay). Almashtirish FAQAT yangi
+ *  matn kelganda: ✕ (bekor), "ovoz eshitilmadi" yoki xato bo'lsa eski matn joyida qoladi. */
+function place(text: string) {
+  value.value = text
 }
 
 const announcement = ref('')
@@ -169,7 +170,7 @@ function announce(text: string) {
 function onOutcome(outcome: DictationOutcome) {
   switch (outcome.kind) {
     case 'text':
-      insert(outcome.text)
+      place(outcome.text)
       haptic.notify('success')
       announce(t('composer.dictate.inserted'))
       if (outcome.truncated) toast.show({ message: t('voiceTruncatedNote'), id: 'dictation' })

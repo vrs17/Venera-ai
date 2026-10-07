@@ -216,19 +216,19 @@ function errorText(err: unknown): string {
   return localizeApiError(err, t)
 }
 
-/** Aytilgan matn qoralamaga QO'SHILADI (almashtirmaydi): odam yozib turgan gapni
- *  ovoz bilan davom ettirishi mumkin. Qoralama bo'shliq bilan tugasa - o'sha qoladi
- *  (masalan, yangi qatordan boshlangan bo'lsa). */
-function insert(text: string) {
-  const draft = value.value
-  if (!draft.trim()) value.value = text
-  else value.value = /\s$/.test(draft) ? `${draft}${text}` : `${draft} ${text}`
+/** Aytilgan matn maydondagi matnning O'RNIGA yoziladi (Mini App kompozeri bilan bir
+ *  xil qoida). Odatiy holat: diktovka yomon eshitildi - odam qayta aytadi va eski
+ *  noto'g'ri matn yangisi bilan almashishi kerak, qo'shilib ketmasligi. Almashtirish
+ *  FAQAT yangi matn kelganda: ✕ (bekor), "ovoz eshitilmadi" yoki xato bo'lsa eski matn
+ *  joyida qoladi. */
+function place(text: string) {
+  value.value = text
 }
 
 function onOutcome(outcome: DictationOutcome) {
   switch (outcome.kind) {
     case 'text':
-      insert(outcome.text)
+      place(outcome.text)
       announce(t('composer.dictate.inserted'))
       if (outcome.truncated) toast.show({ message: t('voiceTruncatedNote'), id: 'dictation' })
       break
