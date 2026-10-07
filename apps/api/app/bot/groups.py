@@ -239,16 +239,43 @@ QOIDALAR
 6. Maosh, ta'til, kasallik, intizom kabi shaxsiy masalalarni javobga kiritma.
 7. Format - Telegram uchun oddiy Markdown: **qalin** bo'lim nomi va "-" bilan ro'yxat. Jadval va # sarlavha ishlatma.
 
-XULOSA:
-Xabarlarni MAVZULARGA ajrat (loyiha, mijoz, uchrashuv, xato, reja va h.k.), muhimlik tartibida. Har mavzu:
+XULOSA - odam uni 5-10 soniyada ko'zdan kechirib, muhimini tushunsin.
+Umumiy sarlavha (Xulosa, Venera, davr) YOZMA - uni Venera o'zi qo'shadi. Faqat mazmuni bor bo'limlarni shu tartibda yoz; bo'sh bo'limni umuman yozma ("yo'q" deb ham). Bo'limlar orasida bo'sh qator qoldir.
+
+🔴 **Muhim**
+- hal bo'lmagan jiddiy muammo, xavf yoki shoshilinch ish, 1-3 qator. Faqat shunday narsa bo'lsa. Uchrashuv va muddat bu yerda emas - 📅 bo'limida.
+
+🟡 **Jarayonda**
+👤 Ism
+- hozir ustida ishlanayotgan ish; qachon boshlangani - xabarda aytilgan bo'lsa
+
+📌 **Muhokama**
 **<mos emoji> Mavzu nomi**
-- nima bo'ldi, kim nima dedi va nimaga kelishildi - 1-4 qator
-Mavzulardan keyin - faqat mazmuni bo'lsa:
-**✅ Qarorlar** - nima kelishildi
-**📋 Vazifalar** - Kim - nima - muddat
-**📅 Muddat va uchrashuvlar** - sana, soat, nima bo'ladi
-**❓ Ochiq savollar** - javobsiz savol va hal bo'lmagan muammolar
-Har bir mazmunli xabar biror joyda aks etsin; salom, "ok", "rahmat" kabilarni tashlab ket. Hajm xabarlarga mos: kam xabar - qisqa, ko'p xabar - batafsilroq, lekin 3000 belgidan oshmasin.
+- qisqa: nima bo'ldi, kim nima dedi yoki qildi; foydali bo'lsa sana bilan
+
+✅ **Qarorlar**
+- faqat ANIQ qabul qilingan qarorlar
+
+📋 **Vazifalar**
+👤 Ism
+- topshirilgan yoki o'z zimmasiga olingan ish; holati va muddati - faqat xabarda aytilgan bo'lsa
+
+📅 **Muddatlar / uchrashuvlar**
+- sana, soat - nima bo'ladi
+
+❓ **Ochiq savollar**
+- javobsiz savollar va hal bo'lmagan muammolar
+
+XULOSA QOIDALARI
+- Yangi va amaliy ma'lumot birinchi; mavzular muhimlik tartibida.
+- Har fakt BIR marta, eng mos bo'limda: Muhim yoki Jarayonda'dagini Muhokama, Vazifalar yoki Ochiq savollarda takrorlama.
+- Farqla: o'tgan voqea, hozirgi muammo, jarayondagi ish, bajarilgan ish, qaror, ochiq savol. Hal bo'lib bo'lgan narsani faol muammo deb ko'rsatma - u Muhokama'da, o'tgan zamonda turadi.
+- Holat belgilari faqat xabar tasdiqlasa: 🔴 hal bo'lmagan yoki jiddiy, 🟡 jarayonda, 🟢 bajarilgan, 🔵 rejalashtirilgan, ⚪ ma'lumot uchun.
+- Muddat, vazifa egasi, holat, muhimlik, uchrashuv va qarorni TO'QIMA: aytilmagan muddatni yozma, egasi noaniq ishni hech kimga biriktirma.
+- Mavzu emojisi bo'lim belgilaridan (🔴 🟡 📌 ✅ 📋 📅 ❓) farqli bo'lsin.
+- Qisqa qatorlar, paragraf emas. "Muhokama davomida", "Umuman olganda", "Yuqoridagilardan kelib chiqib" kabi bo'sh gaplar yozma.
+- Salom, "ok", "rahmat" kabilarni tashlab ket. Ma'lumot kam bo'lsa - qisqa yoz, bo'shliqni to'qib to'ldirma.
+- Bo'lim nomlari - javob tilida. 3000 belgidan oshmasin.
 
 SAVOL:
 Avval to'g'ridan-to'g'ri javob, keyin kerak bo'lsa 2-5 ta dalil qator (kim, qachon, nima degan). Odam haqida so'ralsa - faqat o'sha odamning xabarlari va unga tegishli gaplar. Loyiha yoki mavzu haqida - faqat shu mavzuga oid xabarlar. 1500 belgidan oshmasin."""
@@ -521,7 +548,10 @@ class GroupAssistant:
             log.warning("Telegram guruh: javob yozilmadi: %s", exc)
             self._send(chat_id, esc(_FAILED), reply_to=message_id, thread=thread)
             return
-        header = _header(request, period, len(lines), omitted, first)
+        topics = 0
+        if summary:
+            answer, topics = polish_summary(answer)
+        header = _header(request, period, len(lines), omitted, first, topics)
         parts = render.pack([header, *render.to_blocks(answer)])
         if len(parts) > _MAX_PARTS:
             parts = parts[:_MAX_PARTS]
@@ -579,15 +609,73 @@ def _reply_context(msg: dict[str, Any], name: str, thread: int | None) -> tuple[
     return f"{stamp}{sender_name(reply.get('from') or {})}: {text}", ""
 
 
-def _header(request: Request, period: Period, count: int, omitted: int, first: int | None) -> str:
-    scope = f"{period.label} · {count} ta xabar" + (" (eng yangilari)" if omitted else "")
+def _header(request: Request, period: Period, count: int, omitted: int, first: int | None,
+            topics: int = 0) -> str:
     if request.kind == "summary":
-        line = f"📋 <b>Xulosa</b> · {esc(scope)}"
-    else:
-        line = f"💬 <i>{esc(scope)} asosida</i>"
+        facts = [f"{count} ta xabar" + (" (eng yangilari)" if omitted else "")]
+        if topics:
+            facts.append(f"{topics} ta mavzu")
+        if first is not None and first > period.since:
+            facts.append(f"{_when(first)} dan beri")
+        return f"📋 <b>Venera — {esc(period.label)}</b>\n<i>{esc(' · '.join(facts))}</i>"
+    scope = f"{period.label} · {count} ta xabar" + (" (eng yangilari)" if omitted else "")
+    line = f"💬 <i>{esc(scope)} asosida</i>"
     if first is not None and first > period.since:
         line += f"\n<i>Venera bu guruh xabarlarini {_when(first)} dan beri saqlaydi.</i>"
     return line
+
+
+#: Xulosa bo'limlari belgisi (`SYSTEM_PROMPT`). Bo'lim nomi javob tilida bo'lishi
+#: mumkin - shuning uchun bo'lim NOMI emas, BELGISI bo'yicha taniladi.
+_SECTIONS = frozenset("🔴🟡📌✅📋📅❓")
+_DISCUSSION = "📌"
+#: Butun qator - sarlavha: `📊 **Mavzu**`, `**📊 Mavzu**` yoki `### Mavzu`.
+_HEADING = re.compile(r"^(?!\s*[-•+>]\s)\s*(?:([^\w\s*#]+)\s*)?\*\*\s*([^\w\s*]+)?\s*[^*\n]+?\s*\*\*\s*:?\s*$"
+                      r"|^\s{0,3}#{1,6}\s+(\S+)")
+#: Model o'zi yozgan umumiy sarlavha - bizning sarlavha bilan takrorlanadi.
+_OWN_TITLE = re.compile(r"(?i)^\W*(?:xulosa|venera|summary|итог|сводка|резюме)\b")
+
+
+def _own_title(line: str) -> bool:
+    """Sarlavha qatori ("**Xulosa**", "### Venera xulosasi", "📋 Xulosa:") -
+    gap emas: "Xulosa uchun ma'lumot yetarli emas." saqlanadi."""
+    if len(line) > 80 or not _OWN_TITLE.match(line):
+        return False
+    return bool(_HEADING.match(line)) or bool(re.fullmatch(r"[^\w]*\w+[^\w]*", line.strip()))
+
+
+def polish_summary(markdown: str) -> tuple[str, int]:
+    """Xulosa matnini ko'zdan kechirishga qulay qiladi va mavzular sonini
+    qaytaradi (sarlavha uchun).
+
+    * model o'zi qo'shgan umumiy sarlavha olib tashlanadi - u `_header` bilan
+      takrorlanardi;
+    * har bo'lim va mavzu sarlavhasi oldidan bo'sh qator: Telegram'da bo'limlar
+      bir-biriga yopishib qolmaydi (`render.to_blocks` bo'sh qatorni xat
+      boshiga aylantiradi);
+    * mavzu - `📌` bo'limi ichidagi sarlavha. Bo'lim belgisi bilan taniladi,
+      nomi bilan emas: ruscha so'rovga javob ham to'g'ri sanaladi.
+    """
+    lines = markdown.replace("\r\n", "\n").strip().split("\n")
+    first = next((i for i, line in enumerate(lines) if line.strip()), None)
+    if first is not None and _own_title(lines[first]):
+        lines = lines[first + 1:]
+    out: list[str] = []
+    topics = 0
+    in_discussion = False
+    for line in lines:
+        heading = _HEADING.match(line)
+        if heading:
+            mark = (heading.group(1) or heading.group(2) or heading.group(3) or "")[:1]
+            if mark in _SECTIONS:
+                in_discussion = mark == _DISCUSSION
+            elif in_discussion:
+                topics += 1
+            if out and out[-1].strip():
+                out.append("")
+        if line.strip() or (out and out[-1].strip()):
+            out.append(line.rstrip())
+    return "\n".join(out).strip(), topics
 
 
 def _empty(period: Period, first: int) -> str:
