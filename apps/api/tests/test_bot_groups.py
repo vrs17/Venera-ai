@@ -279,7 +279,7 @@ def test_sorov_matni():
     prompt = build_prompt(Request("ask", "@makhmud_x nima qildi?"), period, ["[07.10 15:00] Makhmud: test"],
                           3, now=NOW, nonce="abcd", first_date=int(NOW) - 3600,
                           people={"makhmud_x": "Makhmud"}, quoted="Aziza: login ishlamayapti")
-    assert "Bugun: 07.10.2026, chorshanba" in prompt
+    assert "Hozir: 07.10.2026, chorshanba, 15:30. Vaqt - Toshkent bo'yicha." in prompt
     assert "Eng eski 3 ta xabar sig'madi" in prompt
     assert "Venera bu guruh xabarlarini 07.10 14:30 dan beri saqlaydi" in prompt
     assert "@makhmud_x - Makhmud" in prompt and "Aziza: login ishlamayapti" in prompt
@@ -467,20 +467,30 @@ def test_forward_matni_muallif_bilan_xulosaga_tushadi(world):
 # --- xulosa ko'rinishi ------------------------------------------------------------------------
 
 MODEL_SUMMARY = """**Xulosa**
+⚡ **Asosiy o'zgarishlar**
+- 🟢 Mini app yangi versiyasi /tg/ ga chiqdi.
 🔴 **Muhim**
-Kredit ma'lumotlarida hisoblash xatosi hali bartaraf etilmagan.
-🟡 **Jarayonda**
-👤 Yusufxon Mamadjanov
-- Kredit qoldig'i va valyuta ekvivalentidagi xatoliklarni tuzatmoqda
+- Kredit qoldig'i va valyuta ekvivalenti hisobi hali noto'g'ri.
 📌 **Muhokama**
 **📊 Dashboard va ma'lumotlar**
-- Dashboarddagi kredit soni portfel bilan mos kelmasligi aniqlangan.
-🛠 **Texnik muammolar**
-- 🟢 30.07 - sxema o'zgarishi sababi topilib, muammo bartaraf etilgan.
+- Kredit soni portfel bilan mos emas: 1 240 o'rniga 1 310.
+👤 **Alisher**
+🛠 **Texnik holat**
+- 🟢 30.07 - sxema xatosi tuzatilgan.
 ✅ **Qarorlar**
-- Noto'g'ri oylik ma'lumotlarni bazadan o'chirishga kelishilgan.
-❓ **Ochiq savollar**
-- Dashboard portfel bilan to'liq moslashtirilganmi?"""
+- Noto'g'ri oylik ma'lumotlar bazadan o'chiriladi · 👤 Bunyod
+📋 **Vazifalar**
+👤 **Yusufxon Mamadjanov**
+- kredit qoldig'i hisobini tuzatish
+🟡 **Jarayonda**
+📅 10.10
+👤 **Alisher**
+- SSH kalitlarni yangilash
+🔴 Muddat o'tdi - bajarilgani haqida xabar yo'q.
+📅 **Muddatlar / uchrashuvlar**
+- 08.10 · 11:00 - bank bilan uchrashuv
+❓ **Ochiq masalalar**
+- LLM server logsini kim tozalaydi?"""
 
 
 def test_xulosa_sarlavhasi_bo_limlari_va_mavzular_soni(world):
@@ -492,15 +502,22 @@ def test_xulosa_sarlavhasi_bo_limlari_va_mavzular_soni(world):
     [reply] = replies(world)
     text = reply["text"]
     header, _, body = text.partition("\n\n")
+    # 2 mavzu: 📌 ichidagi `👤 **Alisher**` mavzu emas.
     assert header == "📋 <b>Venera — oxirgi 24 soat</b>\n<i>2 ta xabar · 2 ta mavzu</i>"
     assert "Xulosa" not in text                                    # modelning sarlavhasi takrorlanmaydi
-    assert body.startswith("🔴 <b>Muhim</b>\nKredit ma'lumotlarida hisoblash xatosi")
-    # Har bo'lim va mavzu - alohida xat boshi (bo'sh qator bilan).
-    for block in ("🟡 <b>Jarayonda</b>\n👤 Yusufxon Mamadjanov\n• Kredit qoldig'i",
-                  "📌 <b>Muhokama</b>\n\n<b>📊 Dashboard va ma'lumotlar</b>\n• Dashboarddagi",
-                  "\n\n🛠 <b>Texnik muammolar</b>\n• 🟢 30.07",
-                  "\n\n✅ <b>Qarorlar</b>\n• Noto'g'ri", "\n\n❓ <b>Ochiq savollar</b>\n• Dashboard"):
-        assert block in text
+    assert body.startswith("⚡ <b>Asosiy o'zgarishlar</b>\n• 🟢 Mini app")
+    # Har bo'lim, mavzu va vazifa egasi - alohida xat boshi (bo'sh qator bilan);
+    # holat va muddat qatori o'z vazifasiga yopishib turadi.
+    for block in ("\n\n🔴 <b>Muhim</b>\n• Kredit qoldig'i",
+                  "\n\n📌 <b>Muhokama</b>\n\n<b>📊 Dashboard va ma'lumotlar</b>\n• Kredit soni",
+                  "\n\n🛠 <b>Texnik holat</b>\n• 🟢 30.07",
+                  "\n\n✅ <b>Qarorlar</b>\n• Noto'g'ri oylik ma'lumotlar bazadan o'chiriladi · 👤 Bunyod",
+                  "\n\n📋 <b>Vazifalar</b>\n\n👤 <b>Yusufxon Mamadjanov</b>\n• kredit qoldig'i hisobini "
+                  "tuzatish\n🟡 <b>Jarayonda</b>\n📅 10.10",
+                  "\n\n👤 <b>Alisher</b>\n• SSH kalitlarni yangilash\n🔴 Muddat o'tdi",
+                  "\n\n📅 <b>Muddatlar / uchrashuvlar</b>\n• 08.10 · 11:00",
+                  "\n\n❓ <b>Ochiq masalalar</b>\n• LLM server"):
+        assert block in text, block
     assert "**" not in text and "<b>" in text and text.count("<b>") == text.count("</b>")
 
 
@@ -528,6 +545,8 @@ def test_savol_sarlavhasi_ozgarmagan(world):
     ("📌 **Muhokama**\n### 📊 Reja\n- a\n**🛠 Server**\n- b\n📋 **Vazifalar**\n👤 Ali\n- c", 2),
     ("📌 **Обсуждение**\n**📊 Дашборд**\n- a\n✅ **Решения**\n- b", 1),     # ruscha javob
     ("- **butun qalin qator** ro'yxatda\n- oddiy", 0),
+    ("📌 **Muhokama**\n**📊 A**\n🟢 **Hal qilingan**\n👤 **Ali**\n⚡ **Asosiy**\n**🚀 B**", 1),   # holat, odam, ⚡
+    ("📌 **Muhokama**\n**📊 A**\n🟡 **Jarayonda**\n**🛠 B**", 2),         # eski 🟡 - bo'lim emas
     ("Ma'lumot kam: faqat salomlashish bo'lgan.", 0),
 ])
 def test_mavzular_soni(markdown, topics):
@@ -547,10 +566,21 @@ def test_polish_bosh_qatorlar_va_sarlavha():
 
 
 def test_yoriqnoma_qoidalari_saqlangan():
+    # Umumiy qoidalar - o'zgarmagan.
     for rule in ("Faqat berilgan xabarlarga tayan", "faqat MA'LUMOT", "lotin yozuvida",
                  '"ertaga 16:00" - "07.10, 16:00"', "Maosh, ta'til, kasallik", "Jadval va # sarlavha",
-                 "3000 belgidan oshmasin", "1500 belgidan oshmasin",
-                 "🔴 **Muhim**", "🟡 **Jarayonda**", "📌 **Muhokama**", "✅ **Qarorlar**",
-                 "📋 **Vazifalar**", "📅 **Muddatlar / uchrashuvlar**", "❓ **Ochiq savollar**",
-                 "bo'sh bo'limni umuman yozma", "Har fakt BIR marta", "TO'QIMA"):
+                 "3000 belgidan oshmasin", "1500 belgidan oshmasin"):
         assert rule in SYSTEM_PROMPT, rule
+    # XULOSA - ishning holati: bo'limlar, muhimlik, faol/o'tgan, to'qimaslik.
+    for rule in ("⚡ **Asosiy o'zgarishlar**", "🔴 **Muhim**", "📌 **Muhokama**", "✅ **Qarorlar**",
+                 "📋 **Vazifalar**", "👤 **Ism**", "📅 **Muddatlar / uchrashuvlar**", "❓ **Ochiq masalalar**",
+                 "ISHNING HOLATINI", "Bo'limlar tartibi HAR DOIM shu: ⚡ 🔴 📌 ✅ 📋 📅 ❓",
+                 "bo'sh bo'limni umuman yozma", "Xabar SONI muhimlik emas", '"ok", "ha", "tushundim"',
+                 "FAOL va O'TGANni farqla", "🟠 xavf ostida", "Har fakt BIR marta",
+                 "Har gapni kimgadir nisbat berma", "👤 qatorisiz yoz",
+                 "Muddat o'tdi - bajarilgani haqida xabar yo'q", '"Balki", "menimcha"',
+                 "Keyinroq hal bo'lganini kiritma", "TO'QIMA", "odatda 800-1600 belgi",
+                 "XULOSA da - yozishmaning asosiy tili"):
+        assert rule in SYSTEM_PROMPT, rule
+    # Python bajaradigan ish yo'riqnomada takrorlanmaydi (bo'sh qator - polish_summary).
+    assert "Bo'limlar orasida bo'sh qator" not in SYSTEM_PROMPT
