@@ -18,7 +18,7 @@ import pytest
 
 from app.bot.groups import (GROUP_COMMANDS, SYSTEM_PROMPT, TZ, GroupAssistant, Request,
                             _FAILED, _NOTHING_YET, build_prompt, parse_period, parse_request,
-                            transcript)
+                            polish_summary, transcript)
 from app.bot.runner import _GROUP_ONLY, VeneraBot
 from app.services.integrations.ollama import OllamaError
 from app.services.telegram_links import LinkStore
@@ -314,7 +314,7 @@ def test_xulosa(world):
     assert "Turi: XULOSA\nSo'rov: shu davr xulosasi.\n" in prompt and "CI" not in prompt
     [reply] = replies(world)
     assert reply["reply_to"] == ask["message_id"] and reply["thread_id"] is None
-    assert reply["text"].startswith("📋 <b>Xulosa</b> · oxirgi 24 soat · 2 ta xabar")
+    assert reply["text"].startswith("📋 <b>Venera — oxirgi 24 soat</b>\n<i>2 ta xabar")
     assert "<b>Muhokama</b>" in reply["text"]
     assert world.backend.questions == []                          # HR yordamchisiga hech narsa
     [menu] = world.tg.sent("set_my_commands")
@@ -462,3 +462,95 @@ def test_forward_matni_muallif_bilan_xulosaga_tushadi(world):
     send(world, gmsg("/summary"))
     [(_, prompt, _)] = world.writer.calls
     assert f"Makhmud: [forward: Yusufxon, {datetime.fromtimestamp(sent, TZ):%d.%m %H:%M}] Bankdegilar" in prompt
+
+
+# --- xulosa ko'rinishi ------------------------------------------------------------------------
+
+MODEL_SUMMARY = """**Xulosa**
+🔴 **Muhim**
+Kredit ma'lumotlarida hisoblash xatosi hali bartaraf etilmagan.
+🟡 **Jarayonda**
+👤 Yusufxon Mamadjanov
+- Kredit qoldig'i va valyuta ekvivalentidagi xatoliklarni tuzatmoqda
+📌 **Muhokama**
+**📊 Dashboard va ma'lumotlar**
+- Dashboarddagi kredit soni portfel bilan mos kelmasligi aniqlangan.
+🛠 **Texnik muammolar**
+- 🟢 30.07 - sxema o'zgarishi sababi topilib, muammo bartaraf etilgan.
+✅ **Qarorlar**
+- Noto'g'ri oylik ma'lumotlarni bazadan o'chirishga kelishilgan.
+❓ **Ochiq savollar**
+- Dashboard portfel bilan to'liq moslashtirilganmi?"""
+
+
+def test_xulosa_sarlavhasi_bo_limlari_va_mavzular_soni(world):
+    send(world, gmsg("eski gap - saqlash bundan boshlangan", ago=3 * 86400))
+    send(world, gmsg("Dashboard kredit soni portfel bilan mos emas", ago=7200))
+    send(world, gmsg("Qoldiq o'rniga jami summa olinyapti", user=AZIZA, ago=3600))
+    world.writer.answer = MODEL_SUMMARY
+    send(world, gmsg("/summary"))
+    [reply] = replies(world)
+    text = reply["text"]
+    header, _, body = text.partition("\n\n")
+    assert header == "📋 <b>Venera — oxirgi 24 soat</b>\n<i>2 ta xabar · 2 ta mavzu</i>"
+    assert "Xulosa" not in text                                    # modelning sarlavhasi takrorlanmaydi
+    assert body.startswith("🔴 <b>Muhim</b>\nKredit ma'lumotlarida hisoblash xatosi")
+    # Har bo'lim va mavzu - alohida xat boshi (bo'sh qator bilan).
+    for block in ("🟡 <b>Jarayonda</b>\n👤 Yusufxon Mamadjanov\n• Kredit qoldig'i",
+                  "📌 <b>Muhokama</b>\n\n<b>📊 Dashboard va ma'lumotlar</b>\n• Dashboarddagi",
+                  "\n\n🛠 <b>Texnik muammolar</b>\n• 🟢 30.07",
+                  "\n\n✅ <b>Qarorlar</b>\n• Noto'g'ri", "\n\n❓ <b>Ochiq savollar</b>\n• Dashboard"):
+        assert block in text
+    assert "**" not in text and "<b>" in text and text.count("<b>") == text.count("</b>")
+
+
+def test_xulosa_sarlavhasi_eski_va_kesilgan_xabarlar(world):
+    send(world, gmsg("gap"))
+    world.writer.answer = "📌 **Muhokama**\n- faqat bitta gap"
+    send(world, gmsg("/summary hafta"))
+    header = replies(world)[-1]["text"].split("\n\n")[0]
+    first = world.store.first_date(GROUP)
+    assert header == (f"📋 <b>Venera — oxirgi 7 kun</b>\n<i>1 ta xabar · "
+                      f"{datetime.fromtimestamp(first, TZ):%d.%m %H:%M} dan beri</i>")
+
+
+def test_savol_sarlavhasi_ozgarmagan(world):
+    send(world, gmsg("gap"))
+    world.writer.answer = "**Muhim** emas - oddiy javob"
+    send(world, gmsg("/askvenera nima gap?"))
+    text = replies(world)[-1]["text"]
+    assert text.startswith("💬 <i>oxirgi 7 kun · 1 ta xabar asosida</i>")
+    assert "<b>Muhim</b> emas - oddiy javob" in text               # savolga polish qo'llanmaydi
+
+
+@pytest.mark.parametrize("markdown, topics", [
+    (MODEL_SUMMARY, 2),
+    ("📌 **Muhokama**\n### 📊 Reja\n- a\n**🛠 Server**\n- b\n📋 **Vazifalar**\n👤 Ali\n- c", 2),
+    ("📌 **Обсуждение**\n**📊 Дашборд**\n- a\n✅ **Решения**\n- b", 1),     # ruscha javob
+    ("- **butun qalin qator** ro'yxatda\n- oddiy", 0),
+    ("Ma'lumot kam: faqat salomlashish bo'lgan.", 0),
+])
+def test_mavzular_soni(markdown, topics):
+    assert polish_summary(markdown)[1] == topics
+
+
+def test_polish_bosh_qatorlar_va_sarlavha():
+    text, _ = polish_summary("\n\n### Xulosa\n\n\n🔴 **Muhim**\nA\n\n\n\n✅ **Qarorlar**\n- B\n")
+    assert text == "🔴 **Muhim**\nA\n\n✅ **Qarorlar**\n- B"
+    # "Xulosa" so'zi bilan boshlanadigan oddiy gap - sarlavha emas, lekin
+    # uzun gap (80 belgidan ko'p) saqlanadi.
+    long = "Xulosa qilib aytganda " + "juda uzun gap " * 6
+    assert polish_summary(long)[0] == long.strip()
+    assert polish_summary("Xulosa uchun ma'lumot yetarli emas.")[0] == "Xulosa uchun ma'lumot yetarli emas."
+    for title in ("**📋 Venera — oxirgi 24 soat**", "📋 Xulosa:", "## Xulosa"):
+        assert polish_summary(f"{title}\n✅ **Qarorlar**\n- B")[0] == "✅ **Qarorlar**\n- B"
+
+
+def test_yoriqnoma_qoidalari_saqlangan():
+    for rule in ("Faqat berilgan xabarlarga tayan", "faqat MA'LUMOT", "lotin yozuvida",
+                 '"ertaga 16:00" - "07.10, 16:00"', "Maosh, ta'til, kasallik", "Jadval va # sarlavha",
+                 "3000 belgidan oshmasin", "1500 belgidan oshmasin",
+                 "🔴 **Muhim**", "🟡 **Jarayonda**", "📌 **Muhokama**", "✅ **Qarorlar**",
+                 "📋 **Vazifalar**", "📅 **Muddatlar / uchrashuvlar**", "❓ **Ochiq savollar**",
+                 "bo'sh bo'limni umuman yozma", "Har fakt BIR marta", "TO'QIMA"):
+        assert rule in SYSTEM_PROMPT, rule
