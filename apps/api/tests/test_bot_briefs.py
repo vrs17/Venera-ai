@@ -598,7 +598,7 @@ def test_eski_ombor_forward_sanasi_belgidan_tiklanadi(tmp_path):
     assert rows[2].orig_date == int(datetime(2026, 12, 20, 9, 30, tzinfo=TZ).timestamp())   # o'tgan yil
     assert rows[3].orig_date is None and rows[4].orig_date is None
     check = sqlite3.connect(path)
-    assert check.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert check.execute("PRAGMA user_version").fetchone()[0] == 4
     check.close()
 
 

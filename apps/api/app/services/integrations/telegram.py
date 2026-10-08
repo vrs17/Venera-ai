@@ -44,6 +44,12 @@ _QUIET_OK = frozenset({"getUpdates", "sendChatAction"})
 #: xabar kechikib kelgandan ko'ra xato jurnalda qolgani yaxshi.
 _MAX_RETRY_AFTER = 30
 
+#: Bot qabul qiladigan yangilanishlar - polling (`get_updates`) ham, webhook
+#: (`runner.ALLOWED_UPDATES`) ham SHU ro'yxat. `edited_message` - guruh xulosasi
+#: tahrirlangan matnni ko'rsin; `my_chat_member` - bot guruhga qo'shildi,
+#: chiqarildi yoki huquqi o'zgardi (`app/bot/group_admin.py`).
+UPDATE_TYPES = ("message", "edited_message", "callback_query", "my_chat_member")
+
 #: Yuklab olinadigan fayl uchun zaxira chegara. Asosiysi chaqiruvchida
 #: (`limit`), bu faqat noto'g'ri chaqiruvdan himoya. Bot API o'zi ham 20 MB
 #: dan kattasini bermaydi.
@@ -55,11 +61,13 @@ class TelegramError(Exception):
     0), `description` - uning matni (TOKENSIZ)."""
 
     def __init__(self, message: str, *, code: int = 0, description: str = "",
-                 retry_after: int | None = None) -> None:
+                 retry_after: int | None = None, migrate_to: int | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.description = description
         self.retry_after = retry_after
+        #: Guruh supergroup'ga aylangan - yangi id (`parameters.migrate_to_chat_id`).
+        self.migrate_to = migrate_to
 
     @property
     def not_modified(self) -> bool:
@@ -200,14 +208,16 @@ class TelegramApi:
                 code=int(payload.get("error_code") or exc.code),
                 description=description,
                 retry_after=_int(params.get("retry_after")),
+                migrate_to=_int(params.get("migrate_to_chat_id")),
             ) from exc
         except (urllib.error.URLError, TimeoutError, socket_timeout, OSError) as exc:
             raise TelegramError(self._redact(f"{method}: tarmoq xatosi: {exc}")) from exc
         payload = _json(raw)
         if not payload.get("ok"):
             description = self._redact(str(payload.get("description") or "javob tushunarsiz"))
+            params = payload.get("parameters") if isinstance(payload.get("parameters"), dict) else {}
             raise TelegramError(f"{method}: {description}", code=int(payload.get("error_code") or 0),
-                                description=description)
+                                description=description, migrate_to=_int(params.get("migrate_to_chat_id")))
         return payload.get("result")
 
     def _redact(self, text: str) -> str:
@@ -221,10 +231,7 @@ class TelegramApi:
     def get_updates(self, offset: int | None, *, timeout: int = 25) -> list[dict[str, Any]]:
         """Uzun so'rov (long polling). HTTP kutishi Telegram kutishidan UZUN
         bo'lishi shart - aks holda har bo'sh so'rov "timeout" xatosi bo'lardi."""
-        # `edited_message` - guruh xulosasi tahrirlangan matnni ko'rsin
-        # (`app/bot/groups.py`); shaxsiy chatda tahrir e'tiborsiz.
-        params: dict[str, Any] = {"timeout": timeout,
-                                  "allowed_updates": ["message", "edited_message", "callback_query"]}
+        params: dict[str, Any] = {"timeout": timeout, "allowed_updates": list(UPDATE_TYPES)}
         if offset is not None:
             params["offset"] = offset
         result = self.call("getUpdates", params, timeout=timeout + 15)
@@ -296,6 +303,28 @@ class TelegramApi:
             fields["reply_markup"] = dict(reply_markup)
         return self.upload("sendDocument", fields, file_field="document", filename=filename,
                            content=content, content_type=content_type)
+
+    # --- guruhlar (`app/bot/group_admin.py`) ----------------------------------
+
+    def get_chat(self, chat_id: int) -> dict[str, Any]:
+        result = self.call("getChat", {"chat_id": chat_id})
+        return result if isinstance(result, dict) else {}
+
+    def get_chat_member(self, chat_id: int, user_id: int) -> dict[str, Any]:
+        """Guruhdagi a'zo holati - bot o'zi uchun: administratormi, qadashi mumkinmi."""
+        result = self.call("getChatMember", {"chat_id": chat_id, "user_id": user_id})
+        return result if isinstance(result, dict) else {}
+
+    def pin_message(self, chat_id: int, message_id: int, *, silent: bool = True) -> Any:
+        """Xabarni qadaydi; `silent` - a'zolarga bildirishnoma ketmaydi."""
+        return self.call("pinChatMessage", {"chat_id": chat_id, "message_id": message_id,
+                                            "disable_notification": silent})
+
+    def unpin_message(self, chat_id: int, message_id: int) -> Any:
+        return self.call("unpinChatMessage", {"chat_id": chat_id, "message_id": message_id})
+
+    def leave_chat(self, chat_id: int) -> Any:
+        return self.call("leaveChat", {"chat_id": chat_id})
 
     def set_webhook(self, url: str, *, secret: str, allowed_updates: list[str]) -> Any:
         """Telegram xabarlarni shu manzilga YUBORADI. `secret` har so'rovning

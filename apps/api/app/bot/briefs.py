@@ -72,6 +72,10 @@ BTN_ONE = "👥 Bitta guruh"
 LABELS = frozenset({BTN_ALL, BTN_ONE})
 REPLY_KEYBOARD = {"keyboard": [[{"text": BTN_ALL}, {"text": BTN_ONE}]],
                   "resize_keyboard": True, "is_persistent": True}
+#: Guruhlarni boshqarish (`group_admin.py`) - rahbar o'zi guruh qo'shadi.
+BTN_GROUPS = "⚙️ Guruhlar"
+REPLY_KEYBOARD_ADMIN = {"keyboard": [[{"text": BTN_ALL}, {"text": BTN_ONE}], [{"text": BTN_GROUPS}]],
+                        "resize_keyboard": True, "is_persistent": True}
 REMOVE_KEYBOARD = {"remove_keyboard": True}
 
 TYPES = ("task", "deadline", "decision", "problem", "status_change", "risk", "management_request")
@@ -880,8 +884,11 @@ def period_keyboard(scope: str) -> dict[str, Any]:
     return {"inline_keyboard": rows}
 
 
-def menu_keyboard() -> dict[str, Any]:
-    return {"inline_keyboard": [[_btn(BTN_ALL, "s", "all")], [_btn(BTN_ONE, "g", 0)]]}
+def menu_keyboard(*, manage: bool = False) -> dict[str, Any]:
+    rows = [[_btn(BTN_ALL, "s", "all")], [_btn(BTN_ONE, "g", 0)]]
+    if manage:
+        rows.append([{"text": "⚙️ Guruhlarni boshqarish", "callback_data": "g:m"}])
+    return {"inline_keyboard": rows}
 
 
 @dataclass
@@ -898,9 +905,11 @@ class BriefService:
                  groups: Callable[[], frozenset[int]] = telegram_groups_now,
                  logins: Callable[[], frozenset[str]] = telegram_brief_logins_now,
                  inline: bool = False, workers: int = 2, clock: Callable[[], float] = time.time,
-                 crm: Any = None) -> None:
+                 crm: Any = None, manage: bool = False) -> None:
         self.api = api
         self.engine = engine
+        #: Guruhlarni botda boshqarish yoqilgan (`group_admin.py`): tugma va menyu qatori.
+        self.manage = manage
         #: `crm_status.CrmChecker` - vazifalarning CRM holati (rahbar nomidan).
         self.crm = crm
         self._groups = groups
@@ -931,8 +940,11 @@ class BriefService:
             self._pool.shutdown(wait=False, cancel_futures=True)
 
     def show_keyboard(self, chat_id: int) -> None:
-        self._send(chat_id, "📊 <b>Rahbariyat brifi</b> - pastdagi tugmalar: barcha guruhlar yoki bitta "
-                            "guruh bo'yicha qisqa holat.", markup=REPLY_KEYBOARD)
+        text = ("📊 <b>Rahbariyat brifi</b> - pastdagi tugmalar: barcha guruhlar yoki bitta "
+                "guruh bo'yicha qisqa holat.")
+        if self.manage:
+            text += " «⚙️ Guruhlar» - guruh qo'shish va boshqarish."
+        self._send(chat_id, text, markup=REPLY_KEYBOARD_ADMIN if self.manage else REPLY_KEYBOARD)
 
     def on_command(self, chat_id: int, user: AuthUser, args: str) -> None:
         """`/brif` - tugmalar; `/brif 7 kun` - darhol barcha guruhlar brifi."""
@@ -944,7 +956,7 @@ class BriefService:
             self._start_brief(chat_id, user, "all", code_for(period), cq_id=None, edit_id=None)
             return
         self.show_keyboard(chat_id)
-        self._send(chat_id, "Qaysi guruhlar bo'yicha?", markup=menu_keyboard())
+        self._send(chat_id, "Qaysi guruhlar bo'yicha?", markup=menu_keyboard(manage=self.manage))
 
     def on_text(self, chat_id: int, msg: dict[str, Any], text: str, user: AuthUser,
                 login: str | None) -> bool:
@@ -992,7 +1004,7 @@ class BriefService:
         edit_id = None if fresh else msg.get("message_id")
         if action == "m":
             self._answer(cq_id)
-            self._show(chat_id, "Qaysi guruhlar bo'yicha?", menu_keyboard(), edit_id)
+            self._show(chat_id, "Qaysi guruhlar bo'yicha?", menu_keyboard(manage=self.manage), edit_id)
         elif action == "g" and len(parts) == 3 and parts[2].isdigit():
             self._answer(cq_id)
             self._group_list(chat_id, int(parts[2]), edit_id=edit_id)
@@ -1025,6 +1037,12 @@ class BriefService:
             log.exception("Brif: guruhlar ro'yxati o'qilmadi")
             return []
 
+    def _no_groups_markup(self) -> dict[str, Any] | None:
+        """Guruh yo'q - boshqarish yoqilgan bo'lsa "qo'shish" tugmasi."""
+        if not self.manage:
+            return None
+        return {"inline_keyboard": [[{"text": "➕ Guruh qo'shish", "callback_data": "g:a"}]]}
+
     def _scope_ok(self, scope: str) -> bool:
         if scope == "all":
             return True
@@ -1044,7 +1062,7 @@ class BriefService:
     def _group_list(self, chat_id: int, page: int, *, edit_id: Any) -> None:
         groups = self._titled(self._allowed_groups())
         if not groups:
-            self._show(chat_id, esc(_NO_GROUPS), None, edit_id)
+            self._show(chat_id, esc(_NO_GROUPS), self._no_groups_markup(), edit_id)
             return
         pages = (len(groups) + PAGE - 1) // PAGE
         page = min(max(page, 0), pages - 1)
@@ -1057,7 +1075,7 @@ class BriefService:
 
     def _picker(self, chat_id: int, scope: str, *, edit_id: Any) -> None:
         if not self._allowed_groups():
-            self._show(chat_id, esc(_NO_GROUPS), None, edit_id)
+            self._show(chat_id, esc(_NO_GROUPS), self._no_groups_markup(), edit_id)
             return
         title = "Barcha guruhlar" if scope == "all" else self._titled([int(scope)])[0][1]
         self._show(chat_id, f"📊 <b>{esc(title)}</b> - davrni tanlang:", period_keyboard(scope), edit_id)
