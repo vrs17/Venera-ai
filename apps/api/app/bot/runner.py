@@ -92,6 +92,7 @@ from ..services.telegram_links import LinkStore, TelegramLink
 from ..services.identities import Directory
 from ..services.users import UserStore
 from . import render
+from .briefs import BriefService
 from .groups import GroupAssistant
 from .render import esc
 
@@ -423,10 +424,14 @@ class VeneraBot:
         beta_url: str = "",
         sync_commands: bool = False,
         groups: GroupAssistant | None = None,
+        briefs: BriefService | None = None,
     ) -> None:
         self.api = api
         #: Ro'yxatdagi guruhlar yordamchisi. `None` - hamma guruhda eski xulq.
         self.groups = groups
+        #: Rahbariyat brifi (`briefs.py`) - shaxsiy chatda, faqat rahbarlarga.
+        #: `None` - bot avvalgidek.
+        self.briefs = briefs
         #: `/beta` tugmasi manzili (yangi mini app). Bo'sh - `/beta` hech kimga yo'q.
         self.beta_url = beta_url
         #: Buyruqlar menyusini Telegram'ga yozish (`setMyCommands`) - FAQAT
@@ -490,6 +495,8 @@ class VeneraBot:
             self._pool.shutdown(wait=False, cancel_futures=True)
         if self.groups is not None:
             self.groups.stop()
+        if self.briefs is not None:
+            self.briefs.stop()
 
     @property
     def running(self) -> bool:
@@ -823,8 +830,14 @@ class VeneraBot:
         if link is None:
             self._link_prompt(chat_id, state)
             return
-        user = self._user_for(chat_id, link)
-        if user is None:
+        found = self._account(chat_id, link)
+        if found is None:
+            return
+        user, login = found
+        # Rahbariyat brifi tugmasi yoki "Boshqa davr" so'roviga javob - HR
+        # yordamchisiga ketmaydi. Qolgan matn va ovoz - avvalgidek.
+        if (self.briefs is not None and text and not isinstance(msg.get("voice"), dict)
+                and self.briefs.on_text(chat_id, msg, text, user, login)):
             return
         # Hisob: shu xabar bo'yicha har tashqi chaqiruv (STT, Assistant,
         # Telegram) shu odam va `bot` kanali bilan yoziladi. Bot HTTP dan
@@ -977,16 +990,23 @@ class VeneraBot:
             if link is None:
                 self._link_prompt(chat_id, state, force=True)
                 return
-            user = self._user_for(chat_id, link)
-            if user is not None:
+            found = self._account(chat_id, link)
+            if found is not None:
+                user, login = found
                 self._send(chat_id, welcome_text(user, again=True),
                            markup=render.app_button(self.webapp_url))
+                # Rahbarga - ikkinchi xabar: brif tugmalari (bitta xabarda
+                # faqat bitta `reply_markup` - birinchisida ilova tugmasi).
+                if self.briefs is not None and self.briefs.allowed(user, login):
+                    self.briefs.show_keyboard(chat_id)
         elif name == "help":
             # Ulanmagan odamga - BITTA xabar: yordam va ilova tugmasi.
             self._send(chat_id, _HELP,
                        markup=render.app_button(self.webapp_url) if link is None else None)
         elif name == "beta":
             self._beta(chat_id, link)
+        elif name in ("brif", "brief"):
+            self._brief_command(chat_id, link, text)
         elif name in ("new", "yangi"):
             if link is None:
                 self._link_prompt(chat_id, state, force=True)
@@ -1006,6 +1026,22 @@ class VeneraBot:
                 self._send(chat_id, "Hisob ulanmagan.")
         else:
             self._send(chat_id, _UNKNOWN)
+
+    def _brief_command(self, chat_id: int, link: TelegramLink | None, text: str) -> None:
+        """`/brif [davr]` - rahbariyat brifi. Ruxsati yo'q odamga - noma'lum
+        buyruqdagi AYNAN o'sha javob (`/beta` kabi): brif borligi bilinmasin."""
+        found = self._account(chat_id, link) if (link is not None and self.briefs is not None) else None
+        if found is None:
+            if link is None or self.briefs is None:
+                self._send(chat_id, _UNKNOWN)
+            return          # bloklangan / hisob yo'q - `_account` o'zi aytdi
+        user, login = found
+        if not self.briefs.allowed(user, login):
+            self._send(chat_id, _UNKNOWN)
+            return
+        parts = text.split(maxsplit=1)
+        log.info("Telegram: /brif (%s)", user.actorId)
+        self.briefs.on_command(chat_id, user, parts[1] if len(parts) > 1 else "")
 
     def _beta(self, chat_id: int, link: TelegramLink | None) -> None:
         """`/beta` - yangi mini app tugmasi, FAQAT sinovchilarga.
@@ -1248,11 +1284,19 @@ class VeneraBot:
         if link is None:
             self._answer_cb(cq_id, "Avval Venera hisobingizni ulang: /start", alert=True)
             return
+        data = str(cq.get("data") or "")
+        if self.briefs is not None and data.startswith("b:"):
+            found = self._account(chat_id, link)
+            if found is None:
+                self._answer_cb(cq_id)
+                return
+            self.briefs.on_callback(cq_id, chat_id, msg, found[0], found[1], data)
+            return
         user = self._user_for(chat_id, link)
         if user is None:
             self._answer_cb(cq_id)
             return
-        kind, _, rest = str(cq.get("data") or "").partition(":")
+        kind, _, rest = data.partition(":")
         # Hisob: tugma bo'yicha chaqiruvlar (tasdiqlash, fayl) shu odam va
         # `bot` kanali bilan yoziladi.
         with bind(user.actorId, "bot"):

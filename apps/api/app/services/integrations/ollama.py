@@ -30,6 +30,8 @@ import threading
 import urllib.error
 import urllib.request
 
+from typing import Any
+
 from ..analytics.meter import begin
 from ..hold import MAVZULAR, OHANGLAR
 
@@ -196,18 +198,26 @@ class OllamaChat:
         return bool(self.base_url and self.model and self._key())
 
     def complete(self, system: str, user: str, *, num_predict: int = 1200,
-                 temperature: float = 0.2, op: str = "group") -> str:
-        """Model javobi (markdown). Xato - `OllamaError`, kalit matnda yo'q."""
+                 temperature: float = 0.2, op: str = "group", format: str | None = None) -> str:
+        """Model javobi (markdown). Xato - `OllamaError`, kalit matnda yo'q.
+
+        `format="json"` - Ollama'ga JSON so'raladi. O'LCHANGAN (2026-10-08,
+        Ollama Cloud, gemma4:31b): talab QAT'IY emas - javob baribir
+        ```json ... ``` ichida keladi, ya'ni o'qiydigan kod chegarani o'zi
+        olib tashlashi kerak (`briefs.parse_events`)."""
         key = self._key() or ""
         if not (self.base_url and self.model and key):
             raise OllamaError("Ollama sozlanmagan")
-        body = json.dumps({
+        payload_in: dict[str, Any] = {
             "model": self.model,
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
             "stream": False,
             "options": {"temperature": temperature, "num_predict": num_predict},
-        }).encode("utf-8")
+        }
+        if format:
+            payload_in["format"] = format
+        body = json.dumps(payload_in).encode("utf-8")
         request = urllib.request.Request(
             f"{self.base_url}/api/chat", data=body, method="POST",
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},

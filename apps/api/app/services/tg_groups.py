@@ -19,11 +19,17 @@ QANCHA - `telegram_group_days` (90) kun, keyin o'chiriladi (`purge`).
 
 SQLite (`data/telegram/groups.db`, gitignore'da, 600) - kontaktlar ombori
 bilan bir xil yondashuv: alohida fayl, tahlil bazasiga tegmaydi.
+
+RAHBARIYAT BRIFI (`app/bot/briefs.py`) shu faylda ikki jadval qo'shadi:
+`chats` - guruh nomlari (menyu uchun) va `brief_events` - har guruhning har
+kunidan ajratilgan hodisalar (kesh). Hodisalarda xabar mazmuni bor - ular
+ham xabarlar bilan birga `days` kundan keyin o'chiriladi (`purge`).
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import re
@@ -63,8 +69,26 @@ CREATE TABLE IF NOT EXISTS messages (
     PRIMARY KEY (chat_id, message_id)
 );
 CREATE INDEX IF NOT EXISTS messages_chat_date ON messages (chat_id, date);
-PRAGMA user_version = 1;
+-- 2: guruh nomlari va rahbariyat brifi uchun ajratilgan hodisalar (`app/bot/briefs.py`).
+CREATE TABLE IF NOT EXISTS chats (
+    chat_id    INTEGER PRIMARY KEY,
+    title      TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS brief_events (
+    chat_id    INTEGER NOT NULL,
+    day        TEXT NOT NULL,
+    marker     TEXT NOT NULL,
+    version    TEXT NOT NULL,
+    status     TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    events     TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY (chat_id, day)
+);
+PRAGMA user_version = 2;
 """
+#: Toshkent = UTC+5, yozgi vaqt yo'q: kun chegarasi SQL da shu siljish bilan.
+_DAY_SHIFT = 5 * 3600
 
 # --- niqoblash ------------------------------------------------------------------
 
@@ -214,8 +238,12 @@ class GroupStore:
         message_id = msg.get("message_id")
         if not isinstance(chat_id, int) or not isinstance(message_id, int) or message_id <= 0:
             return False
+        title = " ".join(str((msg.get("chat") or {}).get("title") or "").split())[:NAME_MAX * 2]
         text = message_text(msg)
         if not text:
+            if title:
+                with self._tx() as conn:
+                    self._title(conn, chat_id, title)
             return False
         sender = msg.get("from") or {}
         reply = msg.get("reply_to_message")
@@ -235,8 +263,71 @@ class GroupStore:
                  text, reply_to if isinstance(reply_to, int) else None),
             )
             added = cur.rowcount > 0
+            if title:
+                self._title(conn, chat_id, title)
         self._maybe_purge()
         return added
+
+    @staticmethod
+    def _title(conn: sqlite3.Connection, chat_id: int, title: str) -> None:
+        """Guruh nomi (brif menyusi uchun) - faqat o'zgarganda yoziladi."""
+        conn.execute(
+            "INSERT INTO chats (chat_id, title, updated_at) VALUES (?, ?, ?)"
+            " ON CONFLICT(chat_id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at"
+            " WHERE chats.title IS NOT excluded.title",
+            (chat_id, title, int(time.time())))
+
+    def titles(self, chat_ids: Any) -> dict[int, str]:
+        """Guruh nomlari; noma'lumi - yo'q (chaqiruvchi zaxira nom qo'yadi)."""
+        ids = [c for c in chat_ids if isinstance(c, int)]
+        if not ids:
+            return {}
+        marks = ",".join("?" * len(ids))
+        with self._tx() as conn:
+            rows = conn.execute(f"SELECT chat_id, title FROM chats WHERE chat_id IN ({marks})", ids)
+            return {chat_id: title for chat_id, title in rows}
+
+    def day_markers(self, chat_id: int, since: float, until: float) -> dict[str, str]:
+        """Toshkent kuni (`YYYY-MM-DD`) -> belgi `soni:max_id:max_tahrir`. Belgi
+        o'zgarsa - o'sha kun xabarlari o'zgargan (yangi xabar yoki tahrir)."""
+        with self._tx() as conn:
+            rows = conn.execute(
+                "SELECT date(date + ?, 'unixepoch') AS day, COUNT(*), MAX(message_id),"
+                " COALESCE(MAX(edited_at), 0) FROM messages"
+                " WHERE chat_id = ? AND date >= ? AND date < ? GROUP BY day",
+                (_DAY_SHIFT, chat_id, int(since), int(until))).fetchall()
+        return {day: f"{count}:{top}:{edited}" for day, count, top, edited in rows}
+
+    def get_events(self, chat_id: int, days: Any) -> dict[str, dict[str, Any]]:
+        """Saqlangan hodisalar: kun -> {marker, version, status, created_at, events}."""
+        wanted = [d for d in days if isinstance(d, str)]
+        if not wanted:
+            return {}
+        marks = ",".join("?" * len(wanted))
+        with self._tx() as conn:
+            rows = conn.execute(
+                "SELECT day, marker, version, status, created_at, events FROM brief_events"
+                f" WHERE chat_id = ? AND day IN ({marks})", [chat_id, *wanted]).fetchall()
+        out: dict[str, dict[str, Any]] = {}
+        for day, marker, version, status, created_at, events in rows:
+            try:
+                parsed = json.loads(events)
+            except ValueError:
+                parsed = []
+            out[day] = {"marker": marker, "version": version, "status": status,
+                        "created_at": created_at, "events": parsed if isinstance(parsed, list) else []}
+        return out
+
+    def put_events(self, chat_id: int, day: str, *, marker: str, version: str, status: str,
+                   events: list[dict[str, Any]], created_at: float | None = None) -> None:
+        """`created_at` - chaqiruvchining soati (brif dvigateli o'z soati bilan
+        "yangimi" deb solishtiradi)."""
+        with self._tx() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO brief_events (chat_id, day, marker, version, status,"
+                " created_at, events) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (chat_id, day, marker, version, status, int(time.time() if created_at is None else created_at),
+                 json.dumps(events, ensure_ascii=False)))
 
     def edit(self, msg: dict[str, Any]) -> bool:
         """Tahrirlangan xabar - yangi matn. Saqlanmagan xabar qo'shilmaydi."""
@@ -277,6 +368,13 @@ class GroupStore:
                                     (chat_id,)).fetchone()
         return value
 
+    def count_between(self, chat_id: int, since: float, until: float) -> int:
+        """Shu guruhning `[since, until)` dagi xabarlari soni (brif statistikasi)."""
+        with self._tx() as conn:
+            (value,) = conn.execute("SELECT COUNT(*) FROM messages WHERE chat_id = ? AND date >= ? AND date < ?",
+                                    (chat_id, int(since), int(until))).fetchone()
+        return int(value)
+
     def count(self) -> int:
         with self._tx() as conn:
             (value,) = conn.execute("SELECT COUNT(*) FROM messages").fetchone()
@@ -285,8 +383,11 @@ class GroupStore:
     def purge(self, now: float | None = None) -> int:
         """`days` kundan eski xabarlarni o'chiradi. Natija: nechta."""
         cutoff = int((time.time() if now is None else now) - self.days * 86400)
+        cutoff_day = time.strftime("%Y-%m-%d", time.gmtime(cutoff + _DAY_SHIFT))
         with self._tx() as conn:
             cur = conn.execute("DELETE FROM messages WHERE date < ?", (cutoff,))
+            # Brif hodisalari ham xabarlar bilan birga ketadi (ichida xabar mazmuni bor).
+            conn.execute("DELETE FROM brief_events WHERE day < ?", (cutoff_day,))
             return cur.rowcount
 
     def _maybe_purge(self) -> None:
