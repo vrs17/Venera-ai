@@ -388,3 +388,14 @@ def test_barcha_guruhlar_ochiq_bug_va_tugma_belgisi(tmp_path):
     assert "Ochiq buglar:\n1. Karta xatosi · <i>Kredit loyihasi</i> · 8-oktyabrdan beri" in text
     assert brief.drill[0] == (G2, T2)                                        # ochiq high bug - birinchi
 
+
+def test_barcha_guruhlar_bitta_chaqiruv_chegarasi(tmp_path, monkeypatch):
+    from app.bot import briefs
+
+    monkeypatch.setattr(briefs, "ON_DEMAND_CALLS", 2)
+    w = make_world(tmp_path)
+    seed(w)                                                                   # 3 kun: G1 - 2, G2 - 1
+    brief = w.engine.brief([(G1, T1), (G2, T2)], period_for("7d", NOW), all_mode=True)
+    assert len(w.writer.extracts()) == 2
+    assert "1 ta kun hali tahlil qilinmagan" in brief.parts[0]
+

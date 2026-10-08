@@ -883,8 +883,13 @@ class BriefEngine:
         events: list[dict[str, Any]] = []
         stats: list[GroupStats] = []
         missing = 0
+        # Model chaqiruvlari - BITTA so'rovga bitta chegara (guruhlar soniga emas):
+        # 100 ta guruh va bo'sh kesh bitta brifni yuzlab chaqiruvga aylantirmasin.
+        # Qolgan kunlar "hali tahlil qilinmagan" deyiladi - fonda tayyorlanadi.
+        budget = ON_DEMAND_CALLS
         for chat_id, title in groups:
-            found, lost, _ = self.ensure(chat_id, title, period, kind=kinds[chat_id])
+            found, lost, calls = self.ensure(chat_id, title, period, kind=kinds[chat_id], budget=budget)
+            budget = max(0, budget - calls)
             missing += lost
             events.extend(found)
             stats.append(GroupStats(chat_id, title, self.store.count_between(chat_id, period.since, period.until)))
