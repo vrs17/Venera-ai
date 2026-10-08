@@ -72,13 +72,13 @@ def test_crm_holati_bizning_holatlarga(raw, status):
 
 def test_crm_da_bajarilgan_vazifa_guruhda_aytilmasa_ham_bajarildi():
     agent = Agent(tasks({"n": 1, "found": True, "key": "DVSIB-120", "title": "Call history fix", "status": "Bajarildi",
-                         "assignee": "Kaizen", "due": "2026-10-07"},
+                         "assignee": "Kaizen", "due": "2026-10-07", "updated": "2026-10-08"},
                         {"n": 2, "found": True, "key": "DVSIB-121", "title": "Prezentatsiya", "status": "Jarayonda",
                          "assignee": None, "due": None}))
     items = [item("Call history xatosini tuzatish", owner="kaizen", status="in_progress"),
-             item("Callmind prezentatsiyasi", kind="deadline")]
+             item("Callmind prezentatsiyasi")]
     report = CrmChecker(agent).check(USER, items, {G1: T1})
-    assert (report.checked, report.found, report.note) == (2, 2, "")
+    assert (report.checked, report.found, report.note, report.tools) == (2, 2, "", {"crm_issue_search"})
     [question] = agent.questions
     assert len(question) <= QUESTION_MAX
     assert "1) Call history xatosini tuzatish (mas'ul: kaizen; guruh: AI team)" in question
@@ -89,10 +89,30 @@ def test_crm_da_bajarilgan_vazifa_guruhda_aytilmasa_ham_bajarildi():
     assert items[1]["status"] == "in_progress" and items[1]["crm"]["raw"] == "Jarayonda"
 
 
-def test_bajarilgan_va_qaror_tekshirilmaydi():
+def test_bajarilgan_qaror_uchrashuv_va_sorov_tekshirilmaydi():
     agent = Agent()
-    report = CrmChecker(agent).check(USER, [item("Tugagan ish", status="done"), item("Qaror", kind="decision")])
+    report = CrmChecker(agent).check(USER, [item("Tugagan ish", status="done"), item("Qaror", kind="decision"),
+                                            item("Bank bilan uchrashuv", kind="deadline"),
+                                            item("DWH ga o'tishni ko'rib chiqish", kind="management_request")])
     assert report.checked == 0 and agent.questions == []
+
+
+def test_guruh_muhokamasidan_oldin_yopilgan_vazifa_boshqa_vazifa():
+    # "Dashboard tekshirish" ~ "DVSIB-6 Dashboard ko'rsatish (Done, 2026-05-02)" - noto'g'ri moslik.
+    agent = Agent(tasks({"n": 1, "found": True, "key": "DVSIB-6", "status": "Done", "updated": "2026-05-02"}))
+    items = [item("Dashboard ma'lumotlarini tekshirish", status="in_progress")]
+    report = CrmChecker(agent).check(USER, items)
+    assert (report.found, report.rejected) == (0, 1) and "crm" not in items[0]
+    assert "Bitta umumiy so'z" in agent.questions[0] and '"updated"' in agent.questions[0]
+
+
+def test_yopilgan_sanasi_aytilmasa_faqat_korsatiladi():
+    agent = Agent(tasks({"n": 1, "found": True, "key": "DVSIB-8", "status": "Done"}))
+    items = [item("Hisobot", status="in_progress")]
+    report = CrmChecker(agent).check(USER, items)
+    assert report.found == 1 and items[0]["crm"]["status"] is None and items[0]["crm"]["raw"] == "Done"
+    apply_crm(items)
+    assert items[0]["status"] == "in_progress"                       # "Bajarildi" ga o'tmaydi
 
 
 def test_agent_crm_ni_oqimasa_javob_ishlatilmaydi():
@@ -126,7 +146,7 @@ def test_matnli_javob_ollamada_jsonga_ogiriladi():
 
         def complete(self, system, user, **kwargs):
             self.calls.append((user, kwargs))
-            return '{"tasks": [{"n": 1, "found": true, "key": "DVSIB-5", "status": "Yopilgan"}]}'
+            return '{"tasks": [{"n": 1, "found": true, "key": "DVSIB-5", "status": "Yopilgan", "updated": "2026-10-08"}]}'
 
     writer = Writer()
     prose = {"answer": "DVSIB-5 vazifasi yopilgan.", "sources": CRM_SOURCE, "error": None}
@@ -184,7 +204,8 @@ def test_agent_yiqilsa_izoh():
 def test_brifda_crm_holati_va_bajarildi(tmp_path):
     w = make_world(tmp_path, roles=("ADMIN",))
     seed(w)
-    agent = Agent(tasks({"n": 1, "found": True, "key": "OPS-7", "title": "SSH keys", "status": "Done"},
+    agent = Agent(tasks({"n": 1, "found": True, "key": "OPS-7", "title": "SSH keys", "status": "Done",
+                         "updated": "2026-10-08"},
                         {"n": 2, "found": True, "key": "CR-12", "title": "Kredit qoldig'i", "status": "Jarayonda",
                          "assignee": "Yusufxon"}))
     checker = CrmChecker(agent)
