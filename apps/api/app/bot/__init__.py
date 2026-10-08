@@ -74,7 +74,8 @@ def start() -> None:
                      workers=settings.telegram_workers, mode=settings.telegram_mode,
                      webhook_url=settings.telegram_webhook_url, webhook_secret=webhook_secret(),
                      beta_url=settings.telegram_webapp_beta_url, sync_commands=True,
-                     groups=_groups(store, registry), briefs=briefs, admin=_admin(store, registry))
+                     groups=_groups(store, registry), briefs=briefs, admin=_admin(store, registry),
+                     group_actions=True)
     _bot.start()
     # Fonda: guruhlarning kunlik hodisalarini oldindan ajratish - uzun davrli
     # brif soniyalarda ochilsin.
