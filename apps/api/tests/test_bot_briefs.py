@@ -193,13 +193,14 @@ def test_tekshiruv_manba_ism_soat_va_qiymatlar():
 
 
 @pytest.mark.parametrize("code, label", [("24h", "oxirgi 24 soat"), ("7d", "oxirgi 7 kun"), ("td", "bugun"),
+                                         ("90d", "oxirgi 90 kun"), ("c60d", "oxirgi 60 kun"),
                                          ("yd", "kecha"), ("tw", "bu hafta"), ("tm", "bu oy"),
                                          ("c3d", "oxirgi 3 kun"), ("c12h", "oxirgi 12 soat")])
 def test_davr_kodlari(code, label):
     assert period_for(code, NOW).label == label
 
 
-@pytest.mark.parametrize("code", ["c40d", "c0d", "c999h", "xx", "c3w"])
+@pytest.mark.parametrize("code", ["c91d", "c0d", "c9999h", "xx", "c3w"])
 def test_davr_kodi_notogri(code):
     assert period_for(code, NOW) is None
 
@@ -352,7 +353,7 @@ def test_barcha_guruhlar_brifi(world):
     assert "SSH kalitlarini yangilash\n  🔴 muddat o'tdi (08.10 12:00) — bajarilgani haqida xabar yo'q" in attention
     assert "✅ <b>Qarorlar</b>\n• Sentyabr ma'lumotlarini o'chirish · <i>Kredit loyihasi</i>" in text
     assert "📋 <b>Vazifalar</b>\n\n👤 <b>Yusufxon</b>\n• Kredit qoldig'i hisobi · 📅 10.10 · 🟡 jarayonda" in text
-    assert "🟢 <b>Bajarildi</b>\n• LLM server xotirasi · <i>AI team</i>" in text
+    assert f"🟢 <b>Bajarildi</b>\n• LLM server xotirasi · {day_of(86400)[8:]}.{day_of(86400)[5:7]} · <i>AI team</i>" in text
     assert "📁 <b>Guruhlar</b>\n• Kredit loyihasi — 3 xabar · 🔴 2\n• AI team — 3 xabar · 🟡 1 · 🟢 1" in text
     assert [t for _, t in brief.drill] == [T2, T1]
     assert all(len(p) <= 4000 for p in brief.parts)
@@ -431,8 +432,8 @@ def test_tugma_menyu_ochadi_hr_ga_ketmaydi(world):
     w.bot.handle_update(text_update(BTN_ALL))
     sent = w.tg.sent()[-1]
     assert "Barcha guruhlar" in sent["text"] and "davrni tanlang" in sent["text"]
-    assert [b["text"] for b in buttons(sent["reply_markup"])][:6] == ["24 soat", "7 kun", "30 kun", "Bugun",
-                                                                         "Kecha", "Bu hafta"]
+    assert [b["text"] for b in buttons(sent["reply_markup"])][:7] == ["24 soat", "7 kun", "30 kun", "90 kun",
+                                                                         "Bugun", "Kecha", "Bu hafta"]
     w.bot.handle_update(text_update(BTN_ONE))
     groups = buttons(w.tg.sent()[-1]["reply_markup"])
     assert [b["text"] for b in groups][:2] == [T1, f"Guruh …{str(G2)[-4:]}"]   # nomi hali noma'lum
@@ -552,3 +553,66 @@ def test_mavjud_xususiyatlar_ozgarmadi(world):
     assert w.backend.questions[-1][0] == "salom"
     w.bot.handle_update(press("r:" + "a" * 32))
     assert w.writer.calls == []
+
+
+# --- forward qilingan tarix: ASL sanasi bilan ---------------------------------------------------------
+
+
+def fwd(chat, text, ago, original, *, who="Sardor", author="Yusufxon"):
+    message = msg(chat, text, ago, who=who)
+    message["forward_origin"] = {"type": "user", "date": int(original), "sender_user": {"id": 7, "first_name": author}}
+    return message
+
+
+def test_forward_asl_vaqti_saqlanadi_va_sanaladi(world):
+    w = world
+    july = datetime(2026, 7, 15, 10, 0, tzinfo=TZ).timestamp()
+    w.store.add(fwd(G1, "Dashboard ishlamayapti", 600, july))
+    w.store.add(msg(G1, "bugungi gap", 300))
+    [old, new] = w.store.window(G1, NOW - 3600, NOW)
+    assert old.orig_date == int(july) and old.when == int(july) and new.orig_date is None
+    assert w.store.count_between(G1, NOW - 7 * 86400, NOW) == 1          # forward - iyulda
+    assert w.store.count_between(G1, NOW - 90 * 86400, NOW) == 2
+
+
+def test_eski_ombor_forward_sanasi_belgidan_tiklanadi(tmp_path):
+    path = tmp_path / "groups.db"
+    conn = sqlite3.connect(path)
+    conn.executescript("CREATE TABLE messages (chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL,"
+                       " thread_id INTEGER, date INTEGER NOT NULL, from_id INTEGER, from_name TEXT NOT NULL"
+                       " DEFAULT '', username TEXT, text TEXT NOT NULL, reply_to INTEGER, edited_at INTEGER,"
+                       " PRIMARY KEY (chat_id, message_id)); PRAGMA user_version = 2;")
+    posted = int(datetime(2026, 10, 7, 12, 0, tzinfo=TZ).timestamp())
+    january = int(datetime(2027, 1, 5, 9, 0, tzinfo=TZ).timestamp())
+    for mid, date, text in ((1, posted, "[forward: Yusufxon Mamadjanov, 15.07 10:00] Dashboard xatosi"),
+                            (2, january, "[forward: Ali, 20.12 09:30] yil oxiri"),
+                            (3, posted, "[forward qilingan xabar]"),
+                            (4, posted, "oddiy xabar")):
+        conn.execute("INSERT INTO messages (chat_id, message_id, date, text) VALUES (?, ?, ?, ?)",
+                     (G1, mid, date, text))
+    conn.commit()
+    conn.close()
+    store = GroupStore(path)
+    rows = {r.message_id: r for r in store.window(G1, 0, january + 1)}
+    assert rows[1].orig_date == int(datetime(2026, 7, 15, 10, 0, tzinfo=TZ).timestamp())
+    assert rows[2].orig_date == int(datetime(2026, 12, 20, 9, 30, tzinfo=TZ).timestamp())   # o'tgan yil
+    assert rows[3].orig_date is None and rows[4].orig_date is None
+    check = sqlite3.connect(path)
+    assert check.execute("PRAGMA user_version").fetchone()[0] == 3
+    check.close()
+
+
+def test_forward_tarix_asl_sanasida_korinadi(world):
+    w = world
+    july = datetime(2026, 7, 15, 10, 0, tzinfo=TZ).timestamp()
+    old = fwd(G2, "Dashboard ishlamayapti, ertaga tuzatamiz", 600, july)
+    w.store.add(old)
+    w.writer.days[(T2, day_of(600))] = events_json(
+        ev("problem", "Dashboard ishlamasligi", [old["message_id"]], status="open", severity="high"))
+    week = w.engine.brief([(G2, T2)], period_for("7d", NOW), all_mode=False)
+    assert "Bu davrda muhim hodisa topilmadi." in week.parts[0] and "<i>0 ta xabar" in week.parts[0]
+    prompt = w.writer.extracts()[0][1]
+    assert "[15.07 10:00] Sardor: [forward: Yusufxon, 15.07 10:00] Dashboard" in prompt
+    season = w.engine.brief([(G2, T2)], period_for("90d", NOW), all_mode=False)
+    assert "Dashboard ishlamasligi" in season.parts[0] and "<i>1 ta xabar · 1 ta hodisa</i>" in season.parts[0]
+    assert len(w.writer.extracts()) == 1                                  # o'sha kun - keshdan

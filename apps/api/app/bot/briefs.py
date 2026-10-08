@@ -62,7 +62,7 @@ from .render import esc
 log = logging.getLogger(__name__)
 
 #: Yo'riqnoma o'zgarsa - shu ham: eski keshdagi hodisalar qayta ajratiladi.
-PROMPT_VERSION = "brief-4"
+PROMPT_VERSION = "brief-5"
 
 BTN_ALL = "📊 Barcha guruhlar"
 BTN_ONE = "👥 Bitta guruh"
@@ -76,14 +76,15 @@ STATUSES = ("open", "in_progress", "done", "blocked", "at_risk")
 SEVERITIES = ("high", "medium", "low")
 
 #: Davr kodlari (tugma ma'lumotida): matni `groups.parse_period` ga beriladi.
-QUICK = (("24h", "24 soat"), ("7d", "7 kun"), ("30d", "30 kun"),
-         ("td", "Bugun"), ("yd", "Kecha"), ("tw", "Bu hafta"))
-_CODE_TEXT = {"24h": "24 soat", "7d": "7 kun", "30d": "30 kun", "td": "bugun", "yd": "kecha",
-              "tw": "bu hafta", "tm": "bu oy"}
+QUICK = ((("24h", "24 soat"), ("7d", "7 kun"), ("30d", "30 kun"), ("90d", "90 kun")),
+         (("td", "Bugun"), ("yd", "Kecha"), ("tw", "Bu hafta")))
+_CODE_TEXT = {"24h": "24 soat", "7d": "7 kun", "30d": "30 kun", "90d": "90 kun", "td": "bugun",
+              "yd": "kecha", "tw": "bu hafta", "tm": "bu oy"}
 _LABEL_CODE = {"bugun": "td", "kecha": "yd", "bu hafta": "tw", "bu oy": "tm"}
 _CUSTOM = re.compile(r"c(\d{1,3})([hd])")
-#: Brif davri - eng ko'pi (o'zi yozgan davr ham).
-MAX_DAYS = 31
+#: Brif davri - eng ko'pi (o'zi yozgan davr ham) = xabarlarni saqlash muddati.
+#: Forward qilingan tarix ham asl sanasi bilan shu oraliqda ko'rinadi.
+MAX_DAYS = 90
 
 PAGE = 8                 # guruhlar ro'yxati - bir sahifada
 DRILL_MAX = 8            # brif ostidagi "guruh ›" tugmalari
@@ -94,7 +95,7 @@ PREWARM_FRESH = 1800.0   # fonda - shuncha
 FAIL_BACKOFF = 1800.0    # yiqilgan kun shuncha vaqt qayta urinilmaydi
 ON_DEMAND_CALLS = 20     # so'rov paytida eng ko'pi shuncha kun ajratiladi
 PREWARM_EVERY = 1800.0
-PREWARM_DAYS = 30
+PREWARM_DAYS = MAX_DAYS
 PREWARM_CALLS = 40
 USER_LIMIT = (10, 600.0)
 PROMPT_TTL = 300.0
@@ -147,7 +148,8 @@ def code_for(period: Period) -> str:
 
 EXTRACT_PROMPT = """Sen Venera - kompaniyaning AI yordamchisisan. Vazifa: ish guruhining BIR KUNLIK xabarlaridan rahbariyat uchun muhim HODISALARni ajratish. Javob - FAQAT JSON: {"events": [...]}. Boshqa hech narsa yozma.
 
-Har qator: "#id [soat] Ism (↩#id): matn". "(↩#id)" - o'sha xabarga javob. "[forward: Y, vaqt]" - Y ning xabari, guruhga forward qilingan. "[rasm]", "[fayl: nomi]" - matnsiz ilova.
+Har qator: "#id [vaqt] Ism (↩#id): matn". "(↩#id)" - o'sha xabarga javob. "[rasm]", "[fayl: nomi]" - matnsiz ilova.
+"[forward: Y, sana soat]" - Y ning ASLIDA o'sha sanada yozgan xabari, guruhga keyin forward qilingan: bunday qatorda vaqt - asl vaqt. Forward qilingan xabarlar boshqa kunlar, hatto oylarga tegishli bo'lishi mumkin - "ertaga", "juma" kabi so'zlarni ASL sanaga qarab hisobla, guruhga tushgan kunga emas.
 
 Hodisa turi (type):
 - task - kimgadir topshirilgan yoki kimdir o'z zimmasiga olgan ish
@@ -248,7 +250,7 @@ def _time_stated(hour: int, minute: int, texts: str) -> bool:
 def validate_events(raw: list[dict[str, Any]], rows: dict[int, Row], blob: str) -> list[dict[str, Any]]:
     """Model hodisalarini TEKSHIRADI. Manbasi yo'q - tashlanadi; xabarda yo'q
     ism - o'chiriladi; aytilmagan soat - olib tashlanadi; noto'g'ri qiymat -
-    `None`. Hodisa vaqti - manba xabarlarning eng kechi."""
+    `None`. Hodisa vaqti - manba xabarlarning eng kechi (forward - ASL vaqti)."""
     out: list[dict[str, Any]] = []
     for item in raw[:80]:
         kind = item.get("type")
@@ -287,7 +289,7 @@ def validate_events(raw: list[dict[str, Any]], rows: dict[int, Row], blob: str) 
         out.append({"type": kind, "title": title, "detail": _text(item.get("detail"), 300),
                     "owner": people["owner"], "requested_by": people["requested_by"],
                     "status": status, "due": due, "severity": severity, "src": src,
-                    "at": max(rows[i].date for i in src)})
+                    "at": max(rows[i].when for i in src)})
     return out
 
 
@@ -297,7 +299,9 @@ def day_lines(rows: list[Row], nonce: str) -> list[str]:
     lines = []
     for row in rows:
         reply = f" (↩#{row.reply_to})" if row.reply_to in ids else ""
-        lines.append(f"#{row.message_id} [{_when(row.date, '%H:%M')}] {_clean(row.from_name, nonce)}{reply}: "
+        # Forward - ASL vaqti, sanasi bilan (boshqa kun bo'lishi mumkin).
+        stamp = _when(row.orig_date) if row.orig_date else _when(row.date, "%H:%M")
+        lines.append(f"#{row.message_id} [{stamp}] {_clean(row.from_name, nonce)}{reply}: "
                      f"{_clean(row.text, nonce)}")
     return lines
 
@@ -429,11 +433,14 @@ def _line(item: dict[str, Any], now: float, tag: str) -> str:
         text += f" — {esc(detail if len(detail) <= 140 else detail[:139] + '…')}"
     status = item.get("status")
     due = item.get("due")
-    if due and status != "done" and _due_epoch(due) < now:
+    if status == "done":
+        # Bajarilgan ish - eski muddati emas, bajarilgani aytilgan kun.
+        return text + f" · {_when(item['at'], '%d.%m')}" + tag
+    if due and _due_epoch(due) < now:
         text += f"\n  🔴 muddat o'tdi ({_due_text(due)}) — bajarilgani haqida xabar yo'q"
     elif due:
         text += f" · 📅 {_due_text(due)}"
-    if status in _STATUS_TEXT and not (due and _due_epoch(due) < now and status != "done"):
+    if status in _STATUS_TEXT and not (due and _due_epoch(due) < now):
         text += f" · {_STATUS_TEXT[status]}"
     return text + tag
 
@@ -800,10 +807,9 @@ def _btn(text: str, *parts: Any) -> dict[str, str]:
 
 
 def period_keyboard(scope: str) -> dict[str, Any]:
-    rows = [[_btn(label, "p", scope, code) for code, label in QUICK[:3]],
-            [_btn(label, "p", scope, code) for code, label in QUICK[3:]],
-            [_btn("✍️ Boshqa davr", "c", scope)],
-            [_btn("⬅ Orqaga", "m") if scope == "all" else _btn("⬅ Guruhlar", "g", 0)]]
+    rows = [[_btn(label, "p", scope, code) for code, label in row] for row in QUICK]
+    rows += [[_btn("✍️ Boshqa davr", "c", scope)],
+             [_btn("⬅ Orqaga", "m") if scope == "all" else _btn("⬅ Guruhlar", "g", 0)]]
     return {"inline_keyboard": rows}
 
 

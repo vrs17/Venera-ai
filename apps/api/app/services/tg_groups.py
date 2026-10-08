@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS messages (
     text       TEXT NOT NULL,
     reply_to   INTEGER,
     edited_at  INTEGER,
+    orig_date  INTEGER,
     PRIMARY KEY (chat_id, message_id)
 );
 CREATE INDEX IF NOT EXISTS messages_chat_date ON messages (chat_id, date);
@@ -85,8 +86,10 @@ CREATE TABLE IF NOT EXISTS brief_events (
     events     TEXT NOT NULL DEFAULT '[]',
     PRIMARY KEY (chat_id, day)
 );
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
 """
+#: Forward belgisidagi asl vaqt: `[forward: Ism, 15.07 10:00]` (eski yozuvlar uchun).
+_FWD_TIME = re.compile(r"^\[forward: [^\]]*?(\d{2})\.(\d{2}) (\d{2}):(\d{2})\]")
 #: Toshkent = UTC+5, yozgi vaqt yo'q: kun chegarasi SQL da shu siljish bilan.
 _DAY_SHIFT = 5 * 3600
 
@@ -189,9 +192,42 @@ class Row:
     username: str | None
     text: str
     reply_to: int | None
+    #: Forward bo'lsa - xabar ASLIDA yozilgan vaqt (`forward_origin.date`).
+    #: Rahbariyat brifi hodisani shu vaqt bilan sanaydi; guruh `/summary` si
+    #: esa `date` (guruhga tushgan vaqt) bilan ishlaydi.
+    orig_date: int | None = None
+
+    @property
+    def when(self) -> int:
+        return self.orig_date or self.date
 
 
 # --- ombor -------------------------------------------------------------------------
+
+
+def _origin_epoch(match: re.Match[str], posted: int) -> int | None:
+    """`dd.mm HH:MM` (yilsiz) -> vaqt: guruhga tushgan vaqtdan oldingi eng yaqin sana."""
+    day, month, hour, minute = (int(g) for g in match.groups())
+    year = datetime.fromtimestamp(posted, _TZ).year
+    for candidate in (year, year - 1):
+        try:
+            value = int(datetime(candidate, month, day, hour, minute, tzinfo=_TZ).timestamp())
+        except ValueError:
+            continue
+        if value <= posted + 60:
+            return value
+    return None
+
+
+def _backfill_orig(conn: sqlite3.Connection) -> None:
+    rows = conn.execute("SELECT chat_id, message_id, date, text FROM messages"
+                        " WHERE text LIKE '[forward:%'").fetchall()
+    for chat_id, message_id, date, text in rows:
+        match = _FWD_TIME.match(text)
+        value = _origin_epoch(match, date) if match else None
+        if value is not None:
+            conn.execute("UPDATE messages SET orig_date = ? WHERE chat_id = ? AND message_id = ?",
+                         (value, chat_id, message_id))
 
 
 class GroupStore:
@@ -211,6 +247,11 @@ class GroupStore:
                     self.path.parent.mkdir(parents=True, exist_ok=True)
                     conn = sqlite3.connect(self.path, timeout=10)
                     try:
+                        columns = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
+                        if columns and "orig_date" not in columns:
+                            # 3: forward'ning asl vaqti. Eski yozuvlar - belgidagi sanadan.
+                            conn.execute("ALTER TABLE messages ADD COLUMN orig_date INTEGER")
+                            _backfill_orig(conn)
                         conn.executescript(_SCHEMA)
                         conn.commit()
                     finally:
@@ -253,14 +294,16 @@ class GroupStore:
             # Mavzuning o'ziga "javob" - bu oddiy xabar, javob emas.
             reply_to = None
         date = msg.get("date") if isinstance(msg.get("date"), int) else int(time.time())
+        origin = msg.get("forward_origin")
+        orig_date = origin.get("date") if isinstance(origin, dict) and isinstance(origin.get("date"), int) else None
         with self._tx() as conn:
             cur = conn.execute(
                 "INSERT OR IGNORE INTO messages (chat_id, message_id, thread_id, date, from_id,"
-                " from_name, username, text, reply_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " from_name, username, text, reply_to, orig_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (chat_id, message_id, thread_id if isinstance(thread_id, int) else None, date,
                  sender.get("id") if isinstance(sender.get("id"), int) else None,
                  sender_name(sender), str(sender.get("username") or "")[:NAME_MAX] or None,
-                 text, reply_to if isinstance(reply_to, int) else None),
+                 text, reply_to if isinstance(reply_to, int) else None, orig_date),
             )
             added = cur.rowcount > 0
             if title:
@@ -349,7 +392,7 @@ class GroupStore:
                thread_id: int | None = None, limit: int = 3000) -> list[Row]:
         """`[since, until)` dagi xabarlar, eskidan yangiga. `limit` dan ko'p
         bo'lsa - ENG YANGILARI. `thread_id` - faqat shu mavzu (forum)."""
-        sql = ("SELECT message_id, thread_id, date, from_id, from_name, username, text, reply_to"
+        sql = ("SELECT message_id, thread_id, date, from_id, from_name, username, text, reply_to, orig_date"
                " FROM messages WHERE chat_id = ? AND date >= ? AND date < ?")
         args: list[Any] = [chat_id, int(since), int(until)]
         if thread_id is not None:
@@ -369,9 +412,11 @@ class GroupStore:
         return value
 
     def count_between(self, chat_id: int, since: float, until: float) -> int:
-        """Shu guruhning `[since, until)` dagi xabarlari soni (brif statistikasi)."""
+        """Shu guruhning `[since, until)` dagi xabarlari soni (brif statistikasi).
+        Forward - ASL vaqti bilan, hodisalar kabi."""
         with self._tx() as conn:
-            (value,) = conn.execute("SELECT COUNT(*) FROM messages WHERE chat_id = ? AND date >= ? AND date < ?",
+            (value,) = conn.execute("SELECT COUNT(*) FROM messages WHERE chat_id = ?"
+                                    " AND COALESCE(orig_date, date) >= ? AND COALESCE(orig_date, date) < ?",
                                     (chat_id, int(since), int(until))).fetchone()
         return int(value)
 
