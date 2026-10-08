@@ -483,6 +483,10 @@ class Settings(BaseSettings):
     #: `.env` dan JONLI o'qiladi (`telegram_groups_now`): guruh qo'shish uchun
     #: xizmatni qayta ishga tushirish shart emas. Guruh id si jurnalda
     #: ko'rinadi - ro'yxatda yo'q guruhda botga murojaat qilinganda.
+    #:
+    #: Endi bu - BOSHLANG'ICH ro'yxat: rahbar guruhlarni botda boshqaradi
+    #: (`GroupRegistry`, `app/bot/group_admin.py`). Rahbar guruh haqida qaror
+    #: qilgach o'sha guruhni bot boshqaradi - bu yerdagi yozuv unga ta'sir qilmaydi.
     telegram_groups: str = ""
     #: Guruh xabarlari ombori. `data/` gitignore'da, fayl 600.
     telegram_groups_db: Path = BASE_DIR / "data" / "telegram" / "groups.db"

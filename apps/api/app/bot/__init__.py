@@ -66,12 +66,15 @@ def start() -> None:
     # `sync_commands=True` - buyruqlar menyusi FAQAT shu yerda (jonli ishga
     # tushish) yoziladi va faqat Telegram'dagisi farq qilsa (`sync_menu`).
     store = _group_store()
-    briefs = _briefs(store)
+    # Qaysi guruh o'qiladi - `.env` + rahbar botda qilgan qarorlar (`GroupRegistry`).
+    # Guruh yordamchisi, brif va guruhlar menyusi BITTA ro'yxatdan foydalanadi.
+    registry = _registry(store)
+    briefs = _briefs(store, registry)
     _bot = VeneraBot(api, links, users=get_directory, webapp_url=settings.telegram_webapp_url,
                      workers=settings.telegram_workers, mode=settings.telegram_mode,
                      webhook_url=settings.telegram_webhook_url, webhook_secret=webhook_secret(),
                      beta_url=settings.telegram_webapp_beta_url, sync_commands=True,
-                     groups=_groups(store), briefs=briefs)
+                     groups=_groups(store, registry), briefs=briefs, admin=_admin(store, registry))
     _bot.start()
     # Fonda: guruhlarning kunlik hodisalarini oldindan ajratish - uzun davrli
     # brif soniyalarda ochilsin.
@@ -86,6 +89,19 @@ def _group_store():
     return GroupStore(settings.telegram_groups_db, days=settings.telegram_group_days)
 
 
+def _registry(store):
+    from ..services.tg_groups import GroupRegistry
+
+    return GroupRegistry(store)
+
+
+def _admin(store, registry):
+    """Guruhlarni botda boshqarish (`group_admin.py`) - rahbar o'zi qo'shadi."""
+    from .group_admin import GroupAdmin
+
+    return GroupAdmin(api, registry, store, days=settings.telegram_group_days)
+
+
 def _writer():
     from ..core.config import ollama_key_now
     from ..services.integrations.ollama import OllamaChat
@@ -94,15 +110,16 @@ def _writer():
                       settings.telegram_group_model or settings.ollama_model)
 
 
-def _groups(store):
+def _groups(store, registry):
     """Ro'yxatdagi guruhlar yordamchisi (`groups.py`). Ro'yxat bo'sh bo'lsa
-    ham yaratiladi - guruh `.env` ga keyin, qayta ishga tushirmasdan qo'shiladi."""
+    ham yaratiladi - guruh keyin (botda yoki `.env` da), qayta ishga
+    tushirmasdan qo'shiladi."""
     from .groups import GroupAssistant
 
-    return GroupAssistant(api, store, _writer())
+    return GroupAssistant(api, store, _writer(), allowed=registry.allowed_ids)
 
 
-def _briefs(store):
+def _briefs(store, registry):
     """Rahbariyat brifi (`briefs.py`). O'z `OllamaChat` i - o'z navbati bilan:
     fondagi tahlil guruhdagi `/summary` ni kuttirmasin. Vazifalarning CRM
     holati - Venera AI agentidan (`crm_status.py`), agent sozlangan bo'lsa."""
@@ -111,7 +128,8 @@ def _briefs(store):
 
     writer = _writer()
     crm = CrmChecker(agent_ask, writer=writer) if settings.hrm_assistant_base_url else None
-    return BriefService(api, BriefEngine(store, writer), crm=crm)
+    engine = BriefEngine(store, writer, groups=registry.allowed_ids)
+    return BriefService(api, engine, crm=crm, groups=registry.allowed_ids, manage=True)
 
 
 def stop() -> None:

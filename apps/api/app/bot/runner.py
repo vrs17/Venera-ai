@@ -86,13 +86,14 @@ from ..schemas.auth import AuthUser
 from ..services import admin_users, analytics
 from ..services.analytics import TurnRecorder, bind, redact, set_proposal_status
 from ..services.integrations.assistant import AssistantError
-from ..services.integrations.telegram import TelegramApi, TelegramError
+from ..services.integrations.telegram import UPDATE_TYPES, TelegramApi, TelegramError
 from ..services.stt import SttError, Transcript
 from ..services.telegram_links import LinkStore, TelegramLink
 from ..services.identities import Directory
 from ..services.users import UserStore
 from . import render
-from .briefs import BriefService
+from .briefs import BTN_GROUPS, BriefService
+from .group_admin import GROUP_NOT_ENABLED, GROUP_PAUSED, GroupAdmin
 from .groups import GroupAssistant
 from .render import esc
 
@@ -115,9 +116,11 @@ _WEBHOOK_FAILS = 5
 #: Telegram javobni olmay qolsa yangilanishni QAYTA yuboradi - shuncha
 #: oxirgi `update_id` eslab qolinadi va takrori tashlanadi.
 _SEEN_UPDATES = 2000
-#: Bot faqat shu turdagi yangilanishlarni oladi. `edited_message` - faqat
-#: ro'yxatdagi guruhlar uchun (`groups.py`); shaxsiy chatda e'tiborsiz.
-ALLOWED_UPDATES = ["message", "edited_message", "callback_query"]
+#: Bot faqat shu turdagi yangilanishlarni oladi (polling ham shu ro'yxat -
+#: `TelegramApi.get_updates`). `edited_message` - faqat ro'yxatdagi guruhlar
+#: uchun (`groups.py`); `my_chat_member` - bot guruhga qo'shildi/chiqarildi
+#: (`group_admin.py`).
+ALLOWED_UPDATES = list(UPDATE_TYPES)
 #: Boshqa nusxa bilan to'qnashuvda (409) qayta so'rash oralig'i. Ikkinchi
 #: nusxa har to'qnashuvdan keyin ~30 s kutadi, biz esa DARHOL qaytamiz - u
 #: ulanishni atigi bir necha yuz millisekund ushlab turadi. Nol emas: u ham
@@ -425,8 +428,12 @@ class VeneraBot:
         sync_commands: bool = False,
         groups: GroupAssistant | None = None,
         briefs: BriefService | None = None,
+        admin: GroupAdmin | None = None,
     ) -> None:
         self.api = api
+        #: Guruhlarni botda boshqarish (`group_admin.py`). `None` - guruhlar
+        #: faqat `.env` dan, bot qo'shilishi/chiqarilishi e'tiborsiz (eski xulq).
+        self.admin = admin
         #: Ro'yxatdagi guruhlar yordamchisi. `None` - hamma guruhda eski xulq.
         self.groups = groups
         #: Rahbariyat brifi (`briefs.py`) - shaxsiy chatda, faqat rahbarlarga.
@@ -448,6 +455,9 @@ class VeneraBot:
         self.webapp_url = webapp_url
         self.typing_every = typing_every
         self.username = ""
+        #: `getMe`: botning o'z id si va privacy mode (o'chiq - hamma xabarni ko'radi).
+        self.bot_id: int | None = None
+        self.can_read_all = False
         self._inline = inline
         self._pool = None if inline else ThreadPoolExecutor(
             max_workers=max(1, workers), thread_name_prefix="tg-bot")
@@ -562,6 +572,13 @@ class VeneraBot:
             self._set_webhook(now, "o'rnatildi" if not self._webhook_set_at
                               else "QAYTA o'rnatildi - manzil o'zgartirilgan edi")
             return True
+        allowed = info.get("allowed_updates")
+        if isinstance(allowed, list) and sorted(allowed) != sorted(ALLOWED_UPDATES):
+            # Yangilanish turlari o'zgargan (masalan `my_chat_member` qo'shildi) -
+            # manzil bir xil bo'lsa ham qayta o'rnatiladi. Yo'q bo'lsa - Telegram
+            # sukuti: `chat_member` dan boshqa hammasi, ya'ni yetarli.
+            self._set_webhook(now, "QAYTA o'rnatildi - yangilanish turlari o'zgardi")
+            return True
         failing = bool(pending and error_at and error_at > self._webhook_set_at
                        and now - error_at < 3 * _WEBHOOK_CHECK)
         self._webhook = {"pending": pending, "last_error": error or None,
@@ -672,10 +689,15 @@ class VeneraBot:
     def _prepare(self) -> None:
         """Bot nomi - bir marta (yiqilsa keyin yana); keyin buyruqlar menyusi."""
         try:
-            self.username = str(self.api.get_me().get("username") or "")
+            me = self.api.get_me()
         except TelegramError as exc:
             log.warning("Telegram bot tayyorlanmadi: %s", exc)
             return
+        self.username = str(me.get("username") or "")
+        self.bot_id = me.get("id") if isinstance(me.get("id"), int) else None
+        self.can_read_all = bool(me.get("can_read_all_group_messages"))
+        if self.admin is not None:
+            self.admin.set_me(bot_id=self.bot_id, username=self.username, can_read_all=self.can_read_all)
         self._prepared = True
         log.info("Telegram bot ishga tushdi: @%s", self.username)
         if self.sync_commands:
@@ -726,6 +748,9 @@ class VeneraBot:
             return
         if isinstance(update.get("callback_query"), dict):
             self._submit(lambda: self._on_callback(update["callback_query"]))
+            return
+        if isinstance(update.get("my_chat_member"), dict):
+            self._submit(lambda: self._on_member(update["my_chat_member"]))
             return
         message = update.get("message")
         if self.groups is not None:
@@ -795,6 +820,8 @@ class VeneraBot:
     def handle_update(self, update: dict[str, Any]) -> None:
         if isinstance(update.get("callback_query"), dict):
             self._on_callback(update["callback_query"])
+        elif isinstance(update.get("my_chat_member"), dict):
+            self._on_member(update["my_chat_member"])
         elif isinstance(update.get("message"), dict):
             self._on_message(update["message"])
         elif isinstance(update.get("edited_message"), dict) and _is_group(update["edited_message"]):
@@ -834,6 +861,10 @@ class VeneraBot:
         if found is None:
             return
         user, login = found
+        # "⚙️ Guruhlar" tugmasi (`group_admin.py`) - HR yordamchisiga ketmaydi.
+        if (self.admin is not None and text == BTN_GROUPS
+                and self.admin.on_text(chat_id, text, user, login)):
+            return
         # Rahbariyat brifi tugmasi yoki "Boshqa davr" so'roviga javob - HR
         # yordamchisiga ketmaydi. Qolgan matn va ovoz - avvalgidek.
         if (self.briefs is not None and text and not isinstance(msg.get("voice"), dict)
@@ -884,20 +915,61 @@ class VeneraBot:
         murojaat qilinsa bitta qisqa izoh, qolgan xabarlar jim (har xabarga
         javob shovqin bo'lardi)."""
         chat_id = (msg.get("chat") or {}).get("id")
+        if self.admin is not None and not edited and self.admin.on_migration(msg):
+            return          # guruh supergroup'ga aylandi - faqat ro'yxat va tarix ko'chadi
         if self.groups is not None and self.groups.allowed(chat_id):
             if edited:
                 self.groups.on_edit(msg)
             else:
                 self.groups.on_message(msg, username=self.username)
             return
+        note = _GROUP_ONLY
+        if self.admin is not None and not edited:
+            # Yoqilmagan guruh: bot qo'shildimi (rahbarga "turini tanlang"),
+            # to'xtatilganmi yoki rahbar qarorini kutyaptimi. Mazmun SAQLANMAYDI.
+            verdict = self.admin.on_inactive(msg, resolve=self._exec_of)
+            if verdict == "join":
+                return
+            note = {"paused": GROUP_PAUSED, "pending": GROUP_NOT_ENABLED}.get(verdict, _GROUP_ONLY)
         # Boshqa botlarga javob yo'q - ikki bot bir-birining xabariga javob
         # berib "suhbatlashib" qolmasin.
         if not edited and not (msg.get("from") or {}).get("is_bot") and self._addressed(msg):
-            self._group_note(chat_id, msg.get("message_id"))
+            self._group_note(chat_id, msg.get("message_id"), text=note)
 
-    def _group_note(self, chat_id: Any, message_id: Any) -> None:
-        """"Faqat shaxsiy chatda" - guruhga `_GROUP_EVERY` da bir marta.
-        Tugma shaxsiy chatni ochadi (bot nomi ma'lum bo'lsa)."""
+    def _on_member(self, update: dict[str, Any]) -> None:
+        """`my_chat_member` - botning guruhdagi holati o'zgardi (`group_admin.py`).
+        Shaxsiy chatda bu - odam botni blokladi/ochdi: e'tiborsiz."""
+        if self.admin is None:
+            return
+        if (update.get("chat") or {}).get("type") not in ("group", "supergroup"):
+            return
+        with bind(None, "bot"):
+            self.admin.on_member(update, resolve=self._exec_of)
+
+    def _exec_of(self, tg_id: int) -> tuple[AuthUser, str | None] | None:
+        """Telegram odami - guruhlarni boshqara oladigan rahbarmi (`_account`
+        ning JIM nusxasi: hech kimga yozmaydi, ulanishni uzmaydi)."""
+        if self.admin is None or not isinstance(tg_id, int):
+            return None
+        link, _ = self.links.lookup(tg_id)
+        if link is None:
+            return None
+        try:
+            stored = self.users().by_actor_id(link.actor_id)
+        except Exception:  # noqa: BLE001
+            log.exception("Telegram: hisoblar manbasi o'qilmadi")
+            return None
+        if stored is None:
+            return None
+        login = getattr(stored, "username", None)
+        verdict = admin_users.access(stored.to_public(), login=login)
+        if verdict.blocked or not self.admin.allowed(verdict.user, login):
+            return None
+        return verdict.user, login
+
+    def _group_note(self, chat_id: Any, message_id: Any, *, text: str = _GROUP_ONLY) -> None:
+        """"Faqat shaxsiy chatda" (yoki guruh holati) - guruhga `_GROUP_EVERY` da
+        bir marta. Tugma shaxsiy chatni ochadi (bot nomi ma'lum bo'lsa)."""
         if not isinstance(chat_id, int):
             return
         now = time.monotonic()
@@ -908,10 +980,9 @@ class VeneraBot:
             self._group_at.clear()
         markup = (render.url_button("Shaxsiy chatni ochish", f"https://t.me/{self.username}")
                   if re.fullmatch(r"\w{3,64}", self.username) else None)
-        # Guruh id si - uni `TELEGRAM_GROUPS` ga qo'shish uchun (nomi yozilmaydi).
-        log.info("Telegram: guruhda murojaat - faqat shaxsiy chat izohi (guruh %s ro'yxatda yo'q)",
-                 chat_id)
-        self._send(chat_id, esc(_GROUP_ONLY), markup=markup, reply_to=message_id)
+        # Guruh id si - qaysi guruh ekanini topish uchun (nomi yozilmaydi).
+        log.info("Telegram: guruhda murojaat - izoh (guruh %s o'qilmaydi)", chat_id)
+        self._send(chat_id, esc(text), markup=markup, reply_to=message_id)
 
     def _reject_video(self, chat_id: int, msg: dict[str, Any]) -> None:
         """Video (kamera) - yuklab olinmaydi va chatdan o'chiriladi."""
@@ -1007,6 +1078,8 @@ class VeneraBot:
             self._beta(chat_id, link)
         elif name in ("brif", "brief"):
             self._brief_command(chat_id, link, text)
+        elif name in ("guruhlar", "groups"):
+            self._groups_command(chat_id, link)
         elif name in ("new", "yangi"):
             if link is None:
                 self._link_prompt(chat_id, state, force=True)
@@ -1042,6 +1115,21 @@ class VeneraBot:
         parts = text.split(maxsplit=1)
         log.info("Telegram: /brif (%s)", user.actorId)
         self.briefs.on_command(chat_id, user, parts[1] if len(parts) > 1 else "")
+
+    def _groups_command(self, chat_id: int, link: TelegramLink | None) -> None:
+        """`/guruhlar` - guruhlarni boshqarish. Ruxsati yo'q odamga - noma'lum
+        buyruqdagi AYNAN o'sha javob (`/brif` kabi)."""
+        found = self._account(chat_id, link) if (link is not None and self.admin is not None) else None
+        if found is None:
+            if link is None or self.admin is None:
+                self._send(chat_id, _UNKNOWN)
+            return          # bloklangan / hisob yo'q - `_account` o'zi aytdi
+        user, login = found
+        if not self.admin.allowed(user, login):
+            self._send(chat_id, _UNKNOWN)
+            return
+        log.info("Telegram: /guruhlar (%s)", user.actorId)
+        self.admin.on_command(chat_id)
 
     def _beta(self, chat_id: int, link: TelegramLink | None) -> None:
         """`/beta` - yangi mini app tugmasi, FAQAT sinovchilarga.
@@ -1291,6 +1379,14 @@ class VeneraBot:
                 self._answer_cb(cq_id)
                 return
             self.briefs.on_callback(cq_id, chat_id, msg, found[0], found[1], data)
+            return
+        if self.admin is not None and data.startswith("g:"):
+            found = self._account(chat_id, link)
+            if found is None:
+                self._answer_cb(cq_id)
+                return
+            with bind(found[0].actorId, "bot"):
+                self.admin.on_callback(cq_id, chat_id, msg, found[0], found[1], data)
             return
         user = self._user_for(chat_id, link)
         if user is None:
