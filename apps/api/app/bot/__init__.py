@@ -104,10 +104,14 @@ def _groups(store):
 
 def _briefs(store):
     """Rahbariyat brifi (`briefs.py`). O'z `OllamaChat` i - o'z navbati bilan:
-    fondagi tahlil guruhdagi `/summary` ni kuttirmasin."""
+    fondagi tahlil guruhdagi `/summary` ni kuttirmasin. Vazifalarning CRM
+    holati - Venera AI agentidan (`crm_status.py`), agent sozlangan bo'lsa."""
     from .briefs import BriefEngine, BriefService
+    from .crm_status import CrmChecker, agent_ask
 
-    return BriefService(api, BriefEngine(store, _writer()))
+    writer = _writer()
+    crm = CrmChecker(agent_ask, writer=writer) if settings.hrm_assistant_base_url else None
+    return BriefService(api, BriefEngine(store, writer), crm=crm)
 
 
 def stop() -> None:

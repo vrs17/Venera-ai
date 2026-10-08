@@ -90,6 +90,8 @@ PRAGMA user_version = 3;
 """
 #: Forward belgisidagi asl vaqt: `[forward: Ism, 15.07 10:00]` (eski yozuvlar uchun).
 _FWD_TIME = re.compile(r"^\[forward: [^\]]*?(\d{2})\.(\d{2}) (\d{2}):(\d{2})\]")
+#: Belgidagi vaqt bo'lagi - yozishmani modelga berishda olib tashlanadi.
+_FWD_STAMP = re.compile(r"^\[forward: ([^\]]*?),? ?\d{2}\.\d{2} \d{2}:\d{2}\]")
 #: Toshkent = UTC+5, yozgi vaqt yo'q: kun chegarasi SQL da shu siljish bilan.
 _DAY_SHIFT = 5 * 3600
 
@@ -182,6 +184,15 @@ def _forward_label(origin: dict[str, Any]) -> str:
     return f"[forward: {', '.join(parts)}]" if parts else "[forward]"
 
 
+def strip_forward_time(text: str) -> str:
+    """`[forward: Ism, 15.07 10:00] matn` -> `[forward: Ism] matn`.
+
+    Forward qilingan xabar guruhga TUSHGAN vaqti bilan o'qiladi (2026-10-08
+    qarori): asl vaqt modelga berilmaydi - "ertaga" ham, hodisa kuni ham
+    guruhdagi vaqtdan. Saqlangan matn o'zgarmaydi."""
+    return _FWD_STAMP.sub(lambda m: f"[forward: {m.group(1)}]" if m.group(1) else "[forward]", text, count=1)
+
+
 @dataclass(frozen=True)
 class Row:
     message_id: int
@@ -193,13 +204,9 @@ class Row:
     text: str
     reply_to: int | None
     #: Forward bo'lsa - xabar ASLIDA yozilgan vaqt (`forward_origin.date`).
-    #: Rahbariyat brifi hodisani shu vaqt bilan sanaydi; guruh `/summary` si
-    #: esa `date` (guruhga tushgan vaqt) bilan ishlaydi.
+    #: Saqlanadi, lekin hozir ishlatilmaydi: guruh xulosasi ham, rahbariyat
+    #: brifi ham xabarni guruhga TUSHGAN vaqti (`date`) bilan sanaydi.
     orig_date: int | None = None
-
-    @property
-    def when(self) -> int:
-        return self.orig_date or self.date
 
 
 # --- ombor -------------------------------------------------------------------------
@@ -413,10 +420,10 @@ class GroupStore:
 
     def count_between(self, chat_id: int, since: float, until: float) -> int:
         """Shu guruhning `[since, until)` dagi xabarlari soni (brif statistikasi).
-        Forward - ASL vaqti bilan, hodisalar kabi."""
+        Forward - guruhga tushgan vaqti bilan, hodisalar kabi."""
         with self._tx() as conn:
             (value,) = conn.execute("SELECT COUNT(*) FROM messages WHERE chat_id = ?"
-                                    " AND COALESCE(orig_date, date) >= ? AND COALESCE(orig_date, date) < ?",
+                                    " AND date >= ? AND date < ?",
                                     (chat_id, int(since), int(until))).fetchone()
         return int(value)
 

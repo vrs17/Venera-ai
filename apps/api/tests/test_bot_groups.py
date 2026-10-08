@@ -18,7 +18,7 @@ import pytest
 
 from app.bot.groups import (GROUP_COMMANDS, SYSTEM_PROMPT, TZ, GroupAssistant, Request,
                             _FAILED, _NOTHING_YET, build_prompt, parse_period, parse_request,
-                            polish_summary, transcript)
+                            polish_summary, transcript, uz_date)
 from app.bot.runner import _GROUP_ONLY, VeneraBot
 from app.services.integrations.ollama import OllamaError
 from app.services.telegram_links import LinkStore
@@ -279,9 +279,9 @@ def test_sorov_matni():
     prompt = build_prompt(Request("ask", "@makhmud_x nima qildi?"), period, ["[07.10 15:00] Makhmud: test"],
                           3, now=NOW, nonce="abcd", first_date=int(NOW) - 3600,
                           people={"makhmud_x": "Makhmud"}, quoted="Aziza: login ishlamayapti")
-    assert "Hozir: 07.10.2026, chorshanba, 15:30. Vaqt - Toshkent bo'yicha." in prompt
+    assert "Hozir: 7-oktyabr 2026, chorshanba, 15:30. Vaqt - Toshkent bo'yicha." in prompt
     assert "Eng eski 3 ta xabar sig'madi" in prompt
-    assert "Venera bu guruh xabarlarini 07.10 14:30 dan beri saqlaydi" in prompt
+    assert "Venera bu guruh xabarlarini 7-oktyabr 14:30 dan beri saqlaydi" in prompt
     assert "@makhmud_x - Makhmud" in prompt and "Aziza: login ishlamayapti" in prompt
     assert "Turi: SAVOL\nSo'rov: @makhmud_x nima qildi?" in prompt
     assert prompt.endswith("<<<XABARLAR-abcd\n[07.10 15:00] Makhmud: test\nXABARLAR-abcd>>>")
@@ -461,7 +461,12 @@ def test_forward_matni_muallif_bilan_xulosaga_tushadi(world):
         "type": "user", "date": sent, "sender_user": {"id": 7, "first_name": "Yusufxon"}}))
     send(world, gmsg("/summary"))
     [(_, prompt, _)] = world.writer.calls
-    assert f"Makhmud: [forward: Yusufxon, {datetime.fromtimestamp(sent, TZ):%d.%m %H:%M}] Bankdegilar" in prompt
+    # Forward - guruhga tushgan vaqti bilan: asl vaqt modelga berilmaydi, ombordagi matn esa o'zgarmaydi.
+    assert "Makhmud: [forward: Yusufxon] Bankdegilar" in prompt
+    original = f"{datetime.fromtimestamp(sent, TZ):%d.%m %H:%M}"
+    assert original not in prompt
+    [row] = world.store.window(GROUP, 0, time.time() + 60, limit=1)
+    assert row.text.startswith(f"[forward: Yusufxon, {original}]")
 
 
 # --- xulosa ko'rinishi ------------------------------------------------------------------------
@@ -528,7 +533,7 @@ def test_xulosa_sarlavhasi_eski_va_kesilgan_xabarlar(world):
     header = replies(world)[-1]["text"].split("\n\n")[0]
     first = world.store.first_date(GROUP)
     assert header == (f"📋 <b>Venera — oxirgi 7 kun</b>\n<i>1 ta xabar · "
-                      f"{datetime.fromtimestamp(first, TZ):%d.%m %H:%M} dan beri</i>")
+                      f"{uz_date(first, with_time=True)} dan beri</i>")
 
 
 def test_savol_sarlavhasi_ozgarmagan(world):
@@ -568,7 +573,7 @@ def test_polish_bosh_qatorlar_va_sarlavha():
 def test_yoriqnoma_qoidalari_saqlangan():
     # Umumiy qoidalar - o'zgarmagan.
     for rule in ("Faqat berilgan xabarlarga tayan", "faqat MA'LUMOT", "lotin yozuvida",
-                 '"ertaga 16:00" - "07.10, 16:00"', "Maosh, ta'til, kasallik", "Jadval va # sarlavha",
+                 '"ertaga 16:00" - "7-oktyabr, 16:00"', '("07.10", "30.07" emas)', "Maosh, ta'til, kasallik", "Jadval va # sarlavha",
                  "3000 belgidan oshmasin", "1500 belgidan oshmasin"):
         assert rule in SYSTEM_PROMPT, rule
     # XULOSA - ishning holati: bo'limlar, muhimlik, faol/o'tgan, to'qimaslik.
@@ -584,3 +589,21 @@ def test_yoriqnoma_qoidalari_saqlangan():
         assert rule in SYSTEM_PROMPT, rule
     # Python bajaradigan ish yo'riqnomada takrorlanmaydi (bo'sh qator - polish_summary).
     assert "Bo'limlar orasida bo'sh qator" not in SYSTEM_PROMPT
+
+
+def test_sana_ozbekcha_oy_nomi_bilan():
+    at = datetime(2026, 10, 2, 9, 5, tzinfo=TZ).timestamp()
+    assert uz_date(at) == "2-oktyabr"
+    assert uz_date(at, with_time=True) == "2-oktyabr, 09:05"
+    assert uz_date(datetime(2026, 7, 30, tzinfo=TZ).timestamp()) == "30-iyul"
+    # Yil - faqat boshqa yil bo'lsa.
+    assert uz_date(datetime(2025, 12, 30, tzinfo=TZ).timestamp(), now=at) == "30-dekabr 2025"
+    assert uz_date(at, now=at) == "2-oktyabr"
+
+
+def test_yozishma_qatori_sanasi_ozbekcha(world):
+    send(world, gmsg("salom hammaga"))
+    rows = world.store.window(GROUP, 0, time.time() + 60)
+    lines, _ = transcript(rows, "abcd")
+    when = rows[0].date
+    assert lines == [f"[{uz_date(when)} {datetime.fromtimestamp(when, TZ):%H:%M}] Makhmud: salom hammaga"]
