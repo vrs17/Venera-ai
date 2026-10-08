@@ -19,7 +19,7 @@ from app.bot import briefs as briefs_mod
 from app.bot.briefs import (BTN_ALL, BTN_ONE, REMOVE_KEYBOARD, REPLY_KEYBOARD, BriefEngine, BriefService,
                             _CLOSED, _NOT_PERIOD, code_for, merge, parse_events, period_for, render_brief,
                             validate_events, GroupStats)
-from app.bot.groups import TZ, Period, parse_period
+from app.bot.groups import TZ, Period, parse_period, uz_date
 from app.bot.runner import _UNKNOWN, VeneraBot
 from app.services.integrations.ollama import OllamaError
 from app.services.telegram_links import LinkStore
@@ -350,10 +350,10 @@ def test_barcha_guruhlar_brifi(world):
     attention = text.split("🔴 <b>Diqqat talab qiladi</b>\n")[1].split("\n\n")[0]
     assert "• Mijoz API xatosi · <i>Kredit loyihasi</i>" in attention
     # Muddati o'tgan vazifa (12:00, hozir 15:00) - faktga tayangan ibora.
-    assert "SSH kalitlarini yangilash\n  🔴 muddat o'tdi (08.10 12:00) — bajarilgani haqida xabar yo'q" in attention
+    assert "SSH kalitlarini yangilash\n  🔴 muddat o'tdi (8-oktyabr, 12:00) — bajarilgani haqida xabar yo'q" in attention
     assert "✅ <b>Qarorlar</b>\n• Sentyabr ma'lumotlarini o'chirish · <i>Kredit loyihasi</i>" in text
-    assert "📋 <b>Vazifalar</b>\n\n👤 <b>Yusufxon</b>\n• Kredit qoldig'i hisobi · 📅 10.10 · 🟡 jarayonda" in text
-    assert f"🟢 <b>Bajarildi</b>\n• LLM server xotirasi · {day_of(86400)[8:]}.{day_of(86400)[5:7]} · <i>AI team</i>" in text
+    assert "📋 <b>Vazifalar</b>\n\n👤 <b>Yusufxon</b>\n• Kredit qoldig'i hisobi · 📅 10-oktyabr · 🟡 jarayonda" in text
+    assert f"🟢 <b>Bajarildi</b>\n• LLM server xotirasi · {uz_date(NOW - 86400)} · <i>AI team</i>" in text
     assert "📁 <b>Guruhlar</b>\n• Kredit loyihasi — 3 xabar · 🔴 2\n• AI team — 3 xabar · 🟡 1 · 🟢 1" in text
     assert [t for _, t in brief.drill] == [T2, T1]
     assert all(len(p) <= 4000 for p in brief.parts)
@@ -555,7 +555,7 @@ def test_mavjud_xususiyatlar_ozgarmadi(world):
     assert w.writer.calls == []
 
 
-# --- forward qilingan tarix: ASL sanasi bilan ---------------------------------------------------------
+# --- forward qilingan xabar: guruhga TUSHGAN vaqti bilan (2026-10-08 qarori) --------------------------
 
 
 def fwd(chat, text, ago, original, *, who="Sardor", author="Yusufxon"):
@@ -564,15 +564,15 @@ def fwd(chat, text, ago, original, *, who="Sardor", author="Yusufxon"):
     return message
 
 
-def test_forward_asl_vaqti_saqlanadi_va_sanaladi(world):
+def test_forward_guruhga_tushgan_vaqti_bilan_sanaladi(world):
     w = world
     july = datetime(2026, 7, 15, 10, 0, tzinfo=TZ).timestamp()
     w.store.add(fwd(G1, "Dashboard ishlamayapti", 600, july))
     w.store.add(msg(G1, "bugungi gap", 300))
     [old, new] = w.store.window(G1, NOW - 3600, NOW)
-    assert old.orig_date == int(july) and old.when == int(july) and new.orig_date is None
-    assert w.store.count_between(G1, NOW - 7 * 86400, NOW) == 1          # forward - iyulda
-    assert w.store.count_between(G1, NOW - 90 * 86400, NOW) == 2
+    assert old.orig_date == int(july) and new.orig_date is None           # saqlanadi, lekin sanalmaydi
+    assert w.store.count_between(G1, NOW - 86400, NOW) == 2
+    assert w.store.count_between(G1, july - 3600, july + 3600) == 0
 
 
 def test_eski_ombor_forward_sanasi_belgidan_tiklanadi(tmp_path):
@@ -602,17 +602,17 @@ def test_eski_ombor_forward_sanasi_belgidan_tiklanadi(tmp_path):
     check.close()
 
 
-def test_forward_tarix_asl_sanasida_korinadi(world):
+def test_forward_tarix_guruhga_tushgan_kunida_korinadi(world):
     w = world
     july = datetime(2026, 7, 15, 10, 0, tzinfo=TZ).timestamp()
     old = fwd(G2, "Dashboard ishlamayapti, ertaga tuzatamiz", 600, july)
     w.store.add(old)
     w.writer.days[(T2, day_of(600))] = events_json(
         ev("problem", "Dashboard ishlamasligi", [old["message_id"]], status="open", severity="high"))
-    week = w.engine.brief([(G2, T2)], period_for("7d", NOW), all_mode=False)
-    assert "Bu davrda muhim hodisa topilmadi." in week.parts[0] and "<i>0 ta xabar" in week.parts[0]
+    today = w.engine.brief([(G2, T2)], period_for("24h", NOW), all_mode=False)
+    assert "Dashboard ishlamasligi" in today.parts[0] and "<i>1 ta xabar · 1 ta hodisa</i>" in today.parts[0]
     prompt = w.writer.extracts()[0][1]
-    assert "[15.07 10:00] Sardor: [forward: Yusufxon, 15.07 10:00] Dashboard" in prompt
-    season = w.engine.brief([(G2, T2)], period_for("90d", NOW), all_mode=False)
-    assert "Dashboard ishlamasligi" in season.parts[0] and "<i>1 ta xabar · 1 ta hodisa</i>" in season.parts[0]
-    assert len(w.writer.extracts()) == 1                                  # o'sha kun - keshdan
+    # Asl vaqt modelga berilmaydi: qator vaqti - guruhga tushgan vaqt, belgida faqat muallif.
+    posted = datetime.fromtimestamp(NOW - 600, TZ).strftime("%H:%M")
+    assert f"[{posted}] Sardor: [forward: Yusufxon] Dashboard" in prompt
+    assert "15.07" not in prompt

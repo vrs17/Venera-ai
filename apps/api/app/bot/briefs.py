@@ -14,6 +14,9 @@ QANDAY ISHLAYDI (2026-10-08 da kelishilgan quvur):
            ism - egasi yo'q, xabarda aytilmagan soat - soat yo'q
         -> kunlar bo'yicha keshlanadi (`brief_events`): o'tgan kun bir marta,
            bugungi kun - yangi xabar bo'lsa; fonda oldindan tayyorlanadi
+        -> CRM: bajarilmagan vazifalar holati Venera AI agentidan
+           (`crm_status.py`) - CRM da bajarilgan ish guruhda aytilmasa ham
+           "Bajarildi" ga o'tadi; CRM javob bermasa brif CRM siz chiqadi
         -> BRIF Python'da yig'iladi: bo'limlar, egalar, muddati o'tganlar,
            guruhlar statistikasi - raqamlar aniq, ism va sana to'qilmaydi.
            Ustida - modelning 2-3 qatorli "⚡ Asosiy" xulosasi (bo'lmasa ham
@@ -54,15 +57,15 @@ from ..services import admin_users
 from ..services.analytics import bind
 from ..services.integrations.ollama import OllamaChat, OllamaError
 from ..services.integrations.telegram import TelegramApi, TelegramError
-from ..services.tg_groups import GroupStore, Row, mask_text
+from ..services.tg_groups import GroupStore, Row, mask_text, strip_forward_time
 from . import render
-from .groups import TZ, Period, _clean, _when, parse_period
+from .groups import TZ, Period, _clean, _when, parse_period, uz_date
 from .render import esc
 
 log = logging.getLogger(__name__)
 
 #: Yo'riqnoma o'zgarsa - shu ham: eski keshdagi hodisalar qayta ajratiladi.
-PROMPT_VERSION = "brief-5"
+PROMPT_VERSION = "brief-6"
 
 BTN_ALL = "📊 Barcha guruhlar"
 BTN_ONE = "👥 Bitta guruh"
@@ -83,7 +86,6 @@ _CODE_TEXT = {"24h": "24 soat", "7d": "7 kun", "30d": "30 kun", "90d": "90 kun",
 _LABEL_CODE = {"bugun": "td", "kecha": "yd", "bu hafta": "tw", "bu oy": "tm"}
 _CUSTOM = re.compile(r"c(\d{1,3})([hd])")
 #: Brif davri - eng ko'pi (o'zi yozgan davr ham) = xabarlarni saqlash muddati.
-#: Forward qilingan tarix ham asl sanasi bilan shu oraliqda ko'rinadi.
 MAX_DAYS = 90
 
 PAGE = 8                 # guruhlar ro'yxati - bir sahifada
@@ -149,7 +151,7 @@ def code_for(period: Period) -> str:
 EXTRACT_PROMPT = """Sen Venera - kompaniyaning AI yordamchisisan. Vazifa: ish guruhining BIR KUNLIK xabarlaridan rahbariyat uchun muhim HODISALARni ajratish. Javob - FAQAT JSON: {"events": [...]}. Boshqa hech narsa yozma.
 
 Har qator: "#id [vaqt] Ism (↩#id): matn". "(↩#id)" - o'sha xabarga javob. "[rasm]", "[fayl: nomi]" - matnsiz ilova.
-"[forward: Y, sana soat]" - Y ning ASLIDA o'sha sanada yozgan xabari, guruhga keyin forward qilingan: bunday qatorda vaqt - asl vaqt. Forward qilingan xabarlar boshqa kunlar, hatto oylarga tegishli bo'lishi mumkin - "ertaga", "juma" kabi so'zlarni ASL sanaga qarab hisobla, guruhga tushgan kunga emas.
+"[forward: Y]" - Y ning xabari, guruhga forward qilingan; vaqti - guruhga tushgan vaqt.
 
 Hodisa turi (type):
 - task - kimgadir topshirilgan yoki kimdir o'z zimmasiga olgan ish
@@ -166,7 +168,7 @@ Har hodisa - shu KO'RINISHDAGI obyekt, BARCHA kalitlari bilan ("type" - MAJBURIY
 Maydonlar:
 - type - yuqoridagi 7 turdan biri, aynan shu yozuvda.
 - title - qisqa BARQAROR nom, 3-8 so'z, ot birikmasi: bitta ish turli kunlarda AYNI nom bilan atalsin ("Kredit qoldig'i hisobi", "SSH kalitlarini yangilash").
-- detail - bir gap: nima bo'ldi. "ertaga", "juma" kabi nisbiy sana o'rniga aniq sana yoz (07.10).
+- detail - bir gap: nima bo'ldi. "ertaga", "juma" kabi nisbiy sana o'rniga aniq sana yoz, shu ko'rinishda: "7-oktyabr" ("07.10" emas).
 - owner - ishni bajaradigan odam, xabarda aniq bo'lsa; aks holda null.
 - requested_by - so'ragan, topshirgan yoki qaror qilgan odam, aniq bo'lsa; aks holda null.
 - status - open | in_progress | done | blocked | at_risk; noma'lum bo'lsa null.
@@ -185,7 +187,7 @@ QOIDALAR
 - Hodisa bo'lmasa: {"events": []}."""
 
 HEADLINE_PROMPT = """Sen Venera - rahbariyat yordamchisisan. Quyida ish guruhlaridan ajratilgan, tekshirilgan hodisalar bor. Rahbar uchun ENG MUHIM 2-3 bandni yoz: hal bo'lmagan muammolar, o'tgan yoki yaqin muddatlar, muhim qarorlar va so'rovlar.
-Faqat berilgan hodisalardan foydalan - yangi fakt, ism, sana yoki raqam qo'shma. Har band "- " bilan boshlansin, bir qator, 140 belgigacha, o'zbekcha lotin yozuvida, oddiy jumla bilan. Ichki belgilarni ("bo'lim:", "holat:", "open" kabi) va qavs ichidagi holatni yozma. Boshqa hech narsa yozma."""
+Faqat berilgan hodisalardan foydalan - yangi fakt, ism, sana yoki raqam qo'shma. Har band "- " bilan boshlansin, bir qator, 140 belgigacha, o'zbekcha lotin yozuvida, oddiy jumla bilan. Sana - "7-oktyabr" ko'rinishida. Ichki belgilarni ("bo'lim:", "holat:", "open" kabi) va qavs ichidagi holatni yozma. Boshqa hech narsa yozma."""
 
 _DUE = re.compile(r"(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?")
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)(?:```|$)", re.DOTALL)
@@ -197,6 +199,11 @@ def parse_events(raw: str) -> list[dict[str, Any]] | None:
     Ollama Cloud `format` ni QAT'IY bajarmaydi: javob ```json ``` ichida
     kelishi mumkin, uzun javob esa `num_predict` da kesilib qoladi - butun
     qolgan obyektlar `raw_decode` bilan qutqariladi."""
+    return parse_list(raw, "events")
+
+
+def parse_list(raw: str, key: str) -> list[dict[str, Any]] | None:
+    """`{"<key>": [...]}` dagi obyektlar - `parse_events` qoidasi bilan."""
     text = (raw or "").strip()
     fence = _FENCE.search(text)
     if fence:
@@ -208,9 +215,9 @@ def parse_events(raw: str) -> list[dict[str, Any]] | None:
         data = json.loads(text[start:text.rfind("}") + 1])
     except ValueError:
         data = None
-    if isinstance(data, dict) and isinstance(data.get("events"), list):
-        return [e for e in data["events"] if isinstance(e, dict)]
-    found = re.search(r'"events"\s*:\s*\[', text)
+    if isinstance(data, dict) and isinstance(data.get(key), list):
+        return [e for e in data[key] if isinstance(e, dict)]
+    found = re.search(rf'"{re.escape(key)}"\s*:\s*\[', text)
     if not found:
         return None
     decoder = json.JSONDecoder()
@@ -250,7 +257,7 @@ def _time_stated(hour: int, minute: int, texts: str) -> bool:
 def validate_events(raw: list[dict[str, Any]], rows: dict[int, Row], blob: str) -> list[dict[str, Any]]:
     """Model hodisalarini TEKSHIRADI. Manbasi yo'q - tashlanadi; xabarda yo'q
     ism - o'chiriladi; aytilmagan soat - olib tashlanadi; noto'g'ri qiymat -
-    `None`. Hodisa vaqti - manba xabarlarning eng kechi (forward - ASL vaqti)."""
+    `None`. Hodisa vaqti - manba xabarlarning eng kechi (guruhga tushgan vaqti)."""
     out: list[dict[str, Any]] = []
     for item in raw[:80]:
         kind = item.get("type")
@@ -289,7 +296,7 @@ def validate_events(raw: list[dict[str, Any]], rows: dict[int, Row], blob: str) 
         out.append({"type": kind, "title": title, "detail": _text(item.get("detail"), 300),
                     "owner": people["owner"], "requested_by": people["requested_by"],
                     "status": status, "due": due, "severity": severity, "src": src,
-                    "at": max(rows[i].when for i in src)})
+                    "at": max(rows[i].date for i in src)})
     return out
 
 
@@ -299,10 +306,9 @@ def day_lines(rows: list[Row], nonce: str) -> list[str]:
     lines = []
     for row in rows:
         reply = f" (↩#{row.reply_to})" if row.reply_to in ids else ""
-        # Forward - ASL vaqti, sanasi bilan (boshqa kun bo'lishi mumkin).
-        stamp = _when(row.orig_date) if row.orig_date else _when(row.date, "%H:%M")
-        lines.append(f"#{row.message_id} [{stamp}] {_clean(row.from_name, nonce)}{reply}: "
-                     f"{_clean(row.text, nonce)}")
+        # Forward - guruhga tushgan vaqti; asl vaqt belgidan olib tashlanadi.
+        lines.append(f"#{row.message_id} [{_when(row.date, '%H:%M')}] {_clean(row.from_name, nonce)}{reply}: "
+                     f"{_clean(strip_forward_time(row.text), nonce)}")
     return lines
 
 
@@ -363,6 +369,34 @@ def merge(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(merged.values())
 
 
+def apply_crm(items: list[dict[str, Any]]) -> None:
+    """CRM - holat bo'yicha HAQIQAT MANBAI: aniqlangan holat guruhdagisini
+    almashtiradi (CRM da bajarilgan - guruhda aytilmasa ham "Bajarildi"; bekor
+    qilingan ham faol ro'yxatdan chiqadi). Muddat va mas'ul - faqat guruhda
+    aytilmagan bo'lsa CRM dan."""
+    for item in items:
+        crm = item.get("crm")
+        if not crm:
+            continue
+        if crm.get("status") in STATUSES:
+            item["status"] = crm["status"]
+        elif crm.get("status") == "cancelled":
+            item["status"] = "done"
+        if not item.get("due") and crm.get("due"):
+            item["due"] = crm["due"]
+        if not item.get("owner") and crm.get("assignee"):
+            item["owner"] = crm["assignee"]
+
+
+def _crm_mark(crm: dict[str, Any] | None) -> str:
+    """` · 🗂 DVSIB-120: Bajarildi` - CRM dagi kalit va holat (CRM matni bilan)."""
+    if not crm:
+        return ""
+    raw = crm.get("raw") or ""
+    raw = raw if len(raw) <= 30 else raw[:29] + "…"
+    return f" · 🗂 {esc(crm.get('key') or 'CRM')}: {esc(raw)}"
+
+
 def _due_epoch(due: str) -> float:
     """Muddat oxiri: soat bo'lsa - o'sha soat, bo'lmasa - kun oxiri."""
     if " " in due:
@@ -370,9 +404,10 @@ def _due_epoch(due: str) -> float:
     return _day_bounds(due)[1]
 
 
-def _due_text(due: str) -> str:
-    day = datetime.strptime(due[:10], "%Y-%m-%d").strftime("%d.%m")
-    return f"{day} {due[11:]}" if len(due) > 10 else day
+def _due_text(due: str, now: float | None = None) -> str:
+    """`2026-10-08 12:00` -> `8-oktyabr, 12:00`."""
+    day = uz_date(_day_bounds(due[:10])[0], now=now)
+    return f"{day}, {due[11:]}" if len(due) > 10 else day
 
 
 def section_of(item: dict[str, Any], now: float) -> str:
@@ -433,20 +468,27 @@ def _line(item: dict[str, Any], now: float, tag: str) -> str:
         text += f" — {esc(detail if len(detail) <= 140 else detail[:139] + '…')}"
     status = item.get("status")
     due = item.get("due")
+    crm = item.get("crm") or {}
+    mark = _crm_mark(crm)
     if status == "done":
+        if crm.get("status") in ("done", "cancelled"):
+            return text + mark + tag              # CRM dagi holat - bajarilgan kuni guruhda yo'q
         # Bajarilgan ish - eski muddati emas, bajarilgani aytilgan kun.
-        return text + f" · {_when(item['at'], '%d.%m')}" + tag
-    if due and _due_epoch(due) < now:
-        text += f"\n  🔴 muddat o'tdi ({_due_text(due)}) — bajarilgani haqida xabar yo'q"
+        return text + f" · {uz_date(item['at'], now=now)}" + mark + tag
+    overdue = bool(due) and _due_epoch(due) < now
+    if overdue:
+        # CRM holati bo'lsa - u yoniga yoziladi, "xabar yo'q" demaymiz.
+        text += f"\n  🔴 muddat o'tdi ({_due_text(due, now)})" + ("" if crm else " — bajarilgani haqida xabar yo'q")
     elif due:
-        text += f" · 📅 {_due_text(due)}"
-    if status in _STATUS_TEXT and not (due and _due_epoch(due) < now):
+        text += f" · 📅 {_due_text(due, now)}"
+    if status in _STATUS_TEXT and not overdue and not crm:
         text += f" · {_STATUS_TEXT[status]}"
-    return text + tag
+    return text + mark + tag
 
 
 def render_brief(items: list[dict[str, Any]], stats: list[GroupStats], *, period: Period, now: float,
-                 all_mode: bool, scope_title: str, headline: list[str], missing: int) -> list[str]:
+                 all_mode: bool, scope_title: str, headline: list[str], missing: int,
+                 crm_note: str = "") -> list[str]:
     """Brif HTML bloklari: sarlavha, ⚡, bo'limlar, 📁 statistika."""
     titles = {s.chat_id: s.title for s in stats}
 
@@ -458,6 +500,8 @@ def render_brief(items: list[dict[str, Any]], stats: list[GroupStats], *, period
     head = f"📊 <b>Rahbariyat brifi — {esc(scope_title)}</b> · {esc(period.label)}\n<i>{' · '.join(facts)}</i>"
     if missing:
         head += f"\n<i>⚠️ {missing} ta kun hali tahlil qilinmagan - birozdan keyin qayta so'rang.</i>"
+    if crm_note:
+        head += f"\n<i>🗂 {esc(crm_note)}</i>"
     blocks = [head]
     if headline:
         blocks.append("⚡ <b>Asosiy</b>\n" + "\n".join(f"• {esc(line)}" for line in headline))
@@ -694,7 +738,10 @@ class BriefEngine:
 
     # --- brif ----------------------------------------------------------------------
 
-    def brief(self, groups: list[tuple[int, str]], period: Period, *, all_mode: bool) -> Brief:
+    def brief(self, groups: list[tuple[int, str]], period: Period, *, all_mode: bool,
+              crm: Callable[[list[dict[str, Any]], dict[int, str]], Any] | None = None) -> Brief:
+        """`crm` - bandlarga CRM holatini qo'yadi (`CrmChecker.check`, so'ragan
+        rahbar nomidan); `None` - CRM siz."""
         now = self._clock()
         events: list[dict[str, Any]] = []
         stats: list[GroupStats] = []
@@ -705,6 +752,7 @@ class BriefEngine:
             events.extend(found)
             stats.append(GroupStats(chat_id, title, self.store.count_between(chat_id, period.since, period.until)))
         items = merge(events)
+        crm_note = self._crm(crm, items, dict(groups)) if crm is not None and items else ""
         by_group = {s.chat_id: s for s in stats}
         for item in items:
             section = section_of(item, now)
@@ -718,25 +766,44 @@ class BriefEngine:
         headline = self._headline(items, by_group, now) if len(items) >= 3 else []
         scope = "Barcha guruhlar" if all_mode else (groups[0][1] if groups else "")
         blocks = render_brief(items, stats, period=period, now=now, all_mode=all_mode, scope_title=scope,
-                              headline=headline, missing=missing)
+                              headline=headline, missing=missing, crm_note=crm_note)
         parts = render.pack(blocks)[:3]
         drill = ([(s.chat_id, s.title) for s in sorted(stats, key=lambda s: (-s.attention, -s.messages))]
                  [:DRILL_MAX] if all_mode else [])
         log.info("Brif: %d guruh, %d hodisa, %d kun tahlilsiz", len(groups), len(items), missing)
         return Brief(parts=parts, drill=drill, items=len(items))
 
+    @staticmethod
+    def _crm(crm: Callable[[list[dict[str, Any]], dict[int, str]], Any], items: list[dict[str, Any]],
+             titles: dict[int, str]) -> str:
+        """CRM holatini qo'yadi; natija - sarlavhadagi izoh."""
+        try:
+            report = crm(items, titles)
+        except Exception:  # noqa: BLE001 - brif CRM siz ham chiqadi
+            log.exception("Brif: CRM tekshiruvi xatosi")
+            return "CRM tekshiruvi bo'lmadi"
+        apply_crm(items)
+        if not report.checked:
+            return ""
+        found = f"CRM: {report.found}/{report.checked} vazifa topildi"
+        if report.note and not report.found:
+            return report.note
+        return f"{found} · {report.note}" if report.note else found
+
     def _headline(self, items: list[dict[str, Any]], groups: dict[int, GroupStats], now: float) -> list[str]:
         lines = []
         for item in sorted(items, key=lambda i: (SEVERITIES.index(i["severity"]), -i["at"]))[:40]:
             parts = [_SECTION_WORD[section_of(item, now)], item["title"], item.get("detail") or "",
                      f"egasi {item['owner']}" if item.get("owner") else "",
-                     f"muddat {_due_text(item['due'])}" if item.get("due") else "",
+                     f"muddat {_due_text(item['due'], now)}" if item.get("due") else "",
                      _STATUS_WORD.get(item.get("status") or "", ""),
+                     f"CRM da: {item['crm']['raw']}" if item.get("crm") else "",
                      f"guruh {groups[item['group']].title}"]
             lines.append(" | ".join(p for p in parts if p))
         nonce = secrets.token_hex(4)
         body = "\n".join(_clean(line, nonce) for line in lines)
-        stamp = datetime.fromtimestamp(now, TZ).strftime("%d.%m.%Y %H:%M")
+        local = datetime.fromtimestamp(now, TZ)
+        stamp = f"{uz_date(now)} {local.year}, {local.strftime('%H:%M')}"
         try:
             raw = self.writer.complete(HEADLINE_PROMPT, f"Hozir: {stamp}.\n\n<<<HODISALAR-{nonce}\n{body}\n"
                                                         f"HODISALAR-{nonce}>>>", num_predict=400,
@@ -830,9 +897,12 @@ class BriefService:
     def __init__(self, api: TelegramApi, engine: BriefEngine, *,
                  groups: Callable[[], frozenset[int]] = telegram_groups_now,
                  logins: Callable[[], frozenset[str]] = telegram_brief_logins_now,
-                 inline: bool = False, workers: int = 2, clock: Callable[[], float] = time.time) -> None:
+                 inline: bool = False, workers: int = 2, clock: Callable[[], float] = time.time,
+                 crm: Any = None) -> None:
         self.api = api
         self.engine = engine
+        #: `crm_status.CrmChecker` - vazifalarning CRM holati (rahbar nomidan).
+        self.crm = crm
         self._groups = groups
         self._logins = logins
         self._clock = clock
@@ -1023,12 +1093,16 @@ class BriefService:
         self._answer(cq_id, "Tayyorlanmoqda…")
         groups = self._titled(ids)
         holder_text = f"⏳ Brif tayyorlanmoqda… ({len(groups)} ta guruh, {esc(period.label)})"
+        if self.crm is not None:
+            holder_text += "\n🗂 Vazifalar holati CRM da tekshirilmoqda"
         holder = self._show(chat_id, holder_text, None, edit_id)
 
         def job() -> None:
             try:
+                crm = self.crm
+                check = (lambda items, titles: crm.check(user, items, titles)) if crm is not None else None
                 with bind(user.actorId, "bot"):
-                    result = self.engine.brief(groups, period, all_mode=scope == "all")
+                    result = self.engine.brief(groups, period, all_mode=scope == "all", crm=check)
                 self._deliver(chat_id, holder, result, scope, code)
             except Exception:  # noqa: BLE001
                 log.exception("Brif tayyorlanmadi")
