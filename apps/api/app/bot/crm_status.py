@@ -11,10 +11,9 @@ o'qiydi va JSON qaytaradi; Python TEKSHIRADI:
   * guruh xabarida vazifa kaliti (DVSIB-120) bo'lsa - CRM kaliti aynan shu;
   * holat matni bizning holatlarga o'giriladi (`map_status`); noma'lum
     holat faqat ko'rsatiladi.
-  * agent "Bajarildi" desa - yopilgan sana guruh muhokamasidan OLDIN
-    bo'lmasligi kerak (aks holda bu boshqa, eski vazifa); sana aytilmasa
-    holat faqat ko'rsatiladi, band "Bajarildi" ga o'tmaydi.
-Faqat ISH tekshiriladi (`TYPES`): uchrashuv va so'rovlar CRM da bo'lmaydi.
+  * agent "Bajarildi" desa va yopilgan sana guruh muhokamasidan bir
+    haftadan ko'p OLDIN bo'lsa - bu boshqa, eski vazifa: rad etiladi
+    (sana aytilmasa - agentga ishoniladi).
 Agent JSON o'rniga oddiy matn yozsa - o'sha MATNNING o'zi Ollama'da JSON ga
 o'giriladi (yangi fakt qo'shilmaydi).
 
@@ -51,10 +50,13 @@ from .groups import TZ
 
 log = logging.getLogger(__name__)
 
-#: Shu turdagi bajarilmagan bandlar CRM da tekshiriladi - faqat ISH. Uchrashuv,
-#: muddat va rahbariyat so'rovi CRM da deyarli bo'lmaydi: jonli tekshiruvda
-#: (2026-10-08) ular "topilmadi" sonini ko'paytirgan, xolos.
-TYPES = ("task", "status_change")
+#: Shu turdagi bajarilmagan bandlar CRM da tekshiriladi. Muddat va rahbariyat
+#: so'rovi ham: haqiqiy guruhlarda ular ham CRM vazifasi bo'lishi mumkin -
+#: topilmasa, bor-yo'g'i "topilmadi" (holat o'zgarmaydi).
+TYPES = ("task", "management_request", "deadline", "status_change")
+#: CRM "Bajarildi" - lekin guruh ishni muhokama qila boshlashidan shuncha kun
+#: OLDIN yopilgan bo'lsa, bu boshqa (eski) vazifa: moslik rad etiladi.
+STALE_DAYS = 7
 TTL = 900.0              # natija keshi (topilmagani ham)
 BATCH = 8                # bitta savolda nechta vazifa
 MAX_ITEMS = 20           # bitta brifda eng ko'pi
@@ -294,15 +296,14 @@ class CrmChecker:
         updated = str(row.get("updated") or "")[:10]
         updated = updated if _DATE.fullmatch(updated) else None
         status = map_status(raw)
-        if status in ("done", "cancelled"):
-            # Guruh hali muhokama qilayotgan ishni CRM undan OLDIN yopgan bo'lsa -
-            # bu boshqa (eski) vazifa: "Dashboard tekshirish" ~ "DVSIB-6 Dashboard
-            # ko'rsatish (Done)". Yopilgan sana aytilmasa - holat faqat ko'rsatiladi,
-            # band "Bajarildi" ga o'tmaydi.
-            first = item.get("first_at") or item.get("at")
-            if updated is None or not isinstance(first, (int, float)):
-                status = None
-            elif updated < datetime.fromtimestamp(first, TZ).strftime("%Y-%m-%d"):
+        first = item.get("first_at") or item.get("at")
+        if status in ("done", "cancelled") and updated is not None and isinstance(first, (int, float)):
+            # Guruh hali muhokama qilayotgan ishni CRM bir haftadan ko'p OLDIN
+            # yopgan bo'lsa - bu boshqa (eski) vazifa: "Dashboard tekshirish" ~
+            # "DVSIB-6 Dashboard ko'rsatish (Done, may)". Sana aytilmasa yoki
+            # yaqin bo'lsa - agentga ishoniladi (CRM - holat bo'yicha haqiqat).
+            oldest = datetime.fromtimestamp(first - STALE_DAYS * 86400, TZ).strftime("%Y-%m-%d")
+            if updated < oldest:
                 return None
         return {"key": key, "title": title, "raw": raw, "status": status,
                 "assignee": _one_line(row.get("assignee"), 64) or None,

@@ -89,12 +89,18 @@ def test_crm_da_bajarilgan_vazifa_guruhda_aytilmasa_ham_bajarildi():
     assert items[1]["status"] == "in_progress" and items[1]["crm"]["raw"] == "Jarayonda"
 
 
-def test_bajarilgan_qaror_uchrashuv_va_sorov_tekshirilmaydi():
+def test_bajarilgan_va_qaror_tekshirilmaydi():
     agent = Agent()
     report = CrmChecker(agent).check(USER, [item("Tugagan ish", status="done"), item("Qaror", kind="decision"),
-                                            item("Bank bilan uchrashuv", kind="deadline"),
-                                            item("DWH ga o'tishni ko'rib chiqish", kind="management_request")])
+                                            item("Muammo", kind="problem")])
     assert report.checked == 0 and agent.questions == []
+
+
+def test_muddat_va_rahbariyat_sorovi_ham_tekshiriladi():
+    agent = Agent()
+    report = CrmChecker(agent).check(USER, [item("Hisobot topshirish", kind="deadline"),
+                                            item("DWH ga o'tish", kind="management_request")])
+    assert report.checked == 2 and len(agent.questions) == 1
 
 
 def test_guruh_muhokamasidan_oldin_yopilgan_vazifa_boshqa_vazifa():
@@ -106,13 +112,14 @@ def test_guruh_muhokamasidan_oldin_yopilgan_vazifa_boshqa_vazifa():
     assert "Bitta umumiy so'z" in agent.questions[0] and '"updated"' in agent.questions[0]
 
 
-def test_yopilgan_sanasi_aytilmasa_faqat_korsatiladi():
-    agent = Agent(tasks({"n": 1, "found": True, "key": "DVSIB-8", "status": "Done"}))
-    items = [item("Hisobot", status="in_progress")]
+def test_yopilgan_sanasi_aytilmasa_yoki_yaqin_bolsa_agentga_ishoniladi():
+    agent = Agent(tasks({"n": 1, "found": True, "key": "DVSIB-8", "status": "Done"},
+                        {"n": 2, "found": True, "key": "DVSIB-9", "status": "Done", "updated": "2026-10-03"}))
+    items = [item("Hisobot", status="in_progress"), item("Tahlil", status="open")]
     report = CrmChecker(agent).check(USER, items)
-    assert report.found == 1 and items[0]["crm"]["status"] is None and items[0]["crm"]["raw"] == "Done"
+    assert (report.found, report.rejected) == (2, 0)
     apply_crm(items)
-    assert items[0]["status"] == "in_progress"                       # "Bajarildi" ga o'tmaydi
+    assert items[0]["status"] == "done" and items[1]["status"] == "done"   # 5 kun oldin - hali shu ish
 
 
 def test_agent_crm_ni_oqimasa_javob_ishlatilmaydi():
