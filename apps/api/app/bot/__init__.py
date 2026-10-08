@@ -65,27 +65,49 @@ def start() -> None:
     # `get_directory`: SSO bilan kirganlar (`identities.json`) + `users.yaml`.
     # `sync_commands=True` - buyruqlar menyusi FAQAT shu yerda (jonli ishga
     # tushish) yoziladi va faqat Telegram'dagisi farq qilsa (`sync_menu`).
+    store = _group_store()
+    briefs = _briefs(store)
     _bot = VeneraBot(api, links, users=get_directory, webapp_url=settings.telegram_webapp_url,
                      workers=settings.telegram_workers, mode=settings.telegram_mode,
                      webhook_url=settings.telegram_webhook_url, webhook_secret=webhook_secret(),
                      beta_url=settings.telegram_webapp_beta_url, sync_commands=True,
-                     groups=_groups())
+                     groups=_groups(store), briefs=briefs)
     _bot.start()
+    # Fonda: guruhlarning kunlik hodisalarini oldindan ajratish - uzun davrli
+    # brif soniyalarda ochilsin.
+    briefs.start()
     _state["note"] = ""
 
 
-def _groups():
-    """Ro'yxatdagi guruhlar yordamchisi (`groups.py`). Ro'yxat bo'sh bo'lsa
-    ham yaratiladi - guruh `.env` ga keyin, qayta ishga tushirmasdan qo'shiladi."""
+def _group_store():
+    """Guruh xabarlari ombori - guruh yordamchisi va brif uchun BITTA."""
+    from ..services.tg_groups import GroupStore
+
+    return GroupStore(settings.telegram_groups_db, days=settings.telegram_group_days)
+
+
+def _writer():
     from ..core.config import ollama_key_now
     from ..services.integrations.ollama import OllamaChat
-    from ..services.tg_groups import GroupStore
+
+    return OllamaChat(settings.ollama_base_url, ollama_key_now,
+                      settings.telegram_group_model or settings.ollama_model)
+
+
+def _groups(store):
+    """Ro'yxatdagi guruhlar yordamchisi (`groups.py`). Ro'yxat bo'sh bo'lsa
+    ham yaratiladi - guruh `.env` ga keyin, qayta ishga tushirmasdan qo'shiladi."""
     from .groups import GroupAssistant
 
-    writer = OllamaChat(settings.ollama_base_url, ollama_key_now,
-                        settings.telegram_group_model or settings.ollama_model)
-    store = GroupStore(settings.telegram_groups_db, days=settings.telegram_group_days)
-    return GroupAssistant(api, store, writer)
+    return GroupAssistant(api, store, _writer())
+
+
+def _briefs(store):
+    """Rahbariyat brifi (`briefs.py`). O'z `OllamaChat` i - o'z navbati bilan:
+    fondagi tahlil guruhdagi `/summary` ni kuttirmasin."""
+    from .briefs import BriefEngine, BriefService
+
+    return BriefService(api, BriefEngine(store, _writer()))
 
 
 def stop() -> None:

@@ -495,6 +495,11 @@ class Settings(BaseSettings):
     #: Sinov paytida keng (2026-10-06: guruhda hamma administrator).
     telegram_group_user_limit: str = "10/60"
     telegram_group_limit: str = "120/3600"
+    #: Rahbariyat brifi (`app/bot/briefs.py`) kimga ochiq: ADMIN rolidagilar VA
+    #: shu loginlar - vergul yoki bo'shliq bilan, harf registriga qaramaydi
+    #: (`miniapp_beta_logins` qoidasi: SSO hisobi - logini, `users.yaml` -
+    #: emaili). `.env` dan JONLI o'qiladi (`telegram_brief_logins_now`).
+    telegram_brief_logins: str = ""
 
     # --- Xodimlar ma'lumotnomasi (kontaktlar) ---
     #: F.I.SH, Telegram, telefon, email - `services/contacts.py`. SHAXSIY
@@ -634,6 +639,12 @@ def telegram_group_limits_now() -> tuple[tuple[int, float], tuple[int, float]]:
         _rate(_env_token("telegram_group_user_limit"), settings.telegram_group_user_limit),
         _rate(_env_token("telegram_group_limit"), settings.telegram_group_limit),
     )
+
+
+def telegram_brief_logins_now() -> frozenset[str]:
+    """Brif ochiq loginlar (`telegram_brief_logins`) - `.env` dan JONLI, kichik harfda."""
+    raw = _env_token("telegram_brief_logins", settings.telegram_brief_logins)
+    return frozenset(part.strip().lower() for part in re.split(r"[,\s;]+", raw or "") if part.strip())
 
 
 def telegram_groups_now() -> frozenset[int]:

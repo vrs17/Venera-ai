@@ -185,8 +185,10 @@ _THIS_MONTH = _w(r"(?:bu|shu) oy\w*|this month|(?:эт\w+|в этом) меся�
 _MONTH = _w(r"oy|oylik|month\w*|месяц\w*")
 
 
-def parse_period(text: str, kind: str, now: float, *, max_days: int = 90) -> Period:
-    """So'rovdagi davr. Yo'q bo'lsa: xulosa - 24 soat, savol - 7 kun.
+def parse_period(text: str, kind: str, now: float, *, max_days: int = 90,
+                 strict: bool = False) -> Period | None:
+    """So'rovdagi davr. Yo'q bo'lsa: xulosa - 24 soat, savol - 7 kun
+    (`strict=True` - `None`: rahbariyat brifida odam davrni o'zi yozadi).
     Har doim `max_days` (saqlash muddati) ichida."""
     local = datetime.fromtimestamp(now, TZ)
     midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -216,6 +218,8 @@ def parse_period(text: str, kind: str, now: float, *, max_days: int = 90) -> Per
         return Period(max(floor, midnight.replace(day=1).timestamp()), now, "bu oy")
     if _MONTH.search(text):
         return last(30 * 86400, "oxirgi 30 kun")
+    if strict:
+        return None
     if kind == "summary":
         return last(86400, "oxirgi 24 soat")
     return last(7 * 86400, "oxirgi 7 kun")
