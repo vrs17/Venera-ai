@@ -48,6 +48,9 @@ class ScriptWriter:
         self.days: dict[tuple[str, str], object] = {}
         self.calls: list[tuple[str, str, dict]] = []
         self.headline: object = "- Asosiy: API xatosi hal bo'lmagan\n- Qaror qabul qilindi"
+        #: Loyiha kartasi matni (`brief_project`) - sukut bo'yicha yiqiladi: karta
+        #: Python matni bilan (aniq) chiqadi, test o'zi matn bersa - model matni.
+        self.project: object = OllamaError("loyiha matni yo'q")
 
     def complete(self, system, user, *, num_predict=1200, temperature=0.2, op="group", format=None):
         self.calls.append((op, user, {"temperature": temperature, "format": format}))
@@ -55,6 +58,10 @@ class ScriptWriter:
             if isinstance(self.headline, Exception):
                 raise self.headline
             return self.headline
+        if op == "brief_project":
+            if isinstance(self.project, Exception):
+                raise self.project
+            return self.project
         group = re.search(r"Guruh: (.*)", user).group(1)
         day = re.search(r"Kun: (\d{4}-\d{2}-\d{2})", user).group(1)
         answer = self.days.get((group, day), '{"events": []}')
@@ -454,7 +461,7 @@ def test_davr_tugmasi_brif_yuboradi(world):
     brief = w.tg.sent()[-1]
     assert brief["text"].startswith("📊 <b>Rahbariyat brifi — Barcha guruhlar</b>")
     data = [b["callback_data"] for b in buttons(brief["reply_markup"])]
-    assert data == [f"b:p:{G2}:7d:n", f"b:p:{G1}:7d:n", "b:s:all:n", "b:m:n"]
+    assert data == [f"b:p:{G2}:7d:n", f"b:p:{G1}:7d:n", "b:d:all:7d:n", "b:s:all:n", "b:m:n"]
     # Brif ostidagi tugma brifni o'zgartirmaydi - yangi xabar.
     w.bot.handle_update(press(f"b:p:{G1}:7d:n", message_id=777))
     assert all(kw["message_id"] != 777 for n, kw in w.tg.calls if n == "edit_message_text")

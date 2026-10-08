@@ -128,7 +128,8 @@ def _briefs(store, registry):
 
     writer = _writer()
     crm = CrmChecker(agent_ask, writer=writer) if settings.hrm_assistant_base_url else None
-    engine = BriefEngine(store, writer, groups=registry.allowed_ids)
+    # Guruh turi (🛠 support / 📁 loyiha) - brif kartasi va CRM shunga qarab.
+    engine = BriefEngine(store, writer, groups=registry.allowed_ids, kind_of=registry.kind_of)
     return BriefService(api, engine, crm=crm, groups=registry.allowed_ids, manage=True)
 
 
