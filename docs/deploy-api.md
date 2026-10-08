@@ -468,7 +468,7 @@ HRM connector'ini o'z ichida birlashtiradi, ya'ni Venera uchun bu BITTA
 endpoint.
 
 ```
-brauzer -> /api/v1/chat/stream (Venera)  ->  POST /api/{v1|v2}/chat/stream (Assistant)
+brauzer -> /api/v1/chat/stream (Venera)  ->  POST /api/{v1|v2|v3}/chat/stream (Assistant)
                                               |-> hujjatlar (RAG, Qdrant)
                                               |-> qonunchilik (LEX.UZ, v2)
                                               `-> HRM connector (hrm-mcp)
@@ -498,12 +498,13 @@ savol umuman yuborilmaydi - xizmat 401 qaytarardi va u foydalanuvchiga
 
 ### Dvigatel: v1 / v2 (2026-10-02 dan)
 
-Xizmat ikki versiyali bo'ldi - so'rov va javob shakli bir xil, yo'l boshqa:
+Xizmat versiyali - so'rov va javob shakli bir xil, yo'l boshqa:
 
 | `HRM_ASSISTANT_ENGINE` | Yo'l | Nima |
 |---|---|---|
 | `v2` (default) | `/api/v2/chat/stream` | yangi: javobni model yozadi, Mehnat kodeksi moddalari LEX.UZ havolasi bilan, **"Pro"** |
 | `v1` | `/api/v1/chat/stream` | barqaror: 29-sentabrgacha bo'lgan javoblar |
+| `v3` | `/api/v3/chat/stream` | **"Venera Core"** (2026-10-08, API 3.3): hamma imkoniyat bitta vazifa-siklida, vazifa holati xabarlar orasida saqlanadi, yozishdan oldin nomlar aniqlanadi; "Pro" bor. `done` ga `trace_id` va vazifa holati (`task`) keladi - admin panel savol izida. Avval odamga ALOHIDA (Versiyalar sahifasi), sinovdan keyin hammaga |
 | bo'sh | `/api/chat/stream` | versiyasiz - xizmat default'i (bugun = v1). **Hozirgi prod shu yo'lda** |
 
 Kanal bo'yicha istisno: `HRM_ASSISTANT_ENGINE_BY_CHANNEL=miniapp=v1,bot=v1`

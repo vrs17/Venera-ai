@@ -1,6 +1,6 @@
 """Yordamchi dvigatelini (versiyasini) ADMIN PANEL boshqaradi.
 
-    effective_engine(user, channel, requested=None)  -> "v1" | "v2" | ""
+    effective_engine(user, channel, requested=None)  -> "v1" | "v2" | "v3" | ""
 
 BITTA FUNKSIYA, hamma yo'l shundan: web oqimi (`/chat/stream`), `/chat/ask`,
 Mini App (u ham `/chat/stream`, kanal `miniapp`), Telegram bot va "Pro"

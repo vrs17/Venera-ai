@@ -4,6 +4,13 @@
                                     javob, hujjat iqtiboslari `[n]`
     v2   POST /api/v2/chat/stream   yangi: javobni model yozadi, Mehnat kodeksi
                                     moddalari LEX.UZ havolasi bilan, "Pro" rejimi
+    v3   POST /api/v3/chat/stream   "Venera Core" (2026-10-08, API 3.3): hamma
+                                    imkoniyat (HRM, CRM, hujjatlar, bilim, "Pro")
+                                    BITTA vazifa-sikli; vazifa holati xabarlar
+                                    orasida saqlanadi, yozishdan oldin nomlar
+                                    aniqlanadi. So'rov va kadrlar v2 bilan bir
+                                    xil, `done` ga vazifa holati va iz kaliti
+                                    (`task`, `trace_id`) qo'shiladi
     ""   POST /api/chat/stream      xizmatning default'i (bugun = v1) - eski,
                                     versiyasiz yo'l (prod hozir shunda)
 
@@ -25,7 +32,7 @@ VERSIYASIZ QOLADIGANLAR: suhbatlar tarixi (`/api/chats`), yozuv amallari,
 ariza fayllari, hujjat PDF'lari va `/api/pro/quota` - xat bo'yicha ular
 ikkala dvigatel uchun bitta.
 
-"PRO" FAQAT v2 DA. Boshqa dvigatelda `mode=pro` yuqoriga YUBORILMAYDI
+"PRO" FAQAT `pro: True` DVIGATELLARDA (v2, v3). Boshqasida `mode=pro` yuqoriga YUBORILMAYDI
 (`chat.open_stream`), `GET /api/v1/pro/quota` esa `available: false` qaytaradi
 - yuqoriga bormasdan.
 
@@ -65,6 +72,8 @@ log = logging.getLogger(__name__)
 ENGINES: tuple[dict[str, object], ...] = (
     {"id": "v1", "pro": False, "law": False},
     {"id": "v2", "pro": True, "law": True},
+    # v3 avval odamlarga ALOHIDA (admin panel) beriladi; hammaga - sinovdan keyin.
+    {"id": "v3", "pro": True, "law": True},
 )
 
 #: Katalogdagi kalitlar - admin va klient tanlovi faqat shulardan.
@@ -74,8 +83,9 @@ CATALOG_IDS: tuple[str, ...] = tuple(str(item["id"]) for item in ENGINES)
 #: default'i). Klient (`assistant.py`) faqat shularni qabul qiladi.
 ROUTES: tuple[str, ...] = (*CATALOG_IDS, "")
 
-#: "Pro" rejimi faqat shu dvigatelda bor (xat, 3-bo'lim).
-PRO_ENGINE = "v2"
+#: "Pro" rejimi bor dvigatellar - katalogdan (`pro: True`), qo'lda emas: yangi
+#: versiya qo'shilganda shu ro'yxatni ham eslash shart bo'lmasin.
+PRO_ENGINES: frozenset[str] = frozenset(str(item["id"]) for item in ENGINES if item["pro"])
 
 #: Kod default'i - sozlama noto'g'ri bo'lsa shu ishlaydi.
 DEFAULT_ENGINE = "v2"
@@ -126,7 +136,7 @@ def default_engine() -> str:
     raw = getattr(settings, "hrm_assistant_engine", DEFAULT_ENGINE)
     found = normalize(raw)
     if found is None:
-        _warn_once(f"HRM_ASSISTANT_ENGINE={raw!r} tanilmadi (v1 | v2 | bo'sh) - "
+        _warn_once(f"HRM_ASSISTANT_ENGINE={raw!r} tanilmadi (v1 | v2 | v3 | bo'sh) - "
                    f"{DEFAULT_ENGINE} ishlatiladi")
         return DEFAULT_ENGINE
     return found
@@ -150,7 +160,7 @@ def channel_overrides() -> tuple[dict[str, str], list[str]]:
         engine = normalize(value)
         if not sep or channel is None or engine is None:
             problems.append(f"HRM_ASSISTANT_ENGINE_BY_CHANNEL: {part!r} tanilmadi "
-                            "(kanal=v1|v2|legacy) - e'tiborsiz qoldirildi")
+                            "(kanal=v1|v2|v3|legacy) - e'tiborsiz qoldirildi")
             continue
         found[channel] = engine
     return found, problems
@@ -174,7 +184,7 @@ def engine_for(channel: str | None) -> str:
 
 def pro_available(engine: str) -> bool:
     """"Pro" shu dvigatelda bormi."""
-    return engine == PRO_ENGINE
+    return engine in PRO_ENGINES
 
 
 def config_state() -> dict[str, object]:

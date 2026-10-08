@@ -174,9 +174,10 @@ export interface ProWindows {
 }
 
 /** Yuqoridagi yordamchining "dvigateli" (2026-10-02): `v1` - barqaror (eski
- *  ko'rinish), `v2` - yangi (qonun moddalari, "Pro"). `''` - versiyasiz
- *  `/api/chat` yo'li (server default'i). Backend `.env` da kanal bo'yicha tanlaydi. */
-export type AssistantEngine = 'v1' | 'v2' | ''
+ *  ko'rinish), `v2` - yangi (qonun moddalari, "Pro"), `v3` - "Venera Core" (2026-10-08:
+ *  bitta vazifa-sikli, vazifa holati xabarlar orasida). `''` - versiyasiz `/api/chat`
+ *  yo'li (server default'i). Qaysi biri ishlashini admin panel va `.env` hal qiladi. */
+export type AssistantEngine = 'v1' | 'v2' | 'v3' | ''
 
 /** schemas/pro.py: ProQuota - `GET /api/v1/pro/quota`. Chegaralar rolga
  *  qarab o'zgaradi, shuning uchun ular QOTIRILMAYDI - shundan o'qiladi. */
@@ -186,9 +187,9 @@ export interface ProQuota {
   used: ProWindows
   /** CHAQIRUVCHINING kanali (`X-Venera-Client`) uchun tanlangan dvigatel. */
   engine: AssistantEngine | (string & {})
-  /** "Pro" shu kanalda bormi: FAQAT `engine === 'v2'` va xizmatning byudjeti
-   *  o'qilganda `true`. `false` bo'lsa kalit umuman ko'rsatilmaydi - backend
-   *  baribir `mode: 'pro'` ni v2 bo'lmagan dvigatelga yubormaydi. */
+  /** "Pro" shu kanalda bormi: FAQAT "Pro" bor dvigatelda (v2, v3) va xizmatning
+   *  byudjeti o'qilganda `true`. `false` bo'lsa kalit umuman ko'rsatilmaydi - backend
+   *  baribir `mode: 'pro'` ni "Pro"siz dvigatelga yubormaydi. */
   available: boolean
 }
 
@@ -204,7 +205,7 @@ export interface ProQuota {
 /** schemas/engines.py: EngineInfo - katalogdagi bitta versiya. */
 export interface EngineInfo {
   id: AssistantEngine | (string & {})
-  /** "Pro" rejimi bor (bugun faqat `v2`). */
+  /** "Pro" rejimi bor (v2, v3). */
   pro: boolean
   /** Javobda LEX.UZ qonunchilik manbalari bor. */
   law: boolean

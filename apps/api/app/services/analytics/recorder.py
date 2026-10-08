@@ -617,8 +617,19 @@ class TurnRecorder:
         engine = _str(frame.get("engine"), 16)
         if engine:
             self.engine = engine
-        self._event("frame", "done", {"route": self.route, "request_id": served,
-                                      **({"engine": engine} if engine else {})})
+        # v3 ("Venera Core"): agent izining kaliti va vazifa holati. Admin panel
+        # savol izida ko'rsatadi; yuqoridagi xizmat jurnalidan shu kalit bilan
+        # izlanadi. Hujjatda `meta.trace_id` / `meta.task` - kadrning o'zida
+        # ham, `meta` ichida ham qabul qilinadi. Vazifa holati 2000 belgigacha.
+        meta = frame.get("meta") if isinstance(frame.get("meta"), Mapping) else {}
+        trace = _str(frame.get("trace_id") or meta.get("trace_id"), 128)
+        task = frame.get("task") if isinstance(frame.get("task"), Mapping) else meta.get("task")
+        self._event("frame", "done", {
+            "route": self.route, "request_id": served,
+            **({"engine": engine} if engine else {}),
+            **({"trace_id": trace} if trace else {}),
+            **({"task": json.loads(_capped_json(task, 2000))} if isinstance(task, Mapping) else {}),
+        })
         pro = frame.get("pro")
         if isinstance(pro, Mapping):
             self._pro_event("frame", pro)
