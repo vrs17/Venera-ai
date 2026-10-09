@@ -195,6 +195,7 @@ function startFailureText(failure: DictationStartFailure): string {
     case 'policy': return `${t('voiceBlockedPolicy')} ${t('voiceBlockedPolicyHow')}`
     case 'denied': return `${t('voiceDenied')} ${t('voiceDeniedHow')}`
     case 'noDevice': return t('voiceNoMic')
+    case 'busy': return t('voiceMicBusy')
     default: return t('voiceError')
   }
 }
