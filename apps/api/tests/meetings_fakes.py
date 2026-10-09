@@ -318,3 +318,154 @@ def run_all(rt, now: float | None = None, rounds: int = 30) -> None:
         queued = rt.store.scalar("SELECT COUNT(*) FROM summaries WHERE status IN ('queued','running')", (), 0)
         if not pending and not queued:
             return
+
+
+# --- v3 ("Venera Core") va OpenAI soxtalari ------------------------------------------------------
+
+
+def v3_frames(text: str, *, engine: str = "v3", extra: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """v3 oqimi: stage, sources, (qo'shimcha kadrlar), matn bo'laklari, done (trace_id, task bilan)."""
+    frames: list[dict[str, Any]] = [{"type": "stage", "text": "O'ylayapman"},
+                                    {"type": "sources", "sources": [{"kind": "doc", "doc_id": "HR_1"}]}]
+    frames += list(extra or [])
+    frames += [{"type": "token", "text": text[i:i + 40]} for i in range(0, len(text), 40)]
+    frames.append({"type": "done", "route": "agent", "engine": engine, "request_id": "up-1", "trace_id": "tr-1",
+                   "task": {"state": "done"}})
+    return frames
+
+
+def v3_auto(op: str, question: str) -> list[dict[str, Any]]:
+    """`auto_reply` javobi - v3 odatidek markdown ichida (```json ... ```)."""
+    return v3_frames("Mana natija:\n```json\n" + auto_reply(op, question, question) + "\n```\nTayyor.")
+
+
+class FakeAssistant:
+    """`AssistantClient.stream` o'rnida. `script[op]` - navbat: kadrlar ro'yxati, istisno yoki
+    `fn(question) -> kadrlar`; bo'sh bo'lsa `reply(op, question)` (default - `v3_auto`)."""
+
+    def __init__(self, *, configured: bool = True) -> None:
+        self.configured = configured
+        self.calls: list[dict[str, Any]] = []
+        self.script: dict[str, list[Any]] = {}
+        self.reply: Callable[[str, str], list[dict[str, Any]]] = v3_auto
+        self.closed = 0
+        #: Birinchi kadrdan oldingi kutish (s) - "jim" v3 ni sinash uchun.
+        self.delay = 0.0
+        self.cancelled: list[dict[str, Any]] = []
+
+    def cancel_action(self, token, *, user_id, tokens=None):
+        self.cancelled.append({"token": token, "user_id": user_id, "tokens": dict(tokens or {})})
+        return {"token": token, "status": "cancelled", "ok": True}
+
+    def stream(self, question, *, user_id, chat_id=None, tokens=None, hrm_employee=None, max_chars=2000,
+               mode="standard", engine="", op="stream"):
+        from app.services.integrations.assistant import AnswerStream, AssistantError
+
+        self.calls.append({"question": question, "user_id": user_id, "chat_id": chat_id, "tokens": dict(tokens or {}),
+                           "max_chars": max_chars, "engine": engine, "op": op, "mode": mode})
+        if len(question) > max_chars:
+            raise AssistantError(f"savol juda uzun ({len(question)} > {max_chars})", status=400)
+        queue = self.script.get(op)
+        item = queue.pop(0) if queue else None
+        if isinstance(item, BaseException):
+            raise item
+        if callable(item):
+            frames = item(question)
+        elif item is not None:
+            frames = item
+        else:
+            frames = self.reply(op, question)
+        if isinstance(frames, BaseException):
+            raise frames
+        lines = [json.dumps(f, ensure_ascii=False).encode("utf-8") + b"\n" for f in frames]
+
+        fake = self
+        delay = self.delay
+
+        def gen():
+            import time as _time
+
+            try:
+                if delay:
+                    _time.sleep(delay)
+                yield from lines
+            finally:
+                fake.closed += 1
+
+        return AnswerStream(request_id="req-1", frames=gen(), engine=engine)
+
+    def ops(self) -> list[str]:
+        return [c["op"] for c in self.calls]
+
+
+class FakeOpenAI:
+    """Mahalliy HTTP server - OpenAI `/v1/chat/completions` o'rnida (tarmoqqa chiqilmaydi).
+
+    `responses` - navbat: `(status, payload)`; bo'sh bo'lsa so'rovdagi sxema nomi (`op`)
+    bo'yicha `auto_reply` javobi qaytadi. Har so'rov `requests` da (yo'l, sarlavha, tana)."""
+
+    def __init__(self) -> None:
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        self.requests: list[dict[str, Any]] = []
+        self.responses: list[tuple[int, Any]] = []
+        fake = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):                     # jim
+                return
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(length) or b"{}")
+                fake.requests.append({"path": self.path, "auth": self.headers.get("Authorization"),
+                                      "body": body})
+                status, payload = fake.responses.pop(0) if fake.responses else (200, fake.auto(body))
+                raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                if payload == FakeOpenAI.TRUNCATED:
+                    # Javob o'rtada uzildi: e'lon qilingan hajmdan kam bayt -> `http.client.IncompleteRead`.
+                    self.send_header("Content-Length", str(len(raw) + 500))
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.wfile.write(raw)
+                    self.wfile.flush()
+                    self.close_connection = True
+                    return
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05},
+                                       daemon=True)
+        self.thread.start()
+        self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}/v1"
+
+    #: `responses` dagi maxsus javob: tana e'lon qilinganidan qisqa (uzilgan ulanish).
+    TRUNCATED = {"truncated": True}
+
+    @staticmethod
+    def auto(body: dict[str, Any]) -> dict[str, Any]:
+        fmt = body.get("response_format") or {}
+        op = ((fmt.get("json_schema") or {}).get("name")) or "meeting_extract"
+        messages = body.get("messages") or [{}, {}]
+        content = auto_reply(op, messages[0].get("content", ""), messages[-1].get("content", ""))
+        return completion(content)
+
+    def ops(self) -> list[str]:
+        return [((r["body"].get("response_format") or {}).get("json_schema") or {}).get("name") or "?"
+                for r in self.requests]
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def completion(content: str, *, finish: str = "stop") -> dict[str, Any]:
+    return {"id": "chatcmpl-1", "object": "chat.completion", "model": "gpt-test",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": finish}],
+            "usage": {"prompt_tokens": 1200, "completion_tokens": 340, "total_tokens": 1540}}

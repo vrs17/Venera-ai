@@ -33,6 +33,7 @@ import difflib
 import json
 import logging
 import re
+import time
 import unicodedata
 
 from dataclasses import dataclass, field
@@ -80,6 +81,11 @@ class LlmFailed(Exception):
 class LlmBusy(Exception):
     """O'Z navbatimiz to'la (`navbat to'la` - boshqa ip modelni band qilgan). Bu
     urinish EMAS: ishchi bir oz kutib qayta oladi, `attempts` oshmaydi."""
+
+
+class PromptTooLong(LlmFailed):
+    """Prompt provayder chegarasidan uzun (v3 `max_chars`) - chaqiruv QILINMAYDI:
+    yuqoridagi xizmat baribir rad etardi, tarmoq va navbat bekorga band bo'lmasin."""
 
 
 class _Fallback(Exception):
@@ -256,6 +262,15 @@ _HONORIFIC_WORDS = {"aka", "opa", "domla", "ustoz", "akа", "xola", "amaki", "ja
 #: O'zbek lotin chiqishida bo'lmasligi kerak bo'lgan harflar (kirill, turkcha).
 _FOREIGN_LETTERS = re.compile(r"[\u0400-\u04ffşçğıöüŞÇĞİÖÜ]")
 _LETTERS = re.compile(r"[^\W\d_]")
+_CYRILLIC = re.compile(r"[\u0400-\u04ff]")
+#: So'z (apostrof ichida bo'lsa ham bitta so'z: "to'liq", "o'n").
+_WORD = re.compile(r"[^\W\d_]+(?:['ʻʼ’‘][^\W\d_]+)*")
+#: Inglizcha yordamchi so'zlar - o'zbekcha va ruscha matnda deyarli uchramaydi. Ataylab
+#: yo'q: "on", "in", "to", "is" (o'zbekchada "o'n", "in", "to'" ASR da apostrofsiz chiqadi).
+_EN_FUNCTION = frozenset("the and of will was with for are were has have been this that which would should "
+                         "their there these those".split())
+#: v3 javobidagi o'z manba raqamlari (`[1]`, `[12]`) - matn qiymatida, markdown havola emas.
+_REF_MARK = re.compile(r"\s?\[\d{1,3}\](?!\()")
 
 
 def _time_stated(hour: int, minute: int, text: str) -> bool:
@@ -294,6 +309,15 @@ class Validator:
     result: Any = None
     #: O'zbekcha chiqishda kirill/turkcha harflar ulushi 2% dan oshdimi.
     script_bad: bool = False
+    #: Zanjirda (`strict`) javobda kutilgan asosiy kalitlar yo'q - masalan butun JSON
+    #: `{"result": {...}}` ichiga o'ralgan: tekshiruvdan "bo'sh, lekin xatosiz" o'tib ketmasin.
+    shape_bad: bool = False
+    #: Zanjirda (`strict`): qiymatlar so'ralgan tilda emas (masalan o'zbekcha yig'ilish
+    #: xulosasi inglizcha yozilgan) - `check_language`. Yumshoq rejimda tekshirilmaydi.
+    language_bad: bool = False
+    #: v3 javobi: matndagi `[1]` kabi manba raqamlari olib tashlanadi (v3 hujjat qidirsa
+    #: qo'yadi; bizda manba - faqat `sourceSegmentIds`). Boshqa modellarda - avvalgidek.
+    strip_refs: bool = False
 
     def __post_init__(self) -> None:
         self.by_id = {int(s["id"]): s for s in self.segments}
@@ -315,7 +339,7 @@ class Validator:
 
     @property
     def needs_repair(self) -> bool:
-        return self.bad_ratio > 0.3 or self.script_bad
+        return self.bad_ratio > 0.3 or self.script_bad or self.shape_bad or self.language_bad
 
     def check_script(self, data: Any) -> None:
         """O'zbekcha chiqish LOTINDA bo'lsin: iqtiboslar, iboralar va ismlardan
@@ -343,11 +367,50 @@ class Validator:
             self.script_bad = True
             self._err("language", "Uzbek values must use Latin script (o', g', sh, ch): no Cyrillic, no Turkish letters")
 
+    def check_language(self, data: Any) -> None:
+        """Zanjirda (`strict`, chaqiruvchi faqat shunda chaqiradi): qiymatlar so'ralgan tilda
+        yozilganmi. NEGA: v3 ning o'z tizim prompti "foydalanuvchi tilida javob ber" deydi,
+        bizning ko'rsatmalar esa inglizcha - o'zbekcha yig'ilish xulosasi inglizcha chiqishi
+        mumkin, `check_script` esa buni ko'rmaydi (lotin harflari). Iqtiboslar va ismlar
+        hisobga olinmaydi; ingliz tili uchun tekshiruv yo'q."""
+        if self.language not in ("uz", "ru"):
+            return
+        words = english = letters = cyrillic = 0
+
+        def walk(value: Any, key: str = "") -> None:
+            nonlocal words, english, letters, cyrillic
+            if key in ("quote", "raw", "value", "name", "suggestedName", "keywords", "coverage", "ref", "id",
+                       "status", "kind", "basis", "origin", "priority", "outcome", "overall", "template"):
+                return
+            if isinstance(value, str):
+                found = _WORD.findall(value)
+                words += len(found)
+                english += sum(1 for w in found if w.lower() in _EN_FUNCTION)
+                letters += len(_LETTERS.findall(value))
+                cyrillic += len(_CYRILLIC.findall(value))
+            elif isinstance(value, list):
+                for item in value:
+                    walk(item, key)
+            elif isinstance(value, dict):
+                for k, v in value.items():
+                    walk(v, str(k))
+
+        walk(data)
+        name = prompts.LANGUAGE_NAMES.get(self.language, self.language)
+        if words >= 30 and english / words > 0.12:
+            self.language_bad = True
+            self._err("language", f"values must be written in {name}, not English (quotes stay as spoken)")
+        elif self.language == "ru" and letters >= 80 and cyrillic / letters < 0.5:
+            self.language_bad = True
+            self._err("language", f"values must be written in {name} (Cyrillic), quotes stay as spoken")
+
     def text(self, value: Any, limit: int, *, keep_lines: bool = False) -> str | None:
         if value is None or isinstance(value, (dict, list)):
             return None
         raw = str(value)
         raw = _MD_LINK.sub(r"\1", raw)
+        if self.strip_refs:
+            raw = _REF_MARK.sub("", raw)
         raw = _TAGS.sub("", raw)
         raw = _S_TOKEN.sub(lambda m: f"[{m.group(1)}]" if m.group(1) in self.speakers else m.group(1), raw)
         if keep_lines:
@@ -1083,14 +1146,67 @@ class SummaryOutput:
     error_code: str | None = None
 
 
+#: Prompt chegarasi bor provayder (v3) uchun: map bo'lagi hajmini hisoblashda
+#: "ochiq vazifalar" bloki va 2 ta kontekst qatoriga qoldiriladigan joy, va
+#: bo'lakning eng kichik foydali hajmi (undan kichik bo'lsa - provayder yaramaydi).
+#: Ochiq vazifalarga KICHIK joy (bir necha oxirgi vazifa): 2000 da 20K savolga atigi
+#: ~1.9K belgi transkript sig'ardi (sharh, 2026-10-09). Sig'masa `_map_chunk` eng
+#: eskilarini tashlaydi - kod birlashtirishi ularni baribir egasi va matni bo'yicha topadi.
+RUNNING_RESERVE = 800
+CONTEXT_RESERVE = 600
+MIN_CHUNK_CHARS = 1000
+
+#: Zanjirda (`strict`) javobning "shakli" - shu kalitlardan HECH BIRI bo'lmasa javob
+#: bizning shaklda emas (`Validator.shape_bad`). Agent bo'sh ro'yxatni tashlab ketishi
+#: odatiy, shuning uchun "hammasi bo'lsin" emas, "birortasi bo'lsin".
+SHAPE_EXTRACT = ("actionItems", "decisions", "keyPoints", "topics", "overview")
+SHAPE_MAP = ("actionItems", "decisions", "keyPoints", "topics", "chunkSummary")
+SHAPE_WRITER = ("overview",)
+
+
+class BudgetExceeded(LlmFailed):
+    """Zanjirda (`strict`) provayder vaqt yoki chaqiruv byudjetini tugatdi - keyingisiga.
+    NEGA: sekin, lekin tirik v3 bitta xulosani o'nlab daqiqa ushlab turmasin."""
+
+
+def _unwrap(data: Any, keys: tuple[str, ...]) -> Any:
+    """`{"summary": {...bizning shakl...}}` -> ichidagisi. Faqat bitta kalitli o'ram va
+    ichida bizning kalitlardan biri bo'lsa; aks holda o'zgarmaydi."""
+    if isinstance(data, dict) and len(data) == 1:
+        inner = next(iter(data.values()))
+        if isinstance(inner, dict) and any(key in inner for key in keys):
+            return inner
+    return data
+
+
 class Pipeline:
+    """Bitta xulosa - BITTA model (provayder) bilan.
+
+    `strict` - zanjirda keyingi provayder bor (`llm.run_chain`): biror qadam yiqilsa
+    yoki JSON tuzatish urinishidan keyin ham tekshiruvdan o'tmasa, xato KO'TARILADI
+    va butun xulosa keyingi provayder bilan boshidan yoziladi. Yumshoq rejim
+    (oxirgi provayder, odatdagi `ollama`) - avvalgidek: ogohlantirish bilan davom.
+
+    `max_prompt_chars` - provayderning prompt chegarasi (v3; 0 - chegarasiz). Bo'lak
+    hajmi, yozuvchi qaydlari va tekshiruv to'plamlari shunga sig'diriladi."""
+
     def __init__(self, llm: Any, *, single_pass_chars: int = 30000, map_chars: int = 20000,
                  verify: bool = True, num_ctx: int = 0, extract_predict: int = 8192, map_predict: int = 6144,
                  write_predict: int = 3000, think: bool | None = None,
                  cache_get: Callable[[str, int, int], Any] | None = None,
                  cache_put: Callable[[str, int, int, Any], None] | None = None,
-                 progress: Callable[[int, int], None] | None = None) -> None:
+                 progress: Callable[[int, int], None] | None = None, strict: bool = False,
+                 max_prompt_chars: int = 0, call_budget: int = 0, time_budget: float = 0.0,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self.llm = llm
+        self.strict = bool(strict)
+        self.max_prompt_chars = max(0, int(max_prompt_chars or 0))
+        #: Zanjirda (`strict`) shu provayderga ajratilgan chaqiruvlar soni va vaqt (s);
+        #: 0 - chegarasiz. Oshsa `BudgetExceeded` - xulosa keyingi model bilan.
+        self.call_budget = max(0, int(call_budget or 0))
+        self.time_budget = max(0.0, float(time_budget or 0.0))
+        self.clock = clock
+        self.started = clock()
         self.single_pass_chars = int(single_pass_chars)
         self.map_chars = int(map_chars)
         self.verify_enabled = bool(verify)
@@ -1115,7 +1231,24 @@ class Pipeline:
 
     # --- yordamchilar ---
 
+    def _fits(self, system: str, user: str) -> bool:
+        """Prompt provayder chegarasiga sig'adimi (chegara yo'q - doim)."""
+        return not self.max_prompt_chars or len(system) + len(user) <= self.max_prompt_chars
+
+    def _budget_check(self, op: str, upcoming: int = 1) -> None:
+        """Zanjirda (`strict`): keyingi `upcoming` chaqiruv byudjetga sig'adimi."""
+        if not self.strict:
+            return
+        if self.call_budget and self.steps + upcoming > self.call_budget:
+            raise BudgetExceeded(f"{op}: chaqiruvlar byudjeti {self.call_budget} "
+                                 f"({self.steps} + {upcoming})")
+        if self.time_budget and self.clock() - self.started > self.time_budget:
+            raise BudgetExceeded(f"{op}: vaqt byudjeti {int(self.time_budget)} s tugadi")
+
     def _call(self, system: str, user: str, *, num_predict: int, temperature: float, op: str):
+        if not self._fits(system, user):
+            raise PromptTooLong(f"{op}: prompt {len(system) + len(user)} > {self.max_prompt_chars}")
+        self._budget_check(op)
         result = call_llm(self.llm, system, user, num_predict=num_predict, temperature=temperature, op=op,
                           num_ctx=self.num_ctx, think=self.think)
         self.steps += 1
@@ -1134,12 +1267,33 @@ class Pipeline:
 
     def _ask_json(self, system: str, user: str, *, num_predict: int, op: str,
                   validate: Callable[[dict], Validator | None], temperature: float = 0.1,
+                  required: tuple[str, ...] = (),
                   ) -> tuple[dict | None, Validator | None, dict, bool]:
-        """Chaqiruv + bitta tuzatish urinishi. -> (obyekt, tekshiruvchi, meta, kesilganmi)."""
+        """Chaqiruv + bitta tuzatish urinishi. -> (obyekt, tekshiruvchi, meta, kesilganmi).
+
+        `required` - zanjirda (`strict`) javob shakli: shu kalitlardan BIRORTASI bo'lishi
+        shart (agent bo'sh ro'yxatni tashlab ketishi mumkin), yo'q bo'lsa - tuzatishga;
+        bitta kalitli o'ram (`{"summary": {...}}`) ochiladi. Yumshoq rejimda (oxirgi
+        provayder) ikkalasi ham yo'q - avvalgi xulq."""
+
+        def read(text: str) -> tuple[dict | None, bool]:
+            data, salvaged = parse_json(text)
+            if self.strict and required and data is not None:
+                data = _unwrap(data, SHAPE_EXTRACT + SHAPE_MAP + required)
+            return data, salvaged
+
+        def check(data: dict) -> Validator | None:
+            checker = validate(data)
+            if self.strict and checker is not None and required and not any(key in data for key in required):
+                checker.shape_bad = True
+                checker._err("shape", "the reply must be the JSON object described above, with keys such as "
+                             + ", ".join(required))
+            return checker
+
         text, meta = self._call(system, user, num_predict=num_predict, temperature=temperature, op=op)
         truncated = self._truncated(system, user, meta)
-        data, salvaged = parse_json(text)
-        checker = validate(data) if data is not None else None
+        data, salvaged = read(text)
+        checker = check(data) if data is not None else None
         if truncated or salvaged:
             return data, checker, meta, True
         if data is not None and checker is not None and not checker.needs_repair:
@@ -1147,9 +1301,17 @@ class Pipeline:
         problems = (checker.errors if checker else []) or ["the reply was not one valid JSON object"]
         repair = (user + "\n\nYour previous reply was invalid: " + "; ".join(problems[:10]) +
                   ". Return only the corrected JSON object.")
+        if self.max_prompt_chars and not self._fits(system, repair):
+            # Xatolar ro'yxati promptni chegaradan oshirdi - asl prompt bilan qayta so'raladi.
+            repair = user
         text2, meta2 = self._call(system, repair, num_predict=num_predict, temperature=0.0, op=op)
-        data2, salvaged2 = parse_json(text2)
-        checker2 = validate(data2) if data2 is not None else None
+        data2, salvaged2 = read(text2)
+        checker2 = check(data2) if data2 is not None else None
+        if self.strict and (data2 is None or salvaged2 or checker2 is None or checker2.needs_repair):
+            # Zanjirda keyingi model bor: yaroqsiz javob "ogohlantirish bilan" qabul
+            # qilinmaydi - chaqiruvchi buni "javob yo'q" deb oladi (bo'lak bo'linadi,
+            # bo'lmasa butun xulosa keyingi model bilan yoziladi).
+            return None, None, meta2, False
         if data2 is not None and not salvaged2:
             if checker2 is not None and checker2.bad_ratio > 0.3:
                 self.warnings.append("validation_errors")
@@ -1165,7 +1327,15 @@ class Pipeline:
         return Validator(segments=segments, speakers={s["id"] for s in inp.speakers},
                          names=[s["name"] for s in inp.speakers if s.get("name")],
                          meeting_day=dates_mod.tashkent(inp.recorded_at).date(),
-                         template_keys=tuple(templates.section_keys(template)), language=inp.language)
+                         template_keys=tuple(templates.section_keys(template)), language=inp.language,
+                         strip_refs=getattr(self.llm, "name", None) == "v3")
+
+    def _check_text(self, checker: Validator, data: Any) -> None:
+        """Yozuv va til tekshiruvi. Til (`check_language`) - faqat zanjirda (`strict`): oxirgi
+        provayder (odatdagi Ollama) avvalgidek tekshiriladi."""
+        checker.check_script(data)
+        if self.strict:
+            checker.check_language(data)
 
     def _names(self, inp: SummaryInput) -> dict[str, str]:
         return {s["id"]: s["name"] for s in inp.speakers if s.get("name")}
@@ -1195,7 +1365,7 @@ class Pipeline:
         lines = [prompts.transcript_line(s, names) for s in inp.segments]
         total_chars = sum(len(line) + 1 for line in lines)
         marks = self._marks(inp)
-        if total_chars <= self.single_pass_chars:
+        if total_chars <= self.single_pass_chars and self._single_fits(inp, template, lines, marks):
             self.est_steps = 2 + (1 if self.verify_enabled else 0)
             try:
                 extracted = self._single(inp, template, lines, marks)
@@ -1230,9 +1400,21 @@ class Pipeline:
             text, _ = self._call(prompts.CLASSIFY_SYSTEM, user, num_predict=200, temperature=0.0,
                                  op="meeting_classify")
         except LlmFailed:
+            if self.strict:
+                raise
             self.warnings.append("classifier_failed")
             return "general", {"value": "general", "confidence": 0.0}
         data, _ = parse_json(text)
+        if self.strict and (data is None or "template" not in data):
+            # Zanjirda: bitta tuzatish urinishi (agent birinchi javobni so'z bilan boshlashi mumkin),
+            # keyin ham JSON bo'lmasa - bu model JSON yozmayapti: keyingisiga, keyingi qadamlar
+            # bekorga sarflanmasin.
+            text, _ = self._call(prompts.CLASSIFY_SYSTEM, user + "\n\nYour previous reply was not the requested "
+                                 "JSON object. Return only the JSON object.", num_predict=200, temperature=0.0,
+                                 op="meeting_classify")
+            data, _ = parse_json(text)
+            if data is None or "template" not in data:
+                raise LlmFailed("meeting_classify: JSON yo'q")
         value = str((data or {}).get("template") or "")
         confidence = Validator.number((data or {}).get("confidence"), 0.0)
         tpl = templates.TEMPLATES.get(value)
@@ -1240,19 +1422,35 @@ class Pipeline:
             return "general", {"value": value if tpl and tpl.auto else "general", "confidence": round(confidence, 2)}
         return value, {"value": value, "confidence": round(confidence, 2)}
 
-    def _single(self, inp: SummaryInput, template: str, lines: list[str], marks: list[dict]) -> dict[str, Any]:
+    def _single_prompt(self, inp: SummaryInput, template: str, lines: list[str],
+                       marks: list[dict]) -> tuple[str, str]:
         system = prompts.extract_system(template)
         user = prompts.user_message(meta=self._meta(inp), language=inp.language, template_id=template,
                                     marks=prompts.marks_block(marks), running="", lines=lines)
+        return system, user
+
+    def _single_fits(self, inp: SummaryInput, template: str, lines: list[str], marks: list[dict]) -> bool:
+        """Chegarali provayderda (v3) bir o'tish prompti sig'masa - to'g'ri map yo'liga
+        (chaqiruvsiz, "bir o'tish yiqildi" ogohlantirishisiz)."""
+        if not self.max_prompt_chars:
+            return True
+        return self._fits(*self._single_prompt(inp, template, lines, marks))
+
+    def _single(self, inp: SummaryInput, template: str, lines: list[str], marks: list[dict]) -> dict[str, Any]:
+        system, user = self._single_prompt(inp, template, lines, marks)
+
         def validate(data: dict) -> Validator:
             checker = self._validator(inp, inp.segments, template)
             checker.result = checker.items(data)
-            checker.check_script(data)
+            self._check_text(checker, data)
             return checker
 
         data, checker, _, truncated = self._ask_json(system, user, num_predict=self.extract_predict,
-                                                     op="meeting_extract", validate=validate)
+                                                     op="meeting_extract", validate=validate,
+                                                     required=SHAPE_EXTRACT)
         if data is None or checker is None:
+            if self.strict:
+                raise LlmFailed("meeting_extract: JSON tuzatishdan keyin ham yaroqsiz")
             raise _Fallback()
         last, first = checker.coverage_last(data), checker.coverage_first(data)
         if truncated or (last is not None and last < int(inp.segments[-1]["id"])) \
@@ -1285,25 +1483,61 @@ class Pipeline:
 
     # --- uzun yo'l: map -> merge -> writer ---
 
-    def _chunks(self, inp: SummaryInput) -> list[list[dict[str, Any]]]:
+    def _chunks(self, inp: SummaryInput, size_limit: int | None = None,
+                marks: list[dict] | None = None) -> list[list[dict[str, Any]]]:
+        """Bo'laklar. `marks` (faqat chegarali provayderda) - bo'lakning O'Z belgilari bloki ham
+        hajmga kiradi: hamma belgilar har bo'lakdan ayrilsa, ko'p belgili yig'ilishda joy
+        keraksiz kichrayib, provayder umuman yaramay qolardi."""
         names = self._names(inp)
+        limit = self.map_chars if size_limit is None else size_limit
+        by_seg: dict[int, list[int]] = {}
+        for index, mark in enumerate(marks or []):
+            for sid in mark.get("segmentIds") or []:
+                by_seg.setdefault(int(sid), []).append(index)
+
+        def marks_cost(indexes: list[int]) -> int:
+            return len(prompts.marks_block([marks[i] for i in indexes])) + 2 if indexes else 0
+
         out: list[list[dict]] = []
         current: list[dict] = []
+        own: list[int] = []
         size = 0
         for seg in inp.segments:
             length = len(prompts.transcript_line(seg, names)) + 1
-            if current and size + length > self.map_chars:
+            extra = [i for i in by_seg.get(int(seg["id"]), []) if i not in own]
+            if current and size + length + marks_cost(own + extra) > limit:
                 out.append(current)
-                current, size = [], 0
+                current, own, size = [], [], 0
+                extra = list(dict.fromkeys(by_seg.get(int(seg["id"]), [])))
             current.append(seg)
+            own += extra
             size += length
         if current:
             out.append(current)
         return out
 
+    def _map_size(self, inp: SummaryInput, template: str, marks: list[dict]) -> int:
+        """Map bo'lagi hajmi. Chegarali provayderda (v3) - promptning o'zgarmas qismi
+        (qoidalar ~14K belgi, meta, shablon, belgilar) ayrilgandan keyin qolgan joy."""
+        if not self.max_prompt_chars:
+            return self.map_chars
+        # Belgilar bu yerda YO'Q: har bo'lak o'z belgilari uchun joyni `_chunks` da ayiradi.
+        fixed = len(prompts.map_system()) + len(prompts.user_message(
+            meta=self._meta(inp), language=inp.language, template_id=template, marks="", running="", lines=[]))
+        room = self.max_prompt_chars - fixed - RUNNING_RESERVE - CONTEXT_RESERVE
+        if room < MIN_CHUNK_CHARS:
+            raise PromptTooLong(f"meeting_map: transkriptga joy {room} belgi - chegara juda kichik")
+        return min(self.map_chars, room)
+
     def _long(self, inp: SummaryInput, template: str, marks: list[dict]) -> dict[str, Any]:
-        chunks = self._chunks(inp)
+        bounded = bool(self.max_prompt_chars)
+        chunks = self._chunks(inp, self._map_size(inp, template, marks), marks if bounded else None)
         self.est_steps = self.steps + len(chunks) + 1 + (1 if self.verify_enabled else 0)
+        if self.strict and self.call_budget:
+            # Oldindan: bu yig'ilish byudjetga sig'masa - birorta map chaqiruvi QILINMAYDI,
+            # xulosa darhol keyingi modelga (uzun yig'ilish - OpenAI ning katta bir o'tishiga).
+            fresh = sum(1 for c in chunks if self.cache_get(template, int(c[0]["id"]), int(c[-1]["id"])) is None)
+            self._budget_check("meeting_map", fresh + 1 + (1 if self.verify_enabled else 0))
         merger = Merger()
         self._parts_ok = 0
         for chunk in chunks:
@@ -1336,9 +1570,31 @@ class Pipeline:
         decisions = [{"ref": d["ref"], "text": d["text"], "status": d["status"]}
                      for d in merger.running_decisions()]
         system = prompts.map_system()
-        user = prompts.user_message(meta=self._meta(inp), language=inp.language, template_id=template,
-                                    marks=prompts.marks_block(chunk_marks),
-                                    running=prompts.running_block(running, decisions), lines=lines)
+
+        def build() -> str:
+            return prompts.user_message(meta=self._meta(inp), language=inp.language, template_id=template,
+                                        marks=prompts.marks_block(chunk_marks),
+                                        running=prompts.running_block(running, decisions), lines=lines)
+
+        user = build()
+        if not self._fits(system, user):
+            # Chegarali provayder (v3): avval eng ESKI ochiq vazifa/qarorlar ro'yxatdan
+            # chiqadi (kod birlashtirishi ularni baribir egasi va matni bo'yicha topadi),
+            # keyin bo'lak ikkiga bo'linadi; bitta qator ham sig'masa - provayder yaramaydi.
+            while (running or decisions) and not self._fits(system, user):
+                if running:
+                    running = running[1:]
+                else:
+                    decisions = decisions[1:]
+                user = build()
+            if not self._fits(system, user):
+                if len(chunk) < 2:
+                    raise PromptTooLong(f"meeting_map: #{first} qatori chegaraga sig'maydi")
+                half = len(chunk) // 2
+                self.est_steps += 1
+                self._map_chunk(inp, template, chunk[:half], marks, merger, depth)
+                self._map_chunk(inp, template, chunk[half:], marks, merger, depth)
+                return
         refs = {i["ref"] for i in running}
         drefs = {d["ref"] for d in decisions}
 
@@ -1353,23 +1609,27 @@ class Pipeline:
                     item["ref"] = None
             items["chunkSummary"] = checker.text(data.get("chunkSummary"), 1500) or ""
             checker.result = items
-            checker.check_script(data)
+            self._check_text(checker, data)
             return checker
 
         data, checker, _, truncated = self._ask_json(system, user, num_predict=self.map_predict, op="meeting_map",
-                                                     validate=validate)
+                                                     validate=validate, required=SHAPE_MAP)
         last_seen = checker.coverage_last(data) if (checker and data) else None
         first_seen = checker.coverage_first(data) if (checker and data) else None
         if (last_seen is not None and last_seen < last) or (first_seen is not None and first_seen > first):
             truncated = True
-        if ((truncated and depth < 2) or (data is None and depth < 1)) and len(chunk) >= 2:
-            # Kesilgan YOKI ikki marta o'qib bo'lmagan bo'lak - ikkiga bo'linadi.
+        if ((truncated and depth < 2) or (data is None and depth < 1 and not self.strict)) and len(chunk) >= 2:
+            # Kesilgan YOKI ikki marta o'qib bo'lmagan bo'lak - ikkiga bo'linadi. Zanjirda (`strict`)
+            # o'qib bo'lmagan bo'lak BO'LINMAYDI: JSON yozmayotgan model yarmini ham o'qiy olmaydi -
+            # 4 ta chaqiruv bekorga ketib, keyin baribir keyingi modelga o'tilardi.
             half = len(chunk) // 2
             self.est_steps += 2
             self._map_chunk(inp, template, chunk[:half], marks, merger, depth + 1)
             self._map_chunk(inp, template, chunk[half:], marks, merger, depth + 1)
             return
         if data is None or checker is None:
+            if self.strict:
+                raise LlmFailed(f"meeting_map: #{first}-#{last} bo'lagi o'qilmadi")
             # Bo'lakning vazifa va qarorlari yo'q - "to'liq" deb aytilmaydi.
             self.warnings.append(f"part_dropped:#{first}-#{last}")
             self.coverage_ok = False
@@ -1391,36 +1651,57 @@ class Pipeline:
         decisions = merged["decisions"]
         for i, dec in enumerate(decisions, start=1):
             dec["_ref"] = dec.get("ref") or f"D{i}"
-        allowed: set[int] = set()
-        notes = ["Part summaries:"]
-        notes += [f"{i}. {prompts.clean_line(s, 1500)}" for i, s in enumerate(merged["chunkSummaries"], 1)]
-        notes.append("\nTopics:")
-        for t in topics:
-            notes.append(f"{t['_ref']} [#{t['startSegmentId']}-#{t['endSegmentId']}] {t['title']}: {t['summary']}")
-            allowed.update({t["startSegmentId"], t["endSegmentId"]})
-            for p in t["keyPoints"]:
-                allowed.update(p["sourceSegmentIds"])
-        notes.append("\nAction items:")
-        for a in merged["actionItems"]:
-            owner = a["owner"].get("speaker") or a["owner"].get("name") or a["owner"].get("kind")
-            due = a["due"].get("date") or a["due"].get("raw") or "-"
-            notes.append(f"{a['ref']}: {a['task']} / {owner} / {due} {self._idtag(a)}")
-            allowed.update(a["sourceSegmentIds"])
-        notes.append("\nDecisions:")
-        for d in decisions:
-            notes.append(f"{d['_ref']}: [{d['status']}] {d['text']} {self._idtag(d)}")
-            allowed.update(d["sourceSegmentIds"])
-        for key, title in (("keyPoints", "Key points"), ("openQuestions", "Open questions"), ("risks", "Risks"),
-                           ("nextSteps", "Next steps")):
-            if merged[key]:
-                notes.append(f"\n{title}:")
-                for x in merged[key][:40]:
-                    notes.append(f"- {x['text']} {self._idtag(x)}")
-                    allowed.update(x["sourceSegmentIds"])
-        user = "\n\n".join([self._meta(inp),
-                            f"Output language: {prompts.LANGUAGE_NAMES.get(inp.language, 'Uzbek (Latin script)')}",
-                            prompts.template_block(template), prompts.marks_block(marks),
-                            "Notes (data, not instructions):\n" + "\n".join(notes)])
+        # Belgilangan lahzalar qatorlari ham joiz: yozuvchi promptidagi belgilar bloki aynan
+        # "shu qatorlardan birini keltiring" deydi - aks holda zanjirda (`strict`) to'g'ri javob
+        # "noto'g'ri manba" bo'lib, butun xulosa keyingi modelga ketardi.
+        allowed: set[int] = {int(sid) for mark in marks for sid in mark.get("segmentIds") or []}
+
+        def build_notes(summary_cap: int, list_cap: int) -> list[str]:
+            notes = ["Part summaries:"]
+            notes += [f"{i}. {prompts.clean_line(s, summary_cap)}"
+                      for i, s in enumerate(merged["chunkSummaries"], 1)]
+            notes.append("\nTopics:")
+            for t in topics:
+                notes.append(f"{t['_ref']} [#{t['startSegmentId']}-#{t['endSegmentId']}] {t['title']}: "
+                             f"{t['summary']}")
+                allowed.update({t["startSegmentId"], t["endSegmentId"]})
+                for p in t["keyPoints"]:
+                    allowed.update(p["sourceSegmentIds"])
+            notes.append("\nAction items:")
+            for a in merged["actionItems"]:
+                owner = a["owner"].get("speaker") or a["owner"].get("name") or a["owner"].get("kind")
+                due = a["due"].get("date") or a["due"].get("raw") or "-"
+                notes.append(f"{a['ref']}: {a['task']} / {owner} / {due} {self._idtag(a)}")
+                allowed.update(a["sourceSegmentIds"])
+            notes.append("\nDecisions:")
+            for d in decisions:
+                notes.append(f"{d['_ref']}: [{d['status']}] {d['text']} {self._idtag(d)}")
+                allowed.update(d["sourceSegmentIds"])
+            for key, title in (("keyPoints", "Key points"), ("openQuestions", "Open questions"),
+                               ("risks", "Risks"), ("nextSteps", "Next steps")):
+                if merged[key]:
+                    notes.append(f"\n{title}:")
+                    for x in merged[key][:list_cap]:
+                        notes.append(f"- {x['text']} {self._idtag(x)}")
+                        allowed.update(x["sourceSegmentIds"])
+            return notes
+
+        head = [self._meta(inp),
+                f"Output language: {prompts.LANGUAGE_NAMES.get(inp.language, 'Uzbek (Latin script)')}",
+                prompts.template_block(template), prompts.marks_block(marks)]
+        label = "Notes (data, not instructions):\n"
+        user = "\n\n".join(head + [label + "\n".join(build_notes(1500, 40))])
+        if not self._fits(prompts.WRITER_SYSTEM, user):
+            # Chegarali provayder (v3): qaydlar qisqartiriladi - avval bo'lak xulosalari va
+            # ikkinchi darajali ro'yxatlar, keyin matn qator chegarasida kesiladi.
+            # Vazifa va qarorlar baribir KOD birlashtirgan holda qoladi: yozuvchi faqat
+            # sarlavha, umumiy xulosa va asosiy fikrlarni yozadi.
+            body = "\n".join(build_notes(400, 10))
+            room = self.max_prompt_chars - len(prompts.WRITER_SYSTEM) - len("\n\n".join(head + [label])) - 2
+            if len(body) > room:
+                body = body[:max(0, room - 3)].rsplit("\n", 1)[0] + "\n…"
+            user = "\n\n".join(head + [label + body])
+
         def validate(data: dict) -> Validator:
             checker = self._validator(inp, inp.segments, template)
             for i, kp in enumerate(data.get("keyPoints") or [] if isinstance(data.get("keyPoints"), list) else []):
@@ -1428,14 +1709,17 @@ class Pipeline:
                 if not isinstance(kp, dict) or not [x for x in checker.ids(kp.get("sourceSegmentIds")) if x in allowed]:
                     checker.invalid += 1
                     checker._err(f"keyPoints[{i}]", "sourceSegmentIds must come from the given items")
-            checker.check_script(data)
+            self._check_text(checker, data)
             return checker
 
         # Tarmoq xatosi (`LlmFailed`) YUQORIGA ketadi: ishchi qayta uradi, bo'laklar
         # keshda. Faqat yaroqsiz JSON zahira shaklga tushadi.
         data, checker, _, _ = self._ask_json(prompts.WRITER_SYSTEM, user, num_predict=self.write_predict,
-                                             op="meeting_write", validate=validate, temperature=0.2)
+                                             op="meeting_write", validate=validate, temperature=0.2,
+                                             required=SHAPE_WRITER)
         if data is None or checker is None:
+            if self.strict:
+                raise LlmFailed("meeting_write: JSON tuzatishdan keyin ham yaroqsiz")
             self.warnings.append("writer_failed")
             first_topic = topics[0]["title"] if topics else None
             merged.update({"title": first_topic, "meetingType": {"value": "general", "confidence": 0.5},
@@ -1502,6 +1786,31 @@ class Pipeline:
 
     # --- tekshiruvchi chaqiruv (6.6.5) ---
 
+    def _verify_batches(self, inp: SummaryInput, rows: list[tuple[str, dict, str]]):
+        """Tekshiruv to'plamlari: 25 tadan. Chegarali provayderda (v3) to'plam promptga
+        sig'adigan qilib yopiladi; bitta juda uzun blok kesiladi."""
+        if not self.max_prompt_chars:
+            for start in range(0, len(rows), 25):
+                part = rows[start:start + 25]
+                yield [(ref, item) for ref, item, _ in part], [block for _, _, block in part]
+            return
+        fixed = len(prompts.VERIFY_SYSTEM) + len(self._meta(inp)) + 2 + len(prompts.fence([]))
+        room = max(500, self.max_prompt_chars - fixed - 1)
+        batch: list[tuple[str, dict]] = []
+        blocks: list[str] = []
+        size = 0
+        for ref, item, block in rows:
+            if len(block) > room:
+                block = block[:room - 1] + "…"
+            if blocks and (len(blocks) >= 25 or size + len(block) + 1 > room):
+                yield batch, blocks
+                batch, blocks, size = [], [], 0
+            batch.append((ref, item))
+            blocks.append(block)
+            size += len(block) + 1
+        if blocks:
+            yield batch, blocks
+
     def _verify(self, inp: SummaryInput, extracted: dict[str, Any]) -> None:
         names = self._names(inp)
         by_id = {int(s["id"]): s for s in inp.segments}
@@ -1516,41 +1825,49 @@ class Pipeline:
         if not entries:
             return
         unsupported: set[int] = set()
-        for start in range(0, len(entries), 25):
-            batch = entries[start:start + 25]
-            blocks = []
-            for ref, item in batch:
-                if ref.startswith("A"):
-                    owner = item["owner"].get("speaker") or item["owner"].get("name") or item["owner"].get("kind")
-                    due = item["due"].get("date") or "-"
-                    if item["due"].get("time"):
-                        due += " " + item["due"]["time"]
-                    head = (f"{ref} | task: {item['task']} | owner: {owner} (basis: {item['owner'].get('basis')}) | "
-                            f"due: {due} (said: {item['due'].get('raw') or '-'})")
-                elif ref.startswith("D"):
-                    head = f"{ref} | decision ({item['status']}): {item['text']}"
-                elif ref.startswith("Q"):
-                    head = f"{ref} | open question: {item['text']}"
-                else:
-                    head = f"{ref} | risk: {item['text']}"
-                chosen: list[int] = []
-                for sid in item["sourceSegmentIds"]:
-                    p = pos.get(sid)
-                    if p is None:
-                        continue
-                    for q in (p - 1, p, p + 1):
-                        if 0 <= q < len(order) and order[q] not in chosen:
-                            chosen.append(order[q])
-                lines = [prompts.transcript_line(by_id[s], names) for s in sorted(chosen, key=pos.get)]
-                blocks.append(head + "\n" + "\n".join("   " + line for line in lines))
+
+        def block_of(ref: str, item: dict) -> str:
+            if ref.startswith("A"):
+                owner = item["owner"].get("speaker") or item["owner"].get("name") or item["owner"].get("kind")
+                due = item["due"].get("date") or "-"
+                if item["due"].get("time"):
+                    due += " " + item["due"]["time"]
+                head = (f"{ref} | task: {item['task']} | owner: {owner} (basis: {item['owner'].get('basis')}) | "
+                        f"due: {due} (said: {item['due'].get('raw') or '-'})")
+            elif ref.startswith("D"):
+                head = f"{ref} | decision ({item['status']}): {item['text']}"
+            elif ref.startswith("Q"):
+                head = f"{ref} | open question: {item['text']}"
+            else:
+                head = f"{ref} | risk: {item['text']}"
+            chosen: list[int] = []
+            for sid in item["sourceSegmentIds"]:
+                p = pos.get(sid)
+                if p is None:
+                    continue
+                for q in (p - 1, p, p + 1):
+                    if 0 <= q < len(order) and order[q] not in chosen:
+                        chosen.append(order[q])
+            lines = [prompts.transcript_line(by_id[s], names) for s in sorted(chosen, key=pos.get)]
+            return head + "\n" + "\n".join("   " + line for line in lines)
+
+        for batch, blocks in self._verify_batches(inp, [(ref, item, block_of(ref, item)) for ref, item in entries]):
             user = (self._meta(inp) + "\n\n" + prompts.fence(blocks))
             try:
                 text, _ = self._call(prompts.VERIFY_SYSTEM, user, num_predict=1500, temperature=0.0,
                                      op="meeting_verify")
             except (LlmFailed, LlmRateLimited, LlmBusy):
+                # Zanjirda ham: tekshiruvchi faqat SUZADI (belgi qo'yadi), mazmun qo'shmaydi -
+                # tayyor, tekshirilgan xulosani bitta tekshiruv xatosi uchun tashlab, keyingi
+                # model bilan boshidan yozish o'nlab chaqiruvni bekorga ketkazardi.
                 self.warnings.append("verify_failed")
                 break
             data, _ = parse_json(text)
+            if self.strict and not isinstance((data or {}).get("results"), list):
+                # Javob o'qilmadi - shu to'plam tekshirilmagan qoladi (xulosa saqlanadi).
+                if "verify_failed" not in self.warnings:
+                    self.warnings.append("verify_failed")
+                continue
             results = {}
             for row in (data or {}).get("results") or [] if isinstance((data or {}).get("results"), list) else []:
                 if isinstance(row, dict) and row.get("id"):

@@ -1846,3 +1846,100 @@ text above and the first backend notes:
     `quality.warnings` may add `topics_gap` (topics cover < 80% of 20+ lines) and `wrong_script`.
     The mind map "computed from topics" (6.1) is **M3**, not built in M1. Mobile follow-up: render
     the `followUps` layout key (unknown keys are hidden today), `condition` and `contribution`.
+
+## Build notes (backend builder, AI engine v3 everywhere, 2026-10-09)
+
+User decisions for tomorrow's demo: the meeting app uses the assistant's v3 engine ("Venera Core")
+for the summary, Ask and turning action items into CRM tasks; summaries also get a frontier-model
+fallback. Everything is in `apps/api`, default behaviour is unchanged (`MEETINGS_LLM_CHAIN=ollama`,
+`MEETINGS_ENABLED=false`), no live calls were made, nothing was committed.
+
+1. **Provider chain** (`services/meetings/llm.py`). `MEETINGS_LLM_CHAIN` (default `ollama`; demo
+   `v3,openai,ollama`), `MEETINGS_ASK_CHAIN` (empty = the same). Providers expose Ollama's
+   `complete_meta`, so `summarize.Pipeline` and `ask.answer` are reused unchanged:
+   - `v3` = `V3Chat` over `AssistantClient.stream(engine="v3")`: header + `INSTRUCTIONS:` + system +
+     user in ONE `question`; collects `token` text; `error` frame, timeout, empty reply -> failure;
+     `stage`/`sources`/`done`/stray `proposal` are ignored. `AssistantError` 501 -> not configured,
+     our `queue_full` -> `LlmBusy`, 429 -> rate limited, else failed.
+   - `openai` = `OpenAIChat`: Chat Completions over `urllib`, `response_format` `json_schema` +
+     `strict` from `services/meetings/shapes.py` (mirrors `prompts` shapes; a test compares names and
+     order). 400 with a schema -> one retry in `json_object` mode. No temperature (reasoning models
+     reject it); `max_completion_tokens`/`reasoning_effort` only when set. 429 -> rate limited, 401/403
+     -> not configured, 5xx/network -> failed. `tokensIn` is not reported (OpenAI never truncates
+     silently; Ollama's "prompt cut" heuristic would misfire). Key read live (`openai_key_now`), never
+     logged; metering `openai / <op>` (`KNOWN_SERVICES` gained `openai`). Disabled unless BOTH
+     `OPENAI_API_KEY` and `MEETINGS_OPENAI_MODEL` are set (no default model id).
+   - `ollama` = the existing `OllamaChat`, with exactly the old pipeline settings.
+2. **One provider per summary run** (`llm.run_chain`). Unconfigured links are skipped; every
+   provider except the last runs `Pipeline(strict=True)`: classifier failure, single-pass JSON that
+   is still invalid after the one repair retry (`needs_repair` included, plus missing top-level keys
+   such as a reply wrapped in `{"result": {...}}` - `Validator.shape_bad`), a map part that still
+   fails after its split, writer failure, verifier failure/unparseable reply all raise, and the WHOLE
+   summary restarts with the next provider (the single pass no longer falls back to the map path in
+   strict mode; truncation still does). The last provider runs leniently (old warnings).
+   `LlmBusy` (our own slot) stops the chain: the worker requeues in 30 s without an attempt, so a busy
+   v3 does not silently degrade to gemma. The last provider's 429 keeps the 5/15/30 backoff. Map
+   cache keys are namespaced per provider (`v3:<tpl>`, `openai/<model>:<tpl>`; Ollama keeps `<tpl>`),
+   so a restart never reuses another model's parts. Summary progress is now monotonic.
+3. **Recorded and exposed:** store schema **v2** (`summaries.provider`; `model` holds the model);
+   `GET .../summaries/{id}` adds `generatedBy: {provider: 'v3'|'openai'|'ollama', model} | null`
+   (legacy rows without a provider read as `ollama`); a fallback adds
+   `content.quality.warnings: ['provider_failed:v3', ...]`. `/api/health/detail` ->
+   `meetings.llmChain: [{provider, configured, model}]` (no secrets).
+4. **v3 summary isolation:** `tokens={}` (v3 cannot read HR data or build proposals while
+   summarising), `user_id='venera-meet:{actorId}'`, no `chat_id` (no memory pollution). The worker
+   uses its OWN `AssistantClient` (`MEETINGS_V3_MAX_CONCURRENT=1`, `MEETINGS_V3_TIMEOUT=180` s between
+   frames, `MEETINGS_V3_MAX_STREAM_SECONDS=600`), never chat's slots. `AssistantClient.stream` got an
+   additive `op` argument (metering `assistant / meeting_extract`; chat still `assistant / stream`).
+5. **v3 question budget:** `MEETINGS_V3_MAX_CHARS=20000` (the chat clip of 2000 does not apply; the
+   upstream `ChatReq.question` declares no maxLength). The extract/map instructions alone are ~14K
+   chars, so one v3 call carries ~4K chars of transcript: `Pipeline(max_prompt_chars=...)` goes
+   straight to the map path when the single pass does not fit, sizes chunks from the remaining room
+   (reserving 2000 for the running-items block and 600 for context lines), drops the oldest running
+   items or splits a chunk that still overflows, shrinks the writer notes, and packs verifier batches
+   by size. Nothing over the limit is ever sent (`PromptTooLong`). A 10-minute meeting is ~3-4 map
+   calls + writer + verifier on v3. Raising the limit to 40000+ after a live check cuts the call count.
+   OpenAI uses its own `MEETINGS_OPENAI_SINGLE_PASS_CHARS=120000` / `MEETINGS_OPENAI_MAP_CHARS=60000`.
+6. **Ask:** the same chain (v3 first in the demo) with the user's OWN tokens and
+   `user_id=chat.assistant_user_id(user)`, no `chat_id`, via chat's `AssistantClient` (interactive,
+   same client that later confirms proposals). The existing excerpt selection and notes are fitted to
+   the v3 budget. v3 `stage`/`sources` frames are ignored (the response shape is unchanged, citations
+   are transcript lines only); a non-JSON v3 answer is returned as text without citations (same rule
+   as Ollama); on failure or a busy slot Ask falls through to the next model. `LlmBusy` now maps to
+   503 `llm_unavailable` (it was an uncaught 500 before).
+7. **CRM:** `POST /api/v1/meetings/{meetingId}/action-items/{itemId}/crm`, optional body
+   `{project?: string<=120, force?: bool}` -> `{status: 'proposed'|'answered'|'failed', proposal,
+   text, reason, item}`. A precise Uzbek request (`services/meetings/crm.py`: task, owner as a CRM
+   name - typed name, confirmed or suggested speaker name, never a bare `S2` - due date with the
+   spoken phrase, project hint = body `project` or meeting title + summary keywords, source meeting
+   title/date in Tashkent time, quote as data) goes to v3 with the user's OWN tokens
+   (`chat._live_tokens`) and `user_id=venera:{actorId}`. `proposed`: the proposal is filtered to the
+   web `ActionCard` keys (`token, connector, operation, summary, target, changes, warnings,
+   expires_at`) and stored on the item (`action_items.crm_token/_status/_proposal/_expires_at/
+   _result/_sig/_updated_at`). Reasons: `crm_not_connected` (no CRM token -> v3 is not called; or an
+   `auth_missing`/`auth_expired` frame), `assistant_not_configured`, `assistant_busy`,
+   `assistant_unavailable`, `timeout` (`MEETINGS_CRM_TIMEOUT=120`), `assistant_error`, `empty`.
+   Flag-gated by `meetings_access`, 404 for other users' meetings, `MEETINGS_CRM_PER_HOUR=20`. A second
+   tap with an unchanged request (same signature) and a pending, unexpired proposal returns the stored
+   proposal without calling v3; `force` asks again. Confirmation stays on
+   `/api/v1/actions/{token}/confirm|cancel`; `actions.py` now also writes the outcome
+   (`executed`/`cancelled`/`failed`/`expired` + CRM `result`, e.g. `{"key": "DVSIB-231"}`) back to the
+   meeting item - guarded: it never creates the meetings DB and never affects the confirm response.
+   `ActionItem` (and `MyActionItem`) gained `crm: {token, status, proposal, expiresAt, result,
+   updatedAt} | null` (`pending` past `expires_at` reads `expired`). A new primary summary or a
+   retranscribe keeps AI items that were sent to CRM (like edited/ticked ones).
+8. **Contract pins:** `tests/test_meetings_api.py` field sets gained `generatedBy` (Summary) and
+   `crm` (ActionItem) - additive; mobile `src/api/types.ts` and web can add them when they render.
+   `tests/conftest.py` pins the new chain/OpenAI settings to code defaults.
+9. **Not done / follow-ups:** the mini app chat is routed to v3 by policy only
+   (`HRM_ASSISTANT_ENGINE_BY_CHANNEL=mobile=v3` or the admin panel, which wins over `.env`); no
+   analytics turn is recorded for the CRM request (its proposal status therefore only lands on the
+   meeting item); `tools/meetings_live_check.py` has no `v3`/`openai` mode yet - the 20K-char v3
+   question and the strict schema on the user's chosen model should be checked live before raising
+   limits; web admin `SERVICES` (apps/web) does not list `openai` yet (shown with the fallback label).
+10. **Tests:** `tests/test_meetings_llm.py` (fake `AssistantClient` with fenced JSON, stage/sources/
+    stray proposal frames, error, `auth_missing`, queue_full, proposal; local fake OpenAI HTTP server
+    asserting the `json_schema` payload, 429/500 -> fallback, 400 -> `json_object`, refusal, length;
+    chain order, whole-run restart, per-provider cache, prompt budget, Ask via v3, CRM proposed/
+    answered/failed/isolation/flag off/rate limit/expiry/force/edit, confirm write-back, chat confirm
+    not creating the meetings DB, `assistant / stream` metering unchanged).

@@ -22,7 +22,7 @@ TemplateId = Literal["auto", "general", "minutes", "standup", "one_on_one", "pro
 MeetingStatus = Literal["uploading", "uploaded", "transcribing", "summarizing", "ready", "failed",
                         "waiting_quota"]
 SummaryStatus = Literal["none", "queued", "running", "ready", "failed", "skipped"]
-EntrySource = Literal["app", "tile", "launcher", "shortcut", "notification", "link"]
+EntrySource = Literal["app", "tile", "launcher", "volume", "shortcut", "notification", "link"]
 
 
 # --- so'rovlar ---------------------------------------------------------------------
@@ -127,6 +127,15 @@ class ActionItemPatch(BaseModel):
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)
     language: Lang | None = None
+
+
+class CrmRequest(BaseModel):
+    """`POST /meetings/{id}/action-items/{itemId}/crm` tanasi - ixtiyoriy."""
+
+    #: Loyiha ishorasi (odam bilsa). Bo'lmasa - yig'ilish sarlavhasi va kalit so'zlari.
+    project: str | None = Field(default=None, max_length=120)
+    #: Muddati o'tmagan taklif bo'lsa ham yangisini so'rash.
+    force: bool = False
 
 
 # --- javoblar ----------------------------------------------------------------------
@@ -297,9 +306,18 @@ class LayoutEntry(BaseModel):
     title: str
 
 
+class GeneratedBy(BaseModel):
+    """Xulosani yozgan model: `v3` (Venera Core) | `openai` | `ollama` va model nomi."""
+
+    provider: Literal["v3", "openai", "ollama"]
+    model: str | None = None
+
+
 class Summary(SummaryCard):
     promptVersion: str
     model: str
+    #: `null` - xulosa tayyor emas.
+    generatedBy: GeneratedBy | None = None
     layout: list[LayoutEntry]
     speakers: list[Speaker]
     #: `SummaryContent` (spetsifikatsiya 6.2) - `null`, agar holat `ready` bo'lmasa.
@@ -316,6 +334,21 @@ class ActionDue(BaseModel):
     date: str | None = None
     time: str | None = None
     raw: str | None = None
+
+
+class ActionCrm(BaseModel):
+    """Vazifaning CRM taklifi (v3). Tasdiqlash - `POST /api/v1/actions/{token}/confirm`."""
+
+    token: str
+    #: pending | executed | failed | cancelled | expired (xizmat yangi holat qo'shsa ham o'tadi).
+    status: str
+    #: Web `ActionCard` kutgan taklif obyekti (token, connector, operation, summary, target,
+    #: changes, warnings, expires_at) - xizmatnikidek, snake_case.
+    proposal: dict[str, Any] | None = None
+    expiresAt: str | None = None
+    #: Tasdiqlangandan keyin CRM qaytargani, masalan {"key": "DVSIB-231"}.
+    result: dict[str, Any] | None = None
+    updatedAt: str | None = None
 
 
 class ActionItem(BaseModel):
@@ -335,6 +368,8 @@ class ActionItem(BaseModel):
     quote: str | None = None
     createdAt: str
     updatedAt: str
+    #: `null` - CRM ga yuborilmagan.
+    crm: ActionCrm | None = None
 
 
 class ActionItemList(BaseModel):
@@ -348,6 +383,20 @@ class MyActionItem(ActionItem):
 
 class MyActionItemList(BaseModel):
     items: list[MyActionItem]
+
+
+class CrmResult(BaseModel):
+    """`POST .../crm` javobi. `proposed` - taklif (`proposal`, tasdiqlash `/api/v1/actions`),
+    `answered` - agent matn bilan javob berdi (aniqlik so'radi), `failed` - sabab kodi:
+    `crm_not_connected` | `assistant_not_configured` | `assistant_busy` | `assistant_unavailable` |
+    `timeout` | `assistant_error` | `empty`."""
+
+    status: Literal["proposed", "answered", "failed"]
+    proposal: dict[str, Any] | None = None
+    text: str | None = None
+    reason: str | None = None
+    #: Yangilangan vazifa (`crm` holati bilan).
+    item: ActionItem | None = None
 
 
 class Citation(BaseModel):

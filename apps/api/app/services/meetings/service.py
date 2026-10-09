@@ -31,10 +31,11 @@ from ..integrations.gapi_stt import MAX_MEETING_SPEAKERS
 from ..reports import RateLimiter
 from ..stt import SttError
 from . import ask as ask_mod
-from . import audio, dates, export, prompts, runtime, templates
+from . import audio, crm, dates, export, prompts, runtime, templates
+from . import llm as llm_mod
 from .errors import RETRYABLE, MeetingProblem, message_for, not_found
 from .store import jdump, jload, new_id, private_file
-from .summarize import LlmFailed, LlmRateLimited, LlmUnavailable
+from .summarize import LlmBusy, LlmFailed, LlmRateLimited, LlmUnavailable
 from .transcribe import language_warning
 from .worker import delete_meeting
 
@@ -532,9 +533,9 @@ def retranscribe(user: AuthUser, meeting_id: str, body: Any, now: float | None =
     with store.transaction() as conn:
         conn.execute("DELETE FROM summaries WHERE meeting_id=?", (m["id"],))
         conn.execute("DELETE FROM summary_parts WHERE meeting_id=?", (m["id"],))
-        # Odam tahrirlagan, qo'shgan yoki belgilagan (bajarildi / kerak emas) vazifalar qoladi.
-        conn.execute("DELETE FROM action_items WHERE meeting_id=? AND origin='ai' AND edited=0 AND status='open'",
-                     (m["id"],))
+        # Odam tahrirlagan, qo'shgan, belgilagan (bajarildi / kerak emas) yoki CRM ga yuborgan vazifalar qoladi.
+        conn.execute("DELETE FROM action_items WHERE meeting_id=? AND origin='ai' AND edited=0 AND status='open' "
+                     "AND crm_token IS NULL", (m["id"],))
         conn.execute("UPDATE action_items SET source_ids='[]' WHERE meeting_id=?", (m["id"],))
         conn.execute("DELETE FROM segments WHERE meeting_id=?", (m["id"],))
         conn.execute("DELETE FROM speakers WHERE meeting_id=?", (m["id"],))
@@ -749,8 +750,17 @@ def get_summary(user: AuthUser, meeting_id: str, summary_id: str) -> dict[str, A
     content = jload(s.get("content_json")) if s["status"] == "ready" else None
     content = _map_merged(content, _merged_map(speakers)) if content else content
     return {**summary_card(s, m), "promptVersion": s["prompt_version"], "model": s.get("model") or "",
+            "generatedBy": generated_by(s),
             "layout": templates.layout(s["template"], s["language"]),
             "speakers": [speaker_view(sp) for sp in speakers], "content": content}
+
+
+def generated_by(s: dict[str, Any]) -> dict[str, Any] | None:
+    """Xulosani qaysi model yozgan: `{provider: v3|openai|ollama, model}`. Faqat tayyor
+    xulosada. `provider` ustuni yo'q eski qator - zanjirdan oldin faqat Ollama bor edi."""
+    if s.get("status") != "ready" or not (s.get("provider") or s.get("model")):
+        return None
+    return {"provider": s.get("provider") or "ollama", "model": s.get("model") or None}
 
 
 def delete_summary(user: AuthUser, meeting_id: str, summary_id: str) -> dict[str, Any]:
@@ -808,7 +818,21 @@ def action_view(a: dict[str, Any], starts: dict[int, float]) -> dict[str, Any]:
             "priority": a.get("priority"), "status": a["status"], "origin": a["origin"],
             "edited": bool(a.get("edited")), "needsConfirmation": bool(a.get("needs_confirmation")),
             "sourceSegmentIds": ids, "start": starts.get(ids[0]) if ids else None, "quote": a.get("quote"),
-            "createdAt": iso(a.get("created_at")), "updatedAt": iso(a.get("updated_at"))}
+            "createdAt": iso(a.get("created_at")), "updatedAt": iso(a.get("updated_at")),
+            "crm": crm_view(a)}
+
+
+def crm_view(a: dict[str, Any], now: float | None = None) -> dict[str, Any] | None:
+    """Vazifaning CRM taklifi: kalit (tasdiqlash `/api/v1/actions/{token}/confirm`), holat
+    (`pending` muddati o'tgan bo'lsa - `expired`), kartadagi taklif, natija. Taklif bo'lmasa `null`."""
+    if not a.get("crm_token"):
+        return None
+    status = a.get("crm_status") or "pending"
+    expires = a.get("crm_expires_at")
+    if status == "pending" and crm.expired(expires, time.time() if now is None else now):
+        status = "expired"
+    return {"token": a["crm_token"], "status": status, "proposal": jload(a.get("crm_proposal")),
+            "expiresAt": expires, "result": jload(a.get("crm_result")), "updatedAt": iso(a.get("crm_updated_at"))}
 
 
 def _starts(meeting_id: str) -> dict[int, float]:
@@ -895,6 +919,137 @@ def patch_action_item(user: AuthUser, meeting_id: str, item_id: str, body: Any) 
     return action_view(store.action_item(m["id"], item_id), _starts(m["id"]))
 
 
+#: Vazifa bo'yicha CRM so'rovi qulfi: ikki tez bosish ikkita taklif (ikkala kartani ham
+#: tasdiqlash mumkin bo'lib qoladi) bermasin - ikkinchisi birinchisini kutadi va o'sha taklifni oladi.
+_crm_locks: dict[str, threading.Lock] = {}
+_crm_locks_guard = threading.Lock()
+
+
+def _crm_lock(item_id: str) -> threading.Lock:
+    with _crm_locks_guard:
+        if len(_crm_locks) > 1000:
+            for key in [k for k, lock in _crm_locks.items() if not lock.locked()]:
+                _crm_locks.pop(key, None)
+        return _crm_locks.setdefault(item_id, threading.Lock())
+
+
+def action_item_to_crm(user: AuthUser, meeting_id: str, item_id: str, body: Any = None) -> dict[str, Any]:
+    """Vazifa -> v3 -> CRM TAKLIFI (`crm.py`). Tasdiqlash - chatdagi `/api/v1/actions/{token}/confirm`.
+
+    Muddati o'tmagan taklif bo'lsa va vazifa o'shandan beri o'zgarmagan bo'lsa (ikki marta
+    bosildi) - agentga qayta borilmaydi, o'sha taklif qaytadi; `force` - yangisi. CRM da
+    allaqachon yaratilgan (`executed`) vazifa HECH QACHON qayta yuborilmaydi (`force` bilan
+    ham): aks holda saqlangan CRM kaliti o'chib, ikkinchi tasdiq ikkinchi vazifa yaratardi.
+    -> `{status, proposal, text, reason, item}`."""
+    rt = runtime()
+    store = rt.store
+    m = _owned(user.actorId, meeting_id)
+    if store.action_item(m["id"], item_id) is None:
+        raise MeetingProblem(404, "item_not_found", "Vazifa topilmadi")
+    lock = _crm_lock(item_id)
+    if not lock.acquire(timeout=float(settings.meetings_crm_timeout) + 15.0):
+        return {"status": "failed", "proposal": None, "text": None, "reason": crm.BUSY,
+                "item": action_view(store.action_item(m["id"], item_id), _starts(m["id"]))}
+    try:
+        return _item_to_crm(rt, user, m, item_id, body)
+    finally:
+        lock.release()
+
+
+def _item_to_crm(rt: Any, user: AuthUser, m: dict[str, Any], item_id: str, body: Any) -> dict[str, Any]:
+    store = rt.store
+    # Qulf ichida QAYTA o'qiladi: kutib turgan bosish birinchisi saqlagan taklifni ko'rsin.
+    item = store.action_item(m["id"], item_id)
+    if item is None:
+        raise MeetingProblem(404, "item_not_found", "Vazifa topilmadi")
+    current = crm_view(item)
+
+    def done(result: dict[str, Any], row: dict[str, Any] | None = None) -> dict[str, Any]:
+        log.info("Yig'ilish %s: vazifa %s CRM ga - %s%s", m["id"], item["id"], result["status"],
+                 f" ({result['reason']})" if result.get("reason") else "")
+        return {**result, "item": action_view(row or item, _starts(m["id"]))}
+
+    if current and current["status"] == "executed":
+        # Bitta vazifa - bitta CRM vazifasi: agentga borilmaydi, chegara ham sarflanmaydi.
+        return done({"status": "failed", "proposal": None, "text": None, "reason": crm.ALREADY})
+    speakers = {sp["id"]: sp for sp in store.speakers(m["id"])}
+    primary = store.summary(m["id"], m["primary_summary_id"]) if m.get("primary_summary_id") else None
+    content = jload(primary.get("content_json"), {}) if primary and primary["status"] == "ready" else {}
+    question = crm.question(item, m, speakers, project=getattr(body, "project", None),
+                            keywords=(content or {}).get("keywords") or [], requester=user.fullName)
+    # So'rov izi: vazifa (matn, mas'ul, muddat) yoki loyiha ishorasi o'zgarsa - eski taklif mos emas.
+    sig = hashlib.sha256(question.encode("utf-8")).hexdigest()[:32]
+    if not getattr(body, "force", False) and current and current["status"] == "pending" and current["proposal"] \
+            and item.get("crm_sig") == sig:
+        return {"status": "proposed", "proposal": current["proposal"], "text": None, "reason": None,
+                "item": action_view(item, _starts(m["id"]))}
+    _rate("crm", user.actorId, settings.meetings_crm_per_hour)
+
+    client = live_assistant(rt)
+    if client is None or not getattr(client, "configured", False):
+        return done({"status": "failed", "proposal": None, "text": None, "reason": crm.NOT_CONFIGURED})
+    user_id, tokens = crm_identity(user)
+    if not tokens.get("crm"):
+        # CRM ulanmagan - agentga bormasdan (u baribir `auth_missing` derdi).
+        return done({"status": "failed", "proposal": None, "text": None, "reason": crm.NOT_CONNECTED})
+    from ..analytics import bind
+    from ..integrations.assistant import AssistantError
+
+    try:
+        with bind(user.actorId):
+            # Qattiq muddat (`within`): v3 jim tursa ham odam `MEETINGS_CRM_TIMEOUT` dan ortiq kutmaydi;
+            # kech kelgan taklif tashlanadi (saqlanmaydi, 15 daqiqada o'zi eskiradi).
+            reply = llm_mod.within(
+                lambda: llm_mod.collect(client, question, user_id=user_id, tokens=tokens,
+                                        max_chars=settings.meetings_v3_max_chars, op="meeting_crm",
+                                        deadline=settings.meetings_crm_timeout),
+                float(settings.meetings_crm_timeout), what="CRM")
+    except llm_mod.DeadlineExceeded:
+        return done({"status": "failed", "proposal": None, "text": None, "reason": crm.TIMEOUT})
+    except AssistantError as exc:
+        return done({"status": "failed", "proposal": None, "text": None, "reason": crm.open_failure(exc)})
+    result = crm.outcome(reply)
+    if result["status"] != "proposed":
+        return done(result)
+    proposal = result["proposal"]
+    token = str(proposal["token"])[:256]
+    store.update_action_item(item["id"], crm_token=token, crm_status="pending",
+                             crm_proposal=jdump(proposal), crm_expires_at=proposal.get("expires_at"),
+                             crm_result=None, crm_sig=sig, crm_updated_at=int(time.time()))
+    if current and current["status"] == "pending" and current["token"] != token:
+        # Eski (hali tasdiqlanmagan) taklif yuqorida ham bekor qilinadi: ekranda qolgan eski
+        # karta tasdiqlanib, ikkinchi vazifa yaratilmasin. Eng yaxshi urinish - xato jurnalga.
+        _cancel_upstream(client, current["token"], user_id, tokens)
+    return done(result, store.action_item(m["id"], item["id"]))
+
+
+def _cancel_upstream(client: Any, token: str, user_id: str, tokens: dict[str, str]) -> None:
+    cancel = getattr(client, "cancel_action", None)
+    if not callable(cancel):
+        return
+    try:
+        cancel(token, user_id=user_id, tokens=tokens)
+    except Exception as exc:                                         # noqa: BLE001
+        log.info("Yig'ilish vazifasi: eski CRM taklifi bekor qilinmadi (%s)", type(exc).__name__)
+
+
+def note_crm_outcome(actor_id: int, token: str, status: str, result: Any = None) -> None:
+    """`/api/v1/actions/{token}/confirm|cancel` natijasi -> vazifaning CRM holati.
+
+    Chat tasdiqlashi O'ZGARMAYDI: ombor yo'q bo'lsa (bo'lim hech qachon yoqilmagan) hech
+    narsa qilinmaydi va yaratilmaydi, xato esa faqat jurnalga - tasdiq javobiga ta'sir qilmaydi."""
+    try:
+        store = runtime().store
+        if not store.exists or not token or not status:
+            return
+        changed = store.set_crm_status(actor_id, token, status,
+                                       result if isinstance(result, dict) and result else None)
+        if changed:
+            log.info("Yig'ilish vazifasi: CRM taklifi %s", status)
+    except Exception:                                              # noqa: BLE001
+        log.warning("Yig'ilish vazifasining CRM holati yozilmadi", exc_info=True)
+
+
 def my_action_items(user: AuthUser, status: str, limit: int) -> dict[str, Any]:
     store = runtime().store
     if not store.exists:
@@ -944,18 +1099,66 @@ def ask(user: AuthUser, meeting_id: str, question: str, language: str | None) ->
 
     try:
         with bind(user.actorId):
-            result = ask_mod.answer(rt.ask_llm, question=question, language=language or m.get("language") or "uz",
-                                    meta=meta, segments=segments,
-                                    speakers=[{"id": sp["id"], "name": sp.get("name")} for sp in speakers],
-                                    summary=summary)
-    except (LlmUnavailable, LlmFailed, LlmRateLimited):
+            providers = _ask_providers(rt, user)
+            # Umumiy muddat: hamma model birga `MEETINGS_ASK_DEADLINE` ga sig'adi (odam kutib turibdi).
+            result, used = ask_mod.answer_chain(
+                providers, deadline=settings.meetings_ask_deadline, question=question,
+                language=language or m.get("language") or "uz", meta=meta,
+                segments=segments, speakers=[{"id": sp["id"], "name": sp.get("name")} for sp in speakers],
+                summary=summary)
+    except (LlmUnavailable, LlmFailed, LlmRateLimited, LlmBusy):
         raise MeetingProblem(503, "llm_unavailable", "Model hozir javob bera olmayapti - keyinroq urinib ko'ring")
+    log.info("Yig'ilish %s: savolga %s javob berdi", m["id"], used.name)
     qid = new_id()
     store.add_question({"id": qid, "meeting_id": m["id"], "question": question.strip()[:500],
                         "answer": result["answer"], "citations": jdump(result["citations"]),
                         "follow_ups": jdump(result["followUps"]), "created_at": int(time.time())})
     q = store.row("SELECT * FROM questions WHERE id=?", (qid,))
     return _question_view(q, {s["id"]: s for s in segments})
+
+
+def _ask_providers(rt: Any, user: AuthUser) -> list[Any]:
+    """Savol zanjiri. v3 bo'lsa - odamning O'Z kimligi va tokenlari bilan (chatdagi qoida);
+    tokenlar faqat v3 zanjirda bo'lganda olinadi (CRM sessiyasini yangilash tarmoqqa chiqadi)."""
+    if "v3" not in llm_mod.ask_chain_names():
+        return llm_mod.ask_providers(rt, user_id="", tokens={}, live_assistant=None)
+    user_id, tokens = assistant_identity(user)
+    return llm_mod.ask_providers(rt, user_id=user_id, tokens=tokens, live_assistant=live_assistant(rt))
+
+
+def live_assistant(rt: Any) -> Any:
+    """Savol-javob va CRM uchun v3 klienti: sinovda soxta, aks holda chatniki."""
+    if rt.live_assistant is not None:
+        return rt.live_assistant
+    from ...api.v1 import chat as _chat
+
+    return _chat._assistant
+
+
+def assistant_identity(user: AuthUser) -> tuple[str, dict[str, str]]:
+    """Savol-javob (Ask) uchun (`user_id`, platforma tokenlari) - chat bilan AYNAN bir xil
+    (`chat.assistant_user_id`, `chat._live_tokens`)."""
+    from ...api.v1 import chat as _chat
+
+    return _chat.assistant_user_id(user), dict(_chat._live_tokens(user))
+
+
+def crm_identity(user: AuthUser) -> tuple[str, dict[str, str]]:
+    """CRM so'rovi uchun (`user_id`, FAQAT `crm` tokeni) - guruhdagi CRM qoidasi (`bot/runner.py`).
+
+    NEGA `_live_tokens` EMAS: u odamning o'z ulanishi bo'lmasa umumiy `CrmAuth` hisobini va
+    `.env` dagi HRM tokenini ham qo'shadi - vazifa so'ragan odam nomidan emas, umumiy hisobdan
+    yaratilardi, "CRM ulanmagan" tekshiruvi hech qachon ishlamasdi, va yig'ilishdagi gap
+    (iqtibos) agentga HRM ni ochardi. `MEETINGS_CRM_OWN_TOKENS=false` - o'z ulanishi bo'lmasa
+    umumiy CRM hisobi (HRM baribir yo'q). Tasdiqlash (`/actions`, `_live_tokens`) ham odamning
+    o'z CRM tokenini birinchi oladi - ikkalasi bir xil hisob."""
+    from ...api.v1 import chat as _chat
+
+    if settings.meetings_crm_own_tokens:
+        tokens = _chat._connectors.hub.tokens(str(user.actorId)) if _chat.has_own_crm(user) else {}
+    else:
+        tokens = _chat._live_tokens(user)
+    return _chat.assistant_user_id(user), {k: v for k, v in dict(tokens).items() if k == "crm"}
 
 
 def questions(user: AuthUser, meeting_id: str) -> dict[str, Any]:

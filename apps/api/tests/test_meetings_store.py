@@ -157,3 +157,38 @@ def test_sqlite_fk_buzilsa_xato(tmp_path):
     with pytest.raises(sqlite3.IntegrityError):
         st.execute("INSERT INTO segments (meeting_id, id, start, \"end\", text) VALUES ('nope', 1, 0, 1, 'x')")
     st.close_all()
+
+
+def test_migratsiya_v1_dan_v2_ga_malumot_bilan(tmp_path):
+    """Ishlab turgan v1 ombori (ma'lumoti bilan) v2 ga o'tadi: faqat ustun qo'shiladi, eski
+    qatorlar joyida, yangi ustunlar bo'sh - eski xulosa `generatedBy` siz (Ollama deb) o'qiladi."""
+    root = tmp_path / "m"
+    root.mkdir()
+    conn = sqlite3.connect(root / "meetings.db")
+    for statement in store_mod.MIGRATIONS[0]:
+        conn.execute(statement)
+    now = int(time.time())
+    conn.execute("INSERT INTO meetings (id, actor_id, client_id, created_at, updated_at, status) "
+                 "VALUES ('m1', 7, 'c1', ?, ?, 'ready')", (now, now))
+    conn.execute("INSERT INTO summaries (id, meeting_id, template, language, prompt_version, transcript_rev, status, "
+                 "model, content_json, created_at) VALUES ('s1', 'm1', 'general', 'uz', 'p1', 1, 'ready', "
+                 "'gemma4:31b', '{}', ?)", (now,))
+    conn.execute("INSERT INTO action_items (id, meeting_id, task, created_at, updated_at) "
+                 "VALUES ('a1', 'm1', 'Hisobot yuborish', ?, ?)", (now, now))
+    conn.execute("PRAGMA user_version = 1")
+    conn.commit()
+    conn.close()
+
+    st = MeetingStore(root)
+    assert st.version() == store_mod.SCHEMA_VERSION == 2
+    summary = st.summary("m1", "s1")
+    assert summary["model"] == "gemma4:31b" and summary["provider"] is None
+    item = st.action_item("m1", "a1")
+    assert item["task"] == "Hisobot yuborish" and item["crm_token"] is None and item["crm_status"] is None
+    indexes = {r["name"] for r in st.rows("SELECT name FROM sqlite_master WHERE type='index'")}
+    assert "action_items_crm" in indexes
+    # Bajarilgan CRM holati 404/410 dan keyin `expired` ga TUSHMAYDI.
+    st.update_action_item("a1", crm_token="tok", crm_status="executed")
+    assert st.set_crm_status(7, "tok", "expired") == 0
+    assert st.action_item("m1", "a1")["crm_status"] == "executed"
+    st.close_all()

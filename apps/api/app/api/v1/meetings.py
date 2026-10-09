@@ -248,6 +248,15 @@ def patch_action_item(meeting_id: str, item_id: str, body: schemas.ActionItemPat
     return service.patch_action_item(user, meeting_id, item_id, body)
 
 
+@router.post("/{meeting_id}/action-items/{item_id}/crm", response_model=schemas.CrmResult)
+def action_item_to_crm(meeting_id: str, item_id: str, body: schemas.CrmRequest | None = None,
+                       user: AuthUser = Depends(meetings_access)) -> dict:
+    """Vazifa -> v3 -> CRM TAKLIFI. Hech narsa o'zgarmaydi: tasdiqlash chatdagi AYNI
+    yo'l bilan - `POST /api/v1/actions/{token}/confirm`. `async` EMAS: agentni kutish
+    (o'nlab soniya) threadpool'da."""
+    return service.action_item_to_crm(user, meeting_id, item_id, body)
+
+
 # --- savol-javob va audio --------------------------------------------------------------------------
 
 

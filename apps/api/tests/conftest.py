@@ -147,7 +147,8 @@ def _isolated_identities(tmp_path, monkeypatch):
 _CODE_DEFAULTS = ("hold_enabled", "wake_log_enabled", "local_login_enabled",
                   "admin_logins", "sso_trusted_roles", "hrm_assistant_engine",
                   "hrm_assistant_engine_by_channel", "hrm_assistant_max_stream_seconds",
-                  "meetings_enabled", "meetings_logins")
+                  "meetings_enabled", "meetings_logins", "meetings_llm_chain", "meetings_ask_chain",
+                  "meetings_openai_model", "openai_api_key", "openai_base_url", "meetings_v3_max_chars")
 
 
 @pytest.fixture(autouse=True)

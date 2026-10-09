@@ -14,8 +14,12 @@
     errors.py      xato kodlari va o'zbekcha xabarlar
 
 Bu modul - YAGONA "ish vaqti" (`Runtime`): ombor, GAPI klienti, Router
-klienti va ikkita model klienti. Testlar uni `reset_for_tests` bilan
-soxtalariga almashtiradi - hech bir test tarmoqqa chiqmaydi.
+klienti, model klientlari (Ollama, OpenAI) va yordamchining v3 klienti. Testlar
+uni `reset_for_tests` bilan soxtalariga almashtiradi - hech bir test tarmoqqa chiqmaydi.
+
+    llm.py         model zanjiri: v3 -> OpenAI -> Ollama (xulosa va savol-javob)
+    shapes.py      OpenAI `strict` JSON sxemalari
+    crm.py         vazifani CRM ga: v3 taklifi (`proposal`), tasdiqlash - `/actions`
 """
 
 from __future__ import annotations
@@ -28,7 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from ...core.config import ollama_key_now, settings
+from ...core.config import ollama_key_now, openai_key_now, settings
+from ..integrations.assistant import AssistantClient
 from ..integrations.gapi_stt import GapiSttClient
 from ..integrations.ollama import OllamaChat
 from ..stt import SttClient
@@ -46,10 +51,32 @@ class Runtime:
     llm: Any
     ask_llm: Any
     devices: Any = None
+    #: v3 ("Venera Core") - yig'ilish ishchisining O'Z klienti (alohida navbat): fondagi
+    #: xulosa chatdagi odamlarning slotlarini olmasin. `None` - v3 yo'q.
+    assistant: Any = None
+    #: OpenAI: xulosa (1 slot) va savol-javob (2 slot, qisqa kutish) - Ollama kabi alohida.
+    openai: Any = None
+    ask_openai: Any = None
+    #: Savol-javob va CRM uchun v3 klienti. `None` - chatning o'zi (`chat._assistant`):
+    #: odam kutib turgan so'rov chat bilan bir navbatda, taklif ham o'sha klientda tasdiqlanadi.
+    live_assistant: Any = None
     clock: Callable[[], float] = time.time
     last_auth_failure: float | None = None
     worker: Any = None
+    #: Model zanjiri kutishlari (v3 slot, qayta urinish) - testlar uni bo'sh funksiyaga almashtiradi.
+    sleep: Callable[[float], None] = time.sleep
+    #: v3 da BIR VAQTDA yoziladigan xulosalar (`MEETINGS_V3_MAX_CONCURRENT`): ikki ishchi ipi
+    #: bitta v3 slotini chaqiruvma-chaqiruv talashib, yarim xulosani "band" bilan tashlamasin -
+    #: ikkinchi xulosa butunlay navbatda kutadi (30 s dan keyin qayta).
+    v3_gate: Any = None
+    #: Xulosa (id, transkript versiyasi) -> (vaqt, shu xulosada yiqilgan provayderlar): qayta
+    #: navbatga tushgan xulosa yiqilgan modelni boshidan takrorlamaydi (`llm.run_chain(skip=...)`).
+    chain_failures: dict = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def __post_init__(self) -> None:
+        if self.v3_gate is None:
+            self.v3_gate = threading.BoundedSemaphore(max(1, int(settings.meetings_v3_max_concurrent or 1)))
 
     def note_auth_failure(self, now: float) -> None:
         """GAPI 401/403 - kalit noto'g'ri; `/api/health/detail` da ogohlantirish."""
@@ -89,6 +116,34 @@ def _llm(max_concurrent: int, timeout: float) -> OllamaChat:
                       timeout=timeout, max_concurrent=max_concurrent)
 
 
+def _assistant() -> AssistantClient:
+    """Yig'ilish xulosasi uchun v3 klienti: chatniki bilan bir xil manzil va kalit, lekin
+    o'z navbati (`MEETINGS_V3_MAX_CONCURRENT`) va uzunroq kutish - agent 20 ming
+    belgilik savolni o'qib, javob yozishni boshlaguncha chat savolidan ko'proq o'ylaydi."""
+    return AssistantClient(settings.hrm_assistant_base_url, settings.hrm_assistant_client_id,
+                           settings.hrm_assistant_client_secret, timeout=settings.meetings_v3_timeout,
+                           max_concurrent=settings.meetings_v3_max_concurrent,
+                           max_stream_seconds=settings.meetings_v3_max_stream_seconds)
+
+
+def _openai(max_concurrent: int, timeout: float, retries: int = 0) -> Any:
+    from .llm import OpenAIChat
+
+    return OpenAIChat(settings.openai_base_url, openai_key_now, settings.meetings_openai_model,
+                      timeout=timeout, max_concurrent=max_concurrent,
+                      max_output_tokens=settings.meetings_openai_max_output_tokens,
+                      reasoning_effort=settings.meetings_openai_reasoning_effort,
+                      temperature=_temperature(settings.meetings_openai_temperature), retries=retries)
+
+
+def _temperature(raw: Any) -> float | None:
+    """`MEETINGS_OPENAI_TEMPERATURE`: bo'sh yoki noto'g'ri - yuborilmaydi."""
+    try:
+        return float(str(raw).strip()) if str(raw or "").strip() else None
+    except ValueError:
+        return None
+
+
 def _devices():
     from ..devices import DeviceStore
 
@@ -116,18 +171,28 @@ def runtime() -> Runtime:
                 # Savol-javob odam kutib turgan paytda - xulosa navbatida turmasin.
                 ask_llm=_llm(2, 120.0),
                 devices=_devices(),
+                assistant=_assistant(),
+                # Xulosa: 5xx/tarmoqda bir marta qayta; savol: odam kutib turibdi - qayta urinish yo'q.
+                openai=_openai(1, settings.meetings_openai_timeout, settings.meetings_openai_retries),
+                ask_openai=_openai(2, 120.0),
             )
         return _runtime
 
 
 def reset_for_tests(root: Path | str, *, gapi: Any = None, router: Any = None, llm: Any = None,
-                    ask_llm: Any = None, devices: Any = None) -> Runtime:
+                    ask_llm: Any = None, devices: Any = None, assistant: Any = None, openai: Any = None,
+                    ask_openai: Any = None, live_assistant: Any = None) -> Runtime:
     """Ish vaqtini vaqtinchalik papka va soxta klientlarga almashtiradi."""
     global _runtime
     with _runtime_lock:
         old = _runtime
         _runtime = Runtime(store=MeetingStore(root), gapi=gapi, router=router, llm=llm,
-                           ask_llm=ask_llm if ask_llm is not None else llm, devices=devices)
+                           ask_llm=ask_llm if ask_llm is not None else llm, devices=devices,
+                           assistant=assistant, openai=openai,
+                           ask_openai=ask_openai if ask_openai is not None else openai,
+                           live_assistant=live_assistant,
+                           # Testlar haqiqatan uxlamaydi (v3 slotini kutish, qayta urinish).
+                           sleep=lambda seconds: None)
     if old is not None:
         if old.worker is not None:
             old.worker.stop(1.0)
@@ -165,6 +230,10 @@ def status() -> dict[str, Any]:
     out: dict[str, Any] = {"enabled": enabled, "worker": rt.worker.status() if rt.worker else {"alive": False},
                            "gapiConfigured": bool(getattr(rt.gapi, "configured", False)),
                            "llmConfigured": bool(getattr(rt.llm, "configured", False))}
+    from .llm import chain_state
+
+    # Zanjir: provayder nomi, sozlanganmi, modeli - kalit va manzil YO'Q.
+    out["llmChain"] = chain_state(rt)
     spend = getattr(rt.gapi, "spend", None)
     if callable(spend):
         out["gapiSpend"] = spend()

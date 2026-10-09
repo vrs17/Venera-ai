@@ -1027,3 +1027,46 @@ venv/bin/python tools/meetings_live_check.py e2e --file s.aac --yes-spend
 `/api/health/detail` -> `meetings`: holatlar bo'yicha sonlar, bugungi daqiqalar, eng eski navbat
 yoshi, ishchi tirikligi; GAPI kaliti rad etilsa (401/403) - ogohlantirish. Mazmun (matn, xulosa)
 u yerda YO'Q, admin uchun yig'ilish mazmuni endpointi ham yo'q.
+
+### Model zanjiri: v3 -> OpenAI -> Ollama (2026-10-09)
+
+Yig'ilish ilovasi HAMMA joyda yordamchining v3 ("Venera Core") dvigatelini ishlatadi: xulosa,
+savol-javob (Ask) va vazifani CRM ga yuborish. Ilovadagi chat - Mini App, kanal `mobile`; uni v3 ga
+kod emas, siyosat yo'naltiradi: `HRM_ASSISTANT_ENGINE_BY_CHANNEL=mobile=v3` (yoki admin panel).
+
+```bash
+MEETINGS_LLM_CHAIN=v3,openai,ollama   # default: ollama (hech narsa o'zgarmaydi)
+OPENAI_API_KEY=...                    # jonli o'qiladi, jurnal va health ga chiqmaydi
+MEETINGS_OPENAI_MODEL=<GPT model id>  # bo'sh - OpenAI o'chiq (default model YO'Q)
+```
+
+- **Bitta xulosa - bitta model.** Biror qadam (bir o'tish yoki map-reduce, yozuvchi, tekshiruvchi)
+  yiqilsa yoki JSON bitta tuzatishdan keyin ham tekshiruvdan o'tmasa, BUTUN xulosa keyingi model
+  bilan boshidan yoziladi; oxirgi model avvalgidek "yumshoq" ishlaydi. `GET .../summaries/{id}` ->
+  `generatedBy: {provider, model}`; o'tib ketilgan model `content.quality.warnings` da
+  `provider_failed:v3` bo'lib ko'rinadi. Sozlanmagan bo'g'in (v3 kalitlari yo'q, OpenAI kaliti yoki
+  modeli yo'q) o'tkazib yuboriladi.
+- **v3 xulosada hech narsaga kira olmaydi:** `tokens={}`, `user_id=venera-meet:{actorId}`, `chat_id`
+  yo'q (odamning suhbat xotirasi to'lmaydi). Ishchining o'z v3 navbati (`MEETINGS_V3_MAX_CONCURRENT=1`)
+  - band bo'lsa xulosa 30 s dan keyin qayta olinadi, pastki modelga tushmaydi.
+- **Savol chegarasi:** chatning 2000 belgisi bu yerga tegishli emas - `MEETINGS_V3_MAX_CHARS=20000`.
+  Xulosa ko'rsatmalari o'zi ~14 ming belgi, shuning uchun bitta v3 chaqiruviga ~4 ming belgi transkript
+  sig'adi va quvur shunga qarab bo'laklaydi (10 daqiqalik yig'ilish - 3-4 bo'lak). v3 uzun savolni
+  qabul qilishi jonli tasdiqlangach 40000+ qo'yish chaqiruvlar sonini kamaytiradi.
+- **OpenAI:** Chat Completions, `response_format: json_schema` (`strict`, sxema -
+  `services/meetings/shapes.py`); xizmat sxemani rad etsa (400) bir marta oddiy JSON rejimida. Harorat
+  yuborilmaydi; `MEETINGS_OPENAI_MAX_OUTPUT_TOKENS`, `MEETINGS_OPENAI_REASONING_EFFORT` - faqat berilsa.
+  429/5xx - keyingi model. Hisob: admin paneldagi `openai` xizmati (`meeting_extract`, ...).
+- **Savol-javob (Ask):** `MEETINGS_ASK_CHAIN` (bo'sh - xulosa zanjiri). v3 ga odamning O'Z tokenlari va
+  kimligi (`venera:{actorId}`) bilan; javob shakli o'zgarmaydi, v3 ning `stage`/`sources` kadrlari
+  e'tiborsiz. v3 yiqilsa yoki band bo'lsa - keyingi model.
+- **Vazifani CRM ga:** `POST /api/v1/meetings/{id}/action-items/{itemId}/crm` (ixtiyoriy tana
+  `{project?, force?}`) -> v3 ga aniq o'zbekcha so'rov (vazifa, mas'ul, muddat, loyiha ishorasi, manba
+  yig'ilish), odamning o'z tokenlari bilan. Javob: `proposed` + taklif (web `ActionCard` maydonlari),
+  `answered` + matn yoki `failed` + sabab (`crm_not_connected`, `assistant_busy`, ...). Tasdiqlash -
+  chatdagi AYNI `POST /api/v1/actions/{token}/confirm`; natija vazifaga yoziladi (`item.crm`).
+  Chegara `MEETINGS_CRM_PER_HOUR=20`, kutish `MEETINGS_CRM_TIMEOUT=120`.
+- **Ombor sxemasi v2** (o'zi ko'chadi, `PRAGMA user_version`): `summaries.provider`,
+  `action_items.crm_*`.
+
+`/api/health/detail` -> `meetings.llmChain`: har bo'g'in, sozlanganmi va modeli (kalitsiz).

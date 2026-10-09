@@ -105,8 +105,24 @@ _V1: tuple[str, ...] = (
   jobs INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, actor_id))""",
 )
 
+#: v2 (2026-10-09): xulosani QAYSI provayder yozgani (`v3` | `openai` | `ollama`; model -
+#: `model` ustunida) va vazifaning CRM taklifi: kalit (`/api/v1/actions/{token}/confirm`
+#: shu bilan), holati, kartaga kerak taklif obyekti, muddati, CRM natijasi va so'rov izi
+#: (`crm_sig`: vazifa o'zgarmagan bo'lsa ikkinchi bosish agentga qayta bormaydi).
+_V2: tuple[str, ...] = (
+    "ALTER TABLE summaries ADD COLUMN provider TEXT",
+    "ALTER TABLE action_items ADD COLUMN crm_token TEXT",
+    "ALTER TABLE action_items ADD COLUMN crm_status TEXT",
+    "ALTER TABLE action_items ADD COLUMN crm_proposal TEXT",
+    "ALTER TABLE action_items ADD COLUMN crm_expires_at TEXT",
+    "ALTER TABLE action_items ADD COLUMN crm_result TEXT",
+    "ALTER TABLE action_items ADD COLUMN crm_sig TEXT",
+    "ALTER TABLE action_items ADD COLUMN crm_updated_at INTEGER",
+    "CREATE INDEX action_items_crm ON action_items(crm_token)",
+)
+
 #: `MIGRATIONS[i]` fayl `user_version = i` dan `i + 1` ga o'tkazadi. FAQAT OXIRIGA.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1,)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 #: Apostrofning hamma ko'rinishi - qidiruvda olib tashlanadi ("o'zbek" = "oʻzbek" = "ozbek").
@@ -479,6 +495,21 @@ class MeetingStore:
     def update_action_item(self, item_id: str, **fields: Any) -> None:
         sets = ", ".join(f"{name}=?" for name in fields)
         self.execute(f"UPDATE action_items SET {sets} WHERE id=?", list(fields.values()) + [item_id])
+
+    def set_crm_status(self, actor_id: int, token: str, status: str, result: Any = None,
+                       now: float | None = None) -> int:
+        """Taklif tasdiqlandi / rad etildi / muddati o'tdi (`/api/v1/actions/...`) - shu
+        kalitli vazifaning CRM holati. Faqat EGASINING yig'ilishidagi vazifa.
+
+        `executed` HECH QACHON almashtirilmaydi: bajarilgan taklifni qayta tasdiqlash xizmatdan
+        404/410 oladi va `expired` bo'lib yozilardi - shunda vazifa yana "yuborilmagan" ko'rinib,
+        CRM da ikkinchi marta yaratilishi mumkin edi."""
+        return self.execute(
+            "UPDATE action_items SET crm_status=?, crm_result=COALESCE(?, crm_result), crm_updated_at=? "
+            "WHERE crm_token=? AND COALESCE(crm_status, '') != 'executed' "
+            "AND meeting_id IN (SELECT id FROM meetings WHERE actor_id=?)",
+            (status, jdump(result) if result is not None else None, int(now if now is not None else time.time()),
+             str(token), int(actor_id))).rowcount
 
     def open_items(self, meeting_id: str) -> int:
         return int(self.scalar("SELECT COUNT(*) FROM action_items WHERE meeting_id=? AND status='open'",

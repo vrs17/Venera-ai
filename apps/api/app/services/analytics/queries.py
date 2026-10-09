@@ -81,7 +81,7 @@ REPORT_REASONS = ("wrong", "incomplete", "outdated", "unsafe", "other")
 #: Foydalanish sahifasidagi xizmatlar TARTIBI. Chaqiruvi bo'lmasa ham
 #: chiqadi (nol bilan) - kartochkalar joyidan sakramasin.
 KNOWN_SERVICES = ("assistant", "stt_router", "stt_gapi", "tts", "ollama", "hrm", "crm",
-                  "keycloak", "telegram")
+                  "keycloak", "telegram", "openai")
 #: Kanalsiz chaqiruv (ishga tushishdagi qizdirish, agent sessiyasini
 #: yangilash) - hech bir foydalanuvchi so'rovi emas.
 SYSTEM_CHANNEL = "system"

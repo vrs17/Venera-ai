@@ -43,6 +43,7 @@ from typing import Any
 
 from ...core.config import settings
 from ..analytics import bind
+from . import llm as llm_mod
 from . import store as store_mod
 from .prompts import PROMPT_VERSION
 from .store import jdump, jload, new_id
@@ -113,8 +114,10 @@ def apply_primary(rt: Any, m: dict[str, Any], summary_id: str, template: str, co
         row = conn.execute("SELECT primary_summary_id FROM meetings WHERE id=?", (m["id"],)).fetchone()
         if row is None or row["primary_summary_id"] != summary_id:
             return
-        conn.execute("DELETE FROM action_items WHERE meeting_id=? AND origin='ai' AND edited=0 AND status='open'",
-                     (m["id"],))
+        # CRM ga yuborilgan vazifa ham qoladi (`crm_token`): taklif/CRM dagi vazifa bilan bog'i uzilmasin
+        # va o'sha vazifa yangi xulosadan qayta "ochiq" bo'lib, ikkinchi marta CRM ga ketmasin.
+        conn.execute("DELETE FROM action_items WHERE meeting_id=? AND origin='ai' AND edited=0 AND status='open' "
+                     "AND crm_token IS NULL", (m["id"],))
         # Odam belgilagan AI vazifalari qoladi; yangi xulosada xuddi shu vazifa
         # bo'lsa, u QAYTA "ochiq" bo'lib qo'shilmaydi.
         kept = [_item_key(r["owner_speaker"], r["owner_name"], r["task"]) for r in conn.execute(
@@ -185,32 +188,39 @@ def _run_one(rt: Any, m: dict[str, Any], s: dict[str, Any], now: float, owner: s
     if primary:
         store.update_meeting(m["id"], now=now, summary_status="running")
 
+    shown = [0.0]
+
     def progress(done: int, total: int) -> None:
         if not store.renew(m["id"], owner, time.time() + LEASE_SEC):
             raise Cancelled()
         if primary and m.get("status") == "summarizing":
-            store.update_meeting(m["id"], progress=round(min(99.0, 80.0 + 19.0 * done / max(1, total)), 1))
+            # Faqat OSHADI: zanjirda keyingi model xulosani boshidan yozganda (yoki bo'lak
+            # bo'linib qadamlar ko'payganda) ilovadagi progress orqaga sakramasin.
+            shown[0] = max(shown[0], round(min(99.0, 80.0 + 19.0 * done / max(1, total)), 1))
+            store.update_meeting(m["id"], progress=shown[0])
 
-    key = lambda template: (int(m["transcript_rev"] or 0), PROMPT_VERSION, template, s["language"])  # noqa: E731
-    pipeline = Pipeline(
-        rt.llm, single_pass_chars=settings.meetings_single_pass_chars, map_chars=settings.meetings_map_chars,
-        verify=settings.meetings_verify, num_ctx=settings.meetings_llm_num_ctx,
-        extract_predict=settings.meetings_extract_num_predict, map_predict=settings.meetings_map_num_predict,
-        think=_think(),
-        cache_get=lambda tpl, a, b: store.part(m["id"], key(tpl), a, b),
-        cache_put=lambda tpl, a, b, part: store.put_part(m["id"], key(tpl), a, b, part),
-        progress=progress)
     attempts = int(s.get("attempts") or 0)
+    memo_key = (s["id"], int(m["transcript_rev"] or 0))
+    # Shu xulosada avval yiqilgan modellar (qayta navbatdan keyin) - boshidan takrorlanmaydi.
+    skip = _failures(rt, memo_key)
+    failed: list[str] = []
     try:
+        inp = summary_input(rt, m, s)
         with bind(m["actor_id"], m.get("channel") or "mobile"):
-            result = pipeline.run(summary_input(rt, m, s))
+            # Zanjir (`llm.py`): BUTUN xulosa bitta model bilan; yiqilsa - keyingisi bilan boshidan.
+            result, used, _ = llm_mod.run_chain(
+                llm_mod.summary_providers(rt, m["actor_id"]),
+                lambda provider, strict: _attempt(rt, m, s, provider, strict, progress, inp),
+                skip=skip, failed=failed)
     except Cancelled:
         log.info("Yig'ilish %s o'chirildi - xulosa to'xtatildi", m["id"])
         return
     except LlmUnavailable:
+        _forget(rt, memo_key)
         _summary_failed(rt, m, s, now, "llm_not_configured", primary)
         return
     except LlmBusy:
+        _remember(rt, memo_key, failed)
         # O'z navbatimiz band (boshqa ip modelni kutyapti) - urinish hisoblanmaydi.
         retry_at = int(time.time() + LLM_BUSY_WAIT)
         store.update_summary(s["id"], status="queued", next_attempt_at=retry_at)
@@ -218,6 +228,7 @@ def _run_one(rt: Any, m: dict[str, Any], s: dict[str, Any], now: float, owner: s
                              summary_status="queued" if primary else m.get("summary_status"))
         return
     except LlmRateLimited:
+        _remember(rt, memo_key, failed)
         retries = int(m.get("retries") or 0) + 1
         if retries >= LLM_RATE_LIMIT_ATTEMPTS:
             log.info("Yig'ilish %s: model %d marta 429 - xulosa to'xtatildi", m["id"], retries)
@@ -239,14 +250,17 @@ def _run_one(rt: Any, m: dict[str, Any], s: dict[str, Any], now: float, owner: s
         else:
             log.info("Yig'ilish %s: xulosa urinishi %d yiqildi: %s", m["id"], attempts, exc)
         if attempts >= LLM_ATTEMPTS:
+            _forget(rt, memo_key)
             _summary_failed(rt, m, s, now, "llm_failed" if isinstance(exc, LlmFailed) else "internal", primary,
                             attempts=attempts)
         else:
+            _remember(rt, memo_key, failed)
             retry_at = int(time.time() + 60 * attempts)
             store.update_summary(s["id"], status="queued", attempts=attempts, next_attempt_at=retry_at)
             store.update_meeting(m["id"], now=now, next_attempt_at=retry_at,
                                  summary_status="queued" if primary else m.get("summary_status"))
         return
+    _forget(rt, memo_key)
     if not store.renew(m["id"], owner, time.time() + LEASE_SEC):
         # Natija tayyor, lekin ijara endi bizniki emas (yoki yig'ilish o'chirildi) - yozilmaydi.
         log.info("Yig'ilish %s: xulosa natijasi yozilmadi - ijara yo'qolgan", m["id"])
@@ -258,13 +272,98 @@ def _run_one(rt: Any, m: dict[str, Any], s: dict[str, Any], now: float, owner: s
         if primary:
             store.update_meeting(m["id"], now=now, summary_status="skipped", retries=0)
         return
-    model = getattr(rt.llm, "model", "") or ""
-    store.update_summary(s["id"], status="ready", template=result.template, model=model,
-                         content_json=jdump(result.content), finished_at=finished, error_code=None, error=None,
-                         next_attempt_at=None)
+    failed = [name for name in dict.fromkeys(list(skip) + failed) if name != used.name]
+    if failed and isinstance((result.content or {}).get("quality"), dict):
+        # Qaysi model yiqilib, xulosa keyingisiga o'tgani ko'rinsin (faqat nomlar).
+        quality = result.content["quality"]
+        quality["warnings"] = [f"provider_failed:{name}" for name in failed] + list(quality.get("warnings") or [])
+    store.update_summary(s["id"], status="ready", template=result.template, model=used.model[:120],
+                         provider=used.name, content_json=jdump(result.content), finished_at=finished,
+                         error_code=None, error=None, next_attempt_at=None)
     if primary:
         apply_primary(rt, m, s["id"], result.template, result.content, now)
         store.update_meeting(m["id"], now=now, retries=0)
+
+
+#: Xulosada yiqilgan provayderlar xotirasi shuncha yashaydi (s): keyinroq (masalan v3
+#: tuzalgach) qo'lda qayta so'ralgan xulosa yana eng yaxshi modeldan boshlaydi.
+FAILURE_MEMORY_SEC = 3600
+
+
+def _failures(rt: Any, key: tuple[str, int]) -> list[str]:
+    with rt._lock:
+        entry = rt.chain_failures.get(key)
+        if entry is None:
+            return []
+        if time.time() - entry[0] > FAILURE_MEMORY_SEC:
+            rt.chain_failures.pop(key, None)
+            return []
+        return list(entry[1])
+
+
+def _remember(rt: Any, key: tuple[str, int], failed: list[str]) -> None:
+    if not failed:
+        return
+    with rt._lock:
+        known = list(rt.chain_failures.get(key, (0.0, []))[1])
+        rt.chain_failures[key] = (time.time(), list(dict.fromkeys(known + failed)))
+        # Eskilari tozalanadi - xotira o'smaydi.
+        for old in [k for k, v in rt.chain_failures.items() if time.time() - v[0] > FAILURE_MEMORY_SEC]:
+            rt.chain_failures.pop(old, None)
+
+
+def _forget(rt: Any, key: tuple[str, int]) -> None:
+    with rt._lock:
+        rt.chain_failures.pop(key, None)
+
+
+def _attempt(rt: Any, m: dict[str, Any], s: dict[str, Any], provider: Any, strict: bool, progress: Any,
+             inp: Any) -> Any:
+    """Bitta provayder bilan butun xulosa. v3 - darvoza orqali: bo'sh joy bo'lmasa `LlmBusy`
+    (xulosa 30 s dan keyin qayta, pastki modelga tushmaydi)."""
+    if provider.name != "v3":
+        return _pipeline(rt, m, s, provider, strict, progress).run(inp)
+    gate = getattr(rt, "v3_gate", None)
+    if gate is not None and not gate.acquire(blocking=False):
+        raise LlmBusy("v3 boshqa xulosa bilan band")
+    try:
+        return _pipeline(rt, m, s, provider, strict, progress).run(inp)
+    finally:
+        if gate is not None:
+            gate.release()
+
+
+def _pipeline(rt: Any, m: dict[str, Any], s: dict[str, Any], provider: Any, strict: bool,
+              progress: Any) -> Pipeline:
+    """Shu provayder uchun quvur. Ollama - AYNAN avvalgi sozlamalar bilan; OpenAI - katta
+    bir o'tish; v3 - prompt chegarasi bo'yicha (`max_prompt_chars`) bo'laklanadi.
+
+    Map keshi PROVAYDER bo'yicha ajratilgan: v3 yiqilib, xulosa OpenAI bilan boshidan
+    yozilganda v3 ning tayyor bo'laklari olinmasin (bitta xulosa - bitta model). Ollama
+    kaliti avvalgidek (shablon nomi) - mavjud kesh o'z joyida."""
+    store = rt.store
+    name = provider.name
+    space = "" if name == "ollama" else (f"openai/{provider.model}:" if name == "openai" else f"{name}:")
+    key = lambda template: (int(m["transcript_rev"] or 0), PROMPT_VERSION, space + template,  # noqa: E731
+                            s["language"])
+    if name == "openai":
+        single, size = settings.meetings_openai_single_pass_chars, settings.meetings_openai_map_chars
+    else:
+        single, size = settings.meetings_single_pass_chars, settings.meetings_map_chars
+    ollama = name == "ollama"
+    v3 = name == "v3"
+    return Pipeline(
+        provider.client, single_pass_chars=single, map_chars=size,
+        verify=settings.meetings_verify, num_ctx=settings.meetings_llm_num_ctx if ollama else 0,
+        extract_predict=settings.meetings_extract_num_predict, map_predict=settings.meetings_map_num_predict,
+        think=_think() if ollama else None,
+        cache_get=lambda tpl, a, b: store.part(m["id"], key(tpl), a, b),
+        cache_put=lambda tpl, a, b, part: store.put_part(m["id"], key(tpl), a, b, part),
+        progress=progress, strict=strict, max_prompt_chars=provider.max_prompt_chars,
+        # Byudjet faqat v3 da va faqat zanjirda (`strict`, keyingi model bor): sekin v3 xulosani
+        # o'nlab daqiqa ushlab turmasin, uzun yig'ilish darhol OpenAI ning katta bir o'tishiga.
+        call_budget=settings.meetings_v3_summary_max_calls if v3 else 0,
+        time_budget=settings.meetings_v3_summary_budget_sec if v3 else 0.0)
 
 
 def _think() -> bool | None:

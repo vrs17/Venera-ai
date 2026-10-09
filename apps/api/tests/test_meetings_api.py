@@ -23,9 +23,10 @@ SPEAKER_FIELDS = {"id", "name", "suggestedName", "talkSec", "mergedInto"}
 SEGMENT_FIELDS = {"id", "speaker", "start", "end", "text", "edited"}
 SUMMARY_CARD_FIELDS = {"id", "template", "language", "status", "primary", "stale", "transcriptRev", "createdAt",
                        "finishedAt", "error"}
-SUMMARY_FIELDS = SUMMARY_CARD_FIELDS | {"promptVersion", "model", "layout", "speakers", "content"}
+SUMMARY_FIELDS = SUMMARY_CARD_FIELDS | {"promptVersion", "model", "generatedBy", "layout", "speakers", "content"}
 ACTION_FIELDS = {"id", "meetingId", "summaryItemId", "task", "owner", "due", "priority", "status", "origin",
-                 "edited", "needsConfirmation", "sourceSegmentIds", "start", "quote", "createdAt", "updatedAt"}
+                 "edited", "needsConfirmation", "sourceSegmentIds", "start", "quote", "createdAt", "updatedAt",
+                 "crm"}
 ASK_FIELDS = {"id", "question", "answer", "citations", "followUps", "createdAt"}
 CONTENT_FIELDS = {"schemaVersion", "template", "language", "meeting", "title", "meetingType", "overview",
                   "purpose", "participants", "topics", "keyPoints", "decisions", "actionItems", "openQuestions",
