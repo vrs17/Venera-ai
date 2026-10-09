@@ -28,7 +28,7 @@ import { micAvailable, micBlockedByPolicy, transcribe } from '../api/stt.api'
 export type DictationState = 'idle' | 'starting' | 'recording' | 'transcribing'
 
 /** Mikrofon nega ochilmadi - chaqiruvchi buni odam tilidagi matnga aylantiradi. */
-export type DictationStartFailure = 'insecure' | 'policy' | 'denied' | 'noDevice' | 'error'
+export type DictationStartFailure = 'insecure' | 'policy' | 'denied' | 'noDevice' | 'busy' | 'error'
 
 export type DictationOutcome =
   | { kind: 'text'; text: string; truncated: boolean }
@@ -49,6 +49,29 @@ export interface LevelStream {
 /** Bitta ustun oynasi. 60-80 ms: undan qisqasi bo'g'in ichida titraydi,
  *  uzunrog'i so'zlarni bitta do'ngga qo'shib yuboradi. */
 export const BAR_MS = 70
+
+/** Mikrofon shuncha vaqtda ochilmasa - kutish to'xtatiladi va sababi aytiladi.
+ *  `getUserMedia` ning o'z muddati YO'Q: Windows yangi yopilgan qurilmani qayta
+ *  ochishda, Bluetooth quloqchin "qo'ng'iroq" rejimiga o'tishda bir necha soniya
+ *  osilib qolishi mumkin - shu payt panel kulrang nuqtalar bilan qotgandek turardi
+ *  ("sahifa qotdi"). 8 s - sekin, lekin ishlaydigan qurilmaga ham yetadi. */
+const MIC_OPEN_MS = 8000
+
+/** `getUserMedia` + muddat. Muddat o'tsa `TimeoutError`; kech kelgan oqim baribir
+ *  YOPILADI - aks holda brauzerning "yozilyapti" belgisi yonib qolardi. */
+function openMic(constraints: MediaStreamConstraints): Promise<MediaStream> {
+  const opening = navigator.mediaDevices.getUserMedia(constraints)
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new DOMException('Microphone did not open in time', 'TimeoutError'))
+      void opening.then((late) => late.getTracks().forEach((track) => track.stop()), () => {})
+    }, MIC_OPEN_MS)
+    opening.then(
+      (media) => { window.clearTimeout(timer); resolve(media) },
+      (err) => { window.clearTimeout(timer); reject(err) },
+    )
+  })
+}
 /** Undan uzun gap - diktovka emas; yuklash ham (WAV ~3.8 MB) chegarada. */
 const MAX_MS = 120_000
 /** Undan qisqasi - adashib bosilgan tugma: yuklanmaydi, jim bekor qilinadi. */
@@ -244,7 +267,7 @@ export function useDictation(options: DictationOptions) {
     let media: MediaStream
     try {
       // AYNAN VoicePanel va useWakeWord dagidek - yuqoridagi izohga qarang.
-      media = await navigator.mediaDevices.getUserMedia({
+      media = await openMic({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       })
     } catch (err) {
@@ -258,6 +281,9 @@ export function useDictation(options: DictationOptions) {
         return micBlockedByPolicy() ? 'policy' : 'denied'
       }
       if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'noDevice'
+      // Qurilma band (boshqa dastur, qo'ng'iroq) yoki o'z vaqtida ochilmadi - odam
+      // nima qilishni bilsin: "xato" emas, "mikrofon javob bermadi".
+      if (name === 'NotReadableError' || name === 'AbortError' || name === 'TimeoutError') return 'busy'
       return 'error'
     }
     // Ruxsat oynasi turganda odam bekor qildi: kech kelgan oqim darhol yopiladi.

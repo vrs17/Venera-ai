@@ -125,7 +125,7 @@ async function expandToSearch() {
       <div class="sb__top">
         <span class="sb__brand sb__block">
           <span class="sb__spark" aria-hidden="true"><BrandSpark :size="16" /></span>
-          <span class="sb__word">Venera</span>
+          <span class="sb__word">Barno</span>
         </span>
         <!-- Bitta tugma ikkala holatda: panel o'ng chetiga yopishgan, yig'ilganda chet
              bilan birga ustun markaziga suriladi. Element almashmaydi - fokus saqlanadi. -->

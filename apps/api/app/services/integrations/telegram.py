@@ -354,6 +354,29 @@ class TelegramApi:
             params["scope"] = dict(scope)
         return self.call("setMyCommands", params)
 
+    # Bot profili - ko'rinadigan nom va tavsif (standart til uchun).
+
+    def get_my_name(self) -> str:
+        result = self.call("getMyName")
+        return str(result.get("name") or "") if isinstance(result, dict) else ""
+
+    def set_my_name(self, name: str) -> Any:
+        return self.call("setMyName", {"name": name})
+
+    def get_my_short_description(self) -> str:
+        result = self.call("getMyShortDescription")
+        return str(result.get("short_description") or "") if isinstance(result, dict) else ""
+
+    def set_my_short_description(self, text: str) -> Any:
+        return self.call("setMyShortDescription", {"short_description": text})
+
+    def get_my_description(self) -> str:
+        result = self.call("getMyDescription")
+        return str(result.get("description") or "") if isinstance(result, dict) else ""
+
+    def set_my_description(self, text: str) -> Any:
+        return self.call("setMyDescription", {"description": text})
+
 
 def webhook_secret(bot_token: str, secret_key: str) -> str:
     """Webhook sarlavhasi uchun sir - `SECRET_KEY` va bot tokenidan HMAC.

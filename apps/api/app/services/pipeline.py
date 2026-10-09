@@ -197,7 +197,7 @@ class Pipeline:
         if not orchestrator.targetModule:
             return (
                 None,
-                "Venera hozircha sozlanmoqda: savolga javob beradigan tizim hali "
+                "Barno hozircha sozlanmoqda: savolga javob beradigan tizim hali "
                 "ulanmagan. Ulanish tugagach shu savolingiz ishlaydi.",
                 _NOT_READY,
             )

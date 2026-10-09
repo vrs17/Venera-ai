@@ -543,7 +543,7 @@ def _leave_lines(art: dict[str, Any]) -> dict[str, Any]:
         "date": f"Sana: {_dmy(art['created'])}",
         "sign": "Imzo: ______________",
         "agreed": "Kelishildi: bo'lim rahbari ______________",
-        "foot": f"Venera tomonidan tayyorlangan  ·  {art['doc_id']}  ·  NAMUNA (dev mock)",
+        "foot": f"Barno tomonidan tayyorlangan  ·  {art['doc_id']}  ·  NAMUNA (dev mock)",
     }
 
 
@@ -724,7 +724,7 @@ def transcript_for(data: bytes, filename: str, language: str) -> tuple[str, floa
     """Namunaviy matn. Uch holat, uchalasi ham brauzerda sinash uchun kerak:
 
       * jimlik -> bo'sh matn ("hech narsa eshitilmadi");
-      * qisqa (<= 2.7 s) o'zbekcha parcha -> "Salom Venera" - uyg'otish
+      * qisqa (<= 2.7 s) o'zbekcha parcha -> "Salom Barno" - uyg'otish
         so'zi (`/stt/wake` parchasi 0.35-2.6 s bo'ladi);
       * qolgani -> namunaviy savol; bir xil audio doim bir xil savol beradi.
     """
@@ -732,7 +732,7 @@ def transcript_for(data: bytes, filename: str, language: str) -> tuple[str, floa
     if silent:
         return "", seconds
     if language == "uz" and seconds <= 2.7:
-        return "Salom Venera", seconds
+        return "Salom Barno", seconds
     options = _SAMPLE_QUESTIONS.get(language) or _SAMPLE_QUESTIONS["uz"]
     return options[hashlib.sha1(data).digest()[0] % len(options)], seconds
 
@@ -1415,7 +1415,7 @@ def plan_smalltalk(ctx: Ctx) -> Plan:
         plan.write("Arzimaydi! Yana savol tug'ilsa, bemalol yozing.")
     elif re.search(r"salom|assalom|привет|здравств|hello|\bhi\b|\bhey\b|салом|ассалом", ctx.q):
         plan.write(
-            "Salom! Men **Venera** — HR yordamchingizman.\n\n"
+            "Salom! Men **Barno** — HR yordamchingizman.\n\n"
             "Qoidalar, ta'til va maosh, CRM vazifalari yoki ariza tayyorlash bo'yicha "
             "so'rashingiz mumkin. Nimadan boshlaymiz?")
     else:

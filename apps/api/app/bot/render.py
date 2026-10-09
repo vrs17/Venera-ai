@@ -406,7 +406,7 @@ def sources_block(docs: list[dict[str, Any]], *, most: int = FOOTNOTES_MAX) -> s
         item = {**doc, "title": _short(str(doc["title"]))} if doc.get("title") else doc
         lines.append(law_line(item, i) if doc.get("kind") == LAW_KIND else esc(source_label(item, i)))
     if len(docs) > most:
-        lines.append(f"<i>… yana {len(docs) - most} ta manba - Venera ilovasida</i>")
+        lines.append(f"<i>… yana {len(docs) - most} ta manba - Barno ilovasida</i>")
     return "📚 <b>Manbalar</b>\n" + "\n".join(lines)
 
 
@@ -535,7 +535,7 @@ def file_button(kind: str, token: str) -> dict[str, Any] | None:
 
 
 #: Mini app tugmasi - ulanmagan odamga, `/start` va `/logout` dan keyin.
-APP_LABEL = "Venera'ni ochish"
+APP_LABEL = "Barnoni ochish"
 
 
 def app_button(url: str, label: str = APP_LABEL) -> dict[str, Any] | None:

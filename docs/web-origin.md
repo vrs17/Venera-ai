@@ -9,7 +9,7 @@
 >
 > Bugungi holat:
 > - Papka `frontend/` emas, **`apps/web/`**.
-> - Loyiha **Venera** deb nomlandi va yuqoridagi GitLab repo'sidan **uzildi** —
+> - Loyiha **Venera** deb nomlandi (2026-10 dan foydalanuvchiga ko'rinadigan nomi **Barno AI**; texnik nomlar `venera` bo'lib qoladi) va yuqoridagi GitLab repo'sidan **uzildi** —
 >   endi rivojlantirish shu monorepo ichida boradi, upstream'dan tortilmaydi.
 
 This directory is a copy of the frontend that was **live** at
@@ -54,7 +54,7 @@ llm.brb-tech.uz:443 (edge nginx, *.brb-tech.uz cert)
 
 `deploy/` and `.gitlab-ci.yml` came along as reference. They still point at the
 BRB GitLab project, registry and hosts — adapt them before using them for
-Venera, and note that a nested `.gitlab-ci.yml` is not picked up by GitLab
+Barno AI, and note that a nested `.gitlab-ci.yml` is not picked up by GitLab
 (only a repo-root one is).
 
 ## Getting started

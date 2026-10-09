@@ -1,6 +1,6 @@
-# Venera — Frontend
+# Barno — Frontend
 
-A standalone Vue 3 + TypeScript single-page app for **Venera**.
+A standalone Vue 3 + TypeScript single-page app for **Barno AI**.
 It is a thin client over the Spring Boot RAG backend: it sends a user question to
 one endpoint and renders the pipeline result (guard → intent → orchestrator →
 access, and retrieval when available).

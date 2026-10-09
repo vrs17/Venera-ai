@@ -62,7 +62,9 @@ import { checkWake, micAvailable } from '../api/stt.api'
  *  matcher is tolerant of that. */
 export const WAKE_LOCALES: readonly string[] = ['uz', 'uz-Cyrl']
 
-export const WAKE_STORAGE_KEY = 'venera_wake_word'
+/** `_v2`: the default changed to OFF (ChatView). A new key, so a stored "on"
+ *  from the on-by-default era does not keep the microphone open for anyone. */
+export const WAKE_STORAGE_KEY = 'venera_wake_word_v2'
 
 const PREROLL_S = 0.45        // samples kept from before speech was noticed
 /** Silence that ends an utterance.

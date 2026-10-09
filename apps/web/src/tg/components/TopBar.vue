@@ -32,7 +32,7 @@ const { t } = useI18n({ useScope: 'global' })
     </div>
     <h1 class="top__title">
       <template v-if="title">{{ title }}</template>
-      <span v-else class="top__brand"><BrandSpark :size="14" />Venera</span>
+      <span v-else class="top__brand"><BrandSpark :size="14" />Barno</span>
     </h1>
     <div class="top__side top__side--end">
       <VIconButton

@@ -34,7 +34,7 @@ if (-not $Source) {
     if (-not $Source) { $Source = $candidates[0] }
 }
 
-$appName   = "Venera AI Assistant"
+$appName   = "Barno AI Assistant"
 $installTo = Join-Path $env:LOCALAPPDATA "Programs\Venera"
 $exePath   = Join-Path $installTo "Venera.exe"
 $taskName  = "Venera\AI Assistant"
@@ -69,6 +69,8 @@ $link.WorkingDirectory = $installTo
 $link.IconLocation     = $exePath
 $link.Description      = "$appName - ovozli yordamchi"
 $link.Save()
+# Qayta nomlashdan oldingi yorliq dublikat bo'lib qolmasin.
+Remove-Item (Join-Path $startMenu "Venera AI Assistant.lnk") -Force -ErrorAction SilentlyContinue
 
 if ($NoAutostart) {
     Write-Host "4/4  Avtostart o'tkazib yuborildi (-NoAutostart)"

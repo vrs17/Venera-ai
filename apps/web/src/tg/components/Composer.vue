@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowUp, Mic, Sparkles, Square } from 'lucide-vue-next'
 import { localizeApiError } from '../../api/errors'
@@ -13,26 +13,22 @@ import { enterSends, haptic, isTelegram } from '../telegram'
 
 /**
  * Kompozer - ekranning pastida, xavfsiz zona ustida, klaviaturaga "minib" chiqadi
- * (ramka balandligi layout.ts da). Telegram'ning o'z yozish qatori kabi: maydon va
- * o'ngda BITTA katta dumaloq tugma (48px) holatga qarab almashadi:
+ * (ramka balandligi layout.ts da). Claude ilovasidagi kabi BITTA karta: tepada matn
+ * (butun kenglikda - chapdagi belgi matnni siqib qo'ymaydi), ostida boshqaruv qatori:
  *
- *   bo'sh      -> mikrofon (ovoz bilan yozish, jonli to'lqin)
- *   matn bor   -> yuborish
- *   javob ketyapti -> to'xtatish
+ *   chapda  "Pro" (faqat dvigatel ruxsat bersa)
+ *   o'ngda  mikrofon va yuborish (javob ketayotganda - to'xtatish)
  *
- * Bitta tugma - bitta nishon: bosh barmoq doim bir joyga boradi. Matn bor paytda ham
- * ovoz bilan davom ettirish uchun maydon ichida kichik mikrofon qoladi.
+ * Yuborish tugmasi doim joyida: matn bo'lmasa xira (bosilmaydi), bor bo'lsa brend
+ * rangida - bosh barmoq har safar bir joyga boradi. Ovoz yozilayotganda karta bitta
+ * qatorga aylanadi: ✕ bekor, to'lqin, ■ to'xtatib tahrirlash, ↑ darhol yuborish.
  *
- * Matn 16px (iOS kattalashtirmaydi), 1-5 qator o'sadi; qator balandligi `1.5` (em) -
- * tizimda katta shrift yoqilganda ham glif qatorga sig'adi. Enter: telefonda - yangi
- * qator (adashib bosilgan Enter yarim savolni jo'natmasin), Telegram Desktop'da -
- * yuborish (Shift+Enter - yangi qator). Yuborish/to'xtatish tugmasi fokusni olmaydi
- * (pointerdown.prevent) - klaviatura yopilmaydi, keyingi savolni darhol yozish mumkin.
- *
- * "Pro" - faqat dvigatel ruxsat bersa (`/pro/quota` -> available): maydonning ICHIDA,
- * chapda 32px dumaloq kalit (alohida qator emas - klaviatura ochiq paytda har piksel
- * kerak). Qoldiq faqat 3 va undan kam bo'lganda burchakdagi belgi bilan; to'liq son
- * har doim `aria-label` da.
+ * Matn 16px (iOS kattalashtirmaydi), qator balandligi `1.5` (em) - tizimda katta shrift
+ * yoqilganda ham glif qatorga sig'adi. Karta 8 qatorgacha o'sadi, lekin ekranning ~30%
+ * dan oshmaydi (klaviatura ochiq paytda suhbat ko'rinib tursin). Enter: telefonda -
+ * yangi qator (adashib bosilgan Enter yarim savolni jo'natmasin), Telegram Desktop'da -
+ * yuborish (Shift+Enter - yangi qator). Yuborish/to'xtatish/Pro fokusni olmaydi
+ * (pointerdown.prevent) - klaviatura yopilmaydi.
  */
 const props = defineProps<{
   busy: boolean
@@ -45,7 +41,10 @@ const value = ref('')
 const taRef = ref<HTMLTextAreaElement | null>(null)
 const hasText = computed(() => value.value.trim().length > 0)
 
-const MAX_ROWS = 5
+const MAX_ROWS = 8
+/** Karta ekranning shuncha qismidan oshmaydi: klaviatura ochiq paytda ham suhbat
+ *  ko'rinib tursin (aytilgan uzun gap 8 qatorni bemalol to'ldiradi). */
+const MAX_SHARE = 0.3
 
 function resize() {
   const ta = taRef.value
@@ -55,12 +54,17 @@ function resize() {
   const raw = parseFloat(cs.lineHeight)
   const line = cs.lineHeight.endsWith('px') ? raw : (raw || 1.5) * parseFloat(cs.fontSize)
   const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
-  const max = line * MAX_ROWS + pad
+  const viewport = window.visualViewport?.height ?? window.innerHeight
+  const max = Math.min(line * MAX_ROWS, Math.max(line * 3, viewport * MAX_SHARE)) + pad
   ta.style.height = 'auto'
   ta.style.height = `${Math.min(ta.scrollHeight, max)}px`
   ta.style.overflowY = ta.scrollHeight > max + 1 ? 'auto' : 'hidden'
 }
-onMounted(resize)
+onMounted(() => {
+  resize()
+  window.visualViewport?.addEventListener('resize', resize)
+})
+onBeforeUnmount(() => window.visualViewport?.removeEventListener('resize', resize))
 watch(value, resize, { flush: 'post' })
 // Diktovka paytida textarea O'RNIDA to'lqin turadi (v-if), ya'ni yozuv tugaganda u
 // QAYTA yaratiladi - aytilgan matn bilan bir tikda. v-model qiymatni yangi elementga
@@ -90,6 +94,7 @@ const { enabled: proOn, available: proAvailable, remaining: proLeft, exhausted: 
 const proActive = computed(() => proOn.value && !proSpent.value)
 /** Burchakdagi son - faqat oz qolganda (ogohlantirish); ko'p bo'lsa shovqin. */
 const proBadge = computed(() => (proLeft.value !== null && proLeft.value <= 3 ? Math.max(0, proLeft.value) : null))
+const proText = computed(() => (proBadge.value !== null ? `${t('pro.label')} · ${proBadge.value}` : t('pro.label')))
 const proLabel = computed(() => `${t('pro.toggle')}${proLeft.value !== null ? ' · ' + t('pro.left', { n: proLeft.value }) : ''}`)
 function togglePro() {
   if (proSpent.value) {
@@ -106,8 +111,12 @@ const dictState = dictation.state
 const dictating = computed(() => dictState.value !== 'idle')
 watch(dictating, (on) => emit('dictating', on), { flush: 'sync' })
 
+/** Yozuv qanday tugadi: ■ - matn maydonga, ↑ - maydonga tushib, darhol yuboriladi. */
+const dictPending = ref<'done' | 'send' | null>(null)
+
 async function startDictation() {
   if (props.busy || dictating.value) return
+  dictPending.value = null
   haptic.impact('light')
   const failure = await dictation.start()
   if (failure) {
@@ -116,7 +125,10 @@ async function startDictation() {
   }
 }
 
-function finishDictation() {
+function finishDictation(intent: 'done' | 'send') {
+  if (dictState.value !== 'recording') return
+  dictPending.value = intent
+  haptic.impact('light')
   dictation.finish()
 }
 
@@ -131,6 +143,8 @@ function startFailureText(failure: DictationStartFailure): string {
       return isTelegram ? t('tg.mic.denied') : `${t('voiceDenied')} ${t('voiceDeniedHow')}`
     case 'noDevice':
       return t('voiceNoMic')
+    case 'busy':
+      return t('voiceMicBusy')
     default:
       return t('voiceError')
   }
@@ -168,12 +182,20 @@ function announce(text: string) {
 }
 
 function onOutcome(outcome: DictationOutcome) {
+  const intent = dictPending.value
+  dictPending.value = null
   switch (outcome.kind) {
     case 'text':
       place(outcome.text)
+      if (outcome.truncated) toast.show({ message: t('voiceTruncatedNote'), id: 'dictation' })
+      // "Darhol yuborish": matn avval maydonga tushadi - yuborish qabul qilinmasa
+      // (javob hali ketyapti) u yo'qolmaydi, odam o'zi yuboradi.
+      if (intent === 'send' && !props.busy) {
+        void nextTick(trySend)
+        break
+      }
       haptic.notify('success')
       announce(t('composer.dictate.inserted'))
-      if (outcome.truncated) toast.show({ message: t('voiceTruncatedNote'), id: 'dictation' })
       break
     case 'empty':
       toast.show({ message: t('composer.dictate.noSpeech'), id: 'dictation' })
@@ -197,24 +219,17 @@ function onCardPointerDown(e: PointerEvent) {
   taRef.value?.focus()
 }
 
-type Primary = 'stop' | 'send' | 'mic'
-const primary = computed<Primary>(() => (props.busy ? 'stop' : hasText.value ? 'send' : 'mic'))
-const primaryLabel = computed(() =>
-  primary.value === 'stop' ? t('stopAria') : primary.value === 'send' ? t('send') : t('composer.dictate.start'),
-)
-
 function onPrimary() {
-  if (primary.value === 'stop') {
+  if (props.busy) {
     haptic.impact('light')
     emit('stop')
-  } else if (primary.value === 'send') trySend()
-  else void startDictation()
+  } else trySend()
 }
 
-/** Yuborish/to'xtatish matn maydonidan fokusni olmasin: klaviatura ochiq qolsin
+/** Yuborish/to'xtatish/Pro matn maydonidan fokusni olmasin: klaviatura ochiq qolsin
  *  (Telegram'ning o'zidagi kabi). Mikrofon esa olsin - u klaviaturani yopadi. */
 function keepFocus(e: PointerEvent) {
-  if (primary.value !== 'mic' && document.activeElement === taRef.value) e.preventDefault()
+  if (document.activeElement === taRef.value) e.preventDefault()
 }
 
 /** Tashqaridan (taklif kartasidan keyin) - matn maydoniga. */
@@ -226,22 +241,38 @@ defineExpose({
 
 <template>
   <div class="composer">
-    <div class="composer__row">
-      <div
-        class="composer__field"
-        :class="{ 'is-dictating': dictating, 'has-pro': proAvailable && !dictating, 'is-pro': proActive && proAvailable }"
-        @pointerdown="onCardPointerDown"
-      >
-        <DictationBar
-          v-if="dictating"
-          class="composer__dict"
-          :state="dictState as 'starting' | 'recording' | 'transcribing'"
-          :elapsed="dictation.elapsed.value"
-          :levels="dictation.levels"
-          @cancel="dictation.cancel"
-          @done="finishDictation"
+    <div
+      class="composer__card"
+      :class="{ 'is-dictating': dictating, 'is-pro': proActive && proAvailable && !dictating }"
+      @pointerdown="onCardPointerDown"
+    >
+      <DictationBar
+        v-if="dictating"
+        class="composer__dict"
+        sendable
+        :pending="dictPending"
+        :state="dictState as 'starting' | 'recording' | 'transcribing'"
+        :elapsed="dictation.elapsed.value"
+        :levels="dictation.levels"
+        @cancel="dictation.cancel"
+        @done="finishDictation('done')"
+        @send="finishDictation('send')"
+      />
+      <template v-else>
+        <textarea
+          ref="taRef"
+          v-model="value"
+          class="composer__input"
+          rows="1"
+          :placeholder="t('composer.placeholder')"
+          :aria-label="t('composer.message')"
+          :enterkeyhint="enterSends ? 'send' : 'enter'"
+          autocomplete="off"
+          autocapitalize="sentences"
+          @keydown="onKeyDown"
+          @focus="emit('focus')"
         />
-        <template v-else>
+        <div class="composer__bar">
           <Transition name="pro-in">
             <button
               v-if="proAvailable"
@@ -250,52 +281,39 @@ defineExpose({
               :class="{ 'is-on': proActive, 'is-spent': proSpent }"
               :aria-pressed="proActive ? 'true' : 'false'"
               :aria-label="proLabel"
+              @pointerdown="keepFocus"
               @click="togglePro"
             >
               <Sparkles :size="16" :stroke-width="2" aria-hidden="true" />
-              <span v-if="proBadge !== null" class="pro__badge" aria-hidden="true">{{ proBadge }}</span>
+              <span class="pro__text" aria-hidden="true">{{ proText }}</span>
             </button>
           </Transition>
-          <textarea
-            ref="taRef"
-            v-model="value"
-            class="composer__input"
-            rows="1"
-            :placeholder="t('composer.placeholder')"
-            :aria-label="t('composer.message')"
-            :enterkeyhint="enterSends ? 'send' : 'enter'"
-            autocomplete="off"
-            autocapitalize="sentences"
-            @keydown="onKeyDown"
-            @focus="emit('focus')"
-          />
+          <span class="composer__spacer" />
           <button
-            v-if="hasText && !busy"
             type="button"
-            class="composer__mic"
+            class="composer__btn composer__mic"
             :aria-label="t('composer.dictate.start')"
+            :disabled="busy"
             @click="startDictation"
           >
             <Mic :size="20" :stroke-width="1.75" aria-hidden="true" />
           </button>
-        </template>
-      </div>
-
-      <button
-        v-if="!dictating"
-        type="button"
-        class="composer__primary"
-        :class="`is-${primary}`"
-        :aria-label="primaryLabel"
-        @pointerdown="keepFocus"
-        @click="onPrimary"
-      >
-        <Transition name="swap" mode="out-in">
-          <Square v-if="primary === 'stop'" key="stop" :size="16" :stroke-width="2.5" fill="currentColor" aria-hidden="true" />
-          <ArrowUp v-else-if="primary === 'send'" key="send" :size="22" :stroke-width="2.25" aria-hidden="true" />
-          <Mic v-else key="mic" :size="22" :stroke-width="1.75" aria-hidden="true" />
-        </Transition>
-      </button>
+          <button
+            type="button"
+            class="composer__btn composer__send"
+            :class="{ 'is-stop': busy, 'is-ready': hasText }"
+            :aria-label="busy ? t('stopAria') : t('send')"
+            :aria-disabled="!busy && !hasText ? 'true' : undefined"
+            @pointerdown="keepFocus"
+            @click="onPrimary"
+          >
+            <Transition name="swap" mode="out-in">
+              <Square v-if="busy" key="stop" :size="13" :stroke-width="0" fill="currentColor" aria-hidden="true" />
+              <ArrowUp v-else key="send" :size="20" :stroke-width="2.25" aria-hidden="true" />
+            </Transition>
+          </button>
+        </div>
+      </template>
     </div>
     <span class="sr-only" aria-live="polite">{{ announcement }}</span>
   </div>
@@ -307,52 +325,55 @@ defineExpose({
   flex-direction: column;
 }
 
-.composer__row {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--s-2);
-}
-.composer__field {
-  /* `em` - kiritish matnining o'lchami: katta shriftda maydon ham o'sadi. */
+/* Karta ranglari: yorug'da - oq karta, aniq chegara va soya (fon ham oq); qorong'ida -
+   fondan bir pog'ona yorug' karta, tugmalar undan ham bir pog'ona (Claude ilovasidagi
+   #151515 -> #20201e -> #313131 zinasi). */
+.composer__card {
+  --cmp-bg: var(--surface);
+  --cmp-line: var(--line-strong);
+  --cmp-btn: var(--fill);
+  --cmp-btn-text: var(--text-2);
+
+  /* `em` - kiritish matnining o'lchami: katta shriftda karta ham o'sadi. */
   font-size: max(16px, 1rem);
   display: flex;
-  flex: 1;
-  align-items: flex-end;
+  flex-direction: column;
   min-width: 0;
-  min-height: max(48px, calc(1.5em + 24px));
-  padding: 0 4px 0 var(--s-4);
-  border: 1px solid var(--line);
+  border: 1px solid var(--cmp-line);
   border-radius: 24px;
-  background: var(--surface);
-  box-shadow: var(--e1);
+  background: var(--cmp-bg);
+  box-shadow: var(--e2);
   cursor: text;
   transition:
     border-color var(--dur-2) var(--ease-out),
     box-shadow var(--dur-2) var(--ease-out);
 }
-.composer__field.has-pro {
-  padding-left: 7px;
+:global(:root[data-theme='dark']) .composer__card {
+  --cmp-bg: var(--fill);
+  --cmp-line: color-mix(in srgb, var(--text) 7%, transparent);
+  --cmp-btn: color-mix(in srgb, var(--text) 9%, var(--fill));
+  box-shadow: none;
 }
-.composer__field:focus-within {
-  border-color: var(--line-strong);
-  box-shadow: var(--e2);
+.composer__card:focus-within {
+  border-color: color-mix(in srgb, var(--text) 22%, transparent);
 }
-/* Pro yoqiq - maydon chegarasi brend rangiga moyil: keyingi savol "Pro" bilan ketishi
-   ko'rinib turadi. */
-.composer__field.is-pro {
-  border-color: color-mix(in srgb, var(--brand) 45%, var(--line));
+/* Pro yoqiq - chegara brend rangiga moyil: keyingi savol "Pro" bilan ketishi ko'rinadi. */
+.composer__card.is-pro {
+  border-color: color-mix(in srgb, var(--brand) 45%, var(--cmp-line));
 }
-.composer__field.is-dictating {
+.composer__card.is-dictating {
+  flex-direction: row;
   align-items: center;
-  padding: 0 4px;
+  padding: 10px 8px;
   cursor: default;
 }
+
 .composer__input {
-  flex: 1;
-  min-width: 0;
-  min-height: calc(1.5em + 22px);
+  display: block;
+  width: 100%;
+  min-height: calc(1.5em + 18px);
   margin: 0;
-  padding: 11px 0;
+  padding: 13px 16px 5px;
   border: 0;
   background: transparent;
   color: var(--text);
@@ -363,82 +384,100 @@ defineExpose({
   overflow-y: hidden;
   overscroll-behavior: contain;
 }
-.has-pro .composer__input {
-  padding-left: var(--s-2);
-}
 .composer__input::placeholder {
   color: var(--text-3);
 }
-.composer__mic {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  width: var(--tap);
-  height: var(--tap);
-  margin-bottom: max(1px, calc((1.5em + 22px - 44px) / 2));
-  border-radius: var(--r-full);
-  color: var(--text-3);
+
+.composer__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 4px 8px 8px;
 }
-.composer__mic:active {
-  background: var(--fill);
+.composer__spacer {
+  flex: 1;
 }
 
-/* Pro kaliti: 32px doira maydon ichida (bosish maydoni ::after bilan 44px). Maydon
-   pastki chetiga tekislangan - ko'p qatorli matnda ham yuborish tugmasi bilan bir
-   chiziqda. */
-.pro {
+/* 36px doiralar; sensorli ekranda bosish maydoni ::after bilan 44px. */
+.composer__btn {
   position: relative;
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  margin-bottom: calc((1.5em + 22px - 32px) / 2);
+  width: 36px;
+  height: 36px;
   border-radius: var(--r-full);
-  color: var(--brand);
   transition:
+    transform var(--dur-1) var(--ease-out),
     background-color var(--dur-2) var(--ease-out),
     color var(--dur-2) var(--ease-out),
-    transform var(--dur-1) var(--ease-out);
+    opacity var(--dur-2) var(--ease-out);
 }
-.pro::after {
+.composer__btn::after {
   content: '';
   position: absolute;
-  inset: -6px;
+  inset: -4px;
   border-radius: var(--r-full);
 }
-.pro:active {
+.composer__btn:not(:disabled):not([aria-disabled='true']):active {
   transform: scale(0.9);
 }
-.pro.is-on {
+.composer__mic {
+  background: var(--cmp-btn);
+  color: var(--cmp-btn-text);
+}
+.composer__mic:disabled {
+  opacity: 0.4;
+}
+/* Yuborish: doim joyida. Matn yo'q - xira brend (bosilmaydi), bor - to'liq brend. */
+.composer__send {
+  background: color-mix(in srgb, var(--brand) 38%, var(--cmp-bg));
+  color: color-mix(in srgb, #fff 60%, var(--cmp-bg));
+}
+.composer__send.is-ready {
+  background: var(--brand);
+  color: #fff;
+}
+.composer__send[aria-disabled='true'] {
+  cursor: default;
+}
+.composer__send.is-stop {
   background: var(--ink);
   color: var(--on-ink);
 }
+
+/* "Pro" - Claude'dagi model tanlovi o'rnida: belgi + yozuv, 36px tabletka. */
+.pro {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 14px 0 11px;
+  border: 1px solid transparent;
+  border-radius: var(--r-full);
+  background: var(--cmp-btn);
+  color: var(--cmp-btn-text);
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  transition:
+    background-color var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+.pro:active {
+  transform: scale(0.95);
+}
+.pro.is-on {
+  border-color: color-mix(in srgb, var(--brand) 40%, transparent);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
 .pro.is-spent {
   color: var(--text-4);
-}
-.pro__badge {
-  position: absolute;
-  /* Belgi burchakdan tashqariroq - uchqun ustini yopmasin. */
-  top: -6px;
-  right: -9px;
-  display: grid;
-  place-items: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border: 1.5px solid var(--surface);
-  border-radius: 8px;
-  background: var(--brand);
-  color: #fff;
-  font-size: 10px;
-  line-height: 1;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  box-sizing: content-box;
-}
-.pro.is-spent .pro__badge {
-  background: var(--text-4);
 }
 .pro-in-enter-active,
 .pro-in-leave-active {
@@ -449,47 +488,52 @@ defineExpose({
 .pro-in-enter-from,
 .pro-in-leave-to {
   opacity: 0;
-  transform: scale(0.6);
+  transform: scale(0.8);
 }
 
-/* DictationBar'ning tugmalari (32px) telefonda kichik - 44px nishon. */
+/* Yozuv qatori: tugmalar 36px doira (bosish maydoni 44px), ✕ va ■ - karta tugmasi
+   rangida, ↑ - brend. To'lqin ustidagi holat yozuvi karta rangida so'nadi. */
 .composer__dict {
-  min-height: 46px;
+  min-height: 36px;
 }
 .composer__dict :deep(.v-icon-btn) {
-  --ib-size: 44px;
+  --ib-size: 36px;
   border-radius: var(--r-full);
+}
+.composer__dict :deep(.v-icon-btn::after) {
+  inset: -4px;
+}
+.composer__dict :deep(.dict__cancel),
+.composer__dict :deep(.dict__stop) {
+  background: var(--cmp-btn);
+  color: var(--text);
+}
+.composer__dict :deep(.dict__send) {
+  background: var(--brand);
+  color: #fff;
+}
+.composer__dict :deep(.v-icon-btn[aria-disabled='true']:not(.is-loading)) {
+  opacity: 0.45;
 }
 .composer__dict :deep(.dict__wave) {
   height: 28px;
 }
+/* Matnga aylantirilayotganda soat to'xtagan - joyini holat yozuviga beradi (telefonda
+   "Matnga aylantirilmoqda…" aks holda qisqarib qolardi). */
+.composer__dict.is-transcribing :deep(.dict__time) {
+  display: none;
+}
+.composer__dict :deep(.dict__status) {
+  padding: 0 var(--s-2);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--cmp-bg) var(--s-4),
+    var(--cmp-bg) calc(100% - var(--s-4)),
+    transparent
+  );
+}
 
-.composer__primary {
-  /* `em` maydon bilan bir xil bo'lsin - katta shriftda ham bir qatorda markazda. */
-  font-size: max(16px, 1rem);
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  width: 48px;
-  height: 48px;
-  margin-bottom: max(0px, calc((1.5em + 24px - 48px) / 2));
-  border-radius: var(--r-full);
-  background: var(--ink);
-  color: var(--on-ink);
-  box-shadow: var(--e2);
-  transition:
-    transform var(--dur-1) var(--ease-out),
-    background-color var(--dur-2) var(--ease-out),
-    color var(--dur-2) var(--ease-out);
-}
-.composer__primary:active {
-  transform: scale(0.9);
-}
-.composer__primary.is-mic {
-  background: var(--fill);
-  color: var(--text);
-  box-shadow: none;
-}
 .swap-enter-active,
 .swap-leave-active {
   transition:

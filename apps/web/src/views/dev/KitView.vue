@@ -884,7 +884,7 @@ const isoToday = toISODate(today)
     <header class="kit-top">
       <a class="kit-brand" href="#foundations" @click.prevent="jump('foundations')">
         <span class="kit-spark" aria-hidden="true"><BrandSpark :size="16" /></span>
-        <span class="kit-word">Venera</span>
+        <span class="kit-word">Barno</span>
         <span class="kit-tag t-caption">UI kit</span>
       </a>
       <div class="kit-top__end">
@@ -919,7 +919,7 @@ const isoToday = toISODate(today)
 
       <main class="kit-main">
         <div class="kit-hero">
-          <h1 class="t-display">Venera 2026</h1>
+          <h1 class="t-display">Barno 2026</h1>
           <p class="t-body-lg t-3">
             src/ui — every component, every state. Light / dark, uz · uz-Cyrl · ru · en, 360 px → wide.
           </p>
@@ -1884,7 +1884,7 @@ const isoToday = toISODate(today)
           </div>
         </section>
 
-        <footer class="kit-foot t-caption t-4">Venera UI · {{ isoToday }}</footer>
+        <footer class="kit-foot t-caption t-4">Barno UI · {{ isoToday }}</footer>
       </main>
     </div>
 

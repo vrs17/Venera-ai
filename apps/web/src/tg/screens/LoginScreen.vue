@@ -113,7 +113,7 @@ onBeforeUnmount(() => {
     <form class="login__inner" novalidate @submit.prevent="submit">
       <div class="login__brand">
         <span class="login__spark"><BrandSpark :size="36" /></span>
-        <h1 class="login__title">Venera</h1>
+        <h1 class="login__title">Barno</h1>
         <p class="login__lead">{{ t('tg.login.lead') }}</p>
       </div>
 

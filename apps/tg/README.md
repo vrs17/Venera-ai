@@ -1,4 +1,4 @@
-# Venera - Telegram Mini App (`/tg/`) - ESKI, ISHLATILMAYDI
+# Barno - Telegram Mini App (`/tg/`) - ESKI, ISHLATILMAYDI
 
 > **2026-10: `/tg/` endi yangi Mini App'ni beradi** - web kod bazasida
 > (`apps/web/tg-app.html`, `apps/web/src/tg/`), frontend image ichida yig'iladi
@@ -37,7 +37,7 @@ ko'rsatilgan. Ayniqsa quyidagilar - ular tanlanmagan, **o'lchangan**:
 ## Ekran tuzilishi
 
 ```
- Venera ✦        [Tayyor] [🔊] [☰]     <- yuqori qator
+ Barno ✦         [Tayyor] [🔊] [☰]     <- yuqori qator
  ┌───────────────────────────────┐
  │                               │
  │   S U H B A T   (flex: 1)     │      <- asosiy maydon, scroll
@@ -45,7 +45,7 @@ ko'rsatilgan. Ayniqsa quyidagilar - ular tanlanmagan, **o'lchangan**:
  └───────────────────────────────┘
             Gapirish uchun bosing      <- bitta status qatori
  ┌───────────────────────────────┐
- │ Veneradan so'rang…   (➤) (◉) │      <- kiritish paneli
+ │ Barnodan so'rang…    (➤) (◉) │      <- kiritish paneli
  └───────────────────────────────┘
 ```
 
@@ -135,7 +135,7 @@ yetarli. Kimlik HAR DOIM `Authorization: Bearer <token>` da.
 
 `/api/v1/chat/ask` ATAYLAB **ishlatilmaydi**: u quvur skeleti
 (`services/pipeline.py`, `_ROUTES` bo'sh) va HR Assistant'ga umuman
-bormaydi - har qanday savolga bir xil "Venera hozircha sozlanmoqda..."
+bormaydi - har qanday savolga bir xil "Barno hozircha sozlanmoqda..."
 matnini qaytaradi. Uni zaxira yo'l qilish foydalanuvchiga javob berilgandek
 ko'rsatib, aslida hech narsa aytmaslik bo'lardi.
 
@@ -310,7 +310,7 @@ Qator: nom + izoh (bosilsa oyna), ulanganida tishli g'ildirak (hisob
 oynasi: uzish) va kalit (chatda ishlatish, optimistik - server rad etsa
 qaytadi); ulanmaganida "+" (ulanish oynasi). Oyna: login + parol; xato
 bo'lsa serverning O'Z xabari ("Login yoki parol noto'g'ri"). 401 bu yerda
-VENERA sessiyasi - platforma paroli xato bo'lsa server 400 qaytaradi.
+BARNO sessiyasi - platforma paroli xato bo'lsa server 400 qaytaradi.
 Uzish ikki bosqichli: "Uzish" -> "HRM dan uzilasizmi?" (Yo'q / Ha, uzish).
 
 Chiqishda holat unutiladi, menyu va oyna yopiladi.
@@ -410,7 +410,7 @@ Telegram serveriga yozib qo'yardi.
 
 ## Uyg'otish so'zi bu yerda YO'Q
 
-Veb ilovada "Salom Venera" bor, Mini App'da ATAYLAB yo'q va
+Veb ilovada "Salom Barno" bor, Mini App'da ATAYLAB yo'q va
 `POST /api/v1/stt/wake` chaqirilmaydi. Sabab: Telegram'da savol har doim
 ilovani ochib, doirani bosishdan boshlanadi - ya'ni mikrofonni doim ochiq
 tutib, har 2.5 soniyada STT routerga parcha yuborishning sababi yo'q.
@@ -424,7 +424,7 @@ Kerak bo'lsa manba `apps/web/src/composables/useWakeWord.ts` da turibdi.
 * **Bot yo'q.** Bu sahifa BotFather'da Mini App sifatida ulangan bo'lishi
   kerak; `/start`, buyruqlar, push xabarlar uchun bot kodi kerak - u hali
   yozilmagan.
-* **`initData` tekshirilmaydi.** Telegram foydalanuvchisi va Venera hisobi
+* **`initData` tekshirilmaydi.** Telegram foydalanuvchisi va Barno hisobi
   bog'lanmagan, shuning uchun kirish oddiy email + parol bilan. Bog'lash
   uchun serverda `initData` ning HMAC imzosini tekshiradigan endpoint kerak.
 * **Iqtibos qilingan hujjatlar** (`/chat/doc/...`, "Manbalar: [1] ...")

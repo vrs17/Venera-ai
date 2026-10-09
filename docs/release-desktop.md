@@ -49,7 +49,7 @@ SHA256 va hajmni o'zi hisoblaydi:
 ```bash
 python3 apps/desktop/tools/make_manifest.py \
     apps/desktop/dist/Venera-AI-Assistant-Setup.exe \
-    --notes "Venera nomiga o'tildi"
+    --notes "Barno nomiga o'tildi"
 ```
 
 `--notes` — foydalanuvchi bildirishnoma panelida **ko'radigan** matn. Qisqa va

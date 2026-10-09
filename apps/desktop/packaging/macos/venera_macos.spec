@@ -112,7 +112,7 @@ app = BUNDLE(
     bundle_identifier=BUNDLE_ID,
     version=__version__,
     info_plist={
-        "CFBundleName": APP_NAME,
+        "CFBundleName": "Barno",
         "CFBundleDisplayName": APP_DISPLAY_NAME,
         "CFBundleShortVersionString": __version__,
         "CFBundleVersion": __version__,
@@ -127,10 +127,10 @@ app = BUNDLE(
         # Bu matnlar foydalanuvchiga tizim dialogida KO'RINADI. Ular
         # bo'lmasa macOS ilovani so'ramasdan yiqitadi (TCC crash).
         "NSMicrophoneUsageDescription":
-            "Venera sizning ovozli buyruqlaringizni eshitishi uchun mikrofon kerak.",
+            "Barno sizning ovozli buyruqlaringizni eshitishi uchun mikrofon kerak.",
         "NSAppleEventsUsageDescription":
-            "Venera tizim ovozini boshqarish va ekranni qulflash uchun System Events'ga murojaat qiladi.",
+            "Barno tizim ovozini boshqarish va ekranni qulflash uchun System Events'ga murojaat qiladi.",
         "NSSystemAdministrationUsageDescription":
-            "Venera ekranni qulflash uchun tizim xizmatlaridan foydalanadi.",
+            "Barno ekranni qulflash uchun tizim xizmatlaridan foydalanadi.",
     },
 )

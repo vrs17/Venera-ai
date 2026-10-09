@@ -1,4 +1,4 @@
-# Venera AI Assistant
+# Barno AI Assistant
 
 Windows uchun doim fonda ishlaydigan ovozli desktop yordamchi.
 Kompyuter yonganda o'zi ishga tushadi, tray ikonkasida turadi, buyruqni bajaradi
@@ -67,7 +67,7 @@ Venera-AI-Assistant-Setup.exe /S /NOAUTOSTART /NOLAUNCH
 Venera-AI-Assistant-Setup.exe /S /DESKTOP
 ```
 
-O'chirish: **Parametrlar → Ilovalar → Venera AI Assistant → O'chirish**.
+O'chirish: **Parametrlar → Ilovalar → Barno AI Assistant → O'chirish** (eski o'rnatmalarda: Venera AI Assistant).
 Yoki buyruq satridan:
 
 ```
@@ -258,7 +258,7 @@ mikrofon uzilganda avtomatik tiklanish.
 | 2 | On-prem STT (ovoz → matn) | `engines/stt_onprem.py` | `engines.stt: onprem` |
 | 3 | On-prem LLM (erkin buyruqlar) | `engines/llm_onprem.py` | `engines.llm: onprem` |
 | 4 | On-prem TTS (o'zbek ovozi) | `engines/tts_onprem.py` | `engines.tts: onprem` |
-| 5 | Wake word "Venera AI Assistant" | `engines/activator_wakeword.py` | `engines.activator: wakeword` |
+| 5 | Wake word "Barno AI Assistant" | `engines/activator_wakeword.py` | `engines.activator: wakeword` |
 
 Har bir stepda **bitta yangi fayl** qo'shiladi va config'da **bitta qator** o'zgaradi.
 Orchestrator, harakatlar, NLU, UI, tray, avtostart va packaging tegilmaydi — chunki
