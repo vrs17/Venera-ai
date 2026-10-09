@@ -63,51 +63,51 @@ ADD_RIGHTS = "pin_messages"
 _JOIN_QUIET = 120.0
 
 NOTICE = (
-    "📣 <b>Venera shu guruhda ishlay boshladi</b>\n\n"
-    "Venera — kompaniyaning AI yordamchisi. U shu guruh yozishmasini o'qiydi va saqlaydi.\n\n"
+    "📣 <b>Barno shu guruhda ishlay boshladi</b>\n\n"
+    "Barno — kompaniyaning AI yordamchisi. U shu guruh yozishmasini o'qiydi va saqlaydi.\n\n"
     "• /summary — guruh xulosasi, masalan: <code>/summary 3 kun</code>\n"
-    "• /askvenera — yozishma bo'yicha savol\n"
-    "• CRM: Venera'ni belgilab «crmga kiritib qo'y» deb yozing — yozishmadan vazifa taklifi chiqadi; "
+    "• /askbarno — yozishma bo'yicha savol\n"
+    "• CRM: Barnoni belgilab «crmga kiritib qo'y» deb yozing — yozishmadan vazifa taklifi chiqadi; "
     "tasdiqlamaguningizcha CRM o'zgarmaydi.\n"
     "• Kompaniya rahbariyati shu guruhdagi ish holati bo'yicha qisqa brif oladi "
     "(guruh a'zosi bo'lmasa ham).\n"
     "• Xabarlar {days} kun saqlanadi, keyin o'chiriladi.\n"
     "• Shaxsiy masalalar — maosh, ta'til, kasallik — xulosa va briflarga kiritilmaydi.\n\n"
-    "Shaxsiy savollaringizni Venera'ga shaxsiy chatda yozing."
+    "Shaxsiy savollaringizni Barnoga shaxsiy chatda yozing."
 )
-GROUP_NOT_ENABLED = ("👋 Venera guruhga qo'shildi, lekin hali yoqilmagan. Uni kompaniya rahbariyati "
-                     "Venera botida yoqadi.")
-GROUP_PAUSED = "⏸ Venera bu guruhda vaqtincha to'xtatilgan."
-FAREWELL = "👋 Venera bu guruhdan chiqdi. Saqlangan xabarlar o'chirildi."
+GROUP_NOT_ENABLED = ("👋 Barno guruhga qo'shildi, lekin hali yoqilmagan. Uni kompaniya rahbariyati "
+                     "Barno botida yoqadi.")
+GROUP_PAUSED = "⏸ Barno bu guruhda vaqtincha to'xtatilgan."
+FAREWELL = "👋 Barno bu guruhdan chiqdi. Saqlangan xabarlar o'chirildi."
 
-_LIST_HEAD = ("⚙️ <b>Guruhlar</b> — Venera o'qiydigan guruhlar\n"
+_LIST_HEAD = ("⚙️ <b>Guruhlar</b> — Barno o'qiydigan guruhlar\n"
               "<i>✅ yoqilgan · ⏸ to'xtatilgan · 🕓 yoqilmagan · ⚠️ e'tibor kerak\n"
               "🛠 Support · 📁 Loyiha · ❔ turi tanlanmagan</i>")
 _EMPTY = "Hozircha guruh yo'q. «➕ Guruh qo'shish» bilan boshlang."
 _ADD = ("➕ <b>Guruh qo'shish</b>\n\n"
         "1. «Guruhni tanlash» tugmasini bosing va guruhni tanlang.\n"
-        "2. Venera'ni <b>administrator</b> qilib qo'shing — shunda u xabarlarni o'qiy oladi "
+        "2. Barnoni <b>administrator</b> qilib qo'shing — shunda u xabarlarni o'qiy oladi "
         "va e'lonni qadaydi.\n"
         "3. Shu chatga xabar keladi: guruh turini tanlaysiz.\n\n"
         "<i>Botni administrator qilib faqat guruh egasi yoki administratori qo'sha oladi.</i>")
-_JOINED = ("🆕 Venera <b>«{title}»</b> guruhiga qo'shildi.\n\n"
-           "Guruh turini tanlang — Venera guruhga qisqa e'lon yozib, uni qadaydi va xabarlarni "
+_JOINED = ("🆕 Barno <b>«{title}»</b> guruhiga qo'shildi.\n\n"
+           "Guruh turini tanlang — Barno guruhga qisqa e'lon yozib, uni qadaydi va xabarlarni "
            "o'qishni boshlaydi.")
-_CANT_READ = ("⚠️ Venera guruhda oddiy a'zo — xabarlarni o'qiy olmaydi. Uni administrator qiling: "
+_CANT_READ = ("⚠️ Barno guruhda oddiy a'zo — xabarlarni o'qiy olmaydi. Uni administrator qiling: "
               "«👑 Administrator qilish» tugmasi yoki guruh → «Tahrirlash» → «Administratorlar».")
-_BACK = "✅ Venera <b>«{title}»</b> guruhiga qaytdi — o'qish davom etadi."
-_KICKED = "⚠️ Venera <b>«{title}»</b> guruhidan chiqarildi — guruh endi o'qilmaydi va brifga kirmaydi."
-_DEMOTED = ("⚠️ <b>«{title}»</b>: Venera endi administrator emas va guruh xabarlarini o'qiy olmaydi. "
+_BACK = "✅ Barno <b>«{title}»</b> guruhiga qaytdi — o'qish davom etadi."
+_KICKED = "⚠️ Barno <b>«{title}»</b> guruhidan chiqarildi — guruh endi o'qilmaydi va brifga kirmaydi."
+_DEMOTED = ("⚠️ <b>«{title}»</b>: Barno endi administrator emas va guruh xabarlarini o'qiy olmaydi. "
             "Uni qayta administrator qiling.")
-_PROMOTED = "✅ <b>«{title}»</b>: Venera administrator — endi barcha xabarlarni o'qiydi."
+_PROMOTED = "✅ <b>«{title}»</b>: Barno administrator — endi barcha xabarlarni o'qiydi."
 _NOTICE_RESULT = {
     "pinned": "📣 E'lon guruhga yozildi va qadaldi.",
-    "posted": "📣 E'lon yozildi, lekin qadab bo'lmadi — Venera'ga «Xabarlarni qadash» huquqini bering.",
+    "posted": "📣 E'lon yozildi, lekin qadab bo'lmadi — Barnoga «Xabarlarni qadash» huquqini bering.",
     "failed": "⚠️ E'lonni yozib bo'lmadi. «📣 E'lonni yuborish» bilan qayta urinib ko'ring.",
 }
 _STALE = "Tugma eskirgan"
 _REFUSED = {"already": "Guruh allaqachon yoqilgan.", "paused": "Guruh to'xtatilgan — «▶️ Davom ettirish».",
-            "gone": "Venera bu guruhda emas.", "unknown": _STALE}
+            "gone": "Barno bu guruhda emas.", "unknown": _STALE}
 
 _ID = re.compile(r"-\d{1,20}")
 #: Bot guruhda emasligini bildiradigan Telegram xatolari.
@@ -288,7 +288,7 @@ class GroupAdmin:
             self._answer(cq_id)
             count, _ = self.store.chat_stats(gid)
             text = (f"🗑 <b>«{esc(title)}»</b> o'chirilsinmi?\n\n"
-                    "• Venera guruhni o'qishni to'xtatadi va guruhdan chiqadi.\n"
+                    "• Barno guruhni o'qishni to'xtatadi va guruhdan chiqadi.\n"
                     f"• Saqlangan {count} ta xabar va brif ma'lumotlari o'chiriladi — qaytarib bo'lmaydi.")
             self._show(chat_id, text, {"inline_keyboard": [[_btn("🗑 Ha, o'chirish", f"g:xy:{gid}"),
                                                              _btn("⬅ Bekor", f"g:c:{gid}")]]}, edit_id)
@@ -298,14 +298,14 @@ class GroupAdmin:
                 self._answer(cq_id, _STALE, alert=True)
                 self._list(chat_id, 0, edit_id=edit_id)
                 return
-            self._answer(cq_id, "O'chirildi" if action == "xy" else "Venera guruhdan chiqdi")
+            self._answer(cq_id, "O'chirildi" if action == "xy" else "Barno guruhdan chiqdi")
             if info.present:
                 self._leave(gid, notice_id=info.notice_id, farewell=action == "xy")
             self._audit(user, "tg_group.remove" if action == "xy" else "tg_group.decline", gid,
                         {"messages": removed, "title": title[:64]})
             log.info("Guruhlar: %s o'chirildi (%d xabar) - %s", gid, removed, user.actorId)
             note = (f"🗑 <b>«{esc(title)}»</b> o'chirildi." if action == "xy"
-                    else f"✖️ <b>«{esc(title)}»</b> qo'shilmadi — Venera guruhdan chiqdi.")
+                    else f"✖️ <b>«{esc(title)}»</b> qo'shilmadi — Barno guruhdan chiqdi.")
             self._list(chat_id, 0, edit_id=edit_id, note=note)
         else:
             self._answer(cq_id, _STALE, alert=True)
@@ -353,7 +353,7 @@ class GroupAdmin:
     def _card(self, chat_id: int, info: GroupInfo, edit_id: Any, *, note: str = "") -> None:
         count, first = self.store.chat_stats(info.chat_id)
         if not info.present:
-            state = "⚠️ Venera guruhda emas"
+            state = "⚠️ Barno guruhda emas"
         elif info.effective:
             state = "✅ yoqilgan"
         else:
@@ -367,7 +367,7 @@ class GroupAdmin:
         else:
             venera = "❔ noma'lum — «🔄 Tekshirish»"
         lines = [f"{self._icon(info)}{KIND_ICON.get(info.kind, '❔')} <b>{esc(self._title(info))}</b>",
-                 f"Holat: {state}", f"Turi: {KIND_NAME.get(info.kind, '❔ tanlanmagan')}", f"Venera: {venera}",
+                 f"Holat: {state}", f"Turi: {KIND_NAME.get(info.kind, '❔ tanlanmagan')}", f"Barno: {venera}",
                  f"E'lon: {'📌 yozilgan' if info.notice_id else 'yozilmagan'}",
                  f"Saqlangan: {count} ta xabar" + (f" · {uz_date(first)} dan beri" if first else "")]
         if info.from_env and not info.adopted:

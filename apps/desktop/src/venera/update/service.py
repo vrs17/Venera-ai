@@ -319,7 +319,7 @@ class UpdateService:
             # tushishda "yangilandi" deb noto'g'ri xabar chiqadi.
             if sys.platform == "darwin":
                 self.on_status("Yuklab olindi. Finder'da ochilmoqda - "
-                               "Venera'ni Applications papkasiga sudrab tashlang.")
+                               "ilovani (Venera.app) Applications papkasiga sudrab tashlang.")
                 log.info("DMG Finder'da ochilmoqda: %s", destination)
                 try:
                     subprocess.Popen(["open", "-R", str(destination)], close_fds=True)

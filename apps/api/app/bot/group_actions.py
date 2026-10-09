@@ -65,11 +65,11 @@ _MAKE = re.compile(r"kirit|qo'sh|qosh|yarat|ochib|tushir|create|(?<!\w)add(?!\w)
                    re.IGNORECASE)
 _QUOTES = str.maketrans({"ʻ": "'", "ʼ": "'", "‘": "'", "’": "'", "`": "'"})
 
-NOT_LINKED = ("CRM bilan ishlash uchun avval Venera hisobingizni ulang - shaxsiy chatda /start. "
+NOT_LINKED = ("CRM bilan ishlash uchun avval Barno hisobingizni ulang - shaxsiy chatda /start. "
               "Vazifa sizning CRM ulanishingiz bilan yaratiladi.")
-NO_CRM = ("CRM ulanmagan: vazifa sizning nomingizdan yaratiladi. Venera ilovasida CRM hisobingizga "
+NO_CRM = ("CRM ulanmagan: vazifa sizning nomingizdan yaratiladi. Barno ilovasida CRM hisobingizga "
           "kiring, keyin qayta so'rang.")
-NOT_YOURS = "Bu so'rovni {name} davom ettira oladi. O'zingiz uchun Venera'ga «crmga kiritib qo'y» deb yozing."
+NOT_YOURS = "Bu so'rovni {name} davom ettira oladi. O'zingiz uchun Barnoga «crmga kiritib qo'y» deb yozing."
 ONLY_OWNER = "Faqat {name} tasdiqlay oladi"
 WORKING = "⏳ CRM bilan ishlanmoqda…"
 FAILED = "⚠️ CRM so'rovini hozir bajarib bo'lmadi. Birozdan keyin qayta urinib ko'ring."
@@ -255,7 +255,7 @@ class GroupActions:
             text = render.proposal_card(proposal)
             markup = render.proposal_buttons(token)
             if markup is None:
-                text += "\n\n<i>Bu taklifni Venera ilovasida tasdiqlang.</i>"
+                text += "\n\n<i>Bu taklifni Barno ilovasida tasdiqlang.</i>"
             sent = self._send(chat_id, text, reply_to=message_id, thread=thread, markup=markup)
             self._remember(chat_id, sent, owner, token=token if markup is not None else None)
 

@@ -1,4 +1,4 @@
-# Venera AI Assistant - sozlamalar
+# Barno AI Assistant - sozlamalar
 # Bu fayl %APPDATA%\Venera\config.yaml ga ko'chiriladi va o'sha yerdan o'qiladi.
 # O'zgartirgandan keyin tray menyusidan "Sozlamalarni qayta yuklash" ni bosing.
 
@@ -8,7 +8,7 @@
 #   * ovozli javob iboralari
 #   * buyruqni tushunish qoidalari ("chromeni och" / "открой хром" / "open chrome")
 #   * ilova oynasi va tray menyusi matnlari
-#   * wake word ("salom Venera") modeli
+#   * wake word ("salom Barno") modeli
 # Til AVTOMATIK ANIQLANMAYDI - buni foydalanuvchi ilova oynasidan tanlaydi.
 # Sabab: qisqa buyruqda (1-2 s) avtomatik aniqlash ~44% aniqlik beradi.
 language: uz

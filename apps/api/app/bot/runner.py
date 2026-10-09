@@ -154,46 +154,56 @@ _TURNS_KEPT = 2000
 #: faqat sinovchilarga, menyuda esa hamma ko'radi. `/app`, `/chiqish`,
 #: `/yangi` - eski nomlar, ishlayveradi, lekin menyuda yo'q.
 COMMANDS = [
-    {"command": "start", "description": "Venera'ni ochish"},
+    {"command": "start", "description": "Barnoni ochish"},
     {"command": "new", "description": "Yangi suhbat"},
     {"command": "help", "description": "Bot nima qila oladi"},
     {"command": "logout", "description": "Hisobni botdan uzish"},
 ]
+#: Bot profili - Telegram'da ko'rinadigan nom va tavsif (`setMyName`,
+#: `setMyShortDescription`, `setMyDescription`). Username (@...) bu yerda
+#: o'zgarmaydi. Chegaralar: nom <=64, qisqa tavsif <=120, tavsif <=512.
+PROFILE = {
+    "name": "Barno AI",
+    "short_description": "Barno AI - HRM va CRM bo'yicha kompaniya yordamchisi.",
+    "description": ("Salom! Men Barno AI - kompaniyaning HRM va CRM bo'yicha yordamchisiman. "
+                    "Savolingizni yozing yoki ovozli xabar yuboring. Boshlash uchun /start ni "
+                    "bosing va ish loginingiz bilan bir marta kiring."),
+}
 
 _INTRO = (
-    "Salom! Men <b>Venera</b> - HRM va CRM bo'yicha yordamchiman.\n\n"
-    "Boshlash uchun pastdagi tugma bilan Venera'ni oching va ish loginingiz "
+    "Salom! Men <b>Barno</b> - HRM va CRM bo'yicha yordamchiman.\n\n"
+    "Boshlash uchun pastdagi tugma bilan Barnoni oching va ish loginingiz "
     "bilan <b>bir marta</b> kiring. Shundan keyin savollarni shu chatda "
     "yozaverasiz - qayta kirish so'ralmaydi."
 )
 #: Guruhda: bitta qisqa izoh, boshqa hech narsa.
-_GROUP_ONLY = "Venera faqat shaxsiy chatda ishlaydi."
+_GROUP_ONLY = "Barno faqat shaxsiy chatda ishlaydi."
 _UNKNOWN = "Bunday buyruq yo'q. Yordam: /help"
 _BETA = (
-    "🧪 Venera mini app'ining <b>yangi (beta)</b> versiyasi. Kamchilik ko'rsangiz, "
+    "🧪 Barno mini app'ining <b>yangi (beta)</b> versiyasi. Kamchilik ko'rsangiz, "
     "javob ostidagi ⚑ yoki ilovadagi «Xabar berish» orqali yozing."
 )
 _EXPIRED = (
     "Bot {days} kun ishlatilmagani uchun xavfsizlik maqsadida ulanish tugadi. "
-    "Venera ilovasini ochib kiring - ulanish yangilanadi va shu yerda davom etasiz."
+    "Barno ilovasini ochib kiring - ulanish yangilanadi va shu yerda davom etasiz."
 )
 #: Admin panelda bloklangan hisob. Sabab va kim bloklagani AYTILMAYDI -
 #: faqat nima qilish kerakligi.
 _BLOCKED = "Hisobingiz bloklangan. Administratorga murojaat qiling."
 #: 3-4 qator: bot nima qila oladi. Batafsili - ilovada.
 _HELP = (
-    "<b>Venera</b> - HRM va CRM bo'yicha yordamchi.\n\n"
+    "<b>Barno</b> - HRM va CRM bo'yicha yordamchi.\n\n"
     "• Savolni yozing yoki 🎙 ovozli xabar yuboring - qisqa javob va manbalari shu yerda.\n"
     "• HRM/CRM da o'zgartirish kerak bo'lsa, avval taklif ko'rsataman - faqat "
     "<b>Tasdiqlash</b> dan keyin bajariladi.\n"
     "• Javob noto'g'ri bo'lsa - ostidagi ⚑ tugmasi bilan xabar bering.\n\n"
-    "/new - yangi suhbat · /start - Venera'ni ochish · /logout - botdan chiqish"
+    "/new - yangi suhbat · /start - Barnoni ochish · /logout - botdan chiqish"
 )
 
 
 def welcome_text(user: AuthUser, *, again: bool = False) -> str:
     """Ulangandan keyingi birinchi xabar (`again` - `/start` da takror)."""
-    head = "Hisobingiz ulangan" if again else "Venera hisobingiz ulandi"
+    head = "Hisobingiz ulangan" if again else "Barno hisobingiz ulandi"
     return (
         f"✅ {head}: <b>{esc(user.fullName or user.email)}</b>\n\n"
         "Endi shu chatda savol yozing yoki 🎙 ovozli xabar yuboring - HRM va CRM "
@@ -732,6 +742,33 @@ class VeneraBot:
         log.info("Telegram bot ishga tushdi: @%s", self.username)
         if self.sync_commands:
             self.sync_menu()
+            self.sync_profile()
+
+    def sync_profile(self) -> int:
+        """Bot nomi va tavsiflari `PROFILE` bilan bir xil bo'lsin. IDEMPOTENT:
+        har maydon avval o'qiladi, faqat farq qilsa yoziladi (`setMyName`
+        chegarasi qattiq - 429 uzoq kuttiradi, shuning uchun bir marta).
+
+        Har maydon alohida: biri yiqilsa qolganlari baribir yoziladi. Xato
+        botni TO'XTATMAYDI. Natija: nechta maydon yozildi.
+        """
+        written = 0
+        for field, value in PROFILE.items():
+            try:
+                getter = getattr(self.api, f"get_my_{field}")
+                setter = getattr(self.api, f"set_my_{field}")
+                if getter() == value:
+                    continue
+                setter(value)
+            except TelegramError as exc:
+                log.warning("Telegram bot: profil (%s) yangilanmadi: %s", field, exc)
+                continue
+            except Exception:  # noqa: BLE001 - ip o'lmasligi kerak
+                log.exception("Telegram bot: profil (%s) - kutilmagan xato", field)
+                continue
+            written += 1
+            log.info("Telegram bot: profil (%s) yangilandi", field)
+        return written
 
     def sync_menu(self) -> bool:
         """Buyruqlar menyusi `COMMANDS` bilan bir xil bo'lsin. IDEMPOTENT:
@@ -1066,7 +1103,7 @@ class VeneraBot:
         if stored is None:
             self.links.unlink(link.tg_id, actor_id=link.actor_id)
             log.warning("Telegram: ulangan hisob topilmadi (%s) - ulanish uzildi", link.actor_id)
-            self._send(chat_id, "Venera hisobingiz topilmadi. Ilovani ochib qaytadan kiring.",
+            self._send(chat_id, "Barno hisobingiz topilmadi. Ilovani ochib qaytadan kiring.",
                        markup=render.app_button(self.webapp_url))
             return None
         login = getattr(stored, "username", None)
@@ -1127,12 +1164,12 @@ class VeneraBot:
                                     "ovozli xabar yuboring.")
         elif name == "app":
             # Eski nom (menyuda endi `/start`) - ishlayveradi.
-            self._send(chat_id, "Venera ilovasi - ovozli suhbat va suhbatlar tarixi:",
+            self._send(chat_id, "Barno ilovasi - ovozli suhbat va suhbatlar tarixi:",
                        markup=render.app_button(self.webapp_url))
         elif name in ("logout", "chiqish"):
             if self.links.unlink(tg_id):
                 log.info("Telegram: ulanish bot orqali uzildi (%s)", link.actor_id if link else "-")
-                self._send(chat_id, "Hisobingiz botdan uzildi. Qayta ulash uchun Venera'ni "
+                self._send(chat_id, "Hisobingiz botdan uzildi. Qayta ulash uchun Barnoni "
                                     "oching.", markup=render.app_button(self.webapp_url))
             else:
                 self._send(chat_id, "Hisob ulanmagan.")
@@ -1415,7 +1452,7 @@ class VeneraBot:
         chat_id = chat["id"]
         link, state = self.links.lookup(tg_id)
         if link is None:
-            self._answer_cb(cq_id, "Avval Venera hisobingizni ulang: /start", alert=True)
+            self._answer_cb(cq_id, "Avval Barno hisobingizni ulang: /start", alert=True)
             return
         data = str(cq.get("data") or "")
         if self.briefs is not None and data.startswith("b:"):
@@ -1452,7 +1489,7 @@ class VeneraBot:
             self._answer_cb(cq_id, "Tugma eskirgan", alert=True)
             return
         if self.groups is None or not self.groups.allowed(chat_id):
-            self._answer_cb(cq_id, "Venera bu guruhda yoqilmagan", alert=True)
+            self._answer_cb(cq_id, "Barno bu guruhda yoqilmagan", alert=True)
             return
         found = self._member_of(tg_id) if isinstance(tg_id, int) else None
         if found is None or found[0].actorId != owner.actor_id:
@@ -1517,7 +1554,7 @@ class VeneraBot:
         path = str(getattr(link, "url", "") or "")
         markup = render.url_button("📄 Hujjatni ochish", origin + path if path.startswith("/") else "")
         if markup is None:
-            self._answer_cb(cq_id, "Hujjatni hozir ochib bo'lmadi - Venera ilovasida oching.",
+            self._answer_cb(cq_id, "Hujjatni hozir ochib bo'lmadi - Barno ilovasida oching.",
                             alert=True)
             return
         self._answer_cb(cq_id)
@@ -1675,7 +1712,7 @@ class VeneraBot:
         text = render.proposal_card(proposal)
         markup = render.proposal_buttons(str(proposal.get("token") or ""))
         if markup is None:
-            text += "\n\n<i>Bu taklifni Venera ilovasida tasdiqlang.</i>"
+            text += "\n\n<i>Bu taklifni Barno ilovasida tasdiqlang.</i>"
         self._send(chat_id, text, markup=markup)
 
     def _send_artifact(self, chat_id: int, art: dict[str, Any]) -> None:
@@ -1691,7 +1728,7 @@ class VeneraBot:
                     refs[parts[6]] = parts[5]
         if not refs:
             self._send(chat_id, f"📎 Hujjat tayyorlandi: <b>{esc(title)}</b>. "
-                                "Faylni Venera ilovasidan yuklab oling.")
+                                "Faylni Barno ilovasidan yuklab oling.")
             return
         kind = "docx" if "docx" in refs else "pdf"
         markup = render.file_button("pdf", refs["pdf"]) if kind == "docx" and "pdf" in refs else None

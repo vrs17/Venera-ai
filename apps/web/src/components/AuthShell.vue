@@ -46,7 +46,7 @@ const isDark = computed(() => theme.value === 'dark')
     <header class="shell__bar">
       <div v-if="brand" class="shell__brand">
         <span class="shell__spark"><BrandSpark :size="16" /></span>
-        <span>Venera</span>
+        <span>Barno</span>
       </div>
       <span v-else aria-hidden="true" />
       <div class="shell__tools">

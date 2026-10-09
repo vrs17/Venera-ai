@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "Venera API"
+    app_name: str = "Barno API"
     #: Frontend `package.json` versiyasi bilan bog'liq emas - bu API versiyasi.
     version: str = "0.1.0"
     debug: bool = False

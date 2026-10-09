@@ -10,6 +10,11 @@ brauzer uni statik resurs sifatida keshlaydi va ijro DARHOL boshlanadi.
 Matn `apps/web/src/i18n.ts` dagi `voiceGreeting` bilan MOS bo'lishi shart -
 u ekranda ko'rinadi, bu esa yangraydi.
 
+Venera -> Barno nomlanishidan keyin fayl QAYTA yasalishi kerak: eski WAV
+"Men Venera" deydi. Shu sababli `apps/web/src/api/greeting.ts` da `PREPARED`
+vaqtincha bo'sh (jonli sintez). Yasab bo'lgach u yerga ['uz', 'uz-Cyrl']
+qaytariladi.
+
 Ishlatish (apps/api ichidan, .env da TTS_CLIENT_SECRET bo'lishi kerak):
 
     venv/bin/python tools/make_greeting.py
@@ -29,7 +34,7 @@ from app.services.tts import TtsClient  # noqa: E402
 #: `voiceGreeting` bilan bir xil bo'lishi SHART.
 #: AYNAN foydalanuvchi bergan matn - tinish belgilari va "beraolaman" ning
 #: qo'shma yozilishi ham o'zgartirilmagan (aniq talab).
-GREETING = "Assalomu Alaykum. Men Venera ovozli yordamchisiman sizga qanday yordam beraolaman"
+GREETING = "Assalomu Alaykum. Men Barno ovozli yordamchisiman sizga qanday yordam beraolaman"
 OUT = Path(__file__).resolve().parents[3] / "apps/web/src/assets/greeting-uz.wav"
 
 

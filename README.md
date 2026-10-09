@@ -1,6 +1,8 @@
-# Venera
+# Barno AI
 
 Ovozli yordamchi platformasi. Ikkita mahsulot bitta repozitoriyada (monorepo).
+
+> Texnik nom `venera` o'zgarmagan: repo, papkalar, xizmatlar (`venera-api`, `venera-frontend`), `VENERA_*` sozlamalari va brauzer kalitlari shu nom bilan qoladi.
 
 | Mahsulot | Nima | Texnologiya | Papka |
 |---|---|---|---|

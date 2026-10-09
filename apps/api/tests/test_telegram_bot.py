@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.bot import render
-from app.bot.runner import COMMANDS, VeneraBot
+from app.bot.runner import COMMANDS, PROFILE, VeneraBot
 from app.core.config import settings
 from app.core.security import hash_password
 from app.services.integrations.assistant import AnswerStream, AssistantError
@@ -84,6 +84,7 @@ class FakeTelegram:
         self.files: dict[str, bytes] = {}
         self.fail_html_once = False
         self.commands: list = []
+        self.profile: dict[str, str] = {}
         self.token = "fake"
 
     @property
@@ -143,6 +144,27 @@ class FakeTelegram:
     def set_my_commands(self, commands):
         self.commands = commands
         self._rec("set_my_commands", commands=commands)
+
+    def get_my_name(self):
+        return self.profile.get("name", "")
+
+    def set_my_name(self, name):
+        self.profile["name"] = name
+        self._rec("set_my_name", text=name)
+
+    def get_my_short_description(self):
+        return self.profile.get("short_description", "")
+
+    def set_my_short_description(self, text):
+        self.profile["short_description"] = text
+        self._rec("set_my_short_description", text=text)
+
+    def get_my_description(self):
+        return self.profile.get("description", "")
+
+    def set_my_description(self, text):
+        self.profile["description"] = text
+        self._rec("set_my_description", text=text)
 
 
 @pytest.fixture
@@ -321,7 +343,7 @@ def test_ulanmagan_odamga_korsatma_va_ilova_tugmasi(world):
     first = tg.sent()[0]
     assert "bir marta" in first["text"]
     button = first["reply_markup"]["inline_keyboard"][0][0]
-    assert button == {"text": "Venera'ni ochish", "web_app": {"url": "https://llm.brb-tech.uz/tg/"}}
+    assert button == {"text": "Barnoni ochish", "web_app": {"url": "https://llm.brb-tech.uz/tg/"}}
     assert backend.questions == []
 
 
@@ -525,12 +547,42 @@ def test_buyruqlar_menyusi_va_offset(world):
     bot._prepare()
     # Menyu faqat jonli ishga tushishda yoziladi (`sync_commands`) - test nusxasida yo'q.
     assert tg.commands == [] and not tg.sent("set_my_commands") and bot.username == "venera_test_bot"
+    assert tg.profile == {} and not tg.sent("set_my_name")
     bot.sync_commands = True
     bot._prepared = False
     bot._prepare()
     assert tg.commands == COMMANDS
     assert bot.poll_once() == 2 and bot._offset == 10
-    assert "Venera" in tg.texts()[0]
+    assert "Barno" in tg.texts()[0]
+
+
+def test_bot_profili_bir_marta_yoziladi(world):
+    """Nom va tavsif (`PROFILE`) faqat jonli ishga tushishda va faqat farq
+    qilsa yoziladi - `setMyName` chegarasi qattiq."""
+    bot, tg, *_ = world
+    bot.sync_commands = True
+    tg.profile = {"name": "Venera AI", "short_description": PROFILE["short_description"]}
+    bot._prepare()
+    assert tg.profile == PROFILE and tg.profile["name"] == "Barno AI"
+    assert len(tg.sent("set_my_name")) == 1 and len(tg.sent("set_my_description")) == 1
+    assert not tg.sent("set_my_short_description")          # allaqachon bir xil edi
+    bot._prepared = False
+    bot._prepare()
+    assert len(tg.sent("set_my_name")) == 1 and len(tg.sent("set_my_description")) == 1
+    assert len(PROFILE["name"]) <= 64 and len(PROFILE["short_description"]) <= 120
+    assert len(PROFILE["description"]) <= 512
+
+
+def test_bot_profili_xatosi_botni_toxtatmaydi(world):
+    """Bir maydon yiqilsa (masalan 429) - qolganlari baribir yoziladi."""
+    bot, tg, *_ = world
+
+    def busy(name):
+        raise TelegramError("setMyName: 429", code=429, description="Too Many Requests", retry_after=3600)
+
+    tg.set_my_name = busy
+    assert bot.sync_profile() == 2
+    assert tg.profile == {k: v for k, v in PROFILE.items() if k != "name"}
 
 
 # --- render --------------------------------------------------------------------
@@ -744,7 +796,7 @@ def test_webhook_endpoint_xabarni_botga_beradi_takrorini_tashlaydi(client, webho
     update = dict(text_update("/help"), update_id=777)
     assert client.post("/api/v1/telegram/webhook", json=update, headers=headers).json() == {"ok": True}
     assert client.post("/api/v1/telegram/webhook", json=update, headers=headers).status_code == 200
-    help_texts = [t for t in tg.texts() if "Venera" in t and "/new" in t]
+    help_texts = [t for t in tg.texts() if "Barno" in t and "/new" in t]
     assert len(help_texts) == 1, "takroriy yangilanish ikkinchi marta ishlanmasligi kerak"
 
 

@@ -53,7 +53,7 @@ fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-echo "=== Venera AI Assistant — macOS build ==="
+echo "=== Barno AI Assistant — macOS build ==="
 echo "Loyiha: $ROOT"
 
 PYTHON="python3"
@@ -140,7 +140,7 @@ cp -R "$APP" "$STAGE/"
 # o'rnatishning standart usuli, alohida installer kerak emas.
 ln -s /Applications "$STAGE/Applications"
 
-hdiutil create -volname "Venera AI Assistant" \
+hdiutil create -volname "Barno AI Assistant" \
                -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
 echo "     $DMG  ($(du -h "$DMG" | cut -f1))"
 

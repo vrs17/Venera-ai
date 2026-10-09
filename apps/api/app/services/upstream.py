@@ -101,7 +101,7 @@ def warnings_for(snapshot: dict) -> list[str]:
         routerda = [
             nomi for nomi, tanlov in (
                 ("o'zbekcha ovoz", settings.stt_provider),
-                ('"Salom Venera"', settings.stt_wake_provider),
+                ('"Salom Barno"', settings.stt_wake_provider),
             ) if tanlov != "gapi"
         ]
         if routerda:

@@ -1,4 +1,4 @@
-# macOS build — Venera AI Assistant
+# macOS build — Barno AI Assistant
 
 Bu hujjat `.dmg` ni **Mac'da** yig'ish tartibini beradi.
 
@@ -136,7 +136,7 @@ qayta tekshiradi). Shuning uchun mijoz:
 
 1. `.dmg` ni yuklab oladi va sha256 ni tekshiradi;
 2. uni **Finder'da ochadi** (`open -R`);
-3. foydalanuvchi Venera'ni Applications papkasiga sudrab tashlaydi.
+3. foydalanuvchi ilovani (`Venera.app`) Applications papkasiga sudrab tashlaydi.
 
 "O'rnatildi" belgisi qo'yilmaydi — aks holda keyingi ishga tushishda noto'g'ri
 "yangilandi" xabari chiqardi.

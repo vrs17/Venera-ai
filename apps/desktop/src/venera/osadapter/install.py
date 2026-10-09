@@ -16,8 +16,10 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 APP_ID = "Venera-AI-Assistant"
-APP_NAME = "Venera AI Assistant"
-PUBLISHER = "Venera"
+APP_NAME = "Barno AI Assistant"
+#: Qayta nomlashdan oldingi yorliq nomlari - o'chirishda ular ham olib tashlanadi.
+LEGACY_APP_NAMES = ("Venera AI Assistant",)
+PUBLISHER = "Barno"
 UNINSTALL_KEY = rf"Software\Microsoft\Windows\CurrentVersion\Uninstall\{APP_ID}"
 CREATE_NO_WINDOW = 0x08000000
 
@@ -35,6 +37,16 @@ def start_menu_shortcut() -> Path:
 def desktop_shortcut() -> Path:
     profile = os.environ.get("USERPROFILE") or str(Path.home())
     return Path(profile) / "Desktop" / f"{APP_NAME}.lnk"
+
+
+def legacy_shortcuts() -> list[Path]:
+    appdata = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    profile = os.environ.get("USERPROFILE") or str(Path.home())
+    found: list[Path] = []
+    for name in LEGACY_APP_NAMES:
+        found.append(Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / f"{name}.lnk")
+        found.append(Path(profile) / "Desktop" / f"{name}.lnk")
+    return found
 
 
 def _powershell(script: str, timeout: float = 30.0) -> bool:
@@ -149,7 +161,7 @@ def uninstall(keep_settings: bool = False) -> list[str]:
     status = adapter.autostart_remove()
     steps.append("Avtostart o'chirildi" if not status.installed else f"Avtostart: {status.detail}")
 
-    for shortcut in (start_menu_shortcut(), desktop_shortcut()):
+    for shortcut in (start_menu_shortcut(), desktop_shortcut(), *legacy_shortcuts()):
         try:
             shortcut.unlink(missing_ok=True)
         except OSError as exc:

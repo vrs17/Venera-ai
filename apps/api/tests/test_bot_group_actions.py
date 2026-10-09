@@ -219,7 +219,7 @@ def test_eskirgan_va_ochirilgan_guruh_tugmasi(w):
     mockup(w)
     w.allowed.clear()
     press(w, f"a:c:{PROPOSAL['token']}", user=ISLOM, message_id=1)
-    assert toasts(w.tg)[-1] == ("Venera bu guruhda yoqilmagan", True) and w.backend.actions == []
+    assert toasts(w.tg)[-1] == ("Barno bu guruhda yoqilmagan", True) and w.backend.actions == []
 
 
 def test_crm_yoqilmagan_bot_avvalgidek(tmp_path):

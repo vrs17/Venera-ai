@@ -25,7 +25,7 @@ state:
 
 # --- holat oynasi (ui/window.py) -------------------------------------------
 window:
-  title: "Venera"
+  title: "Barno"
   version: "v{version}"
   mic: "Mikrofon"
   command: "Buyruq"

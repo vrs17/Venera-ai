@@ -2,4 +2,4 @@
 
 __version__ = "0.3.0"
 APP_NAME = "Venera"
-APP_DISPLAY_NAME = "Venera AI Assistant"
+APP_DISPLAY_NAME = "Barno AI Assistant"

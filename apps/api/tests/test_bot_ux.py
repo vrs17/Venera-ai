@@ -328,7 +328,7 @@ def test_iqtibos_bolmasa_hammasi_va_chegara(world):
                                     {"type": "token", "text": "Iqtibossiz javob."}, {"type": "done"}])
     lines = answer["text"].split("📚 <b>Manbalar</b>\n")[1].split("\n")
     assert len(lines) == render.FOOTNOTES_MAX + 1
-    assert lines[-1] == "<i>… yana 2 ta manba - Venera ilovasida</i>"
+    assert lines[-1] == "<i>… yana 2 ta manba - Barno ilovasida</i>"
     assert lines[0].endswith("…") and len(lines[0]) < 100
     docs = [b for b in all_buttons(answer["reply_markup"]) if b["callback_data"].startswith("d:")]
     assert [b["text"] for b in docs] == [f"📄 [{i}]" for i in range(1, 7)]
@@ -370,7 +370,7 @@ def test_hujjat_havolasi_yasalmasa_tushunarli_xabar(world):
     backend.link_error = RuntimeError("buzildi")
     count = len(tg.sent())
     bot.handle_update(press("d:HR_045"))
-    assert toasts(tg)[-1] == ("Hujjatni hozir ochib bo'lmadi - Venera ilovasida oching.", True)
+    assert toasts(tg)[-1] == ("Hujjatni hozir ochib bo'lmadi - Barno ilovasida oching.", True)
     assert len(tg.sent()) == count
 
 
@@ -395,7 +395,7 @@ def test_ulanmagan_odamga_bitta_xabar_va_ilova_tugmasi(world):
     bot.handle_update(text_update("yana", message_id=11))
     [only] = tg.sent()
     assert "bir marta" in only["text"]
-    assert only["reply_markup"] == {"inline_keyboard": [[{"text": "Venera'ni ochish",
+    assert only["reply_markup"] == {"inline_keyboard": [[{"text": "Barnoni ochish",
                                                           "web_app": {"url": WEBAPP}}]]}
     # `/help` ham bitta xabar: yordam + o'sha tugma.
     bot.handle_update(text_update("/help", message_id=12))

@@ -39,7 +39,7 @@ admin_only = require_roles("ADMIN")
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(admin_only)])
 
-_ACTOR = Path(ge=0, le=2**53, description="Venera `actorId`")
+_ACTOR = Path(ge=0, le=2**53, description="Barno `actorId`")
 _CHANNEL = "^(web|miniapp|bot|desktop|api)$"
 
 

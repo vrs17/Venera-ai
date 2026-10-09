@@ -163,7 +163,7 @@ async function signOut() {
         </button>
       </VTooltip>
       <span class="an__title an__fade">
-        <span class="an__word">Venera</span>
+        <span class="an__word">Barno</span>
         <span class="an__badge">{{ t('admin.title') }}</span>
       </span>
       <span v-if="variant === 'rail'" class="an__collapse an__block" :inert="mini">

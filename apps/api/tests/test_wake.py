@@ -80,6 +80,62 @@ def test_uygotmaydi(text):
     assert not matched, f"{text!r} noto'g'ri uyg'otdi ({reason})"
 
 
+@pytest.mark.parametrize("text", [
+    # Yangi nom (2026-10-09). Qoida QAT'IY (`_is_barno`): butun so'z, masofa <=1.
+    "Salom Barno",
+    "salom barno.",
+    "salom, barno!",
+    "assalomu alaykum barno.",
+    "assalom barno",
+    "SALOM BARNO.",
+    "salombarno",                     # model so'zlarni qo'shib yuboradi
+    "assalomubarno",
+    "barno",                          # salomsiz, lekin YOLG'IZ - bu chaqiriq
+    "barno.",
+    "hey barno",
+    "salom barna",
+    "salom barnu",
+    "salom borno",
+    "salom parno",
+    "salom varno",
+    "salom bar no",                   # model nomni ikkiga bo'ladi
+    "Салом Барно",                    # uz-Cyrl
+    "барно",
+    "ассалому алайкум барно",
+])
+def test_barno_uygotadi(text):
+    matched, reason = is_wake_phrase(text)
+    assert matched, f"{text!r} uyg'otmadi ({reason})"
+
+
+@pytest.mark.parametrize("text", [
+    # "Barno" qisqa va "bar..." bilan boshlanadigan so'zlar ko'p - eski nomdagi
+    # keng chegara bu yerda "salom barcha" (guruhdagi eng ko'p salom) ga uyg'onardi.
+    "salom barcha",
+    "salom barchaga",
+    "barcha",
+    "barchasi",
+    "xabarni oching",
+    "xabarni",
+    "barda",
+    "bardi",
+    "barmoq",
+    "barmoqlar",
+    "salom bahrom",
+    "salom baraka",
+    "salom bahor",
+    "bormi",
+    "barno haqida malumot bering",    # gap ichida nom
+    "menga barno kerak edi",
+    "salom barchangizga",
+    "bar ni",
+    "салом барча",
+])
+def test_barno_uygotmaydi(text):
+    matched, reason = is_wake_phrase(text)
+    assert not matched, f"{text!r} noto'g'ri uyg'otdi ({reason})"
+
+
 def test_sabab_aytiladi():
     """"Uyg'onmadi" degan yozuv foydasiz - jurnal NEGA ekanini ko'rsatishi
     kerak, aks holda qoidalarni sozlash taxmin bo'lib qoladi."""
@@ -88,6 +144,7 @@ def test_sabab_aytiladi():
     assert "juda uzun" in is_wake_phrase("bir ikki uch tort besh olti yetti")[1]
     assert is_wake_phrase("menga venera kerak edi")[1] == "salom yo'q"
     assert is_wake_phrase("salom venera")[1] == "salom + nom"
+    assert is_wake_phrase("salom barno")[1] == "salom + nom"
     assert "faqat nom" in is_wake_phrase("venera")[1]
 
 
@@ -600,7 +657,7 @@ def test_uz_backend_ochganda_health_aytadi():
     })
     assert len(warnings) == 1
     # Xabar NIMA ISHLAMASLIGINI aytadi, "degraded" demaydi.
-    assert "Salom Venera" in warnings[0] and "ISHLAMAYDI" in warnings[0]
+    assert "Salom Barno" in warnings[0] and "ISHLAMAYDI" in warnings[0]
 
 
 def test_hammasi_sogolom_bolsa_jim():

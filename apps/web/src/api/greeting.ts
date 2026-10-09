@@ -14,8 +14,15 @@ import greetingUrl from '../assets/greeting-uz.wav'
 
 /** Locales the prepared file speaks for. The recording is Uzbek; a Cyrillic
  *  reader hears the same words, which is correct — the script differs, the
- *  language does not. */
-const PREPARED: readonly string[] = ['uz', 'uz-Cyrl']
+ *  language does not.
+ *
+ *  EMPTY for now: the product was renamed Venera -> Barno, and the current
+ *  greeting-uz.wav still says "Men Venera". Until it is regenerated with
+ *  `make_greeting.py` (its GREETING already says Barno), `uz` falls back to
+ *  live synthesis of `voiceGreeting` — ~2 s slower, but it says the right
+ *  name; `uz-Cyrl` has no live voice (see `canSpeak`) and opens silently.
+ *  After regenerating, put ['uz', 'uz-Cyrl'] back. */
+const PREPARED: readonly string[] = []
 
 let cached: Blob | null = null
 

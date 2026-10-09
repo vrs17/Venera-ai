@@ -122,7 +122,7 @@ class CrmReport:
     tools: set[str] = field(default_factory=set)
 
 
-_NOT_LINKED = "CRM ulanmagan - CRM holati ko'rsatilmadi (Venera ilovasida CRM ga kiring)"
+_NOT_LINKED = "CRM ulanmagan - CRM holati ko'rsatilmadi (Barno ilovasida CRM ga kiring)"
 _FAILED = "CRM tekshiruvi bo'lmadi"
 _NO_CRM = "agent CRM ni o'qimadi - CRM holati ko'rsatilmadi"
 

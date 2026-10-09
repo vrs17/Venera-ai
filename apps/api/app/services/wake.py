@@ -1,4 +1,4 @@
-"""Uyg'otish so'zi: "Salom Venera".
+"""Uyg'otish so'zi: "Salom Barno" (o'tish davrida eski "Salom Venera" ham qabul qilinadi).
 
 MOSLASHTIRGICH SHU YERDA, brauzerda emas. Uchta sabab:
 
@@ -34,7 +34,10 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-NAME = "venera"
+NAME = "barno"
+#: O'tish davri: eski "Salom Venera" ham JIM qabul qilinadi - uning qoidasi
+#: (`_is_legacy`) o'zgarmagan.
+LEGACY_NAME = "venera"
 #: Nomni tanish uchun ruxsat etilgan Levenshtein masofasi. Model bir xil
 #: tovushni "venera", "vinera", "venira" deb yozadi.
 NAME_DISTANCE = 2
@@ -45,6 +48,17 @@ NAME_MIN_LEN = 5
 #: O'zbekcha salomlar, "assalomu alaykum" bo'linadigan bo'laklari bilan.
 GREETINGS = ("salom", "assalom", "assalomu", "alaykum", "aleykum", "salomlar",
              "salomatsizmi", "hello", "hey")
+#: Nomga yopishib keladigan salom boshlari - model so'zlarni qo'shadi ("salombarno").
+_GREETING_STEMS = ("assalomu", "assalom", "salom", "hello", "hey")
+
+#: Kirill -> lotin. "uz-Cyrl" da STT "Салом Барно" deb yozishi mumkin. Faqat
+#: yangi nom va salom uchun ishlatiladi - eski nom qoidasi aynan avvalgidek.
+_TO_LATIN = str.maketrans({
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "yo", "ж": "j", "з": "z",
+    "и": "i", "й": "y", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r",
+    "с": "s", "т": "t", "у": "u", "ф": "f", "х": "x", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sh",
+    "ъ": "", "ы": "i", "ь": "", "э": "e", "ю": "yu", "я": "ya", "ў": "o", "қ": "q", "ғ": "g", "ҳ": "h",
+})
 
 #: Undan uzun gap chaqiriq emas - "Venera tizimi haqida ayting" ham nomni
 #: o'z ichiga oladi, lekin panelni ochish kerak emas.
@@ -97,7 +111,24 @@ def normalize_heard(text: str) -> str:
     return re.sub(r"\s+", " ", folded).strip()
 
 
-def _is_name(word: str) -> bool:
+def _is_barno(word: str) -> bool:
+    """Shu so'z "barno" mi? QAT'IY: butun so'z, masofa <=1, uzunligi 5-6 -
+    yoki salomga yopishgan nom ("salombarno").
+
+    Eski nomdagi keng chegara (masofa 2-3, uzun so'z ichida qidirish) bu
+    nomda XAVFLI: "barcha", "barda", "barmoq", "xabarni" ham nom bo'lib
+    qolardi - "salom barcha" esa guruhdagi eng ko'p salom.
+    """
+    if len(word) in (len(NAME), len(NAME) + 1) and distance(word, NAME, 1) <= 1:
+        return True
+    for stem in _GREETING_STEMS:
+        rest = word[len(stem):]
+        if word.startswith(stem) and len(rest) in (len(NAME), len(NAME) + 1) and distance(rest, NAME, 1) <= 1:
+            return True
+    return False
+
+
+def _is_legacy(word: str) -> bool:
     """Shu so'z "venera" mi?
 
     Chegara so'z uzunligiga qarab o'sadi. Sabab jonli yozuvlardan: model
@@ -112,12 +143,12 @@ def _is_name(word: str) -> bool:
     """
     if len(word) < NAME_MIN_LEN:
         return False
-    limit = 2 if len(word) <= len(NAME) else 3
-    if distance(word, NAME, limit) <= limit:
+    limit = 2 if len(word) <= len(LEGACY_NAME) else 3
+    if distance(word, LEGACY_NAME, limit) <= limit:
         return True
-    if len(word) > len(NAME) + 1:
-        for size in (len(NAME), len(NAME) + 1):
-            if distance(word[-size:], NAME, 1) <= 1 or distance(word[:size], NAME, 1) <= 1:
+    if len(word) > len(LEGACY_NAME) + 1:
+        for size in (len(LEGACY_NAME), len(LEGACY_NAME) + 1):
+            if distance(word[-size:], LEGACY_NAME, 1) <= 1 or distance(word[:size], LEGACY_NAME, 1) <= 1:
                 return True
     return False
 
@@ -125,14 +156,19 @@ def _is_name(word: str) -> bool:
 def is_wake_phrase(text: str) -> tuple[bool, str]:
     """(uyg'otadimi, sabab). Sabab log uchun - "nega uyg'onmadi" degan savol
     aynan shu yerda javob topadi."""
-    words = normalize_heard(text).split()
+    heard = normalize_heard(text)
+    words = heard.split()
     if not words:
         return False, "bo'sh"
     if len(words) > MAX_WORDS:
         return False, f"juda uzun ({len(words)} so'z)"
-    if not any(_is_name(word) for word in words):
+    latin = heard.translate(_TO_LATIN).split()
+    # "bar no" - model nomni ikkiga bo'lib yozadi.
+    barno = any(_is_barno(word) for word in latin) or any(a + b == NAME for a, b in zip(latin, latin[1:]))
+    if not barno and not any(_is_legacy(word) for word in words):
         return False, "nom yo'q"
-    if any(distance(word, greeting, 2) <= 2 for word in words for greeting in GREETINGS):
+    pool = latin if barno else words
+    if any(distance(word, greeting, 2) <= 2 for word in pool for greeting in GREETINGS):
         return True, "salom + nom"
     if len(words) <= NAME_ONLY_WORDS:
         return True, "faqat nom (qisqa chaqiriq)"
