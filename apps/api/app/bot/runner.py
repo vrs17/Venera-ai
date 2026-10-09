@@ -93,6 +93,7 @@ from ..services.identities import Directory
 from ..services.users import UserStore
 from . import render
 from .briefs import BTN_GROUPS, BriefService
+from .group_actions import ONLY_OWNER, GroupActions
 from .group_admin import GROUP_NOT_ENABLED, GROUP_PAUSED, GroupAdmin
 from .groups import GroupAssistant
 from .render import esc
@@ -257,11 +258,32 @@ class Backend:
 
         return _chat.effective_engine(user, "bot")
 
-    def action(self, verb: str, token: str, user: AuthUser) -> dict[str, Any]:
+    def stream_group(self, question: str, user: AuthUser, chat_id: str):
+        """Guruhdagi CRM so'rovi (`group_actions.py`): shaxsiy chatdagi AYNI yo'l, lekin
+        FAQAT odamning O'Z CRM tokeni bilan - HRM yo'q (javob guruhdagi hammaga
+        ko'rinadi), umumiy agent hisobi yo'q (vazifa so'ragan odam nomidan)."""
+        from ..api.v1 import chat as _chat
+
+        return _chat.open_stream(question, user, chat_id, channel="bot", mode=BOT_MODE, engine=None,
+                                 platforms=("crm",), own_tokens=True)
+
+    def own_crm(self, user: AuthUser) -> bool:
+        """Odamning O'Z CRM ulanishi bormi (guruhda CRM so'rovi sharti)."""
+        from ..api.v1 import chat as _chat
+
+        return _chat.has_own_crm(user)
+
+    def action(self, verb: str, token: str, user: AuthUser, *, own_tokens: bool = False) -> dict[str, Any]:
+        """Taklifni tasdiqlash / rad etish. `own_tokens` - guruhdagi taklif: faqat
+        odamning o'z CRM tokeni (u qanday yaratilgan bo'lsa, shunday)."""
         from ..api.v1 import chat as _chat
 
         call = _chat._assistant.confirm_action if verb == "confirm" else _chat._assistant.cancel_action
-        return call(token, user_id=_chat.assistant_user_id(user), tokens=_chat._live_tokens(user))
+        if own_tokens:
+            tokens = {k: v for k, v in _chat._connectors.hub.tokens(str(user.actorId)).items() if k == "crm"}
+        else:
+            tokens = _chat._live_tokens(user)
+        return call(token, user_id=_chat.assistant_user_id(user), tokens=tokens)
 
     def artifact(self, token: str, kind: str):
         from ..api.v1 import chat as _chat
@@ -429,6 +451,7 @@ class VeneraBot:
         groups: GroupAssistant | None = None,
         briefs: BriefService | None = None,
         admin: GroupAdmin | None = None,
+        group_actions: bool = False,
     ) -> None:
         self.api = api
         #: Guruhlarni botda boshqarish (`group_admin.py`). `None` - guruhlar
@@ -452,6 +475,13 @@ class VeneraBot:
         self.links = links
         self.users = users
         self.backend = backend or Backend()
+        #: Guruhda CRM (`group_actions.py`): "@venera crmga kiritib qo'y" - vazifa
+        #: taklifi, faqat so'ragan odam tasdiqlaydi. `False` - guruhlar avvalgidek.
+        self.group_actions: GroupActions | None = None
+        if group_actions and groups is not None:
+            self.group_actions = GroupActions(api, groups.store, self.backend, resolve=self._member_of,
+                                              username=lambda: self.username)
+            groups.actions = self.group_actions
         self.webapp_url = webapp_url
         self.typing_every = typing_every
         self.username = ""
@@ -946,10 +976,10 @@ class VeneraBot:
         with bind(None, "bot"):
             self.admin.on_member(update, resolve=self._exec_of)
 
-    def _exec_of(self, tg_id: int) -> tuple[AuthUser, str | None] | None:
-        """Telegram odami - guruhlarni boshqara oladigan rahbarmi (`_account`
-        ning JIM nusxasi: hech kimga yozmaydi, ulanishni uzmaydi)."""
-        if self.admin is None or not isinstance(tg_id, int):
+    def _member_of(self, tg_id: int) -> tuple[AuthUser, str | None] | None:
+        """Telegram odami - Venera'ga ulangan, bloklanmagan xodimmi (`_account` ning
+        JIM nusxasi: hech kimga yozmaydi, ulanishni uzmaydi)."""
+        if not isinstance(tg_id, int):
             return None
         link, _ = self.links.lookup(tg_id)
         if link is None:
@@ -963,9 +993,18 @@ class VeneraBot:
             return None
         login = getattr(stored, "username", None)
         verdict = admin_users.access(stored.to_public(), login=login)
-        if verdict.blocked or not self.admin.allowed(verdict.user, login):
+        if verdict.blocked:
             return None
         return verdict.user, login
+
+    def _exec_of(self, tg_id: int) -> tuple[AuthUser, str | None] | None:
+        """Telegram odami - guruhlarni boshqara oladigan rahbarmi."""
+        if self.admin is None:
+            return None
+        found = self._member_of(tg_id)
+        if found is None or not self.admin.allowed(*found):
+            return None
+        return found
 
     def _group_note(self, chat_id: Any, message_id: Any, *, text: str = _GROUP_ONLY) -> None:
         """"Faqat shaxsiy chatda" (yoki guruh holati) - guruhga `_GROUP_EVERY` da
@@ -1360,7 +1399,13 @@ class VeneraBot:
         chat = msg.get("chat") or {}
         tg_id = (cq.get("from") or {}).get("id")
         if chat.get("type") not in (None, "private"):
-            # Guruhdagi xabar tugmasi (bot u yerda tugma yubormaydi - bu
+            data = str(cq.get("data") or "")
+            if (self.group_actions is not None and data.startswith("a:") and chat.get("type") in ("group", "supergroup")
+                    and isinstance(chat.get("id"), int)):
+                # Guruhdagi CRM taklifi kartasi (`group_actions.py`).
+                self._group_action(cq_id, chat["id"], msg, tg_id, data)
+                return
+            # Boshqa guruh tugmasi (bot u yerda boshqa tugma yubormaydi - bu
             # nusxa yoki soxta so'rov): hech narsa bajarilmaydi.
             self._answer_cb(cq_id, _GROUP_ONLY)
             return
@@ -1397,6 +1442,24 @@ class VeneraBot:
         # `bot` kanali bilan yoziladi.
         with bind(user.actorId, "bot"):
             self._button(cq_id, chat_id, msg, user, kind, rest)
+
+    def _group_action(self, cq_id: str, chat_id: int, msg: dict[str, Any], tg_id: Any, data: str) -> None:
+        """Guruhdagi taklif tugmasi: faqat SO'RAGAN odam bosa oladi, faqat yoqilgan
+        guruhda; tasdiqlash - shaxsiy chatdagi AYNI `_action`, o'z CRM tokeni bilan."""
+        verb, _, token = data[2:].partition(":")
+        owner = self.group_actions.owner(token, chat_id) if self.group_actions is not None else None
+        if owner is None:
+            self._answer_cb(cq_id, "Tugma eskirgan", alert=True)
+            return
+        if self.groups is None or not self.groups.allowed(chat_id):
+            self._answer_cb(cq_id, "Venera bu guruhda yoqilmagan", alert=True)
+            return
+        found = self._member_of(tg_id) if isinstance(tg_id, int) else None
+        if found is None or found[0].actorId != owner.actor_id:
+            self._answer_cb(cq_id, ONLY_OWNER.format(name=owner.name), alert=True)
+            return
+        with bind(found[0].actorId, "bot"):
+            self._action(cq_id, chat_id, msg.get("message_id"), found[0], verb, token, own_tokens=True)
 
     def _button(self, cq_id: str, chat_id: int, msg: dict[str, Any], user: AuthUser,
                 kind: str, rest: str) -> None:
@@ -1568,7 +1631,7 @@ class VeneraBot:
         self._answer_cb(cq_id, "Rahmat, yuborildi")
 
     def _action(self, cq_id: str, chat_id: int, message_id: Any, user: AuthUser,
-                verb: str, token: str) -> None:
+                verb: str, token: str, *, own_tokens: bool = False) -> None:
         if verb not in ("c", "x") or not render.SAFE_KEY.fullmatch(token):
             self._answer_cb(cq_id, "Tugma eskirgan", alert=True)
             return
@@ -1581,7 +1644,8 @@ class VeneraBot:
         what = "tasdiqlash" if verb == "c" else "rad etish"
         try:
             try:
-                result = self.backend.action("confirm" if verb == "c" else "cancel", token, user)
+                extra = {"own_tokens": True} if own_tokens else {}
+                result = self.backend.action("confirm" if verb == "c" else "cancel", token, user, **extra)
             except AssistantError as exc:
                 log.warning("Telegram amal %s (%s, %s): %s", what, user.actorId, token, exc)
                 self._answer_cb(cq_id, _action_message(exc.status), alert=True)

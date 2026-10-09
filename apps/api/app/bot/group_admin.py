@@ -67,6 +67,8 @@ NOTICE = (
     "Venera — kompaniyaning AI yordamchisi. U shu guruh yozishmasini o'qiydi va saqlaydi.\n\n"
     "• /summary — guruh xulosasi, masalan: <code>/summary 3 kun</code>\n"
     "• /askvenera — yozishma bo'yicha savol\n"
+    "• CRM: Venera'ni belgilab «crmga kiritib qo'y» deb yozing — yozishmadan vazifa taklifi chiqadi; "
+    "tasdiqlamaguningizcha CRM o'zgarmaydi.\n"
     "• Kompaniya rahbariyati shu guruhdagi ish holati bo'yicha qisqa brif oladi "
     "(guruh a'zosi bo'lmasa ham).\n"
     "• Xabarlar {days} kun saqlanadi, keyin o'chiriladi.\n"

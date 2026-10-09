@@ -13,9 +13,11 @@ NIMA QILADI:
   * `/help` - qisqa yo'riqnoma.
 
 NIMA QILMAYDI - va bu ataylab:
-  * HRM/CRM ga, kontaktlar ro'yxatiga, yuqoridagi yordamchiga MUROJAAT
-    QILMAYDI. Javob faqat shu guruh xabarlaridan tuziladi - guruhga shaxsiy
-    HR ma'lumoti chiqishi uchun yo'l yo'q;
+  * HRM ga, kontaktlar ro'yxatiga MUROJAAT QILMAYDI. `/summary` va
+    `/askvenera` javobi faqat shu guruh xabarlaridan tuziladi - guruhga
+    shaxsiy HR ma'lumoti chiqishi uchun yo'l yo'q. CRM so'rovi ("@venera
+    crmga kiritib qo'y", `/task`) - alohida yo'l (`group_actions.py`): so'ragan
+    odamning O'Z CRM ulanishi bilan, faqat CRM;
   * hech qanday amal bajarmaydi va tugma yubormaydi.
 
 KIM SO'RAY OLADI - guruhning istalgan a'zosi (Venera hisobini ulash shart
@@ -65,8 +67,11 @@ GROUP_COMMANDS = [
     {"command": "askvenera", "description": "Guruh yozishmasi bo'yicha savol"},
     {"command": "help", "description": "Venera guruhda nima qila oladi"},
 ]
+#: CRM yoqilgan guruhda menyuga qo'shiladi (`group_actions.py`).
+TASK_COMMAND = {"command": "task", "description": "CRM: yozishmadan vazifa taklifi"}
 _SUMMARY = frozenset({"summary", "xulosa"})
 _ASK = frozenset({"askvenera", "ask", "venera"})
+_TASK = frozenset({"task", "vazifa", "crm"})
 
 #: Bir vaqtda kutayotgan so'rovlar - ortig'i rad etiladi.
 _PENDING_MAX = 8
@@ -87,8 +92,13 @@ _NOTHING_YET = ("Hali saqlangan xabar yo'q. Venera bu guruh xabarlarini endi yoz
                 "biroz suhbatdan keyin so'rang.")
 
 
-def help_text(username: str, days: int = 90) -> str:
+def help_text(username: str, days: int = 90, *, crm: bool = False) -> str:
     mention = f"• @{esc(username)} deb yozsangiz ham /askvenera kabi javob beraman.\n" if username else ""
+    task = ("• CRM: <code>/task</code> yoki xabarga javob tarzida «@venera crmga kiritib qo'y» - yozishmadan "
+            "vazifa taklifi chiqadi; faqat so'ragan odam tasdiqlaydi, o'z CRM ulanishi bilan.\n" if crm else "")
+    source = ("/summary va /askvenera javobi faqat shu guruh xabarlaridan tuziladi - HRM ma'lumoti "
+              "ishlatilmaydi." if crm else
+              "Javob faqat shu guruh xabarlaridan tuziladi - HRM/CRM ma'lumoti ishlatilmaydi.")
     return (
         "<b>Venera</b> - guruh yordamchisi.\n\n"
         "• /summary - oxirgi 24 soat xulosasi. Davr bilan: <code>/summary bugun</code>, "
@@ -96,9 +106,8 @@ def help_text(username: str, days: int = 90) -> str:
         "• /askvenera - yozishma bo'yicha savol: "
         "<code>/askvenera Makhmud bu hafta nima qildi?</code>, "
         "<code>/askvenera mini app bo'yicha nima kelishildi?</code>\n"
-        f"{mention}\n"
-        "Javob faqat shu guruh xabarlaridan tuziladi - HRM/CRM ma'lumoti ishlatilmaydi. "
-        f"Xabarlar {days} kun saqlanadi. Shaxsiy savollar - shaxsiy chatda."
+        f"{task}{mention}\n"
+        f"{source} Xabarlar {days} kun saqlanadi. Shaxsiy savollar - shaxsiy chatda."
     )
 
 
@@ -107,7 +116,7 @@ def help_text(username: str, days: int = 90) -> str:
 
 @dataclass(frozen=True)
 class Request:
-    kind: str       # "summary" | "ask" | "help"
+    kind: str       # "summary" | "ask" | "task" | "help"
     text: str       # odamning so'rovi - buyruq va @mention siz
 
 
@@ -130,6 +139,8 @@ def parse_request(msg: dict[str, Any], username: str) -> Request | None:
             return Request("summary", rest)
         if command in _ASK:
             return Request("ask", rest)
+        if command in _TASK:
+            return Request("task", rest)
         if command in ("help", "start") or target:
             return Request("help", "")
         return None
@@ -416,6 +427,8 @@ class GroupAssistant:
         self._busy_note_at: dict[int, float] = {}
         self._pending = 0
         self._menus: set[int] = set()
+        #: Guruhda CRM (`group_actions.GroupActions`) - bot ulaydi; `None` - CRM yo'q.
+        self.actions: Any = None
 
     # --- kirish -------------------------------------------------------------------------
 
@@ -444,13 +457,20 @@ class GroupAssistant:
                 self._remember(msg, anonymous=anonymous)
             return
         thread = _thread(msg)
+        if request.kind == "task" and self.actions is None:
+            request = Request("help", "")
         if request.kind == "help":
             button = (render.url_button("Shaxsiy chatni ochish", f"https://t.me/{username}")
                       if re.fullmatch(r"\w{3,64}", username) else None)
-            self._send(chat_id, help_text(username, self.store.days), reply_to=msg.get("message_id"),
-                       thread=thread, markup=button)
+            self._send(chat_id, help_text(username, self.store.days, crm=self.actions is not None),
+                       reply_to=msg.get("message_id"), thread=thread, markup=button)
             return
+        crm = self.actions is not None and self.actions.wants(msg, request.kind, request.text)
         if not self._admit(chat_id, sender.get("id"), msg.get("message_id"), thread):
+            return
+        if crm:
+            # CRM so'rovi - yordamchi agent orqali, so'ragan odamning o'z CRM ulanishi bilan.
+            self._run(lambda: self.actions.handle(msg, request.text))
             return
         self._run(lambda: self._answer(msg, request, username))
 
@@ -487,9 +507,10 @@ class GroupAssistant:
                 return
             self._menus.add(chat_id)
         scope = {"type": "chat", "chat_id": chat_id}
+        commands = GROUP_COMMANDS + ([TASK_COMMAND] if self.actions is not None else [])
         try:
-            if self.api.get_my_commands(scope=scope) != GROUP_COMMANDS:
-                self.api.set_my_commands(GROUP_COMMANDS, scope=scope)
+            if self.api.get_my_commands(scope=scope) != commands:
+                self.api.set_my_commands(commands, scope=scope)
                 log.info("Telegram guruh: buyruqlar menyusi yangilandi")
         except Exception as exc:  # noqa: BLE001 - menyu qulaylik, xabarni to'xtatmaydi
             log.warning("Telegram guruh: menyu yangilanmadi: %s", exc)

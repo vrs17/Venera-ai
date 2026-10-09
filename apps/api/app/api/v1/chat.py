@@ -483,7 +483,8 @@ def engines(request: Request, user: AuthUser = Depends(current_user)) -> EngineC
 def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
                 mode: str = "standard", recorder: TurnRecorder | None = None,
                 before_upstream: Callable[[], None] | None = None,
-                channel: str | None = "api", engine: str | None = None) -> AnswerStream:
+                channel: str | None = "api", engine: str | None = None,
+                platforms: tuple[str, ...] | None = None, own_tokens: bool = False) -> AnswerStream:
     """Savol -> javob oqimi: web, mini app va Telegram bot BITTA yo'ldan.
 
     HAR savol yordamchiga ketadi - SHU ODAM VA KANAL uchun tanlangan
@@ -506,7 +507,12 @@ def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
       * `recorder` - savol izi (admin panel): `tokens` va `assistant.open`
         oraliqlari shu yerda o'lchanadi;
       * `before_upstream` - ulanishdan OLDIN chaqiriladi. Web kutish rejasini
-        shu yerda boshlaydi: tasnif ulanish bilan parallel ketadi.
+        shu yerda boshlaydi: tasnif ulanish bilan parallel ketadi;
+      * `platforms` - yordamchiga FAQAT shu platformalar tokeni ketadi
+        (Telegram guruhi: faqat `crm` - javob guruhdagi hammaga ko'rinadi,
+        HR ma'lumoti u yerga chiqa olmasin). `None` - hammasi (odatiy);
+      * `own_tokens` - faqat odamning O'Z ulanishlari: umumiy `.env` tokeni va
+        agent sessiyasiga TUSHILMAYDI (guruhda vazifa so'ragan odam nomidan).
 
     Ulanish SHU YERDA ochiladi, generator ichida emas: 400/501/503 shunda
     oddiy `AssistantError` bo'lib chaqiruvchiga chiqadi.
@@ -545,7 +551,9 @@ def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
     # Alohida oraliq: CRM sessiyasi shu yerda yangilanishi mumkin (yuzlab
     # ms) - izda "javob nega kech boshlandi" shu bilan ko'rinadi.
     with _span(recorder, "tokens") as info:
-        tokens = _live_tokens(user)
+        tokens = _connectors.hub.tokens(str(user.actorId)) if own_tokens else _live_tokens(user)
+        if platforms is not None:
+            tokens = {name: value for name, value in tokens.items() if name in platforms}
         # Faqat NOMLAR - token qiymati izga HECH QACHON tushmaydi.
         info["platforms"] = sorted(tokens)
     with _span(recorder, "assistant.open") as info:
@@ -1084,3 +1092,11 @@ def _record_pipeline(rec: TurnRecorder, result: PipelineResponse) -> None:
     rec.update(route=(orchestrator.route or None) if orchestrator else None,
                answer=result.answer or "")
     rec.finish("ok")
+
+
+def has_own_crm(user: AuthUser) -> bool:
+    """Odamning O'Z CRM ulanishi bormi (yoqilgan, muddati o'tmagan) - tarmoqsiz.
+    Guruhdagi CRM so'rovi faqat shunday odamdan qabul qilinadi."""
+    entry = (_connectors.hub.store.get(str(user.actorId)) or {}).get("crm") or {}
+    return bool(entry.get("refresh_token")) and entry.get("enabled", True) and not entry.get("expired")
+
