@@ -77,6 +77,10 @@ describe('entry decision', () => {
     // Plitka/yon tugma - almashtirgich: eskirgan "to'xtat" (hech narsa yozilmayapti) = yangi yozuv.
     expect(decideEntry(p(KEY, 'stop'), KEY, 'idle')).toBe('start');
     expect(decideEntry({ src: 'launcher', k: KEY, action: 'stop' }, KEY, 'idle')).toBe('start');
+    // Ovoz tugmasi (2x pastga) - yon tugma bilan bir xil almashtirgich.
+    expect(decideEntry({ src: 'volume', k: KEY, action: 'stop' }, KEY, 'recording')).toBe('stop');
+    expect(decideEntry({ src: 'volume', k: KEY, action: null }, KEY, 'idle')).toBe('start');
+    expect(parseEntryParams({ src: 'volume', k: KEY })).toMatchObject({ src: 'volume' });
     // Bildirishnomadagi Stop esa hech qachon yangi yozuv boshlamaydi.
     expect(decideEntry({ src: 'notification', k: KEY, action: 'stop' }, KEY, 'idle')).toBe('ready');
     expect(decideEntry(p(OTHER, 'stop'), KEY, 'idle')).toBe('ready');

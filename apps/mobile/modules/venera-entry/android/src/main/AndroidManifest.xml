@@ -10,6 +10,9 @@
 
   RecordTileService - Quick Settings "Yozish" plitkasi (toggle: bo'sh -> boshlash,
     yozilmoqda -> to'xtatish).
+
+  RecordKeyService - "Maxsus imkoniyatlar" xizmati: ovozni pasaytirish tugmasini ikki
+    marta bosish = boshlash/to'xtatish. Foydalanuvchi Android sozlamasida o'zi yoqadi.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <application>
@@ -42,6 +45,19 @@
       <meta-data
         android:name="android.service.quicksettings.TOGGLEABLE_TILE"
         android:value="true" />
+    </service>
+
+    <service
+      android:name="uz.brbtech.venera.entry.RecordKeyService"
+      android:exported="true"
+      android:label="@string/venera_entry_key_service_label"
+      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+      <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService" />
+      </intent-filter>
+      <meta-data
+        android:name="android.accessibilityservice"
+        android:resource="@xml/venera_entry_key_service" />
     </service>
   </application>
 </manifest>

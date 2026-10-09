@@ -18,6 +18,8 @@ interface VeneraEntryNative {
   setLauncherEnabled(enabled: boolean): void;
   isLauncherEnabled(): boolean;
   setTrustedKey(key: string): void;
+  isKeyServiceEnabled(): boolean;
+  openAccessibilitySettings(): void;
 }
 
 let native: VeneraEntryNative | null = null;
@@ -71,6 +73,24 @@ export function isLauncherEnabled(): boolean {
 export function setTrustedKey(key: string): void {
   try {
     native?.setTrustedKey(key);
+  } catch {
+    /* no-op */
+  }
+}
+
+/** Ovoz tugmasi bilan yozish (RecordKeyService) Android sozlamasida yoqilganmi. */
+export function isKeyServiceEnabled(): boolean {
+  try {
+    return native?.isKeyServiceEnabled() ?? false;
+  } catch {
+    return false;
+  }
+}
+
+/** Android "Maxsus imkoniyatlar" sozlamasi - xizmatni foydalanuvchi o'zi yoqadi. */
+export function openAccessibilitySettings(): void {
+  try {
+    native?.openAccessibilitySettings();
   } catch {
     /* no-op */
   }

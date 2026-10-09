@@ -499,6 +499,13 @@ export const uz = {
   'settings.myTasks': "Yig'ilishlardagi vazifalarim",
   'settings.appearance': "Ko'rinish",
   'settings.recordingSection': "Yig'ilish yozish sozlamalari",
+  'settings.volumeTitle': "Ovoz tugmasi bilan yozish",
+  'settings.volumeOn': "Yoqilgan",
+  'settings.volumeOff': "O'chiq",
+  'settings.volumeHint': "Ovozni pasaytirish tugmasini ketma-ket ikki marta bosing - yozuv boshlanadi, yana ikki marta - to'xtaydi. Istalgan ilovada, ekran yoniq paytda ishlaydi. Barno faqat shu tugmani kuzatadi.",
+  'settings.volumeSteps': "Yoqish: \"Sozlamani ochish\" > O'rnatilgan ilovalar > \"Barno: ovoz tugmasi bilan yozish\" > Yoqish.",
+  'settings.volumeOpen': "Sozlamani ochish",
+  'settings.volumeManage': "Sozlamada boshqarish",
 } as const;
 
 export type TKey = keyof typeof uz;

@@ -30,7 +30,7 @@ export type MeetingStatus =
   | 'failed'
   | 'waiting_quota';
 export type SummaryStatus = 'none' | 'queued' | 'running' | 'ready' | 'failed' | 'skipped';
-export type EntrySource = 'app' | 'tile' | 'launcher' | 'shortcut' | 'notification' | 'link';
+export type EntrySource = 'app' | 'tile' | 'launcher' | 'volume' | 'shortcut' | 'notification' | 'link';
 
 export interface Speaker {
   id: string; // 'S1'..'S4' (order of first appearance)

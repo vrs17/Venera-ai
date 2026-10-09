@@ -4,7 +4,9 @@
  */
 export {
   isAvailable,
+  isKeyServiceEnabled,
   isLauncherEnabled,
+  openAccessibilitySettings,
   requestAddTile,
   setLauncherEnabled,
   setRecordingState,

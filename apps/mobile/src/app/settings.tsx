@@ -8,11 +8,19 @@ import { useQuery } from '@tanstack/react-query';
 import { Directory } from 'expo-file-system';
 import { router } from 'expo-router';
 import { ChevronRight, ListChecks, Mic } from 'lucide-react-native';
-import { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { useAuth } from '@/features/auth/authStore';
-import { isAvailable, isLauncherEnabled, requestAddTile, setLauncherEnabled, type AddTileResult } from '@/features/entry/nativeEntry';
+import {
+  isAvailable,
+  isKeyServiceEnabled,
+  isLauncherEnabled,
+  openAccessibilitySettings,
+  requestAddTile,
+  setLauncherEnabled,
+  type AddTileResult,
+} from '@/features/entry/nativeEntry';
 import { openBatterySettings } from '@/features/recorder/battery';
 import { RECORDING_SOURCES } from '@/features/recorder/preset';
 import { useRecorderStore } from '@/features/recorder/RecorderProvider';
@@ -36,6 +44,14 @@ export default function SettingsScreen() {
   const rows = useQueueRows();
   const [launcher, setLauncher] = useState(() => isLauncherEnabled());
   const [tileResult, setTileResult] = useState<AddTileResult | null>(null);
+  // Ovoz tugmasi xizmati Android sozlamasida yoqiladi - ilovaga qaytganda holat qayta o'qiladi.
+  const [volumeOn, setVolumeOn] = useState(() => isKeyServiceEnabled());
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'active') setVolumeOn(isKeyServiceEnabled());
+    });
+    return () => sub.remove();
+  }, []);
   const pending = rows.filter((r) => isPending(r) || r.state === 'recording' || r.state === 'failed');
   // Yozuv ketayotganda chiqish yozilayotgan faylni o'chirib yuborardi (yozuv jim yo'qoladi).
   const recording = useRecorderStore((s) => isActive(s.machine));
@@ -183,6 +199,27 @@ export default function SettingsScreen() {
           style={{ alignSelf: 'flex-start' }}
         />
         {tileResult ? <Muted style={{ marginTop: 4 }}>{tileText[tileResult]}</Muted> : null}
+        <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: th.border, marginVertical: 12 }} />
+        <View style={[ui.row, { justifyContent: 'space-between', gap: 8 }]}>
+          <Text style={{ color: th.text, flex: 1, fontSize: 15, fontWeight: '600' }}>{t('settings.volumeTitle')}</Text>
+          <View style={{ borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: volumeOn ? th.tones.good.bg : th.surfaceAlt }}>
+            <Text testID="volume-status" style={{ color: volumeOn ? th.tones.good.fg : th.textMuted, fontSize: 13, fontWeight: '600' }}>
+              {volumeOn ? t('settings.volumeOn') : t('settings.volumeOff')}
+            </Text>
+          </View>
+        </View>
+        <Muted style={{ marginTop: 4 }}>{t('settings.volumeHint')}</Muted>
+        {!volumeOn ? <Muted style={{ marginTop: 6 }}>{t('settings.volumeSteps')}</Muted> : null}
+        <Button
+          small
+          variant="secondary"
+          testID="volume-open"
+          title={volumeOn ? t('settings.volumeManage') : t('settings.volumeOpen')}
+          disabled={!isAvailable()}
+          onPress={() => openAccessibilitySettings()}
+          style={{ marginTop: 8, alignSelf: 'flex-start' }}
+        />
+        <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: th.border, marginVertical: 12 }} />
         <Muted style={{ marginTop: 10 }}>{t('settings.shortcut')}</Muted>
         <View style={{ marginTop: 10 }}>
           {(['settings.step1', 'settings.step2', 'settings.step3', 'settings.step4'] as const).map((k) => (

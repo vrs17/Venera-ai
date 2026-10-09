@@ -1,6 +1,6 @@
 /**
  * Yagona kirish deep link'i (spec 2.2):
- *   venera-rec://record?src=<tile|launcher|shortcut|notification|app|link>&k=<installKey>[&action=stop][&n=<nonce>]
+ *   venera-rec://record?src=<tile|launcher|volume|shortcut|notification|app|link>&k=<installKey>[&action=stop][&n=<nonce>]
  *
  * Xavfsizlik: istalgan ilova deep link yubora oladi. Shuning uchun yozish
  * AVTOMATIK faqat `k` bizning installKey'ga teng bo'lsa boshlanadi. Begona
@@ -15,7 +15,7 @@
 import type { EntrySource } from '@/api/types';
 import type { RecorderStatus } from '@/features/recorder/recorderMachine';
 
-export const ENTRY_SOURCES: EntrySource[] = ['tile', 'launcher', 'shortcut', 'notification', 'app', 'link'];
+export const ENTRY_SOURCES: EntrySource[] = ['tile', 'launcher', 'volume', 'shortcut', 'notification', 'app', 'link'];
 export const KEY_RE = /^[0-9a-f]{64}$/;
 export const NONCE_RE = /^[0-9]{1,20}$/;
 
@@ -107,10 +107,10 @@ export function decideEntry(p: EntryParams, trustedKey: string | null, status: R
   const active = ACTIVE.includes(status);
   if (p.action === 'stop') {
     if (trusted && (status === 'recording' || status === 'paused')) return 'stop';
-    // Yon tugma va plitka - ALMASHTIRGICH: "to'xtat" keldi-yu, hech narsa yozilmayapti
+    // Yon tugma, ovoz tugmasi va plitka - ALMASHTIRGICH: "to'xtat" keldi-yu, hech narsa yozilmayapti
     // (bayroq eskirgan - ilova yozuv paytida o'ldirilgan). Odam uchun bu bosish "yoz" degani.
     // Bildirishnomadagi Stop'ga tegmaymiz - u eski bildirishnomadan kelishi mumkin.
-    if (trusted && !active && (p.src === 'launcher' || p.src === 'tile')) return 'start';
+    if (trusted && !active && (p.src === 'launcher' || p.src === 'volume' || p.src === 'tile')) return 'start';
     return active ? 'show' : 'ready';
   }
   if (active) return 'show';

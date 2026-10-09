@@ -9,4 +9,6 @@
   <string name="venera_entry_tile_label">Yozish</string>
   <string name="venera_entry_tile_idle">Нажмите - запись</string>
   <string name="venera_entry_tile_recording">Идёт запись - остановить</string>
+  <string name="venera_entry_key_service_label">Barno: запись кнопкой громкости</string>
+  <string name="venera_entry_key_service_desc">Дважды подряд нажмите кнопку уменьшения громкости - начнётся запись встречи, ещё дважды - остановится. Barno следит только за этой кнопкой: не читает текст на экране и ничего не сохраняет.</string>
 </resources>

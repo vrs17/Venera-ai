@@ -494,4 +494,11 @@ export const ru: Record<TKey, string> = {
   'settings.myTasks': "Мои задачи со встреч",
   'settings.appearance': "Оформление",
   'settings.recordingSection': "Настройки записи встреч",
+  'settings.volumeTitle': "Запись кнопкой громкости",
+  'settings.volumeOn': "Включено",
+  'settings.volumeOff': "Выключено",
+  'settings.volumeHint': "Дважды подряд нажмите кнопку уменьшения громкости - запись начнётся, ещё дважды - остановится. Работает в любом приложении при включённом экране. Barno следит только за этой кнопкой.",
+  'settings.volumeSteps': "Включить: «Открыть настройки» > Установленные приложения > «Barno: запись кнопкой громкости» > Включить.",
+  'settings.volumeOpen': "Открыть настройки",
+  'settings.volumeManage': "Управлять в настройках",
 };

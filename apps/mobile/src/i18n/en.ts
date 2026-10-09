@@ -494,4 +494,11 @@ export const en: Record<TKey, string> = {
   'settings.myTasks': "My tasks from meetings",
   'settings.appearance': "Appearance",
   'settings.recordingSection': "Meeting recording settings",
+  'settings.volumeTitle': "Record with the volume button",
+  'settings.volumeOn': "On",
+  'settings.volumeOff': "Off",
+  'settings.volumeHint': "Press volume down twice in a row to start recording, twice again to stop. Works in any app while the screen is on. Barno watches only this button.",
+  'settings.volumeSteps': "To turn on: \"Open settings\" > Installed apps > \"Barno: record with the volume button\" > On.",
+  'settings.volumeOpen': "Open settings",
+  'settings.volumeManage': "Manage in settings",
 };
