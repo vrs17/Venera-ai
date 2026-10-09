@@ -140,6 +140,19 @@ function reset(): void {
   loading.value = false
 }
 
+/** "Pro" bor dvigatellar, katalog yuklanmagan bo'lsa (Mini App versiya tanlovini
+ *  yuklamaydi) - server katalogi bilan bir xil (`core/engines.py`, `pro: True`). */
+const PRO_FALLBACK: ReadonlySet<string> = new Set(['v2', 'v3'])
+
+/** Javob bergan dvigatelda "Pro" bormi: avval serverdan kelgan katalog, bo'lmasa
+ *  ma'lum ro'yxat. Chat "Pro so'raldi, lekin berilmadi (versiya)" belgisini shunga qarab
+ *  qo'yadi - `'v2'` ni qo'lda yozish v3 da noto'g'ri belgi chiqarardi. */
+export function hasPro(engine: unknown): boolean {
+  if (typeof engine !== 'string' || !engine) return false
+  const known = choice.value?.catalog.find((e) => e.id === engine)
+  return known ? known.pro : PRO_FALLBACK.has(engine)
+}
+
 export function useEngines() {
   return {
     choice: readonly(choice),

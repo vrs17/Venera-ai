@@ -9,7 +9,7 @@ import { ApiError } from '../api/http'
 import { copyText } from '../clipboard'
 import { useAuth } from '../composables/useAuth'
 import { usePro } from '../composables/usePro'
-import { useEngines } from '../composables/useEngines'
+import { hasPro, useEngines } from '../composables/useEngines'
 import { provisionalTitle, useChats } from '../composables/useChats'
 import { useWakeWord, WAKE_LOCALES, WAKE_STORAGE_KEY } from '../composables/useWakeWord'
 import { warmGreeting } from '../api/greeting'
@@ -546,8 +546,8 @@ function runPipeline(id: string, question: string, mode: 'standard' | 'pro' = 's
         if (frame.pro) {
           patch(id, { pro: frame.pro })
           pro.noteAnswer(frame.pro)
-        } else if (mode === 'pro' && frame.engine !== 'v2') {
-          // "Pro" so'raldi, lekin backend uni v2 bo'lmagan dvigatelga YUBORMADI
+        } else if (mode === 'pro' && !hasPro(frame.engine)) {
+          // "Pro" so'raldi, lekin backend uni "Pro"siz dvigatelga YUBORMADI
           // (kanal sozlamasi sahifa ochilgandan keyin o'zgargan) - shartnoma
           // bo'yicha bunda `done` da `pro` bloki umuman yo'q. Jim qolsak odam
           // "Pro ishladi" deb o'ylaydi; admin izida esa shu tur "berilmadi

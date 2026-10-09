@@ -513,7 +513,7 @@ def test_savollar_notogri_parametr_422(client, auth, adb):
     for params in [
         {"cursor": "buzuq!"}, {"cursor": "WzEsMl0"}, {"status": "yaxshi"}, {"limit": 101},
         {"limit": 0}, {"minMs": -1}, {"channel": "pochta"}, {"from": "ertaga"},
-        {"engine": "v3"}, {"engine": "V2;--"},
+        {"engine": "v9"}, {"engine": "V2;--"},
     ]:
         assert client.get(f"{API}/turns", headers=auth, params=params).status_code == 422, params
         assert client.get(f"{API}/chats", headers=auth, params=params).status_code == 422, params

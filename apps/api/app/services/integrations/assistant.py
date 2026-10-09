@@ -79,7 +79,7 @@ from dataclasses import dataclass, field
 from socket import timeout as socket_timeout
 from typing import Any, Iterator
 
-from ...core.engines import PRO_ENGINE, ROUTES
+from ...core.engines import PRO_ENGINES, ROUTES
 from ..analytics.meter import Call, begin
 
 log = logging.getLogger(__name__)
@@ -349,15 +349,15 @@ class AssistantClient:
         # `standard` YUBORILMAYDI: u xizmatning o'z default'i, va uni
         # ochiq yozish eski nusxalar uchun ortiqcha maydon bo'lardi.
         # `pro` esa faqat odam shu xabar uchun yoqqanda keladi - va FAQAT
-        # v2 ga: "Pro" boshqa dvigatelda yo'q (xat, 3-bo'lim). `chat.py`
+        # "Pro" bor dvigatelga (v2, v3; katalogdagi `pro`). `chat.py`
         # buni oldinroq hal qiladi va izga yozadi; bu yer - ikkinchi to'r,
         # pulli rejim noto'g'ri yo'lga hech qachon ketmasin.
-        pro_sent = mode == "pro" and engine == PRO_ENGINE
+        pro_sent = mode == "pro" and engine in PRO_ENGINES
         if pro_sent:
             payload["mode"] = "pro"
         elif mode == "pro":
             log.info("Assistant: 'pro' tashlandi - dvigatel %s ('pro' faqat %s da)",
-                     engine or "versiyasiz", PRO_ENGINE)
+                     engine or "versiyasiz", ", ".join(sorted(PRO_ENGINES)))
 
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         path = stream_path(engine)

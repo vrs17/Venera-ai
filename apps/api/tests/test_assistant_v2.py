@@ -198,20 +198,22 @@ def test_kanal_istisnosi_va_yozilishlar(monkeypatch):
 
 
 def test_notogri_sozlama_yiqitmaydi_va_aytiladi(monkeypatch):
-    set_engines(monkeypatch, default="v3", by_channel="faks=v1,web=v9,miniapp")
+    set_engines(monkeypatch, default="v8", by_channel="faks=v1,web=v9,miniapp")
     assert engines.engine_for("web") == engines.DEFAULT_ENGINE == "v2"
     state = engines.config_state()
     assert state["default"] == "v2"
     assert len(state["problems"]) == 4, state["problems"]
-    assert any("HRM_ASSISTANT_ENGINE='v3'" in p for p in state["problems"])
+    assert any("HRM_ASSISTANT_ENGINE='v8'" in p for p in state["problems"])
 
 
 def test_oqim_yoli_dvigateldan():
     assert stream_path("v1") == "/api/v1/chat/stream"
     assert stream_path("v2") == "/api/v2/chat/stream"
+    # v3 - "Venera Core" (API 3.3, 2026-10-08).
+    assert stream_path("v3") == "/api/v3/chat/stream"
     assert stream_path("") == "/api/chat/stream"
     with pytest.raises(ValueError):
-        stream_path("v3")
+        stream_path("v9")
     with pytest.raises(ValueError):
         make_client().stream("savol", user_id="venera:1", engine="../../admin")
 

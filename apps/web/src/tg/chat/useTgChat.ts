@@ -16,6 +16,7 @@ import { openChat as fetchChat } from '../../api/chats.api'
 import { localizeApiError } from '../../api/errors'
 import { ApiError } from '../../api/http'
 import { provisionalTitle, useChats } from '../../composables/useChats'
+import { hasPro } from '../../composables/useEngines'
 import { usePro } from '../../composables/usePro'
 import { recallSources, rememberSources } from '../../sourcesCache'
 import { isoToMs } from '../../time'
@@ -244,8 +245,8 @@ export function useTgChat() {
           if (frame.pro) {
             patch(id, { pro: frame.pro })
             pro.noteAnswer(frame.pro)
-          } else if (mode === 'pro' && frame.engine !== 'v2') {
-            // "Pro" so'raldi, lekin backend uni v2 bo'lmagan dvigatelga yubormadi:
+          } else if (mode === 'pro' && !hasPro(frame.engine)) {
+            // "Pro" so'raldi, lekin backend uni "Pro"siz dvigatelga yubormadi:
             // jim qolsak odam "Pro ishladi" deb o'ylaydi (ChatView bilan bir xil).
             const denied: ProInfo = { requested: true, used: false, calls: 0, reason: 'engine' }
             patch(id, { pro: denied })

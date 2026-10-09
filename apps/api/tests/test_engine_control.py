@@ -33,7 +33,7 @@ from app.services.analytics.db import MIGRATIONS, SCHEMA_VERSION, Database
 from app.services.integrations.assistant import AssistantClient, AssistantError
 
 BASE = "http://assistant.test"
-STREAM_PATH = re.compile(r"/api/(?:(v[12])/)?chat/stream")
+STREAM_PATH = re.compile(r"/api/(?:(v[123])/)?chat/stream")
 QUOTA = {"remaining": {"day": 9, "week": 19, "month": 49},
          "limits": {"day": 10, "week": 20, "month": 50},
          "used": {"day": 1, "week": 1, "month": 1}}
@@ -47,7 +47,8 @@ ACCESS_ROW_FIELDS = {"actorId", "name", "login", "engines", "defaultEngine", "no
                      "updatedAt", "updatedBy"}
 USAGE_FIELDS = {"engine", "turns", "errors", "medianTtftMs", "users"}
 CHOICE_FIELDS = {"current", "selectable", "available", "catalog"}
-CATALOG = [{"id": "v1", "pro": False, "law": False}, {"id": "v2", "pro": True, "law": True}]
+CATALOG = [{"id": "v1", "pro": False, "law": False}, {"id": "v2", "pro": True, "law": True},
+           {"id": "v3", "pro": True, "law": True}]
 ISO = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
 
 
@@ -92,6 +93,10 @@ class Upstream:
         done = {"type": "done", "route": "rules", "request_id": "r-1"}
         if found.group(1):
             done["engine"] = found.group(1)
+        if found.group(1) == "v3":
+            # "Venera Core": agent izi kaliti va vazifa holati (`meta` ichida).
+            done["meta"] = {"trace_id": "tr-1", "task": {"intent": "crm.create_issue",
+                                                         "state": "awaiting_confirm"}}
         return _Response([frame(type="token", text="Javob"), frame(**done)])
 
     def paths(self) -> list[str]:
@@ -421,6 +426,27 @@ def test_klient_tanlovi_oqimda(api, user_auth, upstream, db):
     assert json.loads(ignored["payload"]) == {"requested": "v9", "used": "v1"}
 
 
+def test_v3_alohida_berilgan_odamga_venera_core(api, auth, user_auth, upstream, db):
+    """v3 ("Venera Core", API 3.3) avval odamga ALOHIDA beriladi: shu odamning savoli
+    /api/v3/ ga ketadi va "Pro" ham o'tadi (v3 da bor); qolganlar umumiy siyosatda.
+    Izda dvigatel, agent izi kaliti va vazifa holati yoziladi."""
+    grant(db, DEMO_ID, ["v2", "v3"], "v3")
+    mine = api.post("/api/v1/chat/stream", headers={**user_auth, "X-Venera-Client": "web"},
+                    json={"question": "savol", "mode": "pro"})
+    other = api.post("/api/v1/chat/stream", headers={**auth, "X-Venera-Client": "web"},
+                     json={"question": "savol"})
+    assert mine.status_code == other.status_code == 200
+    assert upstream.paths() == ["/api/v3/chat/stream", "/api/v2/chat/stream"]
+    assert upstream.calls[0]["body"]["mode"] == "pro"
+    assert lines(mine)[-1]["engine"] == "v3"
+    assert [r["engine"] for r in turns(db)] == ["v3", "v2"]
+    [done] = db.rows("SELECT payload FROM turn_events WHERE turn_id=? AND name='done'",
+                     (mine.headers["x-venera-turn"],))
+    payload = json.loads(done["payload"])
+    assert payload["trace_id"] == "tr-1"
+    assert payload["task"] == {"intent": "crm.create_issue", "state": "awaiting_confirm"}
+
+
 def test_ruxsatsiz_tanlov_xato_bermaydi(api, auth, upstream, db):
     response = api.post("/api/v1/chat/stream", headers={**auth, "X-Venera-Client": "web"},
                         json={"question": "savol", "engine": "v1"})
@@ -598,7 +624,7 @@ def test_admin_siyosat_qoshiladigan_ozgarish_va_audit(api, auth, db):
 
 
 @pytest.mark.parametrize("body", [
-    {"default": "v3"},
+    {"default": "v9"},
     {"default": ""},
     {"default": "legacy"},
     {"channels": {"faks": "v1"}},
