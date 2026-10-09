@@ -87,6 +87,14 @@ class Writer:
         self.autostart = autostart
         self._queue: queue.Queue = queue.Queue(maxsize=self.max_queue)
         self._thread: threading.Thread | None = None
+        # Ishga tushirish qulfi BLOKLAMASDAN olinadi (`start`). `Thread.start()`
+        # xotira ajratadi va o'sha lahzada - yangi ipning boshlanishida ham - GC
+        # ishlab ketishi mumkin; GC esa `weakref.finalize` (TTS oqimi hisobi,
+        # `services/tts.py`) orqali `record_call` -> `submit` -> `start()` ni
+        # chaqiradi. Kutadigan qulf bilan bu o'z-o'zini (yoki ishga tushayotgan ip
+        # bilan bir-birini) abadiy kutishga olib kelardi - testlarda ushlangan:
+        # `test_tts.py` osilib qoldi. Qulf band bo'lsa ip allaqachon ishga
+        # tushirilmoqda: yozuv navbatda turadi va o'sha ip uni o'qiydi.
         self._start_lock = threading.Lock()
         self._stopped = False
         # Hisoblagichlar - `/admin/system` uchun. Bitta ip yozadi, qolganlar
@@ -156,7 +164,9 @@ class Writer:
 
     def start(self) -> None:
         """Ipni ishga tushiradi (allaqachon ishlayotgan bo'lsa - hech narsa)."""
-        with self._start_lock:
+        if not self._start_lock.acquire(blocking=False):
+            return
+        try:
             if self._stopped:
                 return
             if self._thread is not None and self._thread.is_alive():
@@ -164,6 +174,8 @@ class Writer:
             self._thread = threading.Thread(target=self._run, name="analytics-writer",
                                             daemon=True)
             self._thread.start()
+        finally:
+            self._start_lock.release()
 
     def _ensure_started(self) -> None:
         # Arzon tekshiruv birinchi: har yozuvda qulf olinmasin.

@@ -541,6 +541,93 @@ class Settings(BaseSettings):
     #: (`services/admin_users._effective_roles`).
     sso_trusted_roles: str = ""
 
+    # --- Yig'ilish yozuvchisi (Venera Yozuv, `services/meetings/`) ---
+    #
+    # Mobil ilova yig'ilishni yozadi, GAPI spikerlarni ajratib matnga
+    # o'giradi, gemma4:31b esa xulosa yozadi. Spetsifikatsiya:
+    # `docs/plans/meeting-recorder.md`.
+    #
+    #: BO'LIM O'CHIQ - default. Yig'ilish audiosi GAPI ga, matni Ollama
+    #: Cloud ga ketadi: bu YANGI ma'lumot turi (1:1, suhbat, mijoz
+    #: qo'ng'irog'i), va foydalanuvchi buni alohida tasdiqlamaguncha bo'lim
+    #: ko'rinmaydi (404). `.env` dan JONLI o'qiladi (`meetings_enabled_now`):
+    #: yoqish/o'chirish uchun restart kerak emas.
+    meetings_enabled: bool = False
+    #: Sinov guruhi: ADMIN rolidagilar VA shu loginlar (vergul/bo'shliq bilan,
+    #: registrga qaramaydi; SSO - logini, `users.yaml` - emaili). JONLI.
+    meetings_logins: str = ""
+    #: Ombor, audio va yuklanayotgan bo'laklar shu papkada. SHAXSIY
+    #: MA'LUMOT: papka 700, fayllar 600, `data/` gitignore'da.
+    meetings_dir: Path = BASE_DIR / "data" / "meetings"
+    #: Fon ishchisi (transkripsiya, xulosa, tozalash). Testlarda O'CHIQ:
+    #: `TestClient` ishga tushishi ip yaratmasin.
+    meetings_worker: bool = True
+    #: Bir vaqtda nechta yig'ilish ishlanadi. 2: biri GAPI ni kutayotganda
+    #: ikkinchisining xulosasi yozilsin; server 4 CPU / 3 GB - ko'pi zarar.
+    meetings_worker_threads: int = 2
+    #: Eng uzun yozuv (daqiqa). Ilova shundan 10 daqiqa oldin ogohlantiradi.
+    meetings_max_minutes: int = 180
+    #: Bitta yozuvning eng katta hajmi. 48 kbps ADTS da 3 soat ~65 MB -
+    #: 150 MB katta zahira (m4a yuklansa ham sig'adi).
+    meetings_max_upload_mb: int = 150
+    #: Bo'lak hajmi: nginx'ning `client_max_body_size` (12m deb faraz
+    #: qilingan) dan ancha kichik, mobil tarmoqda esa qayta yuborish arzon.
+    meetings_chunk_bytes: int = 4 * 1024 * 1024
+    #: Bitta odamga kuniga necha audio-daqiqa GAPI da o'giriladi. Oshsa
+    #: yozuv RAD ETILMAYDI - navbatda turadi (`waiting_quota`).
+    meetings_user_daily_minutes: int = 240
+    #: Yig'ilishlar uchun BUTUN xizmatning kunlik ulushi. Balansning
+    #: qolgani chat diktovkasi uchun.
+    meetings_gapi_daily_minutes: int = 180
+    #: GAPI balansida doim shuncha daqiqa qolsin - chatdagi ovozli savol
+    #: yig'ilish tufayli to'xtab qolmasin.
+    meetings_gapi_reserve_minutes: int = 60
+    #: Audio shuncha kundan keyin o'chiriladi; matn va xulosa qoladi.
+    meetings_audio_days: int = 30
+    #: Butun yig'ilish (matni bilan) shuncha kundan keyin o'chiriladi. 0 - saqlanadi.
+    meetings_retention_days: int = 180
+    #: Tugallanmagan yuklash oxirgi bo'lakdan shuncha soat keyin o'chiriladi.
+    meetings_upload_ttl_hours: int = 72
+    #: GAPI ga BITTA HTTP amal (yuklash, so'rash) uchun chegara.
+    meetings_stt_timeout: float = 120.0
+    #: GAPI vazifasini jami shuncha kutamiz, keyin `stt_timeout` (qayta
+    #: urinish o'sha vazifa raqami bilan - pul qayta yechilmaydi).
+    meetings_stt_deadline: float = 3600.0
+    #: Xulosa modeli. Bo'sh - `ollama_model` (gemma4:31b).
+    meetings_llm_model: str = ""
+    #: Bitta model chaqiruvi (va o'z navbatimizni kutish) chegarasi. 8K tokenlik
+    #: javob ~30-50 tok/s da 160-270 s - 180 s kam edi. Jonli o'lchovdan keyin aniqlanadi.
+    meetings_llm_timeout: float = 300.0
+    #: Ollama `num_ctx`. 0 - yuborilmaydi: Cloud'dagi kontekst oynasi hali
+    #: o'lchanmagan, jonli tekshiruv (`tools/meetings_live_check.py`) dan keyin qo'yiladi.
+    meetings_llm_num_ctx: int = 0
+    #: Ollama `think`: bo'sh - yuborilmaydi; `false` - model "o'ylash" tokenlarini
+    #: sarflamasin (ular `num_predict` dan yeyiladi). Jonli tekshiruv `thinking`
+    #: maydoni kelyaptimi - shuni ko'rsatadi, keyin qo'yiladi.
+    meetings_llm_think: str = ""
+    #: Shundan qisqa matn BITTA chaqiruvda xulosalanadi; uzunrog'i bo'laklab
+    #: (map-reduce). ~30 ming belgi ~ 14 ming token kirish va ~5-6 ming token
+    #: javob (45 daqiqalik yig'ilish JSON i ~6-7K token - 45K da javob kesilardi).
+    meetings_single_pass_chars: int = 30000
+    #: Map bosqichida bitta bo'lak hajmi (belgi).
+    meetings_map_chars: int = 20000
+    #: Javob byudjeti (token): bir o'tish va map bo'lagi. Ollama Cloud chiqish
+    #: chegarasi jonli tekshiruvda tasdiqlanadi (`meetings_live_check.py ollama`).
+    meetings_extract_num_predict: int = 8192
+    meetings_map_num_predict: int = 6144
+    #: Vazifa va qarorlarni ikkinchi chaqiruv bilan tekshirish.
+    meetings_verify: bool = True
+    #: Bitta odamning soatlik chegaralari: savol (Ask) va xulosa tabi.
+    meetings_ask_per_hour: int = 30
+    meetings_summary_per_hour: int = 10
+    #: Mobil ilova yozish manbasi (`voice_recognition` | `mic` | `camcorder`) -
+    #: `GET /meetings/config` orqali masofadan A/B sinash uchun.
+    meetings_audio_source: str = "voice_recognition"
+    #: Qurilma tokeni (mobil ilova) - oxirgi ishlatilgandan shuncha kun yashaydi.
+    device_token_days: int = 30
+    #: Qurilma tokenlari ombori (faqat xeshlar). `data/` gitignore'da, 600.
+    devices_db: Path = BASE_DIR / "data" / "devices.db"
+
     # --- CORS ---
     #: Bo'sh bo'lsa CORS o'chirilgan: frontend nginx orqali BIR XIL originda
     #: turadi (`/api` proxy), ya'ni CORS umuman kerak emas. Faqat frontend
@@ -648,6 +735,31 @@ def telegram_group_limits_now() -> tuple[tuple[int, float], tuple[int, float]]:
 def telegram_brief_logins_now() -> frozenset[str]:
     """Brif ochiq loginlar (`telegram_brief_logins`) - `.env` dan JONLI, kichik harfda."""
     raw = _env_token("telegram_brief_logins", settings.telegram_brief_logins)
+    return frozenset(part.strip().lower() for part in re.split(r"[,\s;]+", raw or "") if part.strip())
+
+
+def _env_flag(key: str, default: bool) -> bool:
+    """`.env` dagi mantiqiy qiymat - JONLI. Kalit yo'q bo'lsa `default`
+    (sozlama obyekti: muhit o'zgaruvchisi yoki koddagi default)."""
+    raw = (_env_token(key, "") or "").strip().lower()
+    if not raw:
+        return bool(default)
+    return raw in ("1", "true", "yes", "on")
+
+
+def meetings_enabled_now() -> bool:
+    """Yig'ilishlar bo'limi yoqilganmi - `.env` dan JONLI.
+
+    Yoqish ham, o'chirish ham restartsiz: bo'lim maxfiy ma'lumot bilan
+    ishlaydi, va "darhol yopish" kerak bo'lib qolsa xizmatni qayta ishga
+    tushirish ayni paytda yuklanayotgan yozuvlarni uzib qo'yardi.
+    """
+    return _env_flag("meetings_enabled", settings.meetings_enabled)
+
+
+def meetings_logins_now() -> frozenset[str]:
+    """Yig'ilishlar bo'limi ochiq loginlar - `.env` dan JONLI, kichik harfda."""
+    raw = _env_token("meetings_logins", "") or settings.meetings_logins
     return frozenset(part.strip().lower() for part in re.split(r"[,\s;]+", raw or "") if part.strip())
 
 

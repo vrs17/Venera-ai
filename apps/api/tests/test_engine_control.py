@@ -796,7 +796,7 @@ def test_health_detail_haqiqiy_holatni_korsatadi(api, auth, db, monkeypatch):
     assert state["engine"]["default"] == "v2"
     assert state["policy"] == {"source": "admin", "loaded": True, "grants": 1,
                                "byChannel": {"web": "v1", "miniapp": "v2", "bot": "v2",
-                                             "desktop": "v2", "api": "v2"}}
+                                             "desktop": "v2", "mobile": "v2", "api": "v2"}}
 
 
 # ================================================================ sxema v3

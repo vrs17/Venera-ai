@@ -34,6 +34,8 @@ _NAMES = {
     404: "Not Found",
     409: "Conflict",
     410: "Gone",
+    413: "Payload Too Large",
+    415: "Unsupported Media Type",
     422: "Unprocessable Entity",
     429: "Too Many Requests",
     500: "Internal Server Error",
@@ -48,6 +50,7 @@ def error_response(
     code: int,
     message: str,
     headers: dict[str, str] | None = None,
+    extra: dict | None = None,
 ) -> JSONResponse:
     """`schemas.auth.ApiErrorResponse` shakliga mos javob.
 
@@ -55,16 +58,24 @@ def error_response(
     `WWW-Authenticate` sarlavhasida. Usiz brauzer parol oynasini
     KO'RSATMAYDI va foydalanuvchi shunchaki JSON xato ko'radi - hujjat
     sahifasini ochib bo'lmaydi.
+
+    `extra` - QO'SHIMCHA maydonlar (masalan yig'ilish yuklashida `code`,
+    `receivedBytes`): mobil ilova xatoning turini matndan emas, mashina
+    o'qiydigan koddan biladi va yuklashni aynan qolgan joyidan davom
+    ettiradi. Asosiy beshta maydonni ular ALMASHTIRA OLMAYDI.
     """
+    content = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": code,
+        "error": _NAMES.get(code, "Error"),
+        "message": message,
+        "path": request.url.path,
+    }
+    for key, value in (extra or {}).items():
+        content.setdefault(key, value)
     return JSONResponse(
         status_code=code,
-        content={
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "status": code,
-            "error": _NAMES.get(code, "Error"),
-            "message": message,
-            "path": request.url.path,
-        },
+        content=content,
         headers=headers or None,
     )
 
@@ -79,6 +90,7 @@ def install(app: FastAPI) -> None:
         return error_response(
             request, exc.status_code, str(exc.detail),
             headers=getattr(exc, "headers", None),
+            extra=getattr(exc, "extra", None),
         )
 
     @app.exception_handler(RequestValidationError)

@@ -983,3 +983,47 @@ venv/bin/python -m app.tools.contacts_import --export nusxa.csv
 Qayta yuklash xavfsiz: email yoki F.I.SH bo'yicha topilgan xodimning faqat
 TO'LDIRILGAN maydonlari yangilanadi, bo'sh katak mavjud qiymatni o'chirmaydi,
 faylda yo'q xodim o'chirilmaydi. Birinchi yuklash: 2026-09-25, 77 xodim.
+
+## Yig'ilish yozuvchisi "Venera Yozuv" (mobil ilova backend'i)
+
+Spetsifikatsiya: `docs/plans/meeting-recorder.md`. Kod: `apps/api/app/services/meetings/`,
+yo'llar `/api/v1/meetings/*` va `/api/v1/auth/devices*`.
+
+**Default O'CHIQ.** `MEETINGS_ENABLED=false` bo'lsa butun bo'lim 404 qaytaradi, fon ishchisi
+esa diskka hech narsa yozmaydi. Yoqish - foydalanuvchi maxfiylik bo'limini (4.4: audio GAPI ga,
+transkript Ollama Cloud ga) tasdiqlagandan KEYIN, jonli `.env` da (restart kerak emas):
+
+```bash
+MEETINGS_ENABLED=true
+MEETINGS_LOGINS=y.mamajonov,a.aliyev     # sinov guruhi (ADMIN lar har doim ochiq)
+```
+
+Ma'lumot: `apps/api/data/meetings/` (SQLite `meetings.db`, `uploads/`, `audio/<actorId>/`) va
+`apps/api/data/devices.db` - papkalar 700, fayllar 600, `data/` gitignore'da. Tozalash har soatda:
+audio 30 kun (`MEETINGS_AUDIO_DAYS`), butun yig'ilish 180 kun, tugallanmagan yuklash 72 soat,
+`too_long` audio 24 soat, qurilma tokenlari 30 kun ishlatilmasa. Muddat yozilgan vaqtdan, lekin
+serverga kelgandan ko'pi bilan 7 (audio) / 30 (yig'ilish) kun oldindan hisoblanadi; ishlanayotgan
+yozuvga tegilmaydi. Bayroq o'chirilsa yoki odam `MEETINGS_LOGINS` dan chiqarilsa, telefonning
+qurilma tokeni ham sessiya bermaydi (401).
+
+**Model byudjeti** (jonli `ollama` o'lchovidan keyin aniqlanadi; defaultlar ehtiyotkor):
+`MEETINGS_LLM_TIMEOUT=300`, `MEETINGS_SINGLE_PASS_CHARS=30000`, `MEETINGS_MAP_CHARS=20000`,
+`MEETINGS_EXTRACT_NUM_PREDICT=8192`, `MEETINGS_MAP_NUM_PREDICT=6144`, `MEETINGS_LLM_THINK=` (bo'sh -
+yuborilmaydi; o'lchov "o'ylash" matnini ko'rsatsa `false`). Skript tavsiyani o'zi chiqaradi.
+
+**nginx:** bo'laklar 4 MiB (`MEETINGS_CHUNK_BYTES`); `client_max_body_size` undan katta bo'lsin
+(12m faraz qilingan).
+
+**Jonli tekshiruv** (faqat qo'lda, PULLIK rejimlar `--yes-spend` bilan; kalitlar chop etilmaydi):
+
+```bash
+cd ~/Venera/apps/api
+venv/bin/python tools/meetings_live_check.py                       # GAPI balansi (bepul)
+venv/bin/python tools/meetings_live_check.py gapi --file s.aac --yes-spend --speakers 2
+venv/bin/python tools/meetings_live_check.py ollama --yes-spend --chars 45000 [--num-ctx 32768] [--think false]
+venv/bin/python tools/meetings_live_check.py e2e --file s.aac --yes-spend
+```
+
+`/api/health/detail` -> `meetings`: holatlar bo'yicha sonlar, bugungi daqiqalar, eng eski navbat
+yoshi, ishchi tirikligi; GAPI kaliti rad etilsa (401/403) - ogohlantirish. Mazmun (matn, xulosa)
+u yerda YO'Q, admin uchun yig'ilish mazmuni endpointi ham yo'q.

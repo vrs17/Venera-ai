@@ -146,7 +146,8 @@ def _isolated_identities(tmp_path, monkeypatch):
 #: istisnosi oqim yo'lini va "Pro" ni o'zgartirib, testni mashinaga bog'lardi.
 _CODE_DEFAULTS = ("hold_enabled", "wake_log_enabled", "local_login_enabled",
                   "admin_logins", "sso_trusted_roles", "hrm_assistant_engine",
-                  "hrm_assistant_engine_by_channel", "hrm_assistant_max_stream_seconds")
+                  "hrm_assistant_engine_by_channel", "hrm_assistant_max_stream_seconds",
+                  "meetings_enabled", "meetings_logins")
 
 
 @pytest.fixture(autouse=True)
@@ -271,3 +272,41 @@ def _isolated_analytics(tmp_path):
     yield database
     analytics.shutdown()
     database.close_all()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_meetings(tmp_path, monkeypatch):
+    """Yig'ilish yozuvchisi HAR TESTDA vaqtinchalik papkada va SOXTA klientlar bilan.
+
+    * `meetings_dir` va qurilmalar ombori - `tmp_path` da: jonli yozuvlar
+      (odamlarning yig'ilish matni) testga tegmaydi;
+    * `meetings_worker=False` - `TestClient` ishga tushishi fon ipini yaratmaydi
+      (testlar qadamlarni `Worker.run_once` bilan o'zi yuradi);
+    * GAPI, Router va model - `tests/meetings_fakes.py`: hech bir test tarmoqqa
+      chiqmaydi va hisobdan pul yechmaydi;
+    * bayroq va ruxsat ro'yxati `.env` dan EMAS, sozlama obyektidan o'qiladi -
+      test natijasi mashinadagi `.env` ga bog'liq bo'lmasin (jonli o'qishning
+      o'zi `test_meetings_api.py` da vaqtinchalik `.env` bilan sinaladi).
+    """
+    from app.core import config as config_module
+    from app.services import meetings
+    from app.services.devices import DeviceStore
+    from app.services.meetings import service as meetings_service
+    from meetings_fakes import FakeGapiMeeting, FakeLLM, FakeRouter
+
+    monkeypatch.setattr(settings, "meetings_dir", tmp_path / "meetings", raising=False)
+    monkeypatch.setattr(settings, "devices_db", tmp_path / "devices.db", raising=False)
+    monkeypatch.setattr(settings, "meetings_worker", False, raising=False)
+    monkeypatch.setattr(config_module, "meetings_enabled_now", lambda: bool(settings.meetings_enabled))
+    monkeypatch.setattr(config_module, "meetings_logins_now", lambda: frozenset(
+        p.strip().lower() for p in (settings.meetings_logins or "").replace(";", ",").split(",") if p.strip()))
+    rt = meetings.reset_for_tests(tmp_path / "meetings", gapi=FakeGapiMeeting(), router=FakeRouter(),
+                                  llm=FakeLLM(), devices=DeviceStore(tmp_path / "devices.db", days=30))
+    meetings_service.reset_limits()
+    from app.api.v1 import devices as devices_api
+
+    devices_api._token_limiter.reset()
+    devices_api._ip_limiter.reset()
+    yield rt
+    rt.store.close_all()
+    rt.devices.close()
