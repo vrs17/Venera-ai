@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- "Yozish" launcher belgisi foni = ilovadagi yozish tugmasi rangi (theme.ts `record`). -->
+  <color name="venera_entry_icon_bg">#E11D48</color>
+</resources>

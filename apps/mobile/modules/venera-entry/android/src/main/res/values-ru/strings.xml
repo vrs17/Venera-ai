@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!--
+    Rus tilidagi telefonlar uchun. "Yozish" nomi O'ZGARMAYDI (ilova ichidagi
+    yo'riqnoma va Samsung yon tugma sozlamasida aynan shu nom tanlanadi) -
+    faqat plitka holat matnlari tarjima qilinadi.
+  -->
+  <string name="venera_entry_launcher_label">Yozish</string>
+  <string name="venera_entry_tile_label">Yozish</string>
+  <string name="venera_entry_tile_idle">Нажмите - запись</string>
+  <string name="venera_entry_tile_recording">Идёт запись - остановить</string>
+</resources>

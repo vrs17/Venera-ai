@@ -1,0 +1,6 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "modules": ["uz.brbtech.venera.entry.VeneraEntryModule"]
+  }
+}

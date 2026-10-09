@@ -1,0 +1,19 @@
+# Generatsiya qilinadi (expo prebuild) - faqat ilova ildizidagi papkalar.
+# DIQQAT: modules/venera-entry/android/ bizning Kotlin kodimiz - u gitga tushadi.
+/android/
+/ios/
+/.expo/
+/.expo-shared/
+/dist/
+/web-build/
+/coverage/
+node_modules/
+expo-env.d.ts
+*.apk
+*.aab
+*.aac
+*.m4a
+*.jks
+*.keystore
+.env
+.env.*
