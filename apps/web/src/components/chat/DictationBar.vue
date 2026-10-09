@@ -32,6 +32,23 @@ const emit = defineEmits<{ (e: 'cancel'): void; (e: 'done'): void }>()
 
 const { t } = useI18n({ useScope: 'global' })
 const reduced = usePrefersReducedMotion()
+
+/* Mikrofon ochilishini kutish ("starting") 0.3 s dan oshsa - matn bilan aytiladi.
+   Usiz panel kulrang nuqtalar bilan qotib turardi va odam "sahifa qotdi" deb
+   o'ylardi (Windows qurilmani qayta ochishi, Bluetooth quloqchin rejimi bir necha
+   soniya olishi mumkin). Tez ochilsa - hech narsa ko'rinmaydi, miltillash yo'q. */
+const STARTING_HINT_MS = 300
+const startingSlow = ref(false)
+let startingTimer = 0
+watch(
+  () => props.state,
+  (state) => {
+    window.clearTimeout(startingTimer)
+    startingSlow.value = false
+    if (state === 'starting') startingTimer = window.setTimeout(() => (startingSlow.value = true), STARTING_HINT_MS)
+  },
+  { immediate: true },
+)
 const { theme } = useTheme()
 
 const rootRef = ref<HTMLElement | null>(null)
@@ -221,6 +238,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.clearTimeout(startingTimer)
   halt()
   ro?.disconnect()
   ro = null
@@ -241,8 +259,8 @@ defineExpose({ focusDone })
     <VIconButton class="dict__cancel" :label="t('voiceCancel')" :icon="X" size="sm" @click="emit('cancel')" />
     <div class="dict__wave">
       <canvas ref="canvasRef" class="dict__canvas" aria-hidden="true" />
-      <span v-if="state === 'transcribing'" class="dict__status">
-        <span class="dict__shimmer">{{ t('composer.dictate.transcribing') }}</span>
+      <span v-if="state === 'transcribing' || (state === 'starting' && startingSlow)" class="dict__status">
+        <span class="dict__shimmer">{{ t(state === 'transcribing' ? 'composer.dictate.transcribing' : 'composer.dictate.starting') }}</span>
       </span>
     </div>
     <span class="dict__time" aria-hidden="true">{{ clock }}</span>

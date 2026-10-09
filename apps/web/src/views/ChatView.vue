@@ -99,11 +99,13 @@ function writeFlag(key: string, value: boolean) {
 }
 
 // --- "Salom Venera" ---------------------------------------------------------
-// ON by default: the assistant should answer when spoken to, without anyone
-// having to find a switch first. The switch stays, because the microphone
-// must always have an off — but only an explicit '0' turns it off, so a fresh
-// login, a new browser, or cleared storage all come up listening.
-const wakeEnabled = ref(readFlag(WAKE_STORAGE_KEY, true))
+// OFF by default (2026-10-09, product owner's decision): an always-open
+// microphone was suspected of slowing the page when dictation starts, it sends
+// snippets of nearby speech to the STT provider while nobody is talking to
+// Venera, and people did not expect to be listened to. The switch stays - anyone
+// who wants the wake phrase turns it on, and only an explicit '1' keeps it on
+// (`WAKE_STORAGE_KEY` was renamed, so earlier stored "on"s do not carry over).
+const wakeEnabled = ref(readFlag(WAKE_STORAGE_KEY, false))
 watch(wakeEnabled, (value) => writeFlag(WAKE_STORAGE_KEY, value))
 const wakeSupported = computed(() => WAKE_LOCALES.includes(String(locale.value)))
 

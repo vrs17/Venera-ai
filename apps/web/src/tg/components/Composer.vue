@@ -131,6 +131,8 @@ function startFailureText(failure: DictationStartFailure): string {
       return isTelegram ? t('tg.mic.denied') : `${t('voiceDenied')} ${t('voiceDeniedHow')}`
     case 'noDevice':
       return t('voiceNoMic')
+    case 'busy':
+      return t('voiceMicBusy')
     default:
       return t('voiceError')
   }
