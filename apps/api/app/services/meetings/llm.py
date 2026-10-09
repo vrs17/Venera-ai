@@ -70,7 +70,7 @@ PROVIDERS = ("v3", "openai", "ollama")
 #: qoidasi ATAYLAB shu yerda: v3 ning o'z tizim prompti "foydalanuvchi tilida javob ber"
 #: deydi, ko'rsatmalarimiz esa inglizcha - o'zbekcha yig'ilish inglizcha xulosalanmasin.
 SUMMARY_HEAD = (
-    "[Venera Yozuv - INTERNAL TEXT TASK, not a user question. Do not call any tool (HRM, CRM, documents, "
+    "[Barno Yozuv - INTERNAL TEXT TASK, not a user question. Do not call any tool (HRM, CRM, documents, "
     "knowledge base), do not propose any action and do not ask questions. Follow the INSTRUCTIONS exactly and "
     "reply with ONLY the requested JSON object: no markdown fences, no commentary. Write every JSON string value "
     "in the 'Output language' given in the INPUT, never in the language of these instructions; quotes stay as "
@@ -81,7 +81,7 @@ SUMMARY_HEAD = (
 #: ko'rsatma (`prompts.ASK_SYSTEM`) "FAQAT transkriptdan" deydi - sarlavha buni ANIQ
 #: o'zgartiradi, aks holda v3 ning xulqi noaniq (sharh, 2026-10-09).
 ASK_HEAD = (
-    "[Venera Yozuv - a question about ONE recorded meeting. Answer from the meeting transcript lines in the INPUT; "
+    "[Barno Yozuv - a question about ONE recorded meeting. Answer from the meeting transcript lines in the INPUT; "
     "use your tools (HRM, CRM) only if the question needs facts that are not in the meeting, and never propose a "
     "write action. This overrides 'ONLY its transcript' in the INSTRUCTIONS: facts from your tools are allowed, "
     "say plainly that they are not from the meeting, and cite no line ids for them. Reply with ONLY the requested "

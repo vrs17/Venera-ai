@@ -65,7 +65,7 @@ TEMPLATES: dict[str, Template] = {t.id: t for t in (
     Template(
         "auto", "auto-1",
         _t("Avtomatik", "Автоматически", "Automatic"),
-        _t("Turini Venera o'zi aniqlaydi", "Тип определит Venera", "Venera picks the type"),
+        _t("Turini Barno o'zi aniqlaydi", "Тип определит Барно", "Barno picks the type"),
         auto=False, extra_tab=False, emphasis="",
     ),
     Template(
