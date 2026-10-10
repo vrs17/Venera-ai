@@ -17,6 +17,7 @@ import type { RegisterDeviceRequest } from '@/api/types';
 import { useAuth } from '@/features/auth/authStore';
 import { createSession, type Session } from '@/features/auth/session';
 import { createTokenStore, type TokenStore } from '@/features/auth/tokenStore';
+import { isFileInUse } from '@/features/meeting/playback';
 import { useSettings } from '@/features/settings/settingsStore';
 import type { QueueStore } from '@/features/upload/queueStore';
 import { createUploader, type FileAccess, type Uploader } from '@/features/upload/uploader';
@@ -144,6 +145,7 @@ async function createAppServices(): Promise<Services> {
       return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('');
     },
     keepDays: () => useSettings.getState().keepDays,
+    fileInUse: isFileInUse,
     canonicalUri: (clientId) => recordingFile(clientId).uri,
     yieldToUi,
     appVersion,

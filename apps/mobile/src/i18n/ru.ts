@@ -1,3 +1,6 @@
+import { nav } from './parts/nav';
+import { recordingsPart } from './parts/recordings';
+import { settingsPart } from './parts/settings';
 import type { TKey } from './uz';
 
 export const ru: Record<TKey, string> = {
@@ -295,7 +298,7 @@ export const ru: Record<TKey, string> = {
     'Барно не подготовила предложение - нужно уточнение. Отредактируйте задачу (на встрече нажмите и удерживайте задачу: текст, ответственный), затем отправьте заново.',
   'crm.notConnectedTitle': 'CRM не подключена',
   'crm.notConnected':
-    'Чтобы добавить задачу в CRM, ваш аккаунт CRM должен быть подключён. В чате откройте Настройки > Подключения: если у CRM статус "Не подключено" или "Истекло", выйдите и войдите снова - CRM подключится автоматически по логину. Затем вернитесь сюда и повторите.',
+    'Чтобы добавить задачу в CRM, ваш аккаунт CRM должен быть подключён. В чате откройте меню ☰ > Настройки > Подключения: если у CRM статус "Не подключено" или "Истекло", нажмите "Войти заново" - CRM подключится автоматически по логину. Затем вернитесь сюда и повторите.',
   'crm.openChat': 'Вернуться в чат',
   'crm.fail.generic': 'Барно сейчас не смогла подготовить предложение. Попробуйте чуть позже.',
   'crm.fail.busy': 'Барно сейчас занята. Попробуйте через минуту.',
@@ -501,4 +504,8 @@ export const ru: Record<TKey, string> = {
   'settings.volumeSteps': "Включить: «Открыть настройки» > Установленные приложения > «Barno: запись кнопкой громкости» > Включить.",
   'settings.volumeOpen': "Открыть настройки",
   'settings.volumeManage': "Управлять в настройках",
+  // UI qayta ishlanishi (2026-10-10): har bo'lim o'z faylida - parallel ishda to'qnashmasin.
+  ...nav.ru,
+  ...settingsPart.ru,
+  ...recordingsPart.ru,
 };

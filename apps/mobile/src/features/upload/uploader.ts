@@ -65,6 +65,11 @@ export interface UploaderDeps {
   random?: () => number;
   /** Sozlama: lokal nusxani necha kun saqlash (0 yoki 7). */
   keepDays?: () => number;
+  /**
+   * Fayl hozir pleerda ochiqmi. keepDays=0 bo'lsa ham bunday fayl darhol o'chirilmaydi
+   * (tinglash o'rtasida siljitish yiqilmasin) - `keepUntil` da tozalanadi.
+   */
+  fileInUse?: (uri: string) => boolean;
   appVersion: string;
   device: string;
   /** Sessiya tugadi - ilova login ekraniga o'tadi, navbat saqlanadi. */
@@ -80,6 +85,9 @@ export interface UploaderDeps {
   /** Taymer (testda soxta). Bekor qilish funksiyasini qaytaradi. */
   schedule?: (fn: () => void, ms: number) => () => void;
 }
+
+/** Server tugallanmagan yuklashni unutgan (404 ma'lum id bilan) - qator 0 dan qayta yaratiladi. */
+export const SERVER_RESET = 'server_reset';
 
 export type RowOutcome = 'done' | 'retry' | 'failed' | 'auth' | 'skipped';
 
@@ -161,7 +169,7 @@ export function createUploader(deps: UploaderDeps): Uploader {
       keepUntil,
     });
     hashers.delete(row.clientId);
-    if (keepDays === 0) {
+    if (keepDays === 0 && !deps.fileInUse?.(row.fileUri)) {
       // Server audioni oldi (upload.complete=true) - endi va faqat endi o'chiramiz.
       await deps.files.remove(row.fileUri);
     }
@@ -174,11 +182,11 @@ export function createUploader(deps: UploaderDeps): Uploader {
     return 'failed';
   }
 
-  async function scheduleRetry(row: QueueRow, err: unknown): Promise<RowOutcome> {
+  async function scheduleRetry(row: QueueRow, err: unknown, codeOverride?: string): Promise<RowOutcome> {
     const attempts = row.attempts + 1;
     let delay = backoffMs(attempts, random);
     if (err instanceof ApiError && err.retryAfterSec != null) delay = Math.max(delay, err.retryAfterSec * 1000);
-    const code = err instanceof ApiError ? err.code : 'internal';
+    const code = codeOverride ?? (err instanceof ApiError ? err.code : 'internal');
     await update(row, { attempts, nextAttemptAt: now() + delay, lastError: code });
     return 'retry';
   }
@@ -194,7 +202,9 @@ export function createUploader(deps: UploaderDeps): Uploader {
         // Server qatorni unutgan - eski id bilan har urinish yana 404 bo'lardi. Qaytadan yaratamiz.
         hashers.delete(row.clientId);
         const reset = await update(row, { serverId: null, receivedBytes: 0, state: 'stopped' });
-        return scheduleRetry(reset, err);
+        // Alohida kod: `not_found` + server id'siz qator UI'da "bo'lim yoqilmagan" deb
+        // o'qilardi (yolg'on). Bu esa oddiy kutish - keyingi urinish qayta yaratadi.
+        return scheduleRetry(reset, err, SERVER_RESET);
       }
       if (err.status === 410) return fail(row, err.code);
     }

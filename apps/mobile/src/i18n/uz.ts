@@ -4,6 +4,10 @@
  * `__tests__/i18n.test.ts` ikkalasi tekshiradi.
  * `{name}` - o'rniga qiymat qo'yiladi.
  */
+import { nav } from './parts/nav';
+import { recordingsPart } from './parts/recordings';
+import { settingsPart } from './parts/settings';
+
 export const uz = {
   'app.name': 'Barno AI',
   'common.ok': 'OK',
@@ -299,7 +303,7 @@ export const uz = {
     "Barno taklif tayyorlamadi - aniqlik kerak. Vazifani tahrirlang (yig'ilishda vazifani bosib turing: matn, mas'ul), so'ng qayta yuboring.",
   'crm.notConnectedTitle': 'CRM ulanmagan',
   'crm.notConnected':
-    "Vazifani CRMga qo'shish uchun CRM hisobingiz ulangan bo'lishi kerak. Chatda Sozlamalar > Ulanishlar bo'limini oching: CRM \"Ulanmagan\" yoki \"Muddati tugagan\" bo'lsa, hisobdan chiqib qayta kiring - CRM login orqali avtomatik ulanadi. So'ng shu yerga qaytib, qayta urinib ko'ring.",
+    "Vazifani CRMga qo'shish uchun CRM hisobingiz ulangan bo'lishi kerak. Chatda ☰ menyusini oching > Sozlamalar > Ulanishlar: CRM \"Ulanmagan\" yoki \"Muddati tugagan\" bo'lsa, \"Qayta kirish\"ni bosing - CRM login orqali avtomatik ulanadi. So'ng shu yerga qaytib, qayta urinib ko'ring.",
   'crm.openChat': 'Chatga qaytish',
   'crm.fail.generic': "Barno hozir taklif tayyorlay olmadi. Birozdan keyin qayta urinib ko'ring.",
   'crm.fail.busy': "Barno hozir band. Bir daqiqadan keyin qayta urinib ko'ring.",
@@ -506,6 +510,11 @@ export const uz = {
   'settings.volumeSteps': "Yoqish: \"Sozlamani ochish\" > O'rnatilgan ilovalar > \"Barno: ovoz tugmasi bilan yozish\" > Yoqish.",
   'settings.volumeOpen': "Sozlamani ochish",
   'settings.volumeManage': "Sozlamada boshqarish",
+
+  // UI qayta ishlanishi (2026-10-10): har bo'lim o'z faylida - parallel ishda to'qnashmasin.
+  ...nav.uz,
+  ...settingsPart.uz,
+  ...recordingsPart.uz,
 } as const;
 
 export type TKey = keyof typeof uz;

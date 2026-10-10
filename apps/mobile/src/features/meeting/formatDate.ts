@@ -53,11 +53,29 @@ export function formatDateTime(input: string | number | Date, lang: Lang, opts: 
   return `${dayMonth(p.day, p.month, lang, opts.withYear ? p.year : undefined)}, ${pad(p.hour)}:${pad(p.minute)}`;
 }
 
-/** Faqat sana ('YYYY-MM-DD', vaqt zonasiz) -> `10-oktyabr`. */
-export function formatDay(isoDate: string, lang: Lang): string {
+/** Faqat sana ('YYYY-MM-DD', vaqt zonasiz) -> `10-oktyabr` (`withYear` - `2025-yil 10-oktyabr`). */
+export function formatDay(isoDate: string, lang: Lang, opts: { withYear?: boolean } = {}): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
   if (!m) return isoDate;
-  return dayMonth(Number(m[3]), Number(m[2]), lang);
+  return dayMonth(Number(m[3]), Number(m[2]), lang, opts.withYear ? Number(m[1]) : undefined);
+}
+
+/**
+ * Faqat soat `HH:MM` (Toshkent). Yozuvlar ro'yxatida kun bo'lim sarlavhasida
+ * ("Bugun"), kartada esa faqat soat - sana ikki marta takrorlanmasin.
+ * `lang` - kelajakda 12 soatlik format kerak bo'lsa imzo o'zgarmasin.
+ */
+export function formatTime(input: string | number | Date, _lang?: Lang): string {
+  const p = tashkentParts(input);
+  if (!p) return '';
+  return `${pad(p.hour)}:${pad(p.minute)}`;
+}
+
+/** Toshkent kuni kaliti `YYYY-MM-DD` (ro'yxatni kunlarga guruhlash uchun); noto'g'ri sana -> ''. */
+export function tashkentDayKey(input: string | number | Date): string {
+  const p = tashkentParts(input);
+  if (!p) return '';
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}`;
 }
 
 /** Muddat: aniq sana bo'lsa formatlangan, aks holda aytilgan ibora. */

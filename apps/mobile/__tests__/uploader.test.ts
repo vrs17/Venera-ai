@@ -69,7 +69,9 @@ interface FakeTimer {
   cancelled: boolean;
 }
 
-function setup(opts: { size?: number; rows?: QueueRow[]; keepDays?: number; canonicalUri?: (id: string) => string } = {}) {
+function setup(
+  opts: { size?: number; rows?: QueueRow[]; keepDays?: number; canonicalUri?: (id: string) => string; fileInUse?: (uri: string) => boolean } = {},
+) {
   const server = new FakeServer(CHUNK);
   const tp = tokenProvider();
   const client = new ApiClient({ baseUrl: 'https://llm.brb-tech.uz', fetch: server.fetch, tokens: tp });
@@ -92,6 +94,7 @@ function setup(opts: { size?: number; rows?: QueueRow[]; keepDays?: number; cano
     device: 'SM-S921B',
     onAuthRequired,
     canonicalUri: opts.canonicalUri,
+    fileInUse: opts.fileInUse,
     schedule: (fn, ms) => {
       const t: FakeTimer = { fn, ms, cancelled: false };
       timers.push(t);
@@ -155,6 +158,18 @@ describe('uploader', () => {
     expect(s.fs.removed).toEqual([]);
     expect((await s.get()).keepUntil).toBe(s.now() + 7 * DAY_MS);
     s.advance(7 * DAY_MS + 1);
+    await s.uploader.runOnce();
+    expect(s.fs.removed).toEqual([URI]);
+    expect(await s.store.list()).toEqual([]);
+  });
+
+  it('keepDays=0 but the file is playing right now: not deleted mid-listen, cleaned up with the row later', async () => {
+    // Tinglash paytida yuklash tugadi - Android pleeri keyingi siljitishda faylni qayta ochadi.
+    const s = setup({ fileInUse: (uri) => uri === URI });
+    await s.uploader.runOnce();
+    expect((await s.get()).state).toBe('done');
+    expect(s.fs.removed).toEqual([]);
+    s.advance(DAY_MS + 1);
     await s.uploader.runOnce();
     expect(s.fs.removed).toEqual([URI]);
     expect(await s.store.list()).toEqual([]);
@@ -378,7 +393,7 @@ describe('uploader', () => {
     const s = setup({ rows: [row({ serverId: 'gone0000000000000000000000000000', receivedBytes: 1000, state: 'uploading' })] });
     await s.uploader.runOnce();
     const r = await s.get();
-    expect(r).toMatchObject({ serverId: null, receivedBytes: 0, state: 'stopped', lastError: 'not_found' });
+    expect(r).toMatchObject({ serverId: null, receivedBytes: 0, state: 'stopped', lastError: 'server_reset' });
     expect(r.nextAttemptAt).not.toBeNull();
     s.advance(r.nextAttemptAt! - s.now());
     await s.uploader.runOnce();

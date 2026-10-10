@@ -1,9 +1,11 @@
 /**
  * Native chat ekrani: salomlashuv -> tayyor savol -> oqimli javob (manbalar bilan),
- * HRM/CRM ulanmagan xatosi -> "Qayta ulash", to'xtatish, tarixdan ochish, Pro kaliti,
- * diktovka (to'xtatib tahrirlash va darhol yuborish).
+ * HRM/CRM ulanmagan xatosi -> "Qayta ulash", to'xtatish, drawer'dan tarixni ochish,
+ * Pro kaliti, diktovka (to'xtatib tahrirlash va darhol yuborish), tepa panel
+ * (☰ / ≋ Yozuvlar / qizil yozuv chizig'i).
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { router } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import type { ChatFrame } from '@/api/chat';
@@ -12,9 +14,12 @@ import { useAuth } from '@/features/auth/authStore';
 import { useChat } from '@/features/chat/chatStore';
 import { useChats } from '@/features/chat/chatsStore';
 import { usePro } from '@/features/chat/proStore';
+import { useRecorderStore } from '@/features/recorder/RecorderProvider';
+import { initialRecorderState } from '@/features/recorder/recorderMachine';
 import { useSettings } from '@/features/settings/settingsStore';
 
 import { fakeChatApi, fakeServices, Providers } from './fixtures/fakeServices';
+import { config } from './fixtures/server';
 
 jest.mock('expo-router', () => ({ router: { push: jest.fn(), replace: jest.fn(), navigate: jest.fn() } }));
 
@@ -32,6 +37,14 @@ async function renderChat(chat = fakeChatApi()) {
   return { services, chat };
 }
 
+/** ☰ - drawer ochiladi. */
+async function renderChatMenu() {
+  await act(async () => {
+    await fireEvent.press(await screen.findByTestId('chat-menu'));
+  });
+  await screen.findByTestId('drawer');
+}
+
 /** Kadrlarni ketma-ket beradigan soxta oqim. */
 function streamOf(frames: ChatFrame[]) {
   return jest.fn(async (_q: string, onFrame: (f: ChatFrame) => void) => {
@@ -45,6 +58,8 @@ beforeEach(() => {
   usePro.getState().reset();
   useSettings.getState().set({ uiLang: 'uz', proOn: false, themePref: 'light' });
   useAuth.getState().setSignedIn({ actorId: 7, actorType: 'EMPLOYEE', email: 'y@x.uz', fullName: 'Yusuf Mamajonov', position: null, department: null, roles: [], passwordChangeRequired: false });
+  useAuth.getState().setConfig(null);
+  useRecorderStore.setState({ machine: initialRecorderState });
 });
 
 describe('ChatScreen', () => {
@@ -106,7 +121,7 @@ describe('ChatScreen', () => {
     expect(release).not.toBeNull();
   });
 
-  it('opens a chat from history', async () => {
+  it('opens a chat from history (☰ -> drawer -> chat row)', async () => {
     const chat = fakeChatApi({
       list: jest.fn(async () => ({ items: [{ chat_id: 'old-1', title: "Ta'til qoldig'i", created_at: null, updated_at: new Date().toISOString() }], limit: 50, offset: 0 })),
       get: jest.fn(async (id: string) => ({
@@ -121,15 +136,67 @@ describe('ChatScreen', () => {
       })),
     });
     await renderChat(chat);
-    await act(async () => {
-      await fireEvent.press(await screen.findByTestId('chat-history'));
-    });
+    await renderChatMenu();
     await act(async () => {
       await fireEvent.press(await screen.findByTestId('history-old-1'));
     });
     expect(chat.get).toHaveBeenCalledWith('old-1');
     expect(await screen.findByText('12 kun qoldi.')).toBeTruthy();
     expect(screen.getByText("Ta'tilim qancha qoldi?")).toBeTruthy();
+    // Tanlangandan keyin drawer yopiladi (yopilish animatsiyasidan so'ng Modal yo'qoladi).
+    await waitFor(() => expect(screen.queryByTestId('drawer')).toBeNull());
+    // Ochilgan suhbat nomi tepada.
+    expect(screen.getByText("Ta'til qoldig'i")).toBeTruthy();
+  });
+
+  it('top bar: ☰ opens the drawer; profile moved from the top bar to the drawer footer', async () => {
+    await renderChat();
+    expect(screen.queryByTestId('chat-settings')).toBeNull();
+    expect(screen.queryByTestId('chat-history')).toBeNull();
+    expect(screen.queryByTestId('drawer')).toBeNull();
+    expect(screen.getByTestId('chat-menu').props.accessibilityLabel).toBe('Menyu');
+    await renderChatMenu();
+    expect(screen.getByTestId('drawer')).toBeTruthy();
+    await act(async () => {
+      await fireEvent.press(screen.getByTestId('drawer-settings'));
+    });
+    expect(router.push).toHaveBeenCalledWith('/settings');
+  });
+
+  it('top bar: ≋ Yozuvlar is hidden without meetings and opens /meetings in one tap when enabled', async () => {
+    await renderChat();
+    expect(screen.queryByTestId('chat-meetings')).toBeNull();
+    await act(async () => {
+      useAuth.getState().setConfig(config);
+    });
+    const btn = await screen.findByTestId('chat-meetings');
+    expect(btn.props.accessibilityLabel).toBe('Yozuvlar');
+    await act(async () => {
+      await fireEvent.press(btn);
+    });
+    expect(router.push).toHaveBeenCalledWith('/meetings');
+  });
+
+  it('red recording strip shows the live clock and opens the recorder', async () => {
+    await renderChat();
+    expect(screen.queryByTestId('chat-recording')).toBeNull();
+    const at = Date.now() - 65_000;
+    await act(async () => {
+      useRecorderStore.setState({ machine: { ...initialRecorderState, status: 'recording', startedAt: at, segmentStartedAt: at } });
+    });
+    // Soat har soniya yuradi - aniq soniyaga emas, formatga qaraymiz.
+    expect(await screen.findByText(/^Yozilmoqda 01:0\d$/)).toBeTruthy();
+    // Yozuv paytida ≋ ham ko'rinadi (konfig bo'lmasa ham - yozuv topiladigan bo'lsin).
+    expect(screen.getByTestId('chat-meetings')).toBeTruthy();
+    await act(async () => {
+      await fireEvent.press(screen.getByTestId('chat-recording'));
+    });
+    expect(router.push).toHaveBeenCalledWith('/record?src=app');
+
+    await act(async () => {
+      useRecorderStore.setState({ machine: { ...initialRecorderState, status: 'paused', startedAt: at, accumulatedMs: 125_000, segmentStartedAt: null } });
+    });
+    expect(await screen.findByText('Pauzada 02:05')).toBeTruthy();
   });
 
   it('Pro pill shows when the engine allows it and the next question goes as pro', async () => {

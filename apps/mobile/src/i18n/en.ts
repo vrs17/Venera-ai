@@ -1,3 +1,6 @@
+import { nav } from './parts/nav';
+import { recordingsPart } from './parts/recordings';
+import { settingsPart } from './parts/settings';
 import type { TKey } from './uz';
 
 export const en: Record<TKey, string> = {
@@ -295,7 +298,7 @@ export const en: Record<TKey, string> = {
     'Barno did not prepare a proposal - it needs clarification. Edit the task (in the meeting, press and hold the task: text, owner), then send again.',
   'crm.notConnectedTitle': 'CRM is not connected',
   'crm.notConnected':
-    'To add a task to CRM, your CRM account must be connected. In the chat open Settings > Connections: if CRM shows "Not connected" or "Expired", sign out and sign in again - CRM connects automatically with your login. Then come back here and try again.',
+    'To add a task to CRM, your CRM account must be connected. In the chat open the ☰ menu > Settings > Connections: if CRM shows "Not connected" or "Expired", tap "Sign in again" - CRM connects automatically with your login. Then come back here and try again.',
   'crm.openChat': 'Back to chat',
   'crm.fail.generic': 'Barno could not prepare a proposal right now. Please try again a bit later.',
   'crm.fail.busy': 'Barno is busy right now. Try again in a minute.',
@@ -501,4 +504,8 @@ export const en: Record<TKey, string> = {
   'settings.volumeSteps': "To turn on: \"Open settings\" > Installed apps > \"Barno: record with the volume button\" > On.",
   'settings.volumeOpen': "Open settings",
   'settings.volumeManage': "Manage in settings",
+  // UI qayta ishlanishi (2026-10-10): har bo'lim o'z faylida - parallel ishda to'qnashmasin.
+  ...nav.en,
+  ...settingsPart.en,
+  ...recordingsPart.en,
 };
