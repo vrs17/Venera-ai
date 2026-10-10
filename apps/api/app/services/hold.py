@@ -244,6 +244,7 @@ class HoldVoices:
         self._lock = threading.Lock()
         self._clips: dict[str, bytes] = {}
         self._warmed = False
+        self._pruned = False
 
     def get(self, key: str) -> bytes | None:
         if not key:
@@ -276,16 +277,8 @@ class HoldVoices:
         except OSError as exc:
             log.info("Kutish ovozlari: papka yaratilmadi (%s)", exc)
             return
-        # ESKI ovozlarni tozalash. Gap matni o'zgarsa kaliti ham o'zgaradi
-        # (`clip_key` dagi xesh), ya'ni eski fayl endi hech qachon
-        # ishlatilmaydi. Papka FAQAT shu kesh uchun - boshqa narsa yo'q.
         kerak = {key for key, _ in clips}
-        for fayl in self.cache_dir.glob("*.wav"):
-            if fayl.stem not in kerak:
-                try:
-                    fayl.unlink()
-                except OSError:
-                    pass
+        self.prune(kerak)
         yasalgan = 0
         for key, matn in clips:
             if self.ready(key):
@@ -297,18 +290,55 @@ class HoldVoices:
                 continue
             if not data:
                 continue
-            tmp = self.cache_dir / f".{key}.part"
-            try:
-                tmp.write_bytes(data)
-                tmp.replace(self.cache_dir / f"{key}.wav")
-            except OSError as exc:
-                log.info("Kutish ovozi saqlanmadi (%s): %s", key, exc)
+            if not self.put(key, data):
                 continue
-            with self._lock:
-                self._clips[key] = data
             yasalgan += 1
         log.info("Kutish ovozlari tayyor: %d ta yangi, jami %d/%d",
                  yasalgan, sum(1 for k in kerak if self.ready(k)), len(kerak))
+
+    def prune(self, kerak: set[str]) -> None:
+        """ESKI ovozlarni tozalaydi - har nusxada BIR MARTA.
+
+        Gap matni o'zgarsa kaliti ham o'zgaradi (`clip_key` dagi xesh), ya'ni
+        eski fayl endi hech qachon ishlatilmaydi. Papka FAQAT shu kesh uchun -
+        boshqa narsa yo'q. Faqat shu papkaning o'zi (`*.wav`, ichki papkalar
+        EMAS): boshqa ovozlarning keshi uning ichida turadi (`<papka>/<ovoz>/`)
+        va ular o'z nusxasida tozalanadi.
+        """
+        with self._lock:
+            if self._pruned:
+                return
+            self._pruned = True
+        for fayl in self.cache_dir.glob("*.wav"):
+            if fayl.stem not in kerak:
+                try:
+                    fayl.unlink()
+                except OSError:
+                    pass
+
+    def put(self, key: str, data: bytes) -> bool:
+        """Ovozni diskka (atomar) va xotiraga yozadi. `False` - saqlanmadi.
+
+        ATOMAR: avval `.part`, keyin `replace`. To'g'ridan-to'g'ri yozilsa,
+        o'sha paytda kelgan so'rov yarim faylni o'qib, uni xotirada
+        keshlab qo'yardi - va xizmat qayta ishga tushguncha buzuq ovoz
+        berardi. `.part` `*.wav` ga mos kelmaydi, ya'ni tozalash unga
+        tegmaydi.
+
+        Disk xatosida xotiraga ham YOZILMAYDI (`warm` dagi avvalgi tartib):
+        `ready()` faqat diskda turgan ovoz uchun rost bo'lsin.
+        """
+        tmp = self.cache_dir / f".{key}.part"
+        try:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            tmp.write_bytes(data)
+            tmp.replace(self.cache_dir / f"{key}.wav")
+        except OSError as exc:
+            log.info("Kutish ovozi saqlanmadi (%s): %s", key, exc)
+            return False
+        with self._lock:
+            self._clips[key] = data
+        return True
 
     def snapshot(self, clips: list[tuple[str, str]]) -> dict[str, int]:
         return {"tayyor": sum(1 for key, _ in clips if self.ready(key)), "jami": len(clips)}

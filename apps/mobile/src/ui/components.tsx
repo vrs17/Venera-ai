@@ -2,6 +2,7 @@
  * Kichik UI to'plami. Tashqi UI kutubxonasi yo'q (APK hajmi va build
  * xavfini kamaytirish uchun) - faqat React Native primitivlari.
  */
+import type { LucideIcon } from 'lucide-react-native';
 import type { ReactNode } from 'react';
 import {
   ActivityIndicator,
@@ -37,12 +38,17 @@ export function Button(props: {
   disabled?: boolean;
   loading?: boolean;
   small?: boolean;
+  /** Matn chap tomonidagi belgi (16 px) - tugma nima qilishi bir qarashda ko'rinsin. */
+  icon?: LucideIcon;
+  /** To'liq yumaloq (999) - asosiy chaqiruv tugmalari (bo'sh holat, "Yozish"). */
+  pill?: boolean;
   style?: StyleProp<ViewStyle>;
   testID?: string;
   accessibilityLabel?: string;
 }) {
   const th = useTheme();
   const v = props.variant ?? 'primary';
+  const Icon = props.icon;
   const bg =
     v === 'primary' ? th.primary : v === 'danger' ? th.danger : v === 'record' ? th.record : v === 'secondary' ? th.surfaceAlt : 'transparent';
   const fg = v === 'secondary' || v === 'ghost' ? th.text : th.primaryText;
@@ -60,12 +66,18 @@ export function Button(props: {
       style={({ pressed }) => [
         styles.button,
         props.small && styles.buttonSmall,
+        props.pill && (props.small ? styles.buttonPillSmall : styles.buttonPill),
         { backgroundColor: bg, opacity: disabled ? 0.5 : pressed ? 0.8 : 1 },
         v === 'ghost' && { borderWidth: 1, borderColor: th.border },
         props.style,
       ]}>
       {props.loading ? (
         <ActivityIndicator color={fg} />
+      ) : Icon ? (
+        <View style={styles.buttonRow}>
+          <Icon size={16} color={fg} strokeWidth={2} />
+          <Text style={[styles.buttonText, props.small && styles.buttonTextSmall, { color: fg }]}>{props.title}</Text>
+        </View>
       ) : (
         <Text style={[styles.buttonText, props.small && styles.buttonTextSmall, { color: fg }]}>{props.title}</Text>
       )}
@@ -180,16 +192,24 @@ export function Field(props: TextInputProps & { label?: string }) {
 }
 
 export function Segmented<T extends string>(props: {
-  options: { value: T; label: string }[];
+  options: { value: T; label: string; icon?: LucideIcon }[];
   value: T;
   onChange: (v: T) => void;
   testIDPrefix?: string;
+  /**
+   * Belgi joyi: `left` (default) yoki `top`. 4 ta tab tor telefonda (360 dp) yonma-yon
+   * belgi bilan sig'maydi ("Vazifalar 2" kesiladi) - u holda `top`.
+   */
+  iconPosition?: 'left' | 'top';
 }) {
   const th = useTheme();
+  const top = props.iconPosition === 'top';
   return (
     <View style={[styles.segmented, { backgroundColor: th.surfaceAlt }]}>
       {props.options.map((o) => {
         const active = o.value === props.value;
+        const color = active ? th.text : th.textMuted;
+        const Icon = o.icon;
         return (
           <Pressable
             key={o.value}
@@ -197,8 +217,9 @@ export function Segmented<T extends string>(props: {
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
             onPress={() => props.onChange(o.value)}
-            style={[styles.segment, active && { backgroundColor: th.surface }]}>
-            <Text numberOfLines={1} style={[styles.segmentText, { color: active ? th.text : th.textMuted }]}>
+            style={[styles.segment, Icon && (top ? styles.segmentTop : styles.segmentLeft), active && { backgroundColor: th.surface }]}>
+            {Icon ? <Icon size={16} color={color} strokeWidth={2} /> : null}
+            <Text numberOfLines={1} style={[styles.segmentText, Icon && !top && styles.shrink, { color }]}>
               {o.label}
             </Text>
           </Pressable>
@@ -246,6 +267,9 @@ export const styles = StyleSheet.create({
   card: { borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, padding: 14, marginBottom: 10 },
   button: { borderRadius: 10, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
   buttonSmall: { minHeight: 36, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8 },
+  buttonPill: { borderRadius: 999, paddingHorizontal: 22 },
+  buttonPillSmall: { borderRadius: 999, paddingHorizontal: 14 },
+  buttonRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   buttonText: { fontSize: 16, fontWeight: '600' },
   buttonTextSmall: { fontSize: 13 },
   chip: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, marginRight: 6, marginTop: 4, alignSelf: 'flex-start' },
@@ -261,7 +285,10 @@ export const styles = StyleSheet.create({
   input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
   segmented: { flexDirection: 'row', borderRadius: 10, padding: 3 },
   segment: { flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
+  segmentLeft: { flexDirection: 'row', justifyContent: 'center', gap: 6, paddingHorizontal: 4 },
+  segmentTop: { paddingVertical: 6, gap: 2, paddingHorizontal: 2 },
   segmentText: { fontSize: 13, fontWeight: '600' },
+  shrink: { flexShrink: 1 },
   checkbox: { width: 24, height: 24, borderRadius: 6, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   row: { flexDirection: 'row', alignItems: 'center' },

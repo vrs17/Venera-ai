@@ -35,8 +35,10 @@ CORE_LAYOUT = ("overview", "actionItems", "decisions", "followUps", "topics", "k
 
 #: `short_call` da qoladigan bo'limlar; qolganlari bo'shatiladi. Qisqa mijoz
 #: qo'ng'irog'ining narxi, ochiq savoli va keyingi uchrashuvi ham YO'QOLMASIN.
-SHORT_CALL_KEEP = ("overview", "actionItems", "decisions", "followUps", "openQuestions", "numbers", "dates",
-                   "nextMeeting", "highlights")
+#: `keyPoints` (2026-10-10): "Qisqa xulosa"ning "Asosiy fikrlar"i qisqa qo'ng'iroqda ham
+#: bo'lishi shart - foydalanuvchi aynan shu ko'rinishni ulashadi; umumiy xulosadan keyin.
+SHORT_CALL_KEEP = ("overview", "keyPoints", "actionItems", "decisions", "followUps", "openQuestions", "numbers",
+                   "dates", "nextMeeting", "highlights")
 
 
 @dataclass(frozen=True)
@@ -195,15 +197,15 @@ TEMPLATES: dict[str, Template] = {t.id: t for t in (
                   ("qa", "question and its answer"), ("homework", "assigned homework")),
     ),
     Template(
-        "short_call", "short_call-2",
+        "short_call", "short_call-3",
         _t("Qisqa qo'ng'iroq", "Короткий звонок", "Short call"),
-        _t("Qisqa: xulosa, vazifalar, qarorlar, raqamlar, sanalar",
-           "Кратко: резюме, задачи, решения, цифры, даты",
-           "Short: overview, action items, decisions, numbers, dates"),
+        _t("Qisqa: xulosa, asosiy fikrlar, vazifalar, qarorlar, raqamlar",
+           "Кратко: резюме, ключевые моменты, задачи, решения, цифры",
+           "Short: overview, key points, action items, decisions, numbers"),
         auto=True, extra_tab=False,
-        emphasis=("Short call. The overview, action items, decisions, open questions, key numbers, dates, "
-                  "highlights and a next meeting (if one was set) matter; keep topics, keyPoints, risks, "
-                  "nextSteps and templateSections empty."),
+        emphasis=("Short call. Write the purpose, a 1-2 sentence overview and 3-6 short keyPoints. The action "
+                  "items, decisions, open questions, key numbers, dates, highlights and a next meeting (if one "
+                  "was set) matter; keep topics, risks, nextSteps and templateSections empty."),
         layout=SHORT_CALL_KEEP,
     ),
     Template(

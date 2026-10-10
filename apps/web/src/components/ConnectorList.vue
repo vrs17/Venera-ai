@@ -16,6 +16,12 @@ import { toast } from '../ui/useToast'
 // ishlatish), aks holda "Ulanish" / "Qayta ulanish". Tishli g'ildirak - hisob
 // (sessiya muddati, uzish). Qaysi ko'rinish ochilishi ota komponentning ishi:
 // `connect` - kirish shakli, `manage` - hisob.
+//
+// `hideSwitch` (2026-10-10): oynada platforma kalitlari (PlatformList - "Barno shu
+// manbadan foydalansinmi", HRM va CRM ham) chiqqanda qatordagi kalit yashiriladi - bir
+// ekranda HRM uchun ikki kalit odamni chalg'itardi. Hisob ko'rinishidagi "Chatda
+// ishlatish" kaliti joyida qoladi; platformalar yuklanmasa - qator avvalgidek.
+const props = withDefaults(defineProps<{ hideSwitch?: boolean }>(), { hideSwitch: false })
 const emit = defineEmits<{ connect: [id: ConnectorId]; manage: [id: ConnectorId] }>()
 const { t } = useI18n({ useScope: 'global' })
 const { connectors, loading, loaded, loadFailed, toggle } = useConnectors()
@@ -81,14 +87,14 @@ async function onToggle(id: ConnectorId) {
             @click="emit('manage', c.id)"
           />
           <VSwitch
-            v-if="c.state === 'connected'"
+            v-if="c.state === 'connected' && !props.hideSwitch"
             class="clist__switch"
             :model-value="c.enabled"
             :aria-label="c.label"
             @update:model-value="onToggle(c.id)"
           />
           <VButton
-            v-else
+            v-else-if="c.state !== 'connected'"
             data-role="connect"
             size="sm"
             :variant="c.state === 'expired' ? 'primary' : 'secondary'"

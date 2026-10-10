@@ -22,6 +22,24 @@ export function recordingFile(clientId: string, extension = '.aac'): File {
   return new File(recordingsDir(), `${clientId}${extension}`);
 }
 
+/** Ulashish/eksport fayllari (`cache/exports/`): yuklab olingan PDF, Word, audio (ExportSheet). */
+export const EXPORTS_DIR = 'exports';
+
+/**
+ * Eksport papkasini o'chiradi - CHIQISHDA va ilova ochilganda. NIMA UCHUN: u yerda oxirgi
+ * ulashilgan fayl (to'liq yig'ilish audiosi, transkript PDF) keyingi eksportgacha yotardi -
+ * umumiy telefonda oldingi xodimning fayllari chiqishdan keyin ham qolardi (server ham
+ * `Cache-Control: private, no-store` beradi). Xato yutiladi: papka yo'q bo'lishi mumkin.
+ */
+export function clearExports(): void {
+  try {
+    const dir = new Directory(Paths.cache, EXPORTS_DIR);
+    if (dir.exists) dir.delete();
+  } catch {
+    /* papka yo'q yoki o'qib bo'lmadi */
+  }
+}
+
 /** expo-audio ba'zan `file://`siz yo'l qaytaradi - File() uchun bir xil ko'rinish. */
 export function toFileUri(pathOrUri: string): string {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(pathOrUri)) return pathOrUri;

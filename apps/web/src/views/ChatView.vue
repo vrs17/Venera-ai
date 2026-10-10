@@ -42,6 +42,7 @@ import { isEditableTarget, matchesShortcut } from '../ui/useCommandPalette'
 // Kamdan-kam ochiladi - alohida bo'lak, chatning birinchi yuklanishiga qo'shilmaydi.
 const ReportDialog = defineAsyncComponent(() => import('../features/report/ReportDialog.vue'))
 const DesktopDownload = defineAsyncComponent(() => import('../components/DesktopDownload.vue'))
+const MemoryDialog = defineAsyncComponent(() => import('../components/MemoryDialog.vue'))
 
 const { t, locale } = useI18n({ useScope: 'global' })
 const router = useRouter()
@@ -776,6 +777,11 @@ function onReportSent(payload: { id: string; turnId: string | null }) {
 // --- Ish stoli ilovasi ----------------------------------------------------------
 const desktopOpen = ref(false)
 
+// --- Xotira (Barno nimani eslab qolgan) - hisob menyusidan; kod birinchi ochilganda yuklanadi.
+const memoryOpen = ref(false)
+const memoryMounted = ref(false)
+watch(memoryOpen, (on) => on && (memoryMounted.value = true))
+
 // --- Toast'lar kompozer ustida chiqsin (VToastHost `--toast-offset` ni o'qiydi) --
 const composerEl = ref<HTMLElement | null>(null)
 let composerRo: ResizeObserver | null = null
@@ -819,6 +825,7 @@ onBeforeUnmount(() => {
       @set-theme="setTheme"
       @toggle-wake="toggleWake"
       @open-desktop="desktopOpen = true"
+      @open-memory="memoryOpen = true"
       @logout="onLogout"
     />
     <!-- <1120: chapdan chiquvchi drawer - fokus tuzog'i, parda, Esc; fon bosilmaydi. -->
@@ -848,6 +855,7 @@ onBeforeUnmount(() => {
         @set-theme="setTheme"
         @toggle-wake="toggleWake"
         @open-desktop="desktopOpen = true"
+        @open-memory="memoryOpen = true"
         @logout="onLogout"
       />
     </VSheet>
@@ -934,6 +942,8 @@ onBeforeUnmount(() => {
       :messages="reportMessages"
       @sent="onReportSent"
     />
+
+    <MemoryDialog v-if="memoryMounted" v-model:open="memoryOpen" />
 
     <!-- Sarlavha DesktopDownload'ning o'zida - dialogda takrorlanmaydi. -->
     <VDialog v-model:open="desktopOpen" size="md" :aria-label="t('chat.desktopApp')">

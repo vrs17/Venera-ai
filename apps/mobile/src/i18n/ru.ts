@@ -1,3 +1,8 @@
+import { callsPart } from './parts/calls';
+import { nav } from './parts/nav';
+import { recordingsPart } from './parts/recordings';
+import { settingsPart } from './parts/settings';
+import { sharePart } from './parts/share';
 import type { TKey } from './uz';
 
 export const ru: Record<TKey, string> = {
@@ -141,8 +146,8 @@ export const ru: Record<TKey, string> = {
   'detail.summaryNone': 'Итога пока нет',
   'detail.newSummary': '+ Новый итог',
   'detail.chooseTemplate': 'Выберите шаблон',
-  'detail.shareMd': 'Поделиться Markdown',
-  'detail.copyText': 'Скопировать как текст',
+  'detail.shareMd': 'Поделиться полным итогом',
+  'detail.copyText': 'Скопировать полный итог',
   'detail.audioExpired': 'Срок хранения аудио истёк - остался только текст',
   'detail.deleteConfirm': 'Встреча будет удалена полностью (аудио, текст, итоги). Продолжить?',
   'detail.renameTitle': 'Название',
@@ -224,6 +229,7 @@ export const ru: Record<TKey, string> = {
   'sum.fromMark': 'Ваша отметка',
   'sum.markUncovered': 'Отметка не отражена в итоге',
   'sum.qualityWarn': 'Некоторые пункты без подтверждения удалены ({n})',
+  'sum.warn.key_points_missing': 'Не удалось выделить ключевые моменты - попробуйте пересоздать итог.',
   'sum.meetingType': 'Тип: {type}',
   'sum.subject': 'Тема: {subject}',
   'sum.generatedBy': 'Подготовлено: {engine}',
@@ -295,7 +301,7 @@ export const ru: Record<TKey, string> = {
     'Барно не подготовила предложение - нужно уточнение. Отредактируйте задачу (на встрече нажмите и удерживайте задачу: текст, ответственный), затем отправьте заново.',
   'crm.notConnectedTitle': 'CRM не подключена',
   'crm.notConnected':
-    'Чтобы добавить задачу в CRM, ваш аккаунт CRM должен быть подключён. В чате откройте Настройки > Подключения: если у CRM статус "Не подключено" или "Истекло", выйдите и войдите снова - CRM подключится автоматически по логину. Затем вернитесь сюда и повторите.',
+    'Чтобы добавить задачу в CRM, ваш аккаунт CRM должен быть подключён. В чате откройте меню ☰ > Настройки > Подключения: если у CRM статус "Не подключено" или "Истекло", нажмите "Войти заново" - CRM подключится автоматически по логину. Затем вернитесь сюда и повторите.',
   'crm.openChat': 'Вернуться в чат',
   'crm.fail.generic': 'Барно сейчас не смогла подготовить предложение. Попробуйте чуть позже.',
   'crm.fail.busy': 'Барно сейчас занята. Попробуйте через минуту.',
@@ -433,6 +439,7 @@ export const ru: Record<TKey, string> = {
   'chat.sourcePage': "стр. {n}",
   'chat.sourceData': "Данные системы",
   'chat.sourceLaw': "Законодательство",
+  'chat.citeN': 'Источник {n}',
   'chat.openFailed': "Не удалось открыть файл",
   'chat.artifactReady': "Документ готов",
   'chat.artifactWord': "Word",
@@ -501,4 +508,10 @@ export const ru: Record<TKey, string> = {
   'settings.volumeSteps': "Включить: «Открыть настройки» > Установленные приложения > «Barno: запись кнопкой громкости» > Включить.",
   'settings.volumeOpen': "Открыть настройки",
   'settings.volumeManage': "Управлять в настройках",
+  // UI qayta ishlanishi (2026-10-10): har bo'lim o'z faylida - parallel ishda to'qnashmasin.
+  ...nav.ru,
+  ...settingsPart.ru,
+  ...recordingsPart.ru,
+  ...sharePart.ru,
+  ...callsPart.ru,
 };

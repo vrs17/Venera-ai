@@ -247,19 +247,16 @@ html.tg-mini .v-toast__close {
 
 /* ── Markdown javob ──────────────────────────────────────────────────────── */
 
-/* Iqtibos chiplari barmoq uchun kattaroq: 11px'lik "[1]" telefonda deyarli bosilmaydi.
-   Ko'rinishi ixcham, bosish maydoni esa ::after bilan ~44px. */
+/* Iqtibos - kichik yuqori indeks (MarkdownMessage, 2026-10-10). Ko'rinishi ixcham, barmoq
+   uchun bosish maydoni esa ::after bilan ~40px (::before - ketma-ket iqtiboslar orasidagi vergul). */
 html.tg-mini .tg-answer .vmd-cite {
   position: relative;
-  padding: 3px 7px;
-  margin: 0 0 0 0.2em;
-  font-size: 0.75rem;
-  border-radius: 7px;
+  font-size: 0.72em;
 }
 html.tg-mini .tg-answer .vmd-cite::after {
   content: '';
   position: absolute;
-  inset: -10px -6px;
+  inset: -14px -8px;
 }
 /* So'z + chip + tinish belgisi bir qatorda (chat/polish.ts): chip yoki "." yangi
    qatorga yolg'iz tushmaydi. */

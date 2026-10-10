@@ -52,7 +52,7 @@ describe('summary rendering model', () => {
   it('action items carry owner, resolved/vague due, chips, quote and evidence; unverified ones are flagged', () => {
     const [a1, a2] = section('actionItems').items;
     expect(a1.text).toBe('Hisobotni yuborish');
-    expect(a1.sub).toEqual(["Mas'ul: 2-ishtirokchi", 'Muddat: 10-oktyabr', 'Natija: PDF hisobot']);
+    expect(a1.sub).toEqual(["Mas'ul: 2-ishtirokchi", 'Muddat: 10-oktabr', 'Natija: PDF hisobot']);
     expect(a1.chips.map((c) => c.label)).toEqual(['Muhim', "Va'da (bilvosita)", 'tasdiqlangan']);
     expect(a1.needsCheck).toBe(false);
     expect(a1.quote).toBe('Men ertaga hisobotni yuboraman');
@@ -81,8 +81,8 @@ describe('summary rendering model', () => {
     expect(section('risks').items[0].chips.map((c) => c.label)).toEqual(['Xavf', 'Yuqori']);
     expect(section('risks').items[0].sub).toContain('Chora: Avans olish');
     expect(section('numbers').items[0].text).toBe("15 mln so'm - narx");
-    expect(section('dates').items[0].text).toBe('25-oktyabr - muddat');
-    expect(section('nextMeeting').items[0]).toMatchObject({ text: '13-oktyabr, 10:00', sub: ['Kun tartibi: Natijalar'] });
+    expect(section('dates').items[0].text).toBe('25-oktabr - muddat');
+    expect(section('nextMeeting').items[0]).toMatchObject({ text: '13-oktabr, 10:00', sub: ['Kun tartibi: Natijalar'] });
     expect(section('highlights').items[0]).toMatchObject({ text: '"kelishdik"', sub: ['Aziz', 'Qaror'] });
     expect(section('highlights').items[0].chips[0].label).toBe('Sizning belgingiz');
     expect(section('keywords').tags).toEqual(['narx', 'hisobot']);

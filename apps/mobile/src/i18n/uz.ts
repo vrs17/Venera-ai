@@ -4,6 +4,12 @@
  * `__tests__/i18n.test.ts` ikkalasi tekshiradi.
  * `{name}` - o'rniga qiymat qo'yiladi.
  */
+import { callsPart } from './parts/calls';
+import { nav } from './parts/nav';
+import { recordingsPart } from './parts/recordings';
+import { settingsPart } from './parts/settings';
+import { sharePart } from './parts/share';
+
 export const uz = {
   'app.name': 'Barno AI',
   'common.ok': 'OK',
@@ -145,8 +151,8 @@ export const uz = {
   'detail.summaryNone': "Xulosa hali yo'q",
   'detail.newSummary': '+ Yangi xulosa',
   'detail.chooseTemplate': 'Shablonni tanlang',
-  'detail.shareMd': 'Markdown ulashish',
-  'detail.copyText': 'Matn sifatida nusxalash',
+  'detail.shareMd': "To'liq xulosani ulashish",
+  'detail.copyText': "To'liq xulosani nusxalash",
   'detail.audioExpired': "Audio saqlash muddati tugagan - faqat matn qoldi",
   'detail.deleteConfirm': "Yig'ilish butunlay o'chiriladi (audio, matn, xulosa). Davom etasizmi?",
   'detail.renameTitle': 'Sarlavha',
@@ -228,6 +234,7 @@ export const uz = {
   'sum.fromMark': 'Sizning belgingiz',
   'sum.markUncovered': "Belgi xulosada aks etmagan",
   'sum.qualityWarn': "Ba'zi bandlar dalilsiz bo'lgani uchun olib tashlandi ({n})",
+  'sum.warn.key_points_missing': "Asosiy fikrlarni ajratib bo'lmadi - xulosani qayta yaratib ko'ring.",
   'sum.meetingType': 'Turi: {type}',
   'sum.subject': 'Mavzu: {subject}',
   'sum.generatedBy': 'Tayyorladi: {engine}',
@@ -299,7 +306,7 @@ export const uz = {
     "Barno taklif tayyorlamadi - aniqlik kerak. Vazifani tahrirlang (yig'ilishda vazifani bosib turing: matn, mas'ul), so'ng qayta yuboring.",
   'crm.notConnectedTitle': 'CRM ulanmagan',
   'crm.notConnected':
-    "Vazifani CRMga qo'shish uchun CRM hisobingiz ulangan bo'lishi kerak. Chatda Sozlamalar > Ulanishlar bo'limini oching: CRM \"Ulanmagan\" yoki \"Muddati tugagan\" bo'lsa, hisobdan chiqib qayta kiring - CRM login orqali avtomatik ulanadi. So'ng shu yerga qaytib, qayta urinib ko'ring.",
+    "Vazifani CRMga qo'shish uchun CRM hisobingiz ulangan bo'lishi kerak. Chatda ☰ menyusini oching > Sozlamalar > Ulanishlar: CRM \"Ulanmagan\" yoki \"Muddati tugagan\" bo'lsa, \"Qayta kirish\"ni bosing - CRM login orqali avtomatik ulanadi. So'ng shu yerga qaytib, qayta urinib ko'ring.",
   'crm.openChat': 'Chatga qaytish',
   'crm.fail.generic': "Barno hozir taklif tayyorlay olmadi. Birozdan keyin qayta urinib ko'ring.",
   'crm.fail.busy': "Barno hozir band. Bir daqiqadan keyin qayta urinib ko'ring.",
@@ -438,6 +445,7 @@ export const uz = {
   'chat.sourcePage': "{n}-bet",
   'chat.sourceData': "Tizim ma'lumoti",
   'chat.sourceLaw': "Qonunchilik",
+  'chat.citeN': "{n}-manba",
   'chat.openFailed': "Faylni ochib bo'lmadi",
   'chat.artifactReady': "Hujjat tayyor",
   'chat.artifactWord': "Word",
@@ -506,6 +514,13 @@ export const uz = {
   'settings.volumeSteps': "Yoqish: \"Sozlamani ochish\" > O'rnatilgan ilovalar > \"Barno: ovoz tugmasi bilan yozish\" > Yoqish.",
   'settings.volumeOpen': "Sozlamani ochish",
   'settings.volumeManage': "Sozlamada boshqarish",
+
+  // UI qayta ishlanishi (2026-10-10): har bo'lim o'z faylida - parallel ishda to'qnashmasin.
+  ...nav.uz,
+  ...settingsPart.uz,
+  ...recordingsPart.uz,
+  ...sharePart.uz,
+  ...callsPart.uz,
 } as const;
 
 export type TKey = keyof typeof uz;

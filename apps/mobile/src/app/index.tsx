@@ -1,20 +1,23 @@
 /**
  * Asosiy ekran - Barno bilan suhbat (NATIVE; Mini App'ning dizayni va mantig'i).
  *
- *   tepada   tarix · suhbat nomi · yangi suhbat · profil (sozlamalar)
+ *   tepada   ☰ menyu (drawer) · suhbat nomi · ≋ yozuvlar · ✎ yangi suhbat (`features/nav/TopBar`)
+ *            yozuv paytida ostida qizil chiziq - bir bosishda yozuv ekrani
  *   o'rtada  salomlashuv (bo'sh suhbatda) yoki savol-javoblar
  *   pastda   Claude uslubidagi yozish maydoni (matn + Pro + mikrofon + yuborish)
  *
  * Javob oqim bilan keladi (NDJSON, `api/chat.ts`), ekran pastga o'zi aylanadi - odam
  * yuqoriga aylantirgan bo'lsa to'xtaydi va "Oxirgi xabarga" tugmasi chiqadi.
  * Kanal `mobile`: server dvigatelni shunga qarab tanlaydi (prod: v3).
+ *
+ * Suhbatlar tarixi, profil/sozlamalar va yozuvlar - chap panelda (`AppDrawer`, ☰ bilan).
  */
-import { router } from 'expo-router';
-import { ArrowDown, AudioLines, History, SquarePen } from 'lucide-react-native';
+import { ArrowDown } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -30,27 +33,18 @@ import { useAuth } from '@/features/auth/authStore';
 import { useChat } from '@/features/chat/chatStore';
 import { useChats } from '@/features/chat/chatsStore';
 import { useKeyboardPadding } from '@/features/chat/keyboard';
-import { useRecorderStore } from '@/features/recorder/RecorderProvider';
 import { proActiveNow, usePro } from '@/features/chat/proStore';
 import { Composer } from '@/features/chat/ui/Composer';
 import { ExchangeView } from '@/features/chat/ui/ExchangeView';
-import { HistorySheet, SourcesSheet } from '@/features/chat/ui/Sheets';
+import { SourcesSheet } from '@/features/chat/ui/Sheets';
+import { AppDrawer, firstName } from '@/features/nav/AppDrawer';
+import { ChatTopBar, RecordingStrip } from '@/features/nav/TopBar';
 import { useSettings, useT } from '@/features/settings/settingsStore';
 import { useServices } from '@/services';
 import { useTheme, type Theme } from '@/ui/theme';
 
 /** Pastdan shuncha piksel ichida bo'lsa - "pastda" hisoblanadi (oqim ergashadi). */
 const NEAR_BOTTOM = 80;
-
-export function initials(name: string | null | undefined): string {
-  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return '·';
-  return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
-}
-
-function firstName(name: string | null | undefined): string {
-  return (name ?? '').trim().split(/\s+/)[0] ?? '';
-}
 
 export default function ChatScreen() {
   const services = useServices();
@@ -60,10 +54,6 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const kb = useKeyboardPadding(insets.bottom);
   const user = useAuth((x) => x.user);
-  // Yig'ilishlar bo'limi serverda yoqilgan (konfig keldi) - "Yozuvlar" tepada, bir bosishda.
-  const meetingsOn = useAuth((x) => x.config !== null);
-  const recStatus = useRecorderStore((x) => x.machine.status);
-  const recording = recStatus === 'recording' || recStatus === 'paused';
 
   const chatId = useChat((x) => x.chatId);
   const exchanges = useChat((x) => x.exchanges);
@@ -73,7 +63,14 @@ export default function ChatScreen() {
   const epoch = useChat((x) => x.epoch);
   const chatItems = useChats((x) => x.items);
 
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  // Barqaror funksiyalar: drawer surish (PanResponder) har chizishda qayta yaratilmasin.
+  const openDrawer = useCallback(() => {
+    // Composer klaviaturasi ochiq qolsa drawer ustini yopib turardi.
+    Keyboard.dismiss();
+    setDrawerOpen(true);
+  }, []);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
   const [sources, setSources] = useState<{ list: AnswerSource[]; focus?: string } | null>(null);
 
   // Dvigatelga bog'liqliklar - bir marta (servislar o'zgarmaydi).
@@ -145,43 +142,8 @@ export default function ChatScreen() {
 
   return (
     <View style={[s.root, { paddingTop: insets.top, paddingBottom: kb.paddingBottom || insets.bottom }]} onLayout={kb.onLayout}>
-      <View style={s.top}>
-        <IconButton label={t('chat.history')} onPress={() => setHistoryOpen(true)} testID="chat-history">
-          <History size={21} color={th.textSoft} strokeWidth={1.9} />
-        </IconButton>
-        <Text style={s.title} numberOfLines={1} accessibilityRole="header">
-          {title || t('app.name')}
-        </Text>
-        {meetingsOn ? (
-          <IconButton label={t('settings.meetings')} onPress={() => router.push('/meetings')} testID="chat-meetings">
-            <AudioLines size={21} color={recording ? th.record : th.textSoft} strokeWidth={1.9} />
-          </IconButton>
-        ) : null}
-        <IconButton label={t('chat.newChat')} onPress={() => useChat.getState().newChat()} testID="chat-new">
-          <SquarePen size={20} color={th.textSoft} strokeWidth={1.9} />
-        </IconButton>
-        <Pressable
-          testID="chat-settings"
-          onPress={() => router.push('/settings')}
-          accessibilityRole="button"
-          accessibilityLabel={t('chat.settings')}
-          hitSlop={6}
-          style={({ pressed }) => [s.avatar, pressed ? { opacity: 0.7 } : null]}>
-          <Text style={s.avatarText}>{initials(user?.fullName)}</Text>
-        </Pressable>
-      </View>
-
-      {recording ? (
-        <Pressable
-          testID="chat-recording"
-          onPress={() => router.push('/record?src=app')}
-          accessibilityRole="button"
-          style={({ pressed }) => [s.recBar, pressed ? { opacity: 0.8 } : null]}>
-          <View style={[s.recDot, { backgroundColor: th.record }]} />
-          <Text style={[s.recText, { color: th.record }]}>{t(recStatus === 'paused' ? 'record.paused' : 'record.recording')}</Text>
-          <Text style={[s.recText, { color: th.textSoft }]}>{t('record.title')} ›</Text>
-        </Pressable>
-      ) : null}
+      <ChatTopBar title={title} onMenu={openDrawer} />
+      <RecordingStrip />
 
       <View style={{ flex: 1 }}>
         {empty ? (
@@ -225,8 +187,10 @@ export default function ChatScreen() {
               setJump({ epoch, show: false });
               scroller.current?.scrollToEnd({ animated: true });
             }}
+            testID="chat-jump"
             accessibilityRole="button"
             accessibilityLabel={t('chat.jumpLatest')}
+            hitSlop={4}
             style={s.jump}>
             <ArrowDown size={20} color={th.textSoft} strokeWidth={2} />
           </Pressable>
@@ -238,31 +202,9 @@ export default function ChatScreen() {
         <Text style={s.disclaimer}>{t('chat.disclaimer')}</Text>
       </View>
 
-      <HistorySheet
-        visible={historyOpen}
-        onClose={() => setHistoryOpen(false)}
-        api={services.chat}
-        activeId={chatId}
-        onOpen={(id) => void useChat.getState().openHistory(id)}
-        onNew={() => useChat.getState().newChat()}
-        onRemovedActive={() => useChat.getState().newChat()}
-      />
+      <AppDrawer open={drawerOpen} onClose={closeDrawer} />
       <SourcesSheet visible={!!sources} onClose={() => setSources(null)} sources={sources?.list ?? []} focus={sources?.focus} api={services.chat} />
     </View>
-  );
-}
-
-function IconButton({ label, onPress, children, testID }: { label: string; onPress: () => void; children: React.ReactNode; testID?: string }) {
-  return (
-    <Pressable
-      testID={testID}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      hitSlop={6}
-      style={({ pressed }) => ({ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.6 : 1 })}>
-      {children}
-    </Pressable>
   );
 }
 
@@ -308,44 +250,14 @@ function Welcome({ name, onPick, disabled }: { name: string; onPick: (q: string)
 function makeStyles(th: Theme) {
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: th.bg },
-    top: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-      paddingHorizontal: 8,
-      height: 52,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: th.border,
-    },
-    title: { flex: 1, color: th.text, fontSize: 17, fontWeight: '700', textAlign: 'center', paddingHorizontal: 4 },
-    avatar: {
-      width: 36,
-      height: 36,
-      borderRadius: 18,
-      marginLeft: 4,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: th.surfaceAlt,
-      borderWidth: 1,
-      borderColor: th.border,
-    },
-    avatarText: { color: th.text, fontSize: 13, fontWeight: '700' },
-    recBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      paddingHorizontal: 16,
-      paddingVertical: 10,
-      backgroundColor: th.tones.bad.bg,
-    },
-    recDot: { width: 10, height: 10, borderRadius: 5 },
-    recText: { fontSize: 14, fontWeight: '700' },
     composerWrap: { paddingHorizontal: 12, paddingTop: 6, paddingBottom: 6, backgroundColor: th.bg },
     disclaimer: { color: th.textFaint, fontSize: 11, textAlign: 'center', marginTop: 6 },
+    // O'ng chetda, yozish maydoni ustida (2026-10-10): o'rtada turganda javob matnining
+    // o'rtasini yopib qo'yardi (egasining skrinshoti). `right` - kompozer cheti bilan bir chiziqda.
     jump: {
       position: 'absolute',
-      alignSelf: 'center',
-      bottom: 10,
+      right: 12,
+      bottom: 8,
       width: 40,
       height: 40,
       borderRadius: 20,

@@ -212,8 +212,10 @@ def test_qisqa_qongiroq_qoidasi_klassifikatorsiz():
     result = Pipeline(llm, verify=False).run(make_input(template="auto", duration=120.0))
     assert result.template == "short_call" and "meeting_classify" not in llm.ops()
     content = result.content
-    assert content["topics"] == [] and content["keyPoints"] == [] and content["actionItems"]
+    # "Qisqa xulosa" (2026-10-10): qisqa qo'ng'iroqda ham asosiy fikrlar QOLADI, mavzular yo'q.
+    assert content["topics"] == [] and content["keyPoints"] and content["actionItems"]
     assert content["meetingType"] == {"value": "short_call", "confidence": 1.0}
+    assert "3-6 short keyPoints" in llm.calls[0]["user"] and "1-2 sentence overview" in llm.calls[0]["user"]
 
 
 def test_klassifikator_ishonchsiz_bolsa_general():

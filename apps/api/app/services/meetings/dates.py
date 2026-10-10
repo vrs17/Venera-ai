@@ -34,8 +34,11 @@ WEEKDAYS = {
 }
 
 MONTHS = {
-    "uz": ("yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentyabr",
-           "oktyabr", "noyabr", "dekabr"),
+    # Rasmiy lotin imlosi: "sentabr", "oktabr" (`speech_text.MONTHS` va veb ilova bilan bir xil;
+    # mahsulot egasi tasdiqlagan "Qisqa xulosa" namunasi ham "10-oktabr"). O'qishda (`_MONTH_FORMS`)
+    # ikkala yozuv ham taniladi.
+    "uz": ("yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr",
+           "oktabr", "noyabr", "dekabr"),
     # Rus tilida sana bilan qaratqich kelishigida: "10 октября".
     "ru": ("января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября",
            "октября", "ноября", "декабря"),
@@ -390,7 +393,7 @@ def tashkent(epoch: float) -> datetime:
 
 
 def format_day_time(epoch: float, lang: str) -> str:
-    """`10-oktyabr, 16:00` / `10 октября, 16:00` / `October 10, 16:00`."""
+    """`10-oktabr, 16:00` / `10 октября, 16:00` / `October 10, 16:00`."""
     moment = tashkent(epoch)
     clock = moment.strftime("%H:%M")
     if lang == "ru":
@@ -401,7 +404,7 @@ def format_day_time(epoch: float, lang: str) -> str:
 
 
 def format_date(value: str | None, lang: str) -> str:
-    """ISO sana -> til bo'yicha (`25-oktyabr` / `25 октября` / `October 25`)."""
+    """ISO sana -> til bo'yicha (`25-oktabr` / `25 октября` / `October 25`)."""
     day = parse_iso(value)
     if day is None:
         return value or ""

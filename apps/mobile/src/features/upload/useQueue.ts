@@ -6,15 +6,24 @@ import { useServices } from '@/services';
 import type { QueueRow } from './queueStore';
 
 export function useQueueRows(): QueueRow[] {
+  return useQueue().rows;
+}
+
+/**
+ * Qatorlar + birinchi o'qish tugadimi. NIMA UCHUN `loaded`: birinchi renderda ro'yxat
+ * bo'sh - "yozuv topilmadi" degan xulosani faqat navbat haqiqatan o'qilgandan keyin
+ * chiqarish mumkin (aks holda har ochilishda bir lahza "topilmadi" ko'rinardi).
+ */
+export function useQueue(): { rows: QueueRow[]; loaded: boolean } {
   const { queue } = useServices();
-  const [rows, setRows] = useState<QueueRow[]>([]);
+  const [state, setState] = useState<{ rows: QueueRow[]; loaded: boolean }>({ rows: [], loaded: false });
   useEffect(() => {
     let alive = true;
     const load = () =>
       queue
         .list()
-        .then((r) => alive && setRows(r))
-        .catch(() => {});
+        .then((r) => alive && setState({ rows: r, loaded: true }))
+        .catch(() => alive && setState((s) => (s.loaded ? s : { ...s, loaded: true })));
     load();
     const unsub = queue.subscribe(load);
     return () => {
@@ -22,7 +31,7 @@ export function useQueueRows(): QueueRow[] {
       unsub();
     };
   }, [queue]);
-  return rows;
+  return state;
 }
 
 /** Ro'yxat tepasida ko'rsatiladigan (serverda hali to'liq bo'lmagan) yozuvlar. */

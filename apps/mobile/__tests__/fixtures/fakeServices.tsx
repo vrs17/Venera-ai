@@ -110,7 +110,9 @@ export function fakeServices(over: { meetings?: MeetingsApi; actions?: ActionsAp
 }
 
 export function Providers({ services, children }: { services: Services; children: ReactNode }) {
-  const [qc] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } }));
+  // Mutatsiyalar ham gcTime: Infinity - aks holda har mutatsiya 5 daqiqalik tozalash taymerini
+  // qoldiradi va bitta faylni alohida (in-band) yurgizganda Jest chiqmay osilib qoladi.
+  const [qc] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } }));
   return (
     <QueryClientProvider client={qc}>
       <ServicesProvider services={services}>{children}</ServicesProvider>

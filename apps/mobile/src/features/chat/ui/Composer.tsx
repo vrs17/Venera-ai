@@ -5,14 +5,19 @@
  *   tepada   matn (butun kenglikda, 8 qatorgacha o'sadi, ekranning ~30% idan oshmaydi)
  *   ostida   chapda "Pro" (dvigatel ruxsat bersa), o'ngda mikrofon va yuborish
  *
- * Yuborish doim joyida: matn yo'q - xira, bor - brend rangida; javob ketayotganda -
- * to'xtatish. Ovoz yozilayotganda karta bitta qatorga aylanadi:
+ * O'ngdagi asosiy tugma: matn bor - brend rangidagi ↑ yuborish; matn yo'q - "Jonli"
+ * (ovozli suhbat, Claude'dagi ovoz tugmasi kabi "siyoh" rangida); javob ketayotganda -
+ * to'xtatish. Mikrofon har doim diktovka. Ovoz yozilayotganda karta bitta qatorga aylanadi:
  *
  *   ✕ bekor   ~~to'lqin~~ 0:07   ■ to'xtatib tahrirlash   ↑ darhol yuborish
  *
  * Diktovka: mikrofon -> AAC (yig'ilish yozuvi bilan bir xil sozlama, Gapi uni o'qiydi)
  * -> `/stt/transcribe` -> matn maydonga TUSHADI (eski matn o'rniga - qayta aytilgan gap
  * eskisini almashtiradi). ↑ bosilgan bo'lsa matn tushishi bilan o'zi yuboriladi.
+ *
+ * "Tinglash" pleeri (javobni ovoz chiqarib o'qish) kartaning USTIDA, oqim ichida
+ * chiziladi (absolute emas) - oxirgi xabarni hech qachon yopmaydi. `index.tsx` ga
+ * tegmaslik uchun u shu yerda.
  */
 import * as Haptics from 'expo-haptics';
 import {
@@ -21,10 +26,12 @@ import {
   useAudioRecorder,
   type RecordingOptions,
 } from 'expo-audio';
-import { ArrowUp, Mic, Sparkles, Square, X } from 'lucide-react-native';
+import { router } from 'expo-router';
+import { ArrowUp, AudioLines, Mic, Sparkles, Square, X } from 'lucide-react-native';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
   Pressable,
   StyleSheet,
   Text,
@@ -41,7 +48,11 @@ import { proActiveNow, usePro } from '@/features/chat/proStore';
 import { levelFromDb } from '@/features/recorder/metering';
 import { MEETING_PRESET } from '@/features/recorder/preset';
 import { useRecorderStore } from '@/features/recorder/RecorderProvider';
+import { isActive } from '@/features/recorder/recorderMachine';
 import { useSettings, useT } from '@/features/settings/settingsStore';
+// Chat ekrani: barrel (`@/features/voice`) EMAS - u expo-router hook'larini olib keladi.
+import { PREVIEW_KEY, stopReadAloud, useReadAloud } from '@/features/voice/readAloud';
+import { ReadAloudBar } from '@/features/voice/ui/ReadAloudBar';
 import { errorText, showToast } from '@/ui/errors';
 import { useTheme, type Theme } from '@/ui/theme';
 
@@ -80,6 +91,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const setSettings = useSettings((x) => x.set);
   const proAvailable = usePro((x) => x.available);
   const proLeft = usePro((x) => x.remaining);
+
+  // Sozlamalardagi ovoz namunasi chat pleerida ko'rsatilmaydi.
+  const readAloudActive = useReadAloud((x) => x.key !== null && x.key !== PREVIEW_KEY);
 
   const [text, setText] = useState('');
   const [inputH, setInputH] = useState(LINE);
@@ -190,6 +204,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       showToast(t('dict.meetingBusy'));
       return;
     }
+    // O'qilayotgan javob ovozi diktovkaga yozilib qolmasin.
+    stopReadAloud();
     const mine = ++session.current;
     setPending(null);
     setLevels([]);
@@ -285,6 +301,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     removeFile(recorder.uri);
   }
 
+  // "Jonli": bo'sh maydonda o'ngdagi tugma ovozli suhbatni ochadi. Yig'ilish yozilayotganda
+  // mikrofon band (ikki yozuvchi bir-birini buzadi) - faqat ogohlantirish.
+  const openLive = () => {
+    if (isActive(useRecorderStore.getState().machine)) {
+      showToast(t('dict.meetingBusy'));
+      return;
+    }
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    Keyboard.dismiss();
+    router.push('/voice');
+  };
+
   // Ekran yopilsa - mikrofon albatta bo'shaydi.
   useEffect(
     () => () => {
@@ -301,82 +329,87 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const transcribing = dict === 'transcribing';
     const status = dict === 'starting' ? t('dict.starting') : transcribing ? t(pending === 'send' ? 'dict.sending' : 'dict.transcribing') : null;
     return (
-      <View style={[s.card, s.cardRow]} testID="composer-dictation" accessibilityLabel={t('dict.start')}>
-        <RoundButton label={t('dict.cancel')} onPress={() => void cancel()} bg={th.composerBtn} testID="dict-cancel">
-          <X size={18} color={th.text} strokeWidth={2} />
-        </RoundButton>
-        <View style={s.wave}>
-          {status ? (
-            <Text numberOfLines={1} style={s.status}>
-              {status}
-            </Text>
-          ) : (
-            <Wave levels={levels} color={th.text} faint={th.textFaint} />
-          )}
+      <View>
+        {readAloudActive ? <ReadAloudBar /> : null}
+        <View style={[s.card, s.cardRow]} testID="composer-dictation" accessibilityLabel={t('dict.start')}>
+          <RoundButton label={t('dict.cancel')} onPress={() => void cancel()} bg={th.composerBtn} testID="dict-cancel">
+            <X size={18} color={th.text} strokeWidth={2} />
+          </RoundButton>
+          <View style={s.wave}>
+            {status ? (
+              <Text numberOfLines={1} style={s.status}>
+                {status}
+              </Text>
+            ) : (
+              <Wave levels={levels} color={th.text} faint={th.textFaint} />
+            )}
+          </View>
+          {!transcribing ? <Text style={s.clock}>{clock}</Text> : null}
+          <RoundButton label={t('dict.stop')} onPress={() => void finish('done')} bg={th.composerBtn} disabled={dict !== 'recording'} testID="dict-stop">
+            {transcribing && pending === 'done' ? <ActivityIndicator size="small" color={th.text} /> : <Square size={12} color={th.text} fill={th.text} strokeWidth={0} />}
+          </RoundButton>
+          <RoundButton label={t('dict.send')} onPress={() => void finish('send')} bg={th.brand} disabled={dict !== 'recording'} testID="dict-send">
+            {transcribing && pending === 'send' ? <ActivityIndicator size="small" color="#fff" /> : <ArrowUp size={19} color="#fff" strokeWidth={2.25} />}
+          </RoundButton>
         </View>
-        {!transcribing ? <Text style={s.clock}>{clock}</Text> : null}
-        <RoundButton label={t('dict.stop')} onPress={() => void finish('done')} bg={th.composerBtn} disabled={dict !== 'recording'} testID="dict-stop">
-          {transcribing && pending === 'done' ? <ActivityIndicator size="small" color={th.text} /> : <Square size={12} color={th.text} fill={th.text} strokeWidth={0} />}
-        </RoundButton>
-        <RoundButton label={t('dict.send')} onPress={() => void finish('send')} bg={th.brand} disabled={dict !== 'recording'} testID="dict-send">
-          {transcribing && pending === 'send' ? <ActivityIndicator size="small" color="#fff" /> : <ArrowUp size={19} color="#fff" strokeWidth={2.25} />}
-        </RoundButton>
       </View>
     );
   }
 
   return (
-    <View style={[s.card, proActive && proAvailable ? { borderColor: th.brand } : null]}>
-      <TextInput
-        ref={inputRef}
-        testID="composer-input"
-        value={text}
-        onChangeText={setText}
-        multiline
-        placeholder={t('chat.placeholder')}
-        placeholderTextColor={th.textMuted}
-        accessibilityLabel={t('chat.message')}
-        onContentSizeChange={onContentSize}
-        style={[s.input, { height: inputH + 18 }]}
-        scrollEnabled={inputH >= maxInputH}
-        textAlignVertical="top"
-        autoCapitalize="sentences"
-      />
-      <View style={s.bar}>
-        {proAvailable ? (
-          <Pressable
-            testID="composer-pro"
-            onPress={togglePro}
-            accessibilityRole="switch"
-            accessibilityState={{ checked: proActive }}
-            accessibilityLabel={proLeft !== null ? `${t('pro.label')} · ${t('pro.left', { n: proLeft })}` : t('pro.label')}
-            hitSlop={6}
-            style={({ pressed }) => [s.pro, proActive ? s.proOn : null, pressed && s.pressed]}>
-            <Sparkles size={16} color={proActive ? th.brand : proSpent ? th.textFaint : th.textSoft} strokeWidth={2} />
-            <Text style={[s.proText, proActive ? { color: th.brand } : proSpent ? { color: th.textFaint } : null]}>
-              {proBadge !== null ? `${t('pro.label')} · ${proBadge}` : t('pro.label')}
-            </Text>
-          </Pressable>
-        ) : null}
-        <View style={{ flex: 1 }} />
-        <RoundButton label={t('dict.start')} onPress={() => void start()} bg={th.composerBtn} disabled={busy} testID="composer-mic">
-          <Mic size={19} color={th.textSoft} strokeWidth={1.9} />
-        </RoundButton>
-        {busy ? (
-          <RoundButton label={t('chat.stop')} onPress={onStop} bg={th.primary} testID="composer-stop">
-            <Square size={12} color={th.primaryText} fill={th.primaryText} strokeWidth={0} />
+    <View>
+      {readAloudActive ? <ReadAloudBar /> : null}
+      <View style={[s.card, proActive && proAvailable ? { borderColor: th.brand } : null]}>
+        <TextInput
+          ref={inputRef}
+          testID="composer-input"
+          value={text}
+          onChangeText={setText}
+          multiline
+          placeholder={t('chat.placeholder')}
+          placeholderTextColor={th.textMuted}
+          accessibilityLabel={t('chat.message')}
+          onContentSizeChange={onContentSize}
+          style={[s.input, { height: inputH + 18 }]}
+          scrollEnabled={inputH >= maxInputH}
+          textAlignVertical="top"
+          autoCapitalize="sentences"
+        />
+        <View style={s.bar}>
+          {proAvailable ? (
+            <Pressable
+              testID="composer-pro"
+              onPress={togglePro}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: proActive }}
+              accessibilityLabel={proLeft !== null ? `${t('pro.label')} · ${t('pro.left', { n: proLeft })}` : t('pro.label')}
+              hitSlop={6}
+              style={({ pressed }) => [s.pro, proActive ? s.proOn : null, pressed && s.pressed]}>
+              <Sparkles size={16} color={proActive ? th.brand : proSpent ? th.textFaint : th.textSoft} strokeWidth={2} />
+              <Text style={[s.proText, proActive ? { color: th.brand } : proSpent ? { color: th.textFaint } : null]}>
+                {proBadge !== null ? `${t('pro.label')} · ${proBadge}` : t('pro.label')}
+              </Text>
+            </Pressable>
+          ) : null}
+          <View style={{ flex: 1 }} />
+          <RoundButton label={t('dict.start')} onPress={() => void start()} bg={th.composerBtn} disabled={busy} testID="composer-mic">
+            <Mic size={19} color={th.textSoft} strokeWidth={1.9} />
           </RoundButton>
-        ) : (
-          <RoundButton
-            label={t('chat.send')}
-            onPress={() => void send(text)}
-            bg={hasText ? th.brand : th.dark ? '#5A3426' : '#F7C4AE'}
-            disabled={!hasText}
-            dimmed={false}
-            testID="composer-send">
-            <ArrowUp size={19} color={hasText ? '#fff' : th.dark ? '#A98C84' : '#fff'} strokeWidth={2.25} />
-          </RoundButton>
-        )}
+          {busy ? (
+            <RoundButton label={t('chat.stop')} onPress={onStop} bg={th.primary} testID="composer-stop">
+              <Square size={12} color={th.primaryText} fill={th.primaryText} strokeWidth={0} />
+            </RoundButton>
+          ) : hasText ? (
+            <RoundButton label={t('chat.send')} onPress={() => void send(text)} bg={th.brand} testID="composer-send">
+              <ArrowUp size={19} color="#fff" strokeWidth={2.25} />
+            </RoundButton>
+          ) : (
+            // Bo'sh maydon: "Jonli" - Claude'dagi ovoz tugmasi kabi "siyoh" rangida.
+            <RoundButton label={t('nav.voice.open')} onPress={openLive} bg={th.primary} testID="composer-live">
+              <AudioLines size={19} color={th.primaryText} strokeWidth={2} />
+            </RoundButton>
+          )}
+        </View>
       </View>
     </View>
   );

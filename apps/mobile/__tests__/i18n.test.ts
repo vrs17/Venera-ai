@@ -2,7 +2,21 @@ import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 import { DICTS, interpolate, translate, UI_LANGS } from '@/i18n';
+import { callsPart } from '@/i18n/parts/calls';
+import { nav } from '@/i18n/parts/nav';
+import { recordingsPart } from '@/i18n/parts/recordings';
+import { settingsPart } from '@/i18n/parts/settings';
+import { sharePart } from '@/i18n/parts/share';
 import { uz } from '@/i18n/uz';
+
+/** Bo'lim fayllari (parallel quruvchilar): nomi, lug'ati, kalit prefiksi. */
+const PARTS = [
+  ['nav', nav, 'nav.'],
+  ['settings', settingsPart, 'set.'],
+  ['recordings', recordingsPart, 'recs.'],
+  ['share', sharePart, 'share.'],
+  ['calls', callsPart, 'calls.'],
+] as const;
 
 describe('i18n', () => {
   it('every language has exactly the uz keys, all non-empty', () => {
@@ -10,6 +24,32 @@ describe('i18n', () => {
     for (const lang of UI_LANGS) {
       expect(Object.keys(DICTS[lang]).sort()).toEqual(keys);
       for (const k of keys) expect(DICTS[lang][k as keyof typeof uz].trim()).not.toBe('');
+    }
+  });
+
+  it('parts: uz/ru/en have the same keys, own prefix only, no overlap, all merged into the dictionaries', () => {
+    const seen = new Set<string>();
+    for (const [name, part, prefix] of PARTS) {
+      const keys = Object.keys(part.uz).sort();
+      expect([name, keys.length > 0]).toEqual([name, true]);
+      for (const lang of UI_LANGS) {
+        const dict = part[lang] as Record<string, string>;
+        expect([name, lang, Object.keys(dict).sort()]).toEqual([name, lang, keys]);
+        // Yoyilgan va boshqa kalit ustidan yozilmagan: asosiy lug'atda aynan shu qiymat.
+        for (const k of keys) expect([lang, k, (DICTS[lang] as Record<string, string>)[k]]).toEqual([lang, k, dict[k]]);
+      }
+      for (const k of keys) {
+        expect([name, k.startsWith(prefix)]).toEqual([name, true]);
+        expect([k, seen.has(k)]).toEqual([k, false]);
+        seen.add(k);
+      }
+    }
+    // Prefikslar faqat bo'lim fayllariga tegishli: asosiy uz.ts ichida qo'lda yozilgan
+    // `nav.`/`set.`/`recs.`/`share.`/`calls.` kaliti bo'lmasin (bo'lim fayli uni jim ustidan yozib yuborardi).
+    for (const k of Object.keys(uz)) if (/^(nav|set|recs|share|calls)\./.test(k)) expect([k, seen.has(k)]).toEqual([k, true]);
+    for (const lang of UI_LANGS) {
+      const src = readFileSync(join(__dirname, `../src/i18n/${lang}.ts`), 'utf8');
+      expect([lang, src.match(/^\s*['"](nav|set|recs|share|calls)\./m)]).toEqual([lang, null]);
     }
   });
 

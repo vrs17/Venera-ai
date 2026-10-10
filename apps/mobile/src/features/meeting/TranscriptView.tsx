@@ -4,7 +4,13 @@
  *  - pufakchani bosish -> audio shu joydan; uzoq bosish -> matn/spikerni tuzatish;
  *  - spiker chiplari: nom berish, birlashtirish, taklif qilingan ismni qabul qilish;
  *  - qidiruv; TXT/SRT ulashish.
+ *
+ * Vaqt yorlig'i "▶ 12:34" ko'rinishida (ko'k) - pufakcha bosilsa shu joydan
+ * eshitilishi bir qarashda bilinsin. Hozir eshitilayotgan pufakcha ajratib
+ * ko'rsatiladi (`playback.ts`): faqat faol kalit tanlanadi, shuning uchun ro'yxat
+ * har 250 ms emas, faqat pufakcha almashganda qayta chiziladi.
  */
+import { Play } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, Share, StyleSheet, Text, View } from 'react-native';
 
@@ -19,6 +25,7 @@ import { useTheme } from '@/ui/theme';
 
 import { formatClock } from './formatDate';
 import { bubbleIndexAt, groupBubbles, searchBubbles, speakerColor, type Bubble } from './groupBubbles';
+import { usePlayback } from './playback';
 import { useMeetingMutations, useTranscript } from './queries';
 import { speakerLabel, visibleSpeakers } from './renderTokens';
 
@@ -52,6 +59,10 @@ export function TranscriptView({ meeting, focus, onSeek }: TranscriptViewProps) 
   const bubbles = useMemo(() => (tr ? groupBubbles(tr.segments, { speakers }) : []), [tr, speakers]);
   const matches = useMemo(() => searchBubbles(bubbles, query), [bubbles, query]);
   const shown = query.trim() ? matches.map((i) => bubbles[i]) : bubbles;
+  // Faqat shu yig'ilish pleeri ijro etilgan bo'lsa (0:00 da turgan pleer birinchi pufakchani bo'yamasin).
+  const activeKey = usePlayback((p) =>
+    p.key === meeting.id && p.started && bubbles.length ? (bubbles[bubbleIndexAt(bubbles, p.t)]?.key ?? null) : null,
+  );
   const label = (id: string | null) => (id ? speakerLabel(id, speakers, uiLang) : t('tr.unknown'));
 
   useEffect(() => {
@@ -120,6 +131,7 @@ export function TranscriptView({ meeting, focus, onSeek }: TranscriptViewProps) 
         testID="transcript-list"
         data={shown}
         keyExtractor={(b) => b.key}
+        extraData={activeKey}
         ListHeaderComponent={header}
         initialNumToRender={30}
         windowSize={11}
@@ -131,6 +143,7 @@ export function TranscriptView({ meeting, focus, onSeek }: TranscriptViewProps) 
             bubble={item}
             label={label(item.speaker)}
             editedLabel={t('tr.edited')}
+            active={item.key === activeKey}
             onPress={() => onSeek?.(item.start)}
             onLongPress={() => setEditBubble(item)}
           />
@@ -236,23 +249,35 @@ export function BubbleRow({
   bubble,
   label,
   editedLabel,
+  active,
   onPress,
   onLongPress,
 }: {
   bubble: Bubble;
   label: string;
   editedLabel: string;
+  /** Hozir eshitilayotgan pufakcha. */
+  active?: boolean;
   onPress?: () => void;
   onLongPress?: () => void;
 }) {
   const th = useTheme();
   const color = speakerColor(bubble.speaker);
+  const info = th.tones.info.fg;
   return (
-    <Pressable testID={`bubble-${bubble.key}`} onPress={onPress} onLongPress={onLongPress} style={s.bubbleWrap}>
-      <View style={[s.bubble, { backgroundColor: th.surface, borderLeftColor: color }]}>
+    <Pressable
+      testID={`bubble-${bubble.key}`}
+      accessibilityState={active ? { selected: true } : undefined}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      style={s.bubbleWrap}>
+      <View style={[s.bubble, { backgroundColor: active ? th.brandSoft : th.surface, borderLeftColor: color }]}>
         <View style={[ui.row, { marginBottom: 2 }]}>
           <Text style={[s.name, { color }]}>{label}</Text>
-          <Text style={[s.time, { color: th.textMuted }]}>{formatClock(bubble.start)}</Text>
+          <View style={s.timeChip}>
+            <Play size={12} color={info} fill={info} strokeWidth={2} />
+            <Text style={[s.time, { color: info }]}>{formatClock(bubble.start)}</Text>
+          </View>
           {bubble.edited ? <Text style={[s.time, { color: th.textMuted }]}> · {editedLabel}</Text> : null}
         </View>
         <Text selectable style={[s.text, { color: th.text }]}>
@@ -269,7 +294,8 @@ const s = StyleSheet.create({
   bubbleWrap: { marginBottom: 8 },
   bubble: { borderRadius: 12, padding: 10, borderLeftWidth: 4 },
   name: { fontWeight: '700', fontSize: 13, marginRight: 8 },
-  time: { fontSize: 12 },
+  time: { fontSize: 12, fontVariant: ['tabular-nums'] },
+  timeChip: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   text: { fontSize: 15, lineHeight: 21 },
 });
 

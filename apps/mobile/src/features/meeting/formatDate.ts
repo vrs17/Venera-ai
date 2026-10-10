@@ -11,7 +11,9 @@ import type { Lang } from '@/api/types';
 const TZ_OFFSET_MS = 5 * 60 * 60 * 1000;
 
 const MONTHS: Record<Lang, string[]> = {
-  uz: ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentyabr', 'oktyabr', 'noyabr', 'dekabr'],
+  // Rasmiy lotin imlosi "sentabr", "oktabr" - server `dates.MONTHS`, veb ilova va egasi tasdiqlagan
+  // "Qisqa xulosa" namunasi ("10-oktabr 2026 (shanba)") bilan bir xil.
+  uz: ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'],
   ru: ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'],
   en: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
 };
@@ -46,18 +48,36 @@ function dayMonth(day: number, month: number, lang: Lang, year?: number): string
   return `${year ? `${year}-yil ` : ''}${day}-${name}`;
 }
 
-/** `10-oktyabr, 16:00` | `10 октября, 16:00` | `October 10, 16:00`. */
+/** `10-oktabr, 16:00` | `10 октября, 16:00` | `October 10, 16:00`. */
 export function formatDateTime(input: string | number | Date, lang: Lang, opts: { withYear?: boolean } = {}): string {
   const p = tashkentParts(input);
   if (!p) return '';
   return `${dayMonth(p.day, p.month, lang, opts.withYear ? p.year : undefined)}, ${pad(p.hour)}:${pad(p.minute)}`;
 }
 
-/** Faqat sana ('YYYY-MM-DD', vaqt zonasiz) -> `10-oktyabr`. */
-export function formatDay(isoDate: string, lang: Lang): string {
+/** Faqat sana ('YYYY-MM-DD', vaqt zonasiz) -> `10-oktabr` (`withYear` - `2025-yil 10-oktabr`). */
+export function formatDay(isoDate: string, lang: Lang, opts: { withYear?: boolean } = {}): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
   if (!m) return isoDate;
-  return dayMonth(Number(m[3]), Number(m[2]), lang);
+  return dayMonth(Number(m[3]), Number(m[2]), lang, opts.withYear ? Number(m[1]) : undefined);
+}
+
+/**
+ * Faqat soat `HH:MM` (Toshkent). Yozuvlar ro'yxatida kun bo'lim sarlavhasida
+ * ("Bugun"), kartada esa faqat soat - sana ikki marta takrorlanmasin.
+ * `lang` - kelajakda 12 soatlik format kerak bo'lsa imzo o'zgarmasin.
+ */
+export function formatTime(input: string | number | Date, _lang?: Lang): string {
+  const p = tashkentParts(input);
+  if (!p) return '';
+  return `${pad(p.hour)}:${pad(p.minute)}`;
+}
+
+/** Toshkent kuni kaliti `YYYY-MM-DD` (ro'yxatni kunlarga guruhlash uchun); noto'g'ri sana -> ''. */
+export function tashkentDayKey(input: string | number | Date): string {
+  const p = tashkentParts(input);
+  if (!p) return '';
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}`;
 }
 
 /** Muddat: aniq sana bo'lsa formatlangan, aks holda aytilgan ibora. */

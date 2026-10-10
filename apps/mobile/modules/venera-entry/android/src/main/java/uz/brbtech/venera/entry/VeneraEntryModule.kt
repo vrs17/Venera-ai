@@ -20,6 +20,9 @@ import expo.modules.kotlin.modules.ModuleDefinition
  *   setRecordingState(recording), requestAddTile(), setLauncherEnabled(enabled),
  *   isLauncherEnabled(), setTrustedKey(key), isKeyServiceEnabled(),
  *   openAccessibilitySettings()
+ *   Qo'ng'iroq yozuvlari: hasAudioReadPermission(), listCallRecordings(sinceMs, limit),
+ *   copyToAppStorage(uri, destFileName), getImportMeta(fileName), removeImport(fileName),
+ *   clearImports() - CallImport.kt; "Ulashish -> Barno AI" - ImportActivity.kt.
  *
  * Holat (yozilmoqdami, ishonchli kalit) private SharedPreferences'da: plitka
  * va launcher activity JS ishlamayotganda ham uni o'qiy oladi.
@@ -87,6 +90,57 @@ class VeneraEntryModule : Module() {
       } else {
         requestAddTile33(promise)
       }
+    }
+
+    // --- Qo'ng'iroq yozuvlari (2026-10-10, mantiq CallImport.kt da) ---
+
+    Function("hasAudioReadPermission") {
+      CallImport.hasAudioReadPermission(context)
+    }
+
+    AsyncFunction("listCallRecordings") { sinceMs: Double, limit: Int, promise: Promise ->
+      runImport(promise) { CallImport.listCallRecordings(context, sinceMs.toLong(), limit) }
+    }
+
+    AsyncFunction("copyToAppStorage") { uri: String, destFileName: String, promise: Promise ->
+      runImport(promise) { CallImport.copyToAppStorage(context, uri, destFileName).absolutePath }
+    }
+
+    AsyncFunction("getImportMeta") { fileName: String, promise: Promise ->
+      runImport(promise) { CallImport.readImportMeta(context, fileName) }
+    }
+
+    Function("removeImport") { fileName: String ->
+      CallImport.removeImport(context, fileName)
+    }
+
+    Function("clearImports") {
+      CallImport.clearImports(context)
+    }
+  }
+
+  /**
+   * NIMA UCHUN o'z oqimimiz: Expo AsyncFunction'lari BITTA umumiy oqimda
+   * (modulesQueue) ishlaydi - 100 MB nusxa SecureStore/audio chaqiruvlarini ham
+   * kuttirib qo'yardi. Xatolar JS'ga `error.code` (ERR_PERMISSION, ERR_TOO_LARGE ...).
+   */
+  private fun <T> runImport(promise: Promise, block: () -> T) {
+    importExecutor.execute {
+      try {
+        promise.resolve(block())
+      } catch (e: expo.modules.kotlin.exception.CodedException) {
+        promise.reject(e)
+      } catch (e: Throwable) {
+        val code = CallImport.errorCode(e)
+        promise.reject(code, e.message ?: code, e)
+      }
+    }
+  }
+
+  private companion object {
+    /** Jarayonga bitta (dev reload'da modul qayta yaratilsa ham oqim ko'paymaydi). */
+    val importExecutor: java.util.concurrent.ExecutorService by lazy {
+      java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "barno-call-import") }
     }
   }
 

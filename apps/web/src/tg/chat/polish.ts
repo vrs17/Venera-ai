@@ -1,13 +1,18 @@
 // Javob HTML'ining Mini App uchun "pardozi" - MarkdownMessage chizgandan KEYIN, DOM
 // ustida (u umumiy komponent, web bilan bir xil - unga tegmaymiz).
 //
-//   1. `[T1]` chipi -> tizim nomi ("HRM" / "CRM"). Asl belgi `data-marker` da qoladi:
-//      chip bosilganda manbalar oynasi aynan o'sha so'rovni belgilaydi.
-//   2. SO'Z + CHIP + TINISH BELGISI bitta `nowrap` bo'lakka: tor ekranda "7 kun ⏎ [2] ."
-//      kabi chip yoki nuqta yangi qatorga yolg'iz tushmaydi.
+//   1. Iqtibos (`[2]` -> yuqori indeks) raqami `data-marker` da: bosilganda manbalar oynasi
+//      aynan o'sha hujjatni belgilaydi. `[T1]` (jonli so'rov) matnda umuman ko'rinmaydi
+//      (2026-10-10, MarkdownMessage) - u faqat "Manbalar" tugmasida.
+//   2. SO'Z + IQTIBOS + TINISH BELGISI bitta `nowrap` bo'lakka: tor ekranda "7 kun ⏎ ²."
+//      kabi raqam yoki nuqta yangi qatorga yolg'iz tushmaydi.
 //   3. O'ZBEKCHA TUTUQ BELGILARI (faqat lotin): model `'` yozadi, interfeys esa `ʻ`/`ʼ`
 //      - bir ekranda "koʻpi" va "ko'ra" yonma-yon chiqmasin. o'/g' -> ʻ, qolgan
 //      harf'harf -> ʼ. Kod, havola va chip ichiga tegilmaydi.
+//   4. SANA SHAKLLARI ("9-oktabr", "15-iyun", "2-го"): raqamdan keyingi chiziqcha UZILMAYDIGAN
+//      chiziqchaga (U+2011) - tor ekranda "9-" / "oktabr" bo'lib ikki qatorga bo'linmasin
+//      (eslatma izohida ko'rindi, UX ko'rigi 2026-10-10). Nusxa olishda (`plainText`) oddiy
+//      chiziqchaga qaytadi.
 //
 // Har o'tish idempotent: oqim paytida MarkdownMessage HTML'ni har kadrda qayta
 // yozadi va bu funksiya yangi DOM ustida qayta ishlaydi.
@@ -17,18 +22,13 @@ const TRAILING = /^[.,;:!?)\]»”…]+/u
 const LAST_WORD = /(\S+\s?)$/u
 
 export interface PolishOptions {
-  /** `T1` -> "CRM" (sources.ts `lookupBadges`). */
-  lookups: Map<string, string>
   /** Interfeys tili o'zbek lotin - tutuq belgilarini tekislash. */
   uzLatin: boolean
 }
 
-function relabelChips(root: HTMLElement, lookups: Map<string, string>): void {
+function markChips(root: HTMLElement): void {
   for (const chip of root.querySelectorAll<HTMLElement>('.vmd-cite')) {
     if (!chip.dataset.marker) chip.dataset.marker = chip.textContent?.trim() ?? ''
-    if (!chip.classList.contains('vmd-cite--tool')) continue
-    const label = lookups.get(chip.dataset.marker)
-    if (label && chip.textContent !== label) chip.textContent = label
   }
 }
 
@@ -48,15 +48,42 @@ function normalizeApostrophes(root: HTMLElement): void {
   }
 }
 
+/** Raqam + chiziqcha + harf (sana/tartib shakli) - uzilmaydigan chiziqcha. */
+const NUM_HYPHEN = /(\d)-(?=\p{L})/gu
+const NB_HYPHEN = '\u2011'
+
+function glueNumberHyphens(root: HTMLElement): void {
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const value = node.nodeValue ?? ''
+    if (!value.includes('-') || node.parentElement?.closest(SKIP)) continue
+    const next = value.replace(NUM_HYPHEN, `$1${NB_HYPHEN}`)
+    if (next !== value) node.nodeValue = next
+  }
+}
+
 function glueChips(root: HTMLElement): void {
   const doc = root.ownerDocument
   for (const chip of root.querySelectorAll<HTMLElement>('.vmd-cite')) {
     if (chip.parentElement?.classList.contains('tg-glue')) continue
     const parent = chip.parentNode
     if (!parent) continue
-    const prev = chip.previousSibling
+    let prev = chip.previousSibling
     const next = chip.nextSibling
-    // Ketma-ket chiplar ("[1][2]"): oldingi bo'lakka qo'shiladi.
+    // Ketma-ket chiplar ("[1][2]", "[1] [2]"): oldingi bo'lakka qo'shiladi. Orada faqat bo'shliq
+    // (yoki bo'sh matn tuguni) bo'lsa ham ketma-ket - aks holda har biri alohida bo'lakka tushib,
+    // "¹²" bo'lib qolardi (12-manba deb o'qiladi; vergul `vmd-cite--next` da).
+    if (
+      prev &&
+      prev.nodeType === Node.TEXT_NODE &&
+      !(prev.nodeValue ?? '').trim() &&
+      prev.previousSibling instanceof HTMLElement &&
+      prev.previousSibling.classList.contains('tg-glue')
+    ) {
+      const blank = prev
+      prev = prev.previousSibling
+      blank.remove()
+    }
     const glue =
       prev instanceof HTMLElement && prev.classList.contains('tg-glue')
         ? prev
@@ -87,8 +114,9 @@ function glueChips(root: HTMLElement): void {
 }
 
 export function polishAnswer(root: HTMLElement, options: PolishOptions): void {
-  relabelChips(root, options.lookups)
+  markChips(root)
   if (options.uzLatin) normalizeApostrophes(root)
+  glueNumberHyphens(root)
   glueChips(root)
 }
 
@@ -136,6 +164,8 @@ export function plainText(root: HTMLElement): string {
   return (
     out
       .join('')
+      // Ekrandagi uzilmaydigan chiziqcha (`glueNumberHyphens`) - nusxada oddiy chiziqcha.
+      .replace(/\u2011/g, '-')
       // Olib tashlangan chip o'rnida qolgan bo'shliq: "ko'rsatiladi ." -> "ko'rsatiladi."
       .replace(/[ \t]+([.,;:!?)»])/g, '$1')
       .replace(/[ \t]+\n/g, '\n')

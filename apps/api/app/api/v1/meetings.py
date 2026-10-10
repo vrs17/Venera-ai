@@ -271,10 +271,36 @@ def questions(meeting_id: str, user: AuthUser = Depends(meetings_access)) -> dic
 
 
 @router.get("/{meeting_id}/audio")
-def get_audio(meeting_id: str, user: AuthUser = Depends(meetings_access)) -> FileResponse:
-    """Tinglash: m4a (Range bilan - pleyer istalgan joyga sakraydi)."""
-    path, media, headers = service.audio_file(user, meeting_id)
+def get_audio(meeting_id: str, download: int = Query(0, ge=0, le=1),
+              user: AuthUser = Depends(meetings_access)) -> FileResponse:
+    """Tinglash: m4a (Range bilan - pleyer istalgan joyga sakraydi). `?download=1` - ulashish
+    uchun o'sha fayl `attachment` va yig'ilish nomi bilan (alohida `/audio/file` kerak emas)."""
+    path, media, headers = service.audio_file(user, meeting_id, download=bool(download))
     return FileResponse(path, media_type=media, headers=headers or None)
+
+
+# --- to'liq hujjat eksporti -----------------------------------------------------------------------
+
+
+@router.get("/{meeting_id}/export", responses={200: {"content": {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {}, "application/pdf": {},
+    "text/markdown": {}, "text/plain": {}}}})
+def export_meeting(meeting_id: str, request: Request,
+                   format: str = Query("pdf", pattern="^(docx|pdf|md|txt)$"),
+                   summary_id: str | None = Query(None, alias="summaryId", max_length=64),
+                   parts: str | None = Query(None, max_length=100),
+                   user: AuthUser = Depends(meetings_access)) -> Response:
+    """Plaud'dagidek bitta fayl: "Qisqa xulosa", xulosa, vazifalar jadvali, aqliy xarita, transkript.
+    `parts=brief,summary,actions,mindmap,transcript` (bo'sh - tayyor bo'lgan hammasi; `brief` yolg'iz -
+    faqat ulashiladigan qisqa xulosa), bo'lim
+    sarlavhalari `Accept-Language` tilida. `async` EMAS: PDF chizish CPU ishi - threadpool'da
+    (shuning uchun bir odam - bir vaqtda bitta eksport: ikkinchisi 429 `export_busy`)."""
+    data, media, disposition = service.export_meeting(
+        user, meeting_id, format, summary_id=summary_id, parts=parts,
+        lang=service.accept_language(request.headers.get("Accept-Language")))
+    # Shaxsiy hujjat: oraliq kesh (proksi, brauzer) saqlab qolmasin.
+    return Response(content=data, media_type=media,
+                    headers={"Content-Disposition": disposition, "Cache-Control": "private, no-store"})
 
 
 __all__ = ["router", "meetings_access"]

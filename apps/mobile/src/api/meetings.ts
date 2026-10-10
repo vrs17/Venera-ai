@@ -3,9 +3,21 @@
  * mavjud `/auth/login`, `/auth/logout`.
  *
  * Bu yerda mantiq yo'q - faqat yo'l, metod va tana. Qaror qabul qilish
- * (retry, backoff, resync) uploader va ekranlarda.
+ * (retry, backoff, resync) uploader va ekranlarda. Istisno - fayl yuklash
+ * (`downloadWithAuth`): JSON emas, diskka yoziladi, shuning uchun 401/xato
+ * konvertini `ApiClient` o'rniga o'zi o'qiydi.
  */
-import { AI_TIMEOUT_MS, ApiClient, CHUNK_TIMEOUT_MS, type ApiResponse } from './client';
+import {
+  AI_TIMEOUT_MS,
+  ApiClient,
+  ApiError,
+  AuthRequiredError,
+  CHUNK_TIMEOUT_MS,
+  CLIENT_HEADER,
+  CLIENT_NAME,
+  type ApiResponse,
+  type TokenProvider,
+} from './client';
 import type {
   ActionItem,
   AuthUser,
@@ -53,6 +65,41 @@ export interface TranscriptExportOptions {
   format: TranscriptExportFormat;
   speakers?: boolean;
   timestamps?: boolean;
+}
+
+// --- 33. To'liq hujjat eksporti (fayl) ------------------------------------------------------------
+
+/** Server `GET /meetings/{id}/export?format=` qabul qiladigan formatlar. */
+export type MeetingExportFormat = 'pdf' | 'docx' | 'md' | 'txt';
+/** Hujjat qismlari - server tartibida (`export.PARTS`): fayl "Qisqa xulosa" bilan boshlanadi. */
+export type MeetingExportPart = 'brief' | 'summary' | 'actions' | 'mindmap' | 'transcript';
+export const MEETING_EXPORT_PARTS: readonly MeetingExportPart[] = ['brief', 'summary', 'actions', 'mindmap', 'transcript'];
+/** Tayyor xulosa kerak bo'lgan qismlar (transkript xulosasiz ham eksport qilinadi). */
+export const SUMMARY_EXPORT_PARTS: readonly MeetingExportPart[] = ['brief', 'summary', 'actions', 'mindmap'];
+
+export interface MeetingExportOptions {
+  format: MeetingExportFormat;
+  /** Bo'sh yoki yo'q - server "nima tayyor bo'lsa hammasi"ni beradi. */
+  parts?: readonly MeetingExportPart[] | null;
+  /** Yo'q - asosiy xulosa. */
+  summaryId?: string | null;
+}
+
+/** Ulashiladigan fayl turi: kengaytma va MIME (ulashish oynasi ilovalarni shunga qarab tanlaydi). */
+export const SHARE_FILE_TYPES = {
+  pdf: { ext: 'pdf', mime: 'application/pdf' },
+  docx: { ext: 'docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+  md: { ext: 'md', mime: 'text/markdown' },
+  txt: { ext: 'txt', mime: 'text/plain' },
+  audio: { ext: 'm4a', mime: 'audio/mp4' },
+} as const;
+export type ShareFileKind = keyof typeof SHARE_FILE_TYPES;
+
+/** `parts` -> `brief,summary,...` (server tartibida, takrorsiz); bo'sh - parametr yuborilmaydi. */
+export function exportPartsParam(parts?: readonly MeetingExportPart[] | null): string | undefined {
+  if (!parts?.length) return undefined;
+  const picked = MEETING_EXPORT_PARTS.filter((p) => parts.includes(p));
+  return picked.length ? picked.join(',') : undefined;
 }
 
 export function createMeetingsApi(client: ApiClient) {
@@ -141,6 +188,16 @@ export function createMeetingsApi(client: ApiClient) {
     questions: (id: string) => client.request<{ items: AskAnswer[] }>(`${M}/${enc(id)}/questions`),
     // 28 - pleer `{uri, headers: {Authorization}}` bilan o'zi oladi
     audioUrl: (id: string) => client.url(`${M}/${enc(id)}/audio`),
+    // 28b - ulashish uchun o'sha audio: `attachment` va odamga tushunarli nom bilan
+    audioDownloadUrl: (id: string) => client.url(`${M}/${enc(id)}/audio`, { download: 1 }),
+    // 33 - to'liq hujjat (DOCX/PDF/MD/TXT). JSON emas, FAYL: ilova uni `downloadWithAuth`
+    // bilan keshga yuklab, ulashish oynasiga beradi (bo'lim sarlavhalari `Accept-Language` tilida).
+    exportUrl: (id: string, o: MeetingExportOptions) =>
+      client.url(`${M}/${enc(id)}/export`, {
+        format: o.format,
+        parts: exportPartsParam(o.parts),
+        summaryId: o.summaryId || undefined,
+      }),
     // 32 - vazifa -> v3 -> CRM TAKLIFI (hech narsa o'zgarmaydi; tasdiqlash - actions.ts)
     actionItemToCrm: (id: string, itemId: string, body: CrmRequest = {}) =>
       client.request<CrmResult>(`${M}/${enc(id)}/action-items/${enc(itemId)}/crm`, {
@@ -186,3 +243,207 @@ export function createAuthApi(client: ApiClient) {
 }
 
 export type AuthApi = ReturnType<typeof createAuthApi>;
+
+// --- Faylni yuklab olish (eksport va audio ulashish) ------------------------------------------------
+
+/** Native yuklash natijasi: tana `uri` dagi faylda (XATO statusda ham - server konverti shu yerda). */
+export interface RawDownload {
+  status: number;
+  uri: string;
+  headers: Record<string, string>;
+}
+
+export interface DownloadProgress {
+  written: number;
+  /** Server aytmasa (chunked) - 0 yoki manfiy. */
+  total: number;
+}
+
+export interface DownloadControl {
+  /** Har yozilgan bo'lakdan keyin (native tomonda siyraklashtirilgan). */
+  onProgress?: (p: DownloadProgress) => void;
+  /** Bekor qilish: native yuklash ham to'xtatiladi (fayl keshda yozilib qolmasin). */
+  signal?: AbortSignal;
+}
+
+/**
+ * Faylni to'g'ridan-to'g'ri diskka yozadigan native qatlam (ilovada `expo-file-system/legacy`,
+ * testlarda soxtasi). NIMA UCHUN JS `fetch` emas: audio o'nlab MB - JS xotirasidan va
+ * ko'prikdan o'tkazmasdan, OkHttp tanani darhol faylga oqizadi.
+ */
+export interface FileDownloader {
+  /** Xato statusda REJECT qilmaydi - `status` qaytaradi (409/503 kodini o'qish uchun). */
+  download(url: string, fileUri: string, headers: Record<string, string>, control?: DownloadControl): Promise<RawDownload>;
+  readText(uri: string): Promise<string>;
+  remove(uri: string): Promise<void>;
+}
+
+/** Server faylni chizguncha (PDF - CPU ishi) birinchi baytni kutish chegarasi. */
+export const DOWNLOAD_FIRST_BYTE_MS = 90_000;
+/** Baytlar orasidagi jimlik chegarasi: shundan uzoq yangi bayt kelmasa - "to'xtab qoldi". */
+export const DOWNLOAD_STALL_MS = 30_000;
+
+export interface DownloadWithAuthOptions extends DownloadControl {
+  tokens: TokenProvider;
+  io: FileDownloader;
+  /** `Accept-Language`: hujjatdagi bo'lim sarlavhalari shu tilda. */
+  language?: string;
+  firstByteMs?: number;
+  stallMs?: number;
+}
+
+/** Sarlavha nomi katta-kichik harfga qaramaydi (HTTP/2 da hammasi kichik harf bilan keladi). */
+export function headerOf(headers: Record<string, string> | null | undefined, name: string): string | null {
+  if (!headers) return null;
+  const want = name.toLowerCase();
+  for (const [k, v] of Object.entries(headers)) if (k.toLowerCase() === want) return v;
+  return null;
+}
+
+const DOWNLOAD_CODES: Record<number, string> = {
+  401: 'unauthorized',
+  403: 'forbidden',
+  404: 'not_found',
+  409: 'not_ready',
+  410: 'gone',
+  429: 'rate_limited',
+  500: 'internal',
+  502: 'bad_gateway',
+  503: 'unavailable',
+  504: 'gateway_timeout',
+};
+
+/** Xato javob tanasi (server konverti `{code, message, missing, available}`) -> `ApiError`. */
+function downloadError(status: number, text: string, retryAfter: string | null): ApiError {
+  let envelope: Record<string, unknown> | null = null;
+  try {
+    const parsed: unknown = text ? JSON.parse(text) : null;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) envelope = parsed as Record<string, unknown>;
+  } catch {
+    // nginx HTML sahifasi va h.k. - kod statusdan olinadi.
+    envelope = null;
+  }
+  const code = (typeof envelope?.code === 'string' && envelope.code) || DOWNLOAD_CODES[status] || `http_${status}`;
+  const message =
+    (typeof envelope?.message === 'string' && envelope.message) ||
+    (typeof envelope?.detail === 'string' && envelope.detail) ||
+    `Request failed (${status})`;
+  const wait = retryAfter != null && retryAfter !== '' && Number.isFinite(Number(retryAfter)) ? Math.max(0, Number(retryAfter)) : null;
+  return new ApiError(status, code, message, envelope, wait);
+}
+
+/**
+ * Native yuklash + qo'riqchi. NIMA UCHUN: native yuklash oqim o'rtasida uzilsa (mobil tarmoq,
+ * to'lgan disk) va'da ba'zan HECH QACHON tugamaydi - varaq abadiy "tayyorlanmoqda" bo'lib
+ * qolardi. Birinchi bayt `firstByteMs`, keyingilari orasida `stallMs` dan ko'p jimlik bo'lsa -
+ * native yuklash bekor qilinadi va `ApiError(0, 'stalled')` (qayta urinsa bo'ladi). Tashqi
+ * `signal` (varaq yopildi) - `ApiError(0, 'aborted')`.
+ */
+function guardedDownload(o: DownloadWithAuthOptions, url: string, fileUri: string, headers: Record<string, string>): Promise<RawDownload> {
+  const ctl = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let fail: (e: ApiError) => void = () => {};
+  const guard = new Promise<never>((_, reject) => {
+    fail = reject;
+  });
+  const arm = (ms: number) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      ctl.abort();
+      fail(new ApiError(0, 'stalled', "Yuklash to'xtab qoldi"));
+    }, ms);
+  };
+  const onOuterAbort = () => {
+    ctl.abort();
+    fail(new ApiError(0, 'aborted', 'Bekor qilindi'));
+  };
+  arm(o.firstByteMs ?? DOWNLOAD_FIRST_BYTE_MS);
+  if (o.signal?.aborted) onOuterAbort();
+  else o.signal?.addEventListener('abort', onOuterAbort);
+  const onProgress = (p: DownloadProgress) => {
+    arm(o.stallMs ?? DOWNLOAD_STALL_MS);
+    o.onProgress?.(p);
+  };
+  const work = o.io.download(url, fileUri, headers, { onProgress, signal: ctl.signal }).catch((e: unknown) => {
+    throw e instanceof ApiError ? e : new ApiError(0, 'network', e instanceof Error ? e.message : 'Tarmoq xatosi');
+  });
+  return Promise.race([work, guard]).finally(() => {
+    if (timer) clearTimeout(timer);
+    o.signal?.removeEventListener('abort', onOuterAbort);
+  });
+}
+
+/**
+ * Himoyalangan faylni `fileUri` ga yuklaydi: `Authorization: Bearer`, `X-Venera-Client: mobile`.
+ * 401 - token BIR MARTA yangilanib qayta so'raladi (`ApiClient` bilan bir xil qoida).
+ * 2xx bo'lmasa fayl o'chiriladi va `ApiError` (server `code`i bilan) tashlanadi; serverga
+ * yetib bo'lmasa - `ApiError(0, 'network')`; uzilib qolsa - `ApiError(0, 'stalled')`.
+ */
+export async function downloadWithAuth(url: string, fileUri: string, o: DownloadWithAuthOptions): Promise<RawDownload> {
+  const attempt = async (token: string): Promise<RawDownload> => {
+    const headers: Record<string, string> = {
+      Accept: '*/*',
+      [CLIENT_HEADER]: CLIENT_NAME,
+      'Accept-Language': o.language ?? 'uz',
+      Authorization: `Bearer ${token}`,
+    };
+    let res: RawDownload;
+    try {
+      res = await guardedDownload(o, url, fileUri, headers);
+    } catch (e) {
+      await o.io.remove(fileUri).catch(() => {});
+      throw e;
+    }
+    if (res.status >= 200 && res.status < 300) return res;
+    let text = '';
+    try {
+      text = await o.io.readText(res.uri || fileUri);
+    } catch {
+      text = '';
+    }
+    await o.io.remove(res.uri || fileUri).catch(() => {});
+    throw downloadError(res.status, text, headerOf(res.headers, 'Retry-After'));
+  };
+  const token = await o.tokens.getToken();
+  try {
+    return await attempt(token);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401 && !(e instanceof AuthRequiredError)) {
+      return attempt(await o.tokens.refreshToken());
+    }
+    throw e;
+  }
+}
+
+/** Fayl tizimi va ulashish oynasi ko'tarmaydigan belgilar (`/`, `:`, `*`, boshqaruv belgilari). */
+const UNSAFE_NAME = /[\\/:*?"<>|\u0000-\u001f\u007f]+/g;
+const MAX_NAME = 100;
+
+/** Odamga ko'rinadigan fayl nomi: xavfsiz belgilar, `.ext` bilan, 100 belgidan oshmaydi. */
+export function safeFileName(name: string | null | undefined, ext: string): string {
+  const dotExt = `.${ext}`;
+  let base = (name ?? '').replace(UNSAFE_NAME, ' ').replace(/\s+/g, ' ').trim();
+  if (base.toLowerCase().endsWith(dotExt.toLowerCase())) base = base.slice(0, -dotExt.length);
+  base = base.replace(/^[.\s]+|[.\s]+$/g, '').slice(0, MAX_NAME - dotExt.length).trim();
+  return `${base || 'Barno AI'}${dotExt}`;
+}
+
+/**
+ * `Content-Disposition` -> fayl nomi. Server ikkalasini beradi (RFC 6266): `filename*=UTF-8''...`
+ * (haqiqiy o'zbekcha/kirill nom) va `filename="..."` (ASCII). Telefon odamga haqiqiysini
+ * ko'rsatsin - Telegram'da "haftalik-reja.pdf" emas, "Haftalik reja 2026-10-10.pdf".
+ */
+export function fileNameFromDisposition(value: string | null | undefined, fallback: string, ext: string): string {
+  const v = value ?? '';
+  const star = /filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)/.exec(v);
+  if (star) {
+    try {
+      return safeFileName(decodeURIComponent(star[1].trim().replace(/^"|"$/g, '')), ext);
+    } catch {
+      /* buzilgan foiz kodi - oddiy nomga o'tamiz */
+    }
+  }
+  const plain = /filename\s*=\s*"([^"]*)"|filename\s*=\s*([^;]+)/.exec(v);
+  const name = plain ? (plain[1] ?? plain[2] ?? '').trim() : '';
+  return safeFileName(name || fallback, ext);
+}

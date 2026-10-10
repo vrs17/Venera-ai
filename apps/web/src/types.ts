@@ -393,6 +393,9 @@ export interface ApiErrorResponse {
   error: string
   message: string
   path: string
+  /** Ixtiyoriy mashina kodi (`core/errors` `extra`): masalan `/assistant/*` dagi
+   *  `memory_not_found`, `confirm_required`, `upstream_timeout`. Hamma yo'lda emas. */
+  code?: string
 }
 
 /* ── Voice ─────────────────────────────────────────────────────────────── */

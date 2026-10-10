@@ -17,20 +17,29 @@ Brauzer buni `<audio>` bilan ocholmaydi va ATAYLAB shunday: `format=wav` da
 server oqim boshida umumiy uzunlikni bilmagani uchun sarlavhaga `0xFFFFFFFF`
 yozadi va pleyerlar davomiylikni 74 soat deb ko'rsatadi. Frontend PCM ni
 Web Audio bilan bo'lak-bo'lak ijro qiladi (`api/tts.api.ts`).
+
+MOBIL ILOVA uchun alohida yo'l bor - `/tts/clip`: bitta qisqa bo'lak, to'liq
+WAV (sababi o'sha funksiya izohida).
 """
 
 from __future__ import annotations
 
 import logging
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path as FsPath
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
 from ...core.config import settings
 from ...core.errors import bad_request, error_status
 from ...schemas.auth import AuthUser
-from ...schemas.tts import SpeakRequest
+from ...schemas.tts import CLIP_MAX_CHARS, ClipRequest, SpeakRequest
 from ...services.analytics import bind, valid_turn_id
+from ...services.hold import HoldVoices, all_clips
 from ...services.tts import LOCALE_TO_TTS, TtsClient, TtsError
 from ..deps import current_user
 
@@ -150,6 +159,129 @@ def speak(body: SpeakRequest, request: Request,
     )
 
 
+#: Bitta foydalanuvchining bir vaqtdagi `/clip` sintezlari. NEGA CHEKLOV: route oddiy
+#: `def` (threadpool) - klient so'rovni uzsa (bo'lib gapirish, suhbatni yopish) server buni
+#: sezmaydi va bo'lakni oxirigacha sintez qiladi. TTS ning 2 sloti HAMMAGA umumiy: bitta
+#: odam (ikki qurilma yoki ketma-ket bo'lib gapirish) ikkalasini egallab, boshqalarni 503 ga
+#: tushirmasin. Klient bitta so'rov yuboradi; 2 - uzilgan so'rov tugaguncha yangisiga joy.
+_CLIP_PER_USER = 2
+_clip_inflight: dict[tuple[str, int], int] = {}
+_clip_guard = threading.Lock()
+
+
+@contextmanager
+def _clip_slot(user: AuthUser) -> Iterator[None]:
+    key = (user.actorType, user.actorId)
+    with _clip_guard:
+        busy = _clip_inflight.get(key, 0)
+        if busy >= _CLIP_PER_USER:
+            error = error_status(503, _MESSAGES[503])
+            error.headers = {"Retry-After": "1"}
+            raise error
+        _clip_inflight[key] = busy + 1
+    try:
+        yield
+    finally:
+        with _clip_guard:
+            left = _clip_inflight.get(key, 1) - 1
+            if left > 0:
+                _clip_inflight[key] = left
+            else:
+                _clip_inflight.pop(key, None)
+
+
+@router.post(
+    "/clip",
+    response_class=Response,
+    responses={200: {"content": {"audio/wav": {}},
+                     "description": "To'liq WAV (PCM 16-bit LE mono), haqiqiy sarlavha bilan"},
+               501: {"description": "Ovoz sintezi sozlanmagan"},
+               503: {"description": "TTS band (`Retry-After`)"}},
+)
+def clip_wav(body: ClipRequest, request: Request,
+             user: AuthUser = Depends(current_user)) -> Response:
+    """Bitta bo'lak matn -> TO'LIQ WAV (mobil ilova).
+
+    NEGA OQIM EMAS. Mobil pleyer (expo-audio) faqat TAYYOR faylni o'ynata
+    oladi - xom PCM oqimini ocholmaydi. Qisqa to'liq fayl esa diskdan darhol
+    o'ynaydi. Oqimning TTFB afzalligini klient boshqa yo'l bilan qaytaradi:
+    javobni GAP chegarasida bo'laklaydi (birinchisi <=160 belgi, ~1.2-2 s
+    sintez), keyingi bo'lak oldingisi o'ynayotganda tayyorlanadi.
+
+    NEGA <=600 BELGI. Bu BITTA bo'lak (klient <=350 yuboradi). TTS ning ikki
+    sloti BARCHA foydalanuvchilarga umumiy: qisqa so'rov slotni ~2 s ushlaydi,
+    3000 belgilik oqim esa ~40 s - ya'ni uzun so'rov boshqalarni 503 ga
+    tushirardi.
+
+    HAMMASI YOKI HECH NARSA: oqim o'rtasida uzilsa yarim WAV emas, JSON xato
+    qaytadi (statusi bilan) - klient gapning yarmini o'ynatib qo'ymasin.
+
+    Matn log'ga HECH QACHON yozilmaydi: u foydalanuvchining HRM javobi.
+
+    `async def` EMAS - `/speak` dagi sabab: bloklaydigan `urllib`, threadpool.
+    """
+    if LOCALE_TO_TTS.get(body.language) is None:
+        # `/speak` dagi kabi: hozircha faqat o'zbek lotin.
+        raise bad_request(f"ovoz bu tilda hali yo'q: {body.language}")
+
+    text = body.text.strip()
+    if not text:
+        raise bad_request("matn bo'sh")
+
+    turn = valid_turn_id(request.headers.get(_TURN_HEADER))
+    binding = bind(turn_id=turn) if turn else None
+    try:
+        with _clip_slot(user):
+            audio = _client.synthesize_clip(
+                text,
+                voice=body.voice or settings.tts_voice,
+                speed=body.speed if body.speed is not None else settings.tts_speed,
+                chunk_sec=settings.tts_chunk_sec,
+                max_chars=CLIP_MAX_CHARS,
+            )
+    except TtsError as exc:
+        # Faqat status: `str(exc)` ichida yuqoridagi serverning `detail` i
+        # bo'lishi mumkin, u esa (422 da) matn bo'lagini aynan ko'chiradi.
+        log.warning("TTS bo'lak (%s): status=%s", user.email, exc.status)
+        raise _tts_http_error(exc) from exc
+    finally:
+        if binding is not None:
+            binding.reset()
+
+    if audio.duration_ms <= 0:
+        # Server 200 bilan BO'SH audio berdi. Uzunligi nol fayl ba'zi
+        # pleyerlarda "tugadi" hodisasini bermaydi va klient navbati qotadi -
+        # yaxshisi aniq xato.
+        log.warning("TTS bo'lak (%s): bo'sh audio keldi", user.email)
+        raise error_status(502, _MESSAGES[502])
+
+    return Response(
+        content=audio.wav,
+        media_type="audio/wav",
+        headers={
+            # Audio foydalanuvchiga xos (HRM javobi) - keshga tushmasin.
+            "Cache-Control": "no-store",
+            "X-Venera-Sample-Rate": str(audio.sample_rate),
+            "X-Venera-Duration-Ms": str(audio.duration_ms),
+            "X-Venera-Truncated": "1" if audio.truncated else "0",
+        },
+    )
+
+
+def _tts_http_error(exc: TtsError):
+    """`TtsError` -> foydalanuvchiga ko'rinadigan HTTP xatosi (ichki matnsiz).
+
+    503 ga `Retry-After` qo'shiladi (`chat.py` dagi kabi): klient 503 da
+    qisqa pauza bilan qayta urinadi, sarlavha esa buni mashina o'qiydigan
+    qilib aytadi.
+    """
+    status = exc.status if exc.status in _MESSAGES else 502
+    error = error_status(status, _MESSAGES[status])
+    if status == 503:
+        error.headers = {"Retry-After": "1"}
+    return error
+
+
 @router.get(
     "/hold/{clip}.wav",
     response_class=Response,
@@ -157,6 +289,10 @@ def speak(body: SpeakRequest, request: Request,
                404: {"description": "Bu ovoz hali sintez qilinmagan"}},
 )
 def hold_clip(clip: str = Path(pattern=r"^[a-z0-9-]{1,80}$"),
+              voice: Literal["uz_female_calm", "uz_male_news"] | None = Query(
+                  default=None,
+                  description="Bo'sh yoki `TTS_VOICE` - tayyor kesh; boshqasi birinchi "
+                              "so'rovda sintez qilinib keshlanadi"),
               user: AuthUser = Depends(current_user)) -> Response:
     """Tayyor kutish gapining ovozi.
 
@@ -174,8 +310,16 @@ def hold_clip(clip: str = Path(pattern=r"^[a-z0-9-]{1,80}$"),
 
     Kalit naqshi faqat kichik harf, raqam va chiziqcha: nuqta ham, `/` ham
     yo'q - ya'ni kalit orqali fayl tizimida boshqa joyga chiqib bo'lmaydi.
+
+    `?voice=` - mobil ilovada odam tanlagan ovoz. Asosiy ovoz (yoki bo'sh)
+    AYNAN avvalgi yo'l. Boshqa ovoz ishga tushishda QIZDIRILMAYDI, birinchi
+    so'rovda yasaladi (`_hold_in_voice`). URL da `?voice` bor, ya'ni
+    `immutable` kesh ovozlarni aralashtirmaydi.
     """
-    data = _hold_voices().get(clip)
+    if voice is None or voice == settings.tts_voice:
+        data = _hold_voices().get(clip)
+    else:
+        data = _hold_in_voice(clip, voice)
     if not data:
         # Sintez hali tugamagan (xizmat yangi ishga tushgan) yoki TTS
         # o'chiq. Bu XATO EMAS: klient matnni o'zi ovozga aylantiradi.
@@ -201,3 +345,78 @@ def _hold_voices():
     from .chat import _hold_voices as voices
 
     return voices
+
+
+#: Asosiy ovozdan boshqa ovozlarning kutish keshi: papka -> kesh. Kalit
+#: PAPKA (ovoz nomi emas): `settings.hold_voice_dir` testda almashtirilsa,
+#: eski papkadagi kesh yangisiga aralashib ketmaydi.
+_voice_caches: dict[FsPath, HoldVoices] = {}
+#: Bitta (papka, kalit) uchun bitta sintez. Bir vaqtda kelgan ikki so'rov
+#: ikkita bir xil sintez qilib, umumiy ikki TTS slotini bekor band qilardi.
+_synth_locks: dict[tuple[FsPath, str], threading.Lock] = {}
+_registry_lock = threading.Lock()
+#: Sintez qulfini shuncha kutamiz, keyin 404. Klient kutish ovozini ~4 s
+#: kutadi; undan uzoq ushlab turilgan ip faqat threadpool'ni band qiladi.
+_HOLD_SYNTH_WAIT = 5.0
+
+
+def _voice_cache(voice: str) -> HoldVoices:
+    directory = settings.hold_voice_dir / voice
+    with _registry_lock:
+        cache = _voice_caches.get(directory)
+        if cache is None:
+            cache = _voice_caches[directory] = HoldVoices(directory)
+        return cache
+
+
+def _synth_lock(directory: FsPath, clip: str) -> threading.Lock:
+    with _registry_lock:
+        return _synth_locks.setdefault((directory, clip), threading.Lock())
+
+
+def _hold_in_voice(clip: str, voice: str) -> bytes | None:
+    """Kutish ovozi TANLANGAN ovozda: keshdan yoki birinchi so'rovda sintez.
+
+    NEGA QIZDIRISH EMAS. Ikkinchi ovozni ishga tushishda yasash har qayta
+    ishga tushishdan keyin ~50 s davomida ikki umumiy TTS slotidan birini
+    egallardi - hamma foydalanuvchining javob ovozi sekinlashardi. Talab
+    bo'yicha esa faqat har gapning BIRINCHI so'rovi ~1.5 s kutadi; klient
+    ovozni faqat savol hali "o'ylanayotgan" bo'lsa o'ynatadi.
+
+    `None` -> 404: noma'lum kalit, TTS sozlanmagan, band yoki yiqildi.
+    Kutish ovozi - xushmuomalalik, klient uni jimgina o'tkazib yuboradi.
+    """
+    text = dict(all_clips()).get(clip)
+    if text is None:
+        # Noma'lum kalit hech qachon sintezga bormaydi (aks holda URL orqali
+        # ixtiyoriy matnni TTS ga yuborib bo'lardi) va diskdagi ESKI fayl
+        # ham berilmaydi - u eskirgan gapning ovozi.
+        return None
+    cache = _voice_cache(voice)
+    data = cache.get(clip)
+    if data:
+        return data
+    if not _client.configured:
+        return None
+    lock = _synth_lock(cache.cache_dir, clip)
+    if not lock.acquire(timeout=_HOLD_SYNTH_WAIT):
+        return None
+    try:
+        # Qulfni kutayotganda boshqa so'rov yasab qo'ygan bo'lishi mumkin.
+        data = cache.get(clip)
+        if data:
+            return data
+        try:
+            wav = _client.synthesize_wav(text, voice=voice, op="hold")
+        except TtsError as exc:
+            log.info("Kutish ovozi %s ovozida yasalmadi (%s): status=%s",
+                     voice, clip, exc.status)
+            return None
+        # Birinchi yozuvdan oldin ESKI gaplarning ovozi tozalanadi (`warm`
+        # dagi kabi; har nusxada bir marta).
+        cache.prune({key for key, _ in all_clips()})
+        # Diskka yozilmasa ham shu so'rovga beramiz - ovoz tayyor.
+        cache.put(clip, wav)
+        return wav
+    finally:
+        lock.release()

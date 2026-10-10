@@ -30,7 +30,8 @@ import BrandSpark from '../../components/BrandSpark.vue'
 import ThinkingLoader from '../../components/ThinkingLoader.vue'
 import { longPress } from '../chat/longPress'
 import { closeDangling, observeAnswer, trimStreamingTable, uzApostrophes } from '../chat/polish'
-import { lookupBadges, sourceItems } from '../chat/sources'
+import { sourceItems } from '../chat/sources'
+import { stripToolMarks } from '../../components/chat/answerMarks'
 import { isAuthCode } from '../chat/useTgChat'
 import type { TgExchange } from '../chat/useTgChat'
 import { haptic, openLink } from '../telegram'
@@ -47,8 +48,8 @@ import SourcesRow from './SourcesRow.vue'
  * MARKDOWN KECH YUKLANADI: markdown-it + DOMPurify ilovaning birinchi ochilishiga
  * kerak emas (salomlashuv ekrani). Bo'lak kelguncha javob oddiy matn bo'lib turadi -
  * bo'sh joy yoki sakrash yo'q. Chizilgan HTML Mini App uchun pardozlanadi
- * (chat/polish.ts): "T1" o'rniga "CRM", chip va nuqta yolg'iz qatorga tushmaydi,
- * o'zbekcha tutuq belgilari bir xil.
+ * (chat/polish.ts): iqtibos raqami va nuqta yolg'iz qatorga tushmaydi, o'zbekcha tutuq
+ * belgilari bir xil. `[T1]` (jonli so'rov) belgisi matnda ko'rinmaydi - "Manbalar"da.
  *
  * Iqtibos chipi va havolalar ushlanadi (capture): web'da chip hujjat ko'ruvchisini
  * ochadi (pdf.js) - Mini App'da esa manbalar oynasi; havola - Telegram'ning `openLink`
@@ -95,19 +96,19 @@ const needsLogin = computed(() => isAuthCode(ex.value.errorCode))
 const uzLatin = computed(() => String(locale.value) === 'uz')
 /** Xizmat matni (ogohlantirish, xato) ham interfeys tutuq belgilarida. */
 const fix = (text: string | null | undefined) => (text && uzLatin.value ? uzApostrophes(text) : (text ?? ''))
-const plain = computed(() => fix(shown.value))
+// Markdown bo'lagi kelguncha ham `[T1]` ko'rinmasin (MarkdownMessage'dagi bilan bir xil).
+const plain = computed(() => fix(stripToolMarks(shown.value)))
 
 /* ── Pardoz: MarkdownMessage har chizgandan keyin ── */
 const answerEl = ref<HTMLElement | null>(null)
 let stopObserving: (() => void) | null = null
-const badges = computed(() => lookupBadges(ex.value.sources))
 watch(
   [answerEl, markdown],
   ([el]) => {
     stopObserving?.()
     stopObserving = null
     if (el && markdown.value) {
-      stopObserving = observeAnswer(el, () => ({ lookups: badges.value, uzLatin: uzLatin.value }))
+      stopObserving = observeAnswer(el, () => ({ uzLatin: uzLatin.value }))
     }
   },
   { flush: 'post' },

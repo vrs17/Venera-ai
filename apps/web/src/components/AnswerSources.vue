@@ -12,6 +12,11 @@
  * ko'ruvchida, iqtibos sahifasida); so'rovda ochiladigan narsa yo'q - u vaqtning bir
  * lahzasidagi chaqiruv, shuning uchun nomi va qisqa natijasi ko'rsatiladi. Qonun
  * moddasi (v2, `kind: "law"`) - LEX.UZ ga tashqi havola, yangi oynada.
+ *
+ * PLATFORMALAR (2026-10-10): so'rov qatorida "T1" o'rniga platforma belgisi (HRM, CRM,
+ * DWH, Biznes 24/7, Superapp...) va tarjima qilingan nom (`components/chat/platforms.ts`).
+ * Qo'llanma maqolasi (`biznes247_kb` / `biznes247_help`, `[n]` bilan) - qonun kabi tashqi
+ * sahifa, izohida platforma nomi.
  */
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -22,7 +27,8 @@ import { downloadFile } from '../api/chat.api'
 import { useDocViewer } from '../composables/useDocViewer'
 import VButton from '../ui/VButton.vue'
 import { useId } from '../ui/composables/useId'
-import { isLaw, isLookup, lawSite, lawTitle, lawUrl, lookupLabel, lookupMarker } from './chat/sources'
+import { isLaw, isLookup, lawSite, lawTitle, lawUrl, lookupMarker, lookupTitle } from './chat/sources'
+import { isGuideSource, platformIcon, platformName, platformOfSource } from './chat/platforms'
 
 const props = defineProps<{
   sources?: AnswerSource[]
@@ -49,10 +55,12 @@ const files = computed(() => {
   ].filter((f): f is { kind: 'docx' | 'pdf'; url: string; label: string } => !!f.url)
 })
 
-/** Yig'iq qatordagi kichik raqamlar - birinchi uchtasi. */
+/** Yig'iq qatordagi kichik doirachalar - birinchi uchtasi. Hujjat - raqami (matndagi ¹ bilan
+ *  bir xil); so'rov - PLATFORMA BELGISI: "T1" matnda ko'rinmaydi, demak odamga hech narsa
+ *  demaydi (UX ko'rigi, 2026-10-10). */
 const preview = computed(() => [
-  ...docs.value.map((s, i) => String(s.citation_index ?? i + 1)),
-  ...calls.value.map((s, i) => lookupMarker(s, i)),
+  ...docs.value.map((s, i) => ({ key: `d${i}`, text: String(s.citation_index ?? i + 1), icon: null })),
+  ...calls.value.map((s, i) => ({ key: `t${i}`, text: '', icon: platformIcon(platformOfSource(s)) })),
 ].slice(0, 3))
 
 const open = ref(false)
@@ -65,10 +73,16 @@ function docMeta(source: AnswerSource): string {
     .filter(Boolean)
     .join(' · ')
 }
-/** Qonun moddasi qatori: havola (faqat `https://`) va izoh ("LEX.UZ · qonunchilik"). */
+/** Qonun moddasi / qo'llanma qatori: havola (faqat `https://`) va izoh ("LEX.UZ ·
+ *  qonunchilik" yoki "Biznes 24/7 qo'llanmalari"). */
 function lawRow(source: AnswerSource): { url: string | null; caption: string } {
   const url = lawUrl(source)
+  if (isGuideSource(source)) return { url, caption: platformName(platformOfSource(source), t) }
   return { url, caption: t('chat.lawCaption', { site: lawSite(url) }) }
+}
+/** Tashqi sahifa izohining belgisi: qonun - tarozi, qo'llanma - platformaniki. */
+function extIcon(source: AnswerSource) {
+  return isGuideSource(source) ? platformIcon(platformOfSource(source)) : Scale
 }
 
 /** Parcha matni - xizmat yuborsa (hozircha ixtiyoriy maydon). */
@@ -134,7 +148,10 @@ async function take(kind: string, url: string) {
         @click="open = !open"
       >
         <span class="proof__stack" aria-hidden="true">
-          <span v-for="m in preview" :key="m" class="proof__mini">{{ m }}</span>
+          <span v-for="m in preview" :key="m.key" class="proof__mini">
+            <component :is="m.icon" v-if="m.icon" :size="11" :stroke-width="2" />
+            <template v-else>{{ m.text }}</template>
+          </span>
         </span>
         <span>{{ t('chat.sourceCount', { n: count }, count) }}</span>
         <ChevronDown class="proof__chev" :class="{ 'is-open': open }" :size="16" :stroke-width="1.75" aria-hidden="true" />
@@ -145,7 +162,7 @@ async function take(kind: string, url: string) {
           <li v-for="(source, i) in docs" :key="`${source.doc_id ?? source.url ?? ''}-${source.citation_index ?? i}`">
             <!-- Qonun moddasi: ko'ruvchida EMAS, LEX.UZ da (yangi oynada) - `/doc/...` faqat
                  `doc_id` uchun. Havola faqat `https://` bo'lsa; aks holda oddiy matn. -->
-            <template v-if="isLaw(source)">
+            <template v-if="isLaw(source) || isGuideSource(source)">
               <a
                 v-if="lawRow(source).url"
                 class="proof__item is-link"
@@ -158,7 +175,7 @@ async function take(kind: string, url: string) {
                 <span class="proof__body">
                   <span class="proof__name">{{ lawTitle(source, t('sourceDocument')) }}</span>
                   <span class="proof__meta">
-                    <Scale class="proof__law-icon" :size="13" :stroke-width="1.75" aria-hidden="true" />{{ lawRow(source).caption }}
+                    <component :is="extIcon(source)" class="proof__law-icon" :size="13" :stroke-width="1.75" aria-hidden="true" />{{ lawRow(source).caption }}
                   </span>
                 </span>
                 <ArrowUpRight class="proof__ext" :size="16" :stroke-width="1.75" aria-hidden="true" />
@@ -169,7 +186,7 @@ async function take(kind: string, url: string) {
                 <span class="proof__body">
                   <span class="proof__name">{{ lawTitle(source, t('sourceDocument')) }}</span>
                   <span class="proof__meta">
-                    <Scale class="proof__law-icon" :size="13" :stroke-width="1.75" aria-hidden="true" />{{ lawRow(source).caption }}
+                    <component :is="extIcon(source)" class="proof__law-icon" :size="13" :stroke-width="1.75" aria-hidden="true" />{{ lawRow(source).caption }}
                   </span>
                 </span>
               </div>
@@ -202,9 +219,12 @@ async function take(kind: string, url: string) {
         <ul v-if="calls.length" class="proof__list" :aria-label="t('sourcesLookups')">
           <li v-for="(call, i) in calls" :key="lookupMarker(call, i)">
             <div class="proof__item">
-              <span class="proof__num">{{ lookupMarker(call, i) }}</span>
+              <!-- "T1" matnda ko'rinmaydi - raqam o'rnida platforma belgisi (qaysi tizimdan). -->
+              <span class="proof__num proof__num--icon" :title="lookupMarker(call, i)">
+                <component :is="platformIcon(platformOfSource(call))" :size="13" :stroke-width="1.75" aria-hidden="true" />
+              </span>
               <span class="proof__body">
-                <span class="proof__name">{{ lookupLabel(call) }}</span>
+                <span class="proof__name">{{ lookupTitle(call, t) }}</span>
                 <span v-if="call.status && call.status !== 'ok'" class="proof__meta is-bad">
                   <span class="proof__dot" aria-hidden="true" />{{ t('chat.lookupFailed') }} · {{ call.status }}
                 </span>
@@ -394,6 +414,11 @@ async function take(kind: string, url: string) {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   overflow-wrap: anywhere;
+}
+/* So'rov qatori: raqam o'rnida platforma belgisi. */
+.proof__num--icon {
+  padding: 0;
+  color: var(--text-3);
 }
 .proof__meta.is-bad {
   color: var(--crit-text);

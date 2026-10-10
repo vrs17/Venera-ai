@@ -1943,3 +1943,275 @@ fallback. Everything is in `apps/api`, default behaviour is unchanged (`MEETINGS
     chain order, whole-run restart, per-provider cache, prompt budget, Ask via v3, CRM proposed/
     answered/failed/isolation/flag off/rate limit/expiry/force/edit, confirm write-back, chat confirm
     not creating the meetings DB, `assistant / stream` metering unchanged).
+
+## Build notes (export, 2026-10-10)
+
+User decision 2026-10-10: Plaud-style EXPORT and MIND MAP. The phone draws the mind map from the
+summary content (no extra LLM call); the backend provides the files.
+
+1. **Endpoint:** `GET /meetings/{id}/export?format=docx|pdf|md|txt[&summaryId=][&parts=...]`
+   (`format` defaults to `pdf`). `parts` is a comma list of `summary, actions, mindmap, transcript`
+   (any order; unknown -> 400 `invalid_parts`); empty = everything that is available. Summary =
+   `summaryId` or the primary summary. Responses: the file with `Content-Type`,
+   `Content-Disposition: attachment; filename="<ascii-slug>-<YYYY-MM-DD>.<ext>"; filename*=UTF-8''<real
+   title> <date>.<ext>` and `Cache-Control: private, no-store`. The ASCII slug drops apostrophes
+   (`bo'yicha`/`boʻyicha` -> `boyicha`) and transliterates Cyrillic (`Планёрка` -> `planyorka`); empty
+   slug -> `meeting`. Errors: 404 `not_found` (other user / unknown, same gate as every meetings
+   endpoint, flag off -> 404, not in the test group -> 403, no auth -> 401), 404 `summary_not_found`,
+   409 `not_ready` with `missing` (requested parts that are not ready) and `available` (parts that are),
+   429 `rate_limited` + `Retry-After` (`MEETINGS_EXPORT_PER_HOUR=30`), 429 `export_busy` + `Retry-After`
+   (the same user already has an export in flight), 503 `export_busy` + `Retry-After` (server export
+   queue full), 503 `pdf_unavailable` / `docx_unavailable`. 400/404/409/`export_busy` do not consume the
+   hourly limit. 422 for a `format` outside the four.
+   - No ready summary: the default export is transcript-only (200); asking for `summary`, `actions` or
+     `mindmap` is 409. An explicit `summaryId` that is not ready is 409 even with default parts.
+2. **Document** (`services/meetings/export.py`: `build_document` -> one neutral `Document`, rendered by
+   `render_markdown` / `render_text` there and by `services/meetings/export_render.py` for DOCX/PDF, so
+   the four formats always carry the same content): title (capped at 200 chars), date with year
+   (`2026-yil 10-oktyabr, 10:00` / `10 октября 2026, 10:00` / `October 10, 2026, 10:00`), duration
+   (`1 soat 2 daqiqa`), participants (renamed speakers, merged ones folded, unnamed -> `3-ishtirokchi`),
+   summary type (ru `Шаблон`), a warning when the transcript was edited after the summary; then the
+   summary sections in the template's `layout` order (empty sections dropped) with titles from
+   `SECTION_TITLES` plus two export-only names (`highlights` -> Iqtiboslar/Цитаты/Quotes,
+   `participants` -> Ishtirokchilar faolligi/Активность участников/Participation, with "nutq ulushi
+   45%"); action items as a TABLE (№, task, owner, due, status, CRM) at the `actionItems` position;
+   MIND MAP outline (root = title; branches = topics with their key points (or the topic summary) and
+   outcome, then decisions (non-final ones tagged `(taxminiy)` etc.), action items with owner, due and
+   a `✓ … (bajarildi)` marker for done ones, open questions; nodes capped); full transcript
+   `[time] Name: text`; footer `Barno AI · Generated: <time> (Toshkent vaqti)` (+ `n / N` page number in
+   DOCX/PDF). Code-drawn text (titles, labels, dates, `1-ishtirokchi`, statuses) is in the UI language
+   (`Accept-Language` uz|ru|en, default uz); the summary text stays in its own language.
+   - **One time format per document:** `mm:ss` everywhere for meetings under an hour, `hh:mm:ss`
+     everywhere for longer ones, so `(00:14)` in a decision matches `[00:14]` in the transcript.
+   - **Transcript paragraphs:** consecutive segments of the same speaker with a gap <= 3 s are merged
+     into one paragraph (stamped with the first segment; capped at ~1200 chars).
+   - **No repeated open questions:** when the layout has `followUps` ("Hal qilinmagan masalalar",
+     which already lists every open question with its reason), open questions referenced there
+     (`ref`) or with the same text are left out of the "Ochiq savollar" section (export only; the
+     mind map keeps them, the app is unchanged).
+   - **Needs-confirmation flag:** `⚠ aniqlashtirish kerak` / `⚠ требует уточнения` / `⚠ needs
+     confirmation`, shown in the table's status column (second line), and inside the decision's
+     bracket (`[taxminiy · ⚠ aniqlashtirish kerak]`) - never glued to the task text.
+   - Sentiment and talk share stay in the document (they are template sections); see "Not done".
+3. **Action items:** for the primary summary the table comes from the LIVE `action_items` rows (user
+   edits, user-added items, done status (`✓ bajarildi`, greyed row), dismissed hidden; same order as
+   `GET .../action-items` via the shared `_action_order`). The CRM column shows the key only when the
+   CRM task was actually created (`crm_status == executed`, key from `crm_result.key|id|number`, else
+   "yaratildi"); a pending proposal shows nothing. A non-primary summary (e.g. `follow_up`) uses its own
+   `content.actionItems` (no CRM). Column widths `[5, 31, 18, 19, 15, 12]` were measured so that
+   "Ответственный", "16 октября, 18:00", "✓ выполнена", "aniqlashtirish" and `DVSIB-231` do not break.
+4. **PDF:** reportlab Platypus, A4, DejaVu Sans registered from `MEETINGS_EXPORT_FONT_DIR` (default
+   `/usr/share/fonts/truetype/dejavu`; bold falls back to regular). Missing regular font -> 503
+   `pdf_unavailable` (never a silent Helvetica fallback: it cannot draw Cyrillic or `oʻ`/`gʻ`).
+   `initialFontName` and the table `FONTNAME` keep Helvetica out of the file. Text is escaped for the
+   Paragraph mini-markup; table cells are capped at 600 chars and a `LayoutError` retries with the table
+   drawn as a list. Every section heading is a PDF bookmark (outline); page numbers are `n / N` (each
+   page number is a form XObject drawn at save time - no second build); each mind-map branch is kept
+   on one page and the section heading + root stay with the first branch. `/Lang` = content language.
+   One PDF is built at a time (`_pdf_lock`, reportlab font state is process-wide; fonts are registered
+   inside the lock); the lock wait is bounded (30 s -> 503 `export_busy`). Measured: 3000 segments ->
+   PDF ~2.4 s / 244 KB, DOCX ~2.0 s / 53 KB.
+5. **DOCX:** python-docx default template restyled to match the PDF: one sans font (Arial, theme fonts
+   removed from docDefaults/Title/Headings so Word, LibreOffice, Google Docs and WPS agree), ink title
+   without the template's blue rule, indigo `#3730A3` Heading 1 with 14 pt space before, `Table Grid`
+   with the widths written to `tcW` AND `tblGrid/gridCol` AND `tblW` (LibreOffice/Google Docs/WPS read
+   the grid, Word reads the cells), shaded repeating header row, greyed done rows, warning line in
+   amber. Document language (`docDefaults w:lang`, core `language`) = content language (`uz-Latn-UZ` /
+   `ru-RU` / `en-US`) so Word does not red-underline every Uzbek word; transcript runs are `noProof`.
+   Footer `… · PAGE / NUMPAGES`. Core title capped at 255 (python-docx limit).
+6. **Text hygiene:** `export.clean` (strip, CR/TAB normalised) and `export.xml_safe` (control
+   characters and U+FFFE/U+FFFF removed, lone surrogates -> `?`). Speaker names go through `one_line`
+   in `speaker_name`, and the DOCX renderer passes EVERY run/heading through `xml_safe` (defence in
+   depth: a speaker named `Aziz\x01` from old data no longer crashes DOCX with 500). `rename_speaker`
+   now strips control characters too. Filenames strip `\ / : * ? " < > |`.
+7. **Concurrency (sync endpoint):** each waiting request holds one of the shared threadpool threads,
+   and almost every API handler is sync. `service._export_slot`: one export in flight per user (the
+   second gets 429 `export_busy`, `Retry-After: 5`) and at most `MEETINGS_EXPORT_CONCURRENCY=2` exports
+   in the process, waiting at most `MEETINGS_EXPORT_WAIT_SEC=10` (then 503 `export_busy`,
+   `Retry-After: 10`). The hourly limit is taken after the slot, so refused requests cost nothing.
+8. **Libraries are imported lazily** inside the renderers: a server updated without `pip install`
+   still boots; only that format returns 503. New pinned deps in `apps/api/pyproject.toml`:
+   `python-docx==1.2.0`, `reportlab==4.4.10` (py3 wheels; they pull `lxml`, `pillow`,
+   `charset-normalizer`, `typing_extensions` - all binary wheels for Python 3.10, no compiler).
+   **Where they were installed:** `apps/api/venv` in this worktree is a SYMLINK to
+   `~/venera-integration/apps/api/venv`, so the install landed in the venera-integration venv
+   (python-docx 1.2.0, reportlab 4.4.10, lxml 6.1.3, pillow 12.3.0, charset-normalizer 3.5.2 added;
+   nothing upgraded, `pip check` clean). The production venv `~/Venera/apps/api/venv` is untouched and
+   does NOT have them. `apps/api/.gitignore` now ignores the `venv` symlink (the root `venv/` rule
+   only matches a directory).
+9. **Deploy (once, after the code is on the server):**
+
+   ```bash
+   cd ~/Venera/apps/api && venv/bin/python -m pip install "python-docx==1.2.0" "reportlab==4.4.10"
+   venv/bin/python -m pip check
+   systemctl --user restart venera-api.service
+   ```
+
+   (equivalently `venv/bin/python -m pip install -e .` - it reads the pins from `pyproject.toml`; needs
+   PyPI access, or copy the six wheels from a machine that has it and `pip install --no-index
+   --find-links <dir>`). The PDF font is the `fonts-dejavu-core` package (present on this server at
+   `/usr/share/fonts/truetype/dejavu`); elsewhere set `MEETINGS_EXPORT_FONT_DIR`. Optional settings:
+   `MEETINGS_EXPORT_PER_HOUR=30`, `MEETINGS_EXPORT_CONCURRENCY=2`, `MEETINGS_EXPORT_WAIT_SEC=10`,
+   `MEETINGS_EXPORT_FONT_DIR=/usr/share/fonts/truetype/dejavu`. Without the pip step the API still
+   starts; DOCX/PDF return 503 and MD/TXT work. Check (file goes to disk, not the screen):
+   `curl -s -o /tmp/t.pdf -D - -H "Authorization: Bearer $TOKEN" -H "Accept-Language: uz"
+   "http://127.0.0.1:8000/api/v1/meetings/<id>/export?format=pdf" | grep -iE "^HTTP|content-"`.
+10. **Audio file:** no new endpoint - `GET /meetings/{id}/audio` already returns the whole stored
+    file with auth (and Range). It gained `?download=1`: same file plus `Content-Disposition:
+    attachment` with `<slug>-<date>.m4a` (or `.aac` when the remux failed) and `Cache-Control: private,
+    no-store`, for the share sheet.
+11. **Tests:** `tests/test_meetings_export.py` (42): every format x uz/ru/en; DOCX opened with
+    python-docx (meta lines, heading order = layout, table cells incl. CRM key/pending/done/warning,
+    mind map levels and statuses, transcript) and its XML (gridCol/tblW, shading, fonts, language,
+    noProof, PAGE/NUMPAGES); PDF checked without extra libraries (header/EOF, page count, DejaVu
+    embedded, no Helvetica, text via the ToUnicode maps incl. Cyrillic, `oʻ`/`gʻ`, ⚠ and ✓, outline
+    entries, `n / N`); Cyrillic title/content and transliterated `filename`; md/txt shapes; part
+    selection; transcript-only export; 409 shapes; stale-summary warning; follow-up summary; isolation
+    404; flag off 404 / 403 / 401; rate limit; per-user busy 429 (real concurrent request) and queue-full
+    503; PDF lock timeout 503; missing font 503; missing library 503; control characters in speaker
+    names (highlights + standup sections) and in rename; 1500-segment transcript with a 3000-char word
+    and a 6800-char task; unit tests for slug, time format, transcript merging, open-question dedupe,
+    mind map, 20k-char title. PDF tests are skipped (not failed) when DejaVu is missing.
+12. **Review round (2026-10-10):** fixed - thread starvation (item 7), DOCX 500 on control characters
+    (item 6), DOCX grid/styles/language (item 5), repeated open questions and mind-map statuses (item
+    2), warning wording, mind-map page splits, slug, labels/date format, one time format, transcript
+    merging, `n / N`, bookmarks, time zone in footer, column widths, title cap, fonts inside the lock,
+    audio `Cache-Control`; the earlier out-of-scope edit of `docs/deploy-api.md` was reverted (deploy
+    steps live in item 9). Not taken: moving the mind map right after the overview or trimming its
+    decision/task/question branches (the contract puts the full outline after the summary sections);
+    vendoring the DejaVu TTFs into the repo (binary blobs; the tests skip instead).
+13. **Not done:** no server-side mind map image (the phone draws it); no XLSX/SRT in this endpoint
+    (SRT stays on `.../transcript/export`); the old `.../summaries/{id}/export` (md/txt) is unchanged
+    apart from the better ASCII filename slug; sentiment and talk share are still exported by default
+    (open product question: hide them, or make them an opt-in `analytics` part, if the CEO forwards
+    files to clients).
+
+## Build notes (backend + web, "Qisqa xulosa" and chat readability, 2026-10-10)
+
+User decisions 2026-10-10: a short stakeholder summary ("Qisqa xulosa") written by gemma, first in
+every export and shareable on its own; chat answers without platform markers.
+
+1. **Prompt `meeting-3`** (`prompts.PROMPT_VERSION`; old cached map parts and "same summary" checks
+   no longer match). Shared `SYSTEM_RULES` (also in every map-part prompt, so kept short - on v3 every
+   character there is taken from the chunk's transcript room; `test_v3_bolak_hajmi_va_belgilar` guards
+   it): rule 11 - `keyPoints` are 3-6 takeaways, required even for a short call, one short sentence
+   each; rule 13 - short, plain, natural sentences, no bureaucratic or translated-sounding phrases;
+   rule 15 - `overview` is 1-2 short sentences. Extract-only `prompts.BRIEF_RULES` (rule 16, appended
+   by `extract_system`): written like a sharp human note-taker in natural word order, key points <= 20
+   words each and distinct, an unagreed proposal starts with `G'oya:` / `Идея:` / `Idea:`, overview
+   never more than 2 sentences, `purpose` one short phrase (Uzbek "... muhokama qilish"), null only
+   if it cannot be told. The single-pass TASK REMINDER (after the transcript) adds
+   `prompts.BRIEF_REMINDER` (keyPoints 3-6, purpose, 1-2 sentence overview, plain wording); map parts
+   get neither. `WRITER_SYSTEM` got the same overview, purpose and keyPoints rules. JSON shapes and
+   `shapes.py` are unchanged.
+2. **`short_call` template (`short_call-3`):** emphasis now asks for the purpose, a 1-2 sentence
+   overview and 3-6 keyPoints (topics, risks, nextSteps, templateSections stay empty);
+   `SHORT_CALL_KEEP` = `overview, keyPoints, actionItems, ...` and `_finalise` no longer empties
+   `keyPoints` for short calls (it still empties topics, risks, nextSteps, keywords, templateSections,
+   sentiment).
+3. **One repair for missing key points:** `Validator.key_points_missing` (separate from
+   `needs_repair`). Single pass: set when the validated `keyPoints` list is empty and the transcript
+   has >= `REAL_CONTENT_WORDS = 40` words (the summary gate is 30; a 30-40-word mic check may honestly
+   have none). Writer (long path): set when the writer returned no valid key point. `_ask_json` then
+   asks ONCE with `KEY_POINTS_MISSING` first in the error list. The repair is a fresh full extraction
+   (temperature 0), so only its `keyPoints` (and `purpose`/`overview` when the first reply left them
+   empty) are MERGED into the first reply, which is re-validated; action items and decisions always
+   come from the first reply. If the repair (or the merge) is broken, truncated, worse
+   (`needs_repair`) or still has no key points, the FIRST (valid) reply is kept with warning
+   `key_points_missing` - action items and decisions are never traded for key points, there is no map
+   fallback and, in a provider chain (`strict`), the summary does NOT move to the next provider for
+   this reason. A first reply that was invalid anyway follows the old path (warning added if the
+   repaired one still lacks key points).
+4. **Export part `brief`** (`export.PARTS = brief, summary, actions, mindmap, transcript`; `brief` is
+   a summary part -> 409 `not_ready` without a ready summary; the default "everything available"
+   now starts with it). Block layout (`export.brief_block`, kind `brief` in the neutral `Document`,
+   rendered by MD/TXT/DOCX/PDF):
+   `**Title**` / `9-oktabr 2026 (juma), 11:00 · 1 daq 4 s · 3 ishtirokchi` / `**Maqsad:** …` /
+   `**Qisqacha:** …` / `**Asosiy fikrlar:**` bullets / `**Qarorlar:**` (only when present) /
+   `**Vazifa(lar):**` `Task. Mas'ul: X. Muddat: Y.` (or `Mas'ul belgilanmagan.`, `Muddat
+   belgilanmagan.`, `Mas'ul: Jamoa.` for a team owner) / `**Ochiq savol(lar):**`. Singular label for
+   one item (Asosiy fikr/Vazifa/Qaror/Ochiq savol) - the same strings as the mobile app's
+   `recs.brief.*`, so the app's Copy/Share text and the exported file match word for word. This is
+   enforced by ONE shared golden fixture, `packages/fixtures/meeting-brief.json` (owner's example, a
+   Russian summary with every decision/task form, an English one with live tasks and a user title),
+   asserted by both `apps/api/tests/test_meetings_brief_golden.py` and
+   `apps/mobile/__tests__/briefGolden.test.ts`. Details:
+   - **Language:** the block (labels, owner/due phrases, `2-ishtirokchi` fallback, date, weekday,
+     duration, participant count with Russian plural forms) is in the SUMMARY's language, so a
+     shared block never mixes "Maqsad: Обсудить…"; document headings stay in the UI language. The
+     mobile card uses the same rule (only its chrome - "Qisqa xulosa", Copy, Share - is in the UI
+     language). Title: the user's title, otherwise THIS summary's title (`user_title`).
+   - **Content:** purpose and overview get a final period; overview is cut to its first 2 sentences
+     (`first_sentences`: splits only before a capital/digit/`[S1]`, so "15 mln. so'm" and "1.2" do not
+     split - old summaries had 3-5 sentences); key points capped at 6, falling back to topic key
+     points, then topic summaries/titles (old short calls had none); reversed decisions left out,
+     tentative/conditional and unconfirmed ones tagged in ONE parenthesis inside the sentence
+     (`Narx 15 mln so'm (taxminiy, aniqlashtirish kerak).`); unconfirmed (or verifier-rejected)
+     tasks end with ` (aniqlashtirish kerak)` - a status, not the imperative "tekshiring" aimed at the
+     reader; conditional tasks keep `(shart: …)`; tasks are the LIVE action items for the primary
+     summary (user edits, done ones prefixed `✓ `, dismissed hidden, `[S2]` tokens rendered), the
+     summary's own items otherwise.
+   - **`parts=brief` alone** (`Document.head = False`): the file IS the block - title (Title style in
+     DOCX/PDF, `**bold**` in MD) and the one-line meta instead of the document header ("Sana:",
+     "Davomiyligi:", ...), no MD/TXT footer (DOCX/PDF keep the page footer); people count omitted when
+     `speakersAvailable` is false. MD uses a hard break (`  `) between title and meta; TXT is the same
+     text without `**`.
+   - **With other parts:** heading `Qisqa xulosa` / `Краткий итог` / `Short summary` (UI language, a
+     PDF bookmark) right after the document header, without its own title/meta line (the header has
+     them). Summary sections the block repeats in full are skipped (`brief_covers`): "Qisqacha" when
+     the overview was not cut, "Asosiy fikrlar" when all key points (<= 6) fit, "Ochiq savollar"
+     always (the block lists them all); decisions stay (status, condition, rationale). The mobile
+     Summary tab hides the same sections under "Batafsil" and makes the brief items tappable instead.
+     `parts=summary` alone is unchanged. The document header's duration shows seconds under 10
+     minutes ("1 daqiqa 53 soniya", matching the block's "1 daq 53 s").
+5. **Web + Mini App answers** (`components/MarkdownMessage.vue`, shared by the web chat, the Mini App
+   `Exchange.vue` and admin snapshots; helpers in `components/chat/answerMarks.ts`): after
+   DOMPurify, outside `code`/`pre`: `[T1]`, `[T1, T2]`, `[T1][T2]` are REMOVED with the space before
+   them (the Sources button/row still lists the lookups); `[n]` with a known source becomes a small
+   superscript `<sup class="vmd-cite">` (no grey box, no space before it, consecutive ones as `¹,²`,
+   still clickable/hoverable; law links stay `<a>`); task keys (`[A-Z][A-Z0-9]{1,9}-\d{1,6}` not inside
+   a word, e.g. `DVSIB-245`) are wrapped in `.vmd-key` (0.82em, `--text-3`, weight 500), also inside
+   links and bold text. No lookbehind in the regexes (old iOS WebViews in Telegram reject them at
+   parse time). Mini App: `polish.ts` no longer relabels `T1` chips (gone) and only records
+   `data-marker`; the plain-text fallback shown before the markdown chunk loads also drops `[Tn]`;
+   tap targets for the superscripts via `::after`; `lookupBadges` removed (unused).
+6. **Tests:** `test_meetings_summary_quality.py` (+9: meeting-3 rules, reminder only in single pass,
+   one key-point repair, repair empty/broken/truncated keeps the first reply, strict chain not
+   failed, no repair under 40 words, writer repair), `test_meetings_summary.py` (short call keeps key
+   points), `test_meetings_export.py` (+8 and updated heading order/bookmarks: exact uz MD/TXT block
+   with live tasks, DOCX/PDF `parts=brief`, every format starts with the block, cut overview + 8 key
+   points keep their sections, ru/en labels, plural forms, team owner, legacy fallbacks, duration,
+   weekday, sentence split; 409 for `parts=brief` without a summary), `test_meetings_api.py`
+   (`promptVersion` `meeting-3`). The web has no unit-test runner; the DOM pass was checked with
+   jsdom from scratch and by `vue-tsc` + `vite build`.
+7. **Month spelling:** Uzbek months are now the official Latin `sentabr`/`oktabr` in
+   `dates.MONTHS` and the mobile `formatDate` (as `speech_text.MONTHS`, the web app and the owner's
+   sample); parsing (`_MONTH_FORMS`) accepts both spellings. New auto titles read "Yig'ilish
+   9-oktabr, 11:00"; stored titles are not rewritten.
+8. **Review fixes (2026-10-10):**
+   - Mobile mind map no longer draws ONE `<Svg>` (react-native-svg allocates a bitmap of the whole
+     view; a 10-topic map was ~120 MB at 100% and crashed Android). It is cut into 1024 px tiles
+     (<= 4 MB each, `canvasTiles`) and only tiles around the viewport are mounted (`visibleTiles`:
+     half a screen above/below, a quarter left/right) - memory depends on the screen, not the map.
+     The map opens collapsed (root + branches with counts), at the largest zoom <= 100% that fits the
+     screen width, with the root scrolled into view; a tapped branch stays in place when it opens;
+     zoom keeps the screen centre. Branches (topic/group) fold on tap, items seek (`pressAction`,
+     same in the outline); topic colours no longer reuse the decision/task/question colours; the
+     node meta line reads `2-ishtirokchi · Muddat: 10-oktabr · ▶ 00:09`.
+   - The map is a "Xulosa | Xarita" switch inside the Summary tab (4 main tabs again - a 5th tab
+     truncated "Vazifalar 2" on 360 dp phones).
+   - Export sheet: default parts are brief + full summary + tasks (mind map and transcript are
+     opt-in; the last choice is remembered while the app runs); it exports the summary being viewed
+     (`summaryId`); downloads use `createDownloadResumable` with a stall watchdog (90 s to the first
+     byte, 30 s between bytes -> "stopped, retry"), are cancelled when the sheet closes and show a
+     percentage for audio; 410/404/403 offer no retry. `cache/exports/` is wiped on logout and on
+     app start.
+   - Chat: consecutive citations are detected in JS (`vmd-cite--next`, comma via CSS) - the old CSS
+     `+` rule ignored the text between two citations; the Mini App glues "[1] [2]" into one span.
+     Mobile uses the same comma and gives each citation a screen-reader label. Common codes
+     (COVID-19, UTF-8, ISO-9001, SHA-256, Q3-2026, H1-2026) are not muted as task keys. The Mini App
+     jump-to-latest button moved to the right edge too.
+   - Open (product owner): the overview is now 1-2 sentences for EVERY meeting, also long ones (was
+     5-8 sentences over 30 minutes) - kept, as decided ("Qisqacha = overview, max 2 sentences");
+     long meetings keep their detail in topics and key points. The old
+     `.../summaries/{id}/export` endpoint has no brief.

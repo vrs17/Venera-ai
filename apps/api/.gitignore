@@ -1,0 +1,3 @@
+# `venv` ba'zan boshqa worktree venv iga SYMLINK bo'ladi: ildizdagi `venv/` (slash bilan) faqat
+# papkaga mos keladi - symlink `git add -A` bilan commitga tushib qolardi.
+/venv

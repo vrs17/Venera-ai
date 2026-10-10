@@ -14,6 +14,7 @@ from . import actions, auth, chat, chats, connectors, pro, stt, telegram, tts
 from . import admin_users, reports
 from . import admin, admin_engines
 from . import devices, meetings
+from . import assistant_extras
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(auth.router)
@@ -29,6 +30,10 @@ router.include_router(reports.router)
 router.include_router(admin_users.router)
 router.include_router(admin.router)
 router.include_router(admin_engines.router)
+# Barno xotirasi va platforma kalitlari - yuqoridagi xizmat ustidan proksi
+# (`assistant_extras.py`). `/connectors` dan ALOHIDA: u yerda odamning
+# HRM/CRM login tokenlari.
+router.include_router(assistant_extras.router)
 # Yig'ilish yozuvchisi (mobil ilova). Yo'llar DOIM ulangan, lekin eshik
 # (`meetings_access`) `MEETINGS_ENABLED` o'chiq bo'lsa 404 qaytaradi - bayroq
 # `.env` dan jonli o'qiladi, ya'ni yoqish uchun restart kerak emas.

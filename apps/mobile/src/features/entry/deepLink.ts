@@ -11,10 +11,24 @@
  * Date.now). NIMA UCHUN: Record ekrani ochiq turganda AYNAN bir xil havola
  * kelsa expo-router qayta render bermaydi va ikkinchi bosish yo'qolardi
  * (masalan, ruxsatni sozlamada yoqib, yon tugmani qayta bosganda).
+ *
+ * "Ulashish -> Barno AI" (2026-10-10): ImportActivity fayllarni `imports/` ga nusxalab
+ *   venera-rec://import?files=<a.m4a,b.aac>[&skipped=<n>]&n=<nonce>
+ * ochadi. Fayl nomlari qat'iy tekshiriladi (faqat ASCII, `..` yo'q, .m4a/.aac) - begona
+ * ilova bu havola bilan `imports/` dan tashqaridagi faylga ishora qila olmasin. Hech narsa
+ * avtomatik yuborilmaydi: tasdiq ekrani doim ko'rsatiladi. Shuning uchun o'rnatish kaliti (`k`)
+ * import havolasida KERAK EMAS - kelsa ham tashlanadi (router holatiga tarqalmasin).
  */
 import type { EntrySource } from '@/api/types';
 import type { RecorderStatus } from '@/features/recorder/recorderMachine';
 
+// Sof yordamchi (native'siz): `nativeEntry` testlarda mock qilinadi - marshrut tozalovchi unga bog'liq bo'lmasin.
+import { parseImportFiles } from '../../../modules/venera-entry/importNames';
+
+/**
+ * YOZISH kirish nuqtalari (`record?src=`). `call`/`share` bu yerda YO'Q: ular yozishni
+ * boshlamaydi, faqat import oqimida navbat qatoriga yoziladi.
+ */
 export const ENTRY_SOURCES: EntrySource[] = ['tile', 'launcher', 'volume', 'shortcut', 'notification', 'app', 'link'];
 export const KEY_RE = /^[0-9a-f]{64}$/;
 export const NONCE_RE = /^[0-9]{1,20}$/;
@@ -58,6 +72,37 @@ function parseQuery(qs: string): RawParams {
   return out;
 }
 
+export interface ImportParams {
+  /** Tekshirilgan `imports/` fayl nomlari (bo'sh bo'lishi mumkin). */
+  files: string[];
+  /** ImportActivity qabul qilmagan fayllar soni (format, hajm, 20 dan ortiq). */
+  skipped: number;
+  n: string | null;
+}
+
+const SKIPPED_RE = /^[0-9]{1,3}$/;
+
+/** `/import` parametrlari (router yoki xom so'rov): yaroqsiz qiymatlar tashlanadi. */
+export function parseImportParams(raw: RawParams): ImportParams {
+  const skipped = first(raw.skipped);
+  const n = first(raw.n);
+  return {
+    files: parseImportFiles(raw.files ?? null),
+    skipped: skipped && SKIPPED_RE.test(skipped) ? Number(skipped) : 0,
+    n: n && NONCE_RE.test(n) ? n : null,
+  };
+}
+
+/** Tozalangan `/import?...`; fayl qolmasa - yozuvlar ro'yxati (bo'sh tasdiq ekrani ma'nosiz). */
+export function buildImportPath(p: ImportParams): string {
+  if (!p.files.length) return '/meetings';
+  // Vergul ataylab kodlanmaydi: nomlar IMPORT_NAME_RE dan o'tgan (faqat [A-Za-z0-9._-]).
+  const parts = [`files=${p.files.join(',')}`];
+  if (p.skipped > 0) parts.push(`skipped=${p.skipped}`);
+  if (p.n) parts.push(`n=${p.n}`);
+  return `/import?${parts.join('&')}`;
+}
+
 export function buildRecordPath(p: EntryParams): string {
   const parts = [`src=${p.src}`];
   if (p.k) parts.push(`k=${p.k}`);
@@ -68,8 +113,8 @@ export function buildRecordPath(p: EntryParams): string {
 
 /**
  * `+native-intent` uchun: kiruvchi URL/yo'lni tozalash. Record havolasi
- * bo'lsa faqat src, k, action, n qoladi; boshqa ichki yo'llar o'zgarmaydi;
- * tanimagan narsa bosh sahifaga.
+ * bo'lsa faqat src, k, action, n qoladi; import havolasida faqat tekshirilgan
+ * files, skipped, n; boshqa ichki yo'llar o'zgarmaydi; tanimagan narsa bosh sahifaga.
  */
 export function sanitizeIncomingPath(path: string): string {
   if (!path) return '/';
@@ -85,6 +130,7 @@ export function sanitizeIncomingPath(path: string): string {
   const pathname = (qIdx >= 0 ? rest.slice(0, qIdx) : rest).replace(/\/+$/, '') || '/';
   const query = qIdx >= 0 ? rest.slice(qIdx + 1) : '';
   if (pathname === '/record') return buildRecordPath(parseEntryParams(parseQuery(query)));
+  if (pathname === '/import') return buildImportPath(parseImportParams(parseQuery(query)));
   if (['/', '/meetings', '/settings', '/action-items', '/login'].includes(pathname)) return pathname;
   if (/^\/meeting\/[A-Za-z0-9_-]{1,64}$/.test(pathname)) return pathname;
   return '/';

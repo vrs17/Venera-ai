@@ -5,14 +5,17 @@
  *   chapda   javob (Markdown, butun kenglikda), oqim paytida bosqich matni yoki
  *            "O'ylayapman…" va oxirida kursor
  *   ostida   manbalar tugmasi, ariza (DOCX/PDF), CRM taklifi kartasi, amallar
- *            (nusxalash, qayta javob)
+ *            (🔊 tinglash, nusxalash, qayta javob)
+ *
+ * Jonli ovozli rejimda berilgan savol pufakchasida kichik 🎤 belgisi bor - chatni keyin
+ * o'qigan odam savol aytilganini (matni nutqdan tanilganini) bilsin.
  *
  * Xato: xizmat matni + "Qayta urinish"; HRM/CRM ulanmagan bo'lsa - "Qayta ulash"
  * (qayta kirish, ulanish yangilanadi).
  */
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import { BookOpen, Copy, FileText, RotateCcw } from 'lucide-react-native';
+import { Copy, FileText, Mic, RotateCcw } from 'lucide-react-native';
 import { memo, useMemo, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -21,10 +24,14 @@ import type { ActionsApi } from '@/api/actions';
 import { isExpiredError } from '@/api/actions';
 import { ApiError } from '@/api/client';
 import { isAuthCode, type Exchange } from '@/features/chat/chatStore';
+import { sourceMarks } from '@/features/chat/sources';
 import { ProposalCard } from '@/features/crm/ProposalCard';
 import { crmFromProposal, decisionOutcome, type Outcome, type SessionOutcome } from '@/features/crm/proposalModel';
 import type { Busy } from '@/features/crm/crmStore';
-import { useT } from '@/features/settings/settingsStore';
+import { useSettings, useT } from '@/features/settings/settingsStore';
+// Chat ekrani: barrel (`@/features/voice`) EMAS - u expo-router hook'larini olib keladi.
+import { canReadAloud } from '@/features/voice/readAloud';
+import { ListenButton } from '@/features/voice/ui/ListenButton';
 import { errorText, showToast } from '@/ui/errors';
 import { useTheme, type Theme } from '@/ui/theme';
 
@@ -44,8 +51,15 @@ function ExchangeViewImpl({ ex, api, actions, live, onRetry, onReconnect, onSour
   const th = useTheme();
   const t = useT();
   const s = useMemo(() => makeStyles(th), [th]);
+  const uiLang = useSettings((x) => x.uiLang);
   const streaming = ex.status === 'streaming' || (ex.status === 'pending' && live);
   const waiting = ex.status === 'pending' && !ex.answer;
+  // Ovoz faqat o'zbekcha (server ovozi lotin o'zbekcha) - aks holda tugma umuman yo'q.
+  const listenable = useMemo(() => ex.status === 'done' && !!ex.answer && canReadAloud(ex.answer, uiLang), [ex.status, ex.answer, uiLang]);
+  const voiceQ = ex.input === 'voice';
+  // "N manba" tugmasida manbalar belgilari (HRM odamlar, DWH ombor, hujjat kitob) - qaysi
+  // tizimdan javob berilgani tugmani ochmasdan ko'rinsin (Claude'dagi favicon qatori kabi).
+  const marks = useMemo(() => sourceMarks(ex.sources), [ex.sources]);
 
   const copy = async () => {
     try {
@@ -76,8 +90,13 @@ function ExchangeViewImpl({ ex, api, actions, live, onRetry, onReconnect, onSour
     <View style={s.wrap}>
       {ex.question ? (
         <View style={s.qRow}>
-          <View style={s.bubble}>
-            <Text style={s.qText} selectable>
+          <View
+            style={[s.bubble, voiceQ ? s.voiceBubble : null]}
+            testID={voiceQ ? 'question-voice' : undefined}
+            accessible={voiceQ ? true : undefined}
+            accessibilityLabel={voiceQ ? `${t('nav.voice.voiceQuestion')}: ${ex.question}` : undefined}>
+            {voiceQ ? <Mic size={14} color={th.textMuted} strokeWidth={2} style={s.voiceMark} /> : null}
+            <Text style={[s.qText, voiceQ ? s.voiceText : null]} selectable>
               {ex.question}
             </Text>
           </View>
@@ -142,12 +161,17 @@ function ExchangeViewImpl({ ex, api, actions, live, onRetry, onReconnect, onSour
         {ex.status === 'done' && (ex.answer || ex.sources.length) ? (
           <View style={s.actions}>
             {ex.sources.length ? (
-              <Pressable style={s.sourcesBtn} onPress={() => onSources(ex.sources)} accessibilityRole="button" hitSlop={6}>
-                <BookOpen size={15} color={th.textSoft} strokeWidth={2} />
+              <Pressable testID="answer-sources" style={s.sourcesBtn} onPress={() => onSources(ex.sources)} accessibilityRole="button" hitSlop={6}>
+                <View style={s.sourceMarks}>
+                  {marks.map(({ key, Icon }) => (
+                    <Icon key={key} size={15} color={th.textSoft} strokeWidth={2} />
+                  ))}
+                </View>
                 <Text style={s.sourcesText}>{t('chat.sources', { n: ex.sources.length })}</Text>
               </Pressable>
             ) : null}
             <View style={{ flex: 1 }} />
+            {listenable ? <ListenButton id={ex.id} markdown={ex.answer} turnId={ex.turnId} /> : null}
             {ex.answer ? (
               <Pressable onPress={() => void copy()} accessibilityRole="button" accessibilityLabel={t('chat.copy')} hitSlop={8} style={s.iconBtn}>
                 <Copy size={17} color={th.textMuted} strokeWidth={1.9} />
@@ -247,6 +271,9 @@ function makeStyles(th: Theme) {
     qRow: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 14 },
     bubble: { maxWidth: '86%', backgroundColor: th.bubble, borderRadius: 20, borderBottomRightRadius: 6, paddingHorizontal: 14, paddingVertical: 10 },
     qText: { color: th.text, fontSize: 16, lineHeight: 23 },
+    voiceBubble: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
+    voiceMark: { marginTop: 5 },
+    voiceText: { flexShrink: 1 },
     answer: { minHeight: 8 },
     thinking: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 },
     thinkingText: { color: th.textMuted, fontSize: 15, flex: 1 },
@@ -264,6 +291,7 @@ function makeStyles(th: Theme) {
     actions: { flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 },
     sourcesBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 999, backgroundColor: th.surfaceAlt, paddingHorizontal: 12, paddingVertical: 7 },
     sourcesText: { color: th.textSoft, fontSize: 13, fontWeight: '600' },
+    sourceMarks: { flexDirection: 'row', alignItems: 'center', gap: 3 },
     iconBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 18 },
   });
 }

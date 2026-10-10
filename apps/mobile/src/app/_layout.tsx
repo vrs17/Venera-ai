@@ -3,8 +3,8 @@
  * himoyasi va ishga tushish ishlari (spec 7.3).
  *
  * Asosiy ekran (`index`) - Barno bilan native suhbat. U va yig'ilish bo'limi
- * (`meetings`, `meeting/[id]`, `action-items`, `settings`) - kirgandan keyin;
- * kirilmagan bo'lsa `login`.
+ * (`meetings`, `meeting/[id]`, `action-items`) hamda Sozlamalar hub'i va uning
+ * ichki sahifalari (`settings/*`) - kirgandan keyin; kirilmagan bo'lsa `login`.
  *
  * `record` ekrani HIMOYALANMAGAN: yozish hech qachon login yoki tarmoqni
  * kutmaydi (spec 7.5). Sessiya yo'q bo'lsa yozuv navbatda turadi va
@@ -23,6 +23,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { ApiError } from '@/api/client';
 import { useAuth } from '@/features/auth/authStore';
+import { CallAutoSend } from '@/features/calls/CallAutoSend';
 import { useCrmStore } from '@/features/crm/crmStore';
 import { setTrustedKey } from '@/features/entry/nativeEntry';
 import { hrefFromAction, installRecordShortcut, withEntryNonce } from '@/features/entry/quickActions';
@@ -32,6 +33,7 @@ import { useSettings, useT } from '@/features/settings/settingsStore';
 // Bu import modulni yuklaydi - backgroundTask.ts modul darajasida defineTask() chaqiradi.
 import { registerUploadTask } from '@/features/upload/backgroundTask';
 import { makeT } from '@/i18n';
+import { clearExports } from '@/lib/paths';
 import { getAppServices, ServicesProvider, useServices, type Services } from '@/services';
 import { toastError } from '@/ui/errors';
 import { useTheme } from '@/ui/theme';
@@ -66,6 +68,9 @@ export default function RootLayout() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Oldingi seansda ulashilgan fayllar (eksport keshi) - ilova ochilganda tozalanadi: ulashish
+    // oynasi allaqachon yopilgan, qabul qilgan ilova faylni o'ziga olgan.
+    clearExports();
     getAppServices()
       .then(setServices)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
@@ -87,6 +92,8 @@ export default function RootLayout() {
         <ServicesProvider services={services}>
           <RecorderProvider>
             <Bootstrap />
+            {/* Qo'ng'iroq yozuvlarini avtomatik yuborish: hech narsa chizmaydi, shartlar bajarilsa skanerlaydi. */}
+            <CallAutoSend />
             <AppStack />
           </RecorderProvider>
         </ServicesProvider>
@@ -106,17 +113,35 @@ function AppStack() {
       <StatusBar style={th.dark ? 'light' : 'dark'} />
       <Stack
         screenOptions={{
-          headerStyle: { backgroundColor: th.surface },
+          // Claude uslubi: sarlavha sahifa bilan bir rangda, soya chizig'isiz - "tinch" ko'rinish.
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: th.bg },
           headerTintColor: th.text,
+          headerTitleStyle: { fontSize: 18, fontWeight: '600' },
           contentStyle: { backgroundColor: th.bg },
         }}>
         <Stack.Protected guard={signedIn}>
           {/* Chat o'z sarlavhasini va xavfsiz zonasini o'zi chizadi. */}
           <Stack.Screen name="index" options={{ headerShown: false }} />
-          <Stack.Screen name="meetings" options={{ title: t('list.title') }} />
+          <Stack.Screen name="meetings" options={{ title: t('nav.recordings') }} />
           <Stack.Screen name="meeting/[id]" options={{ title: '' }} />
-          <Stack.Screen name="action-items" options={{ title: t('ai.myTitle') }} />
-          <Stack.Screen name="settings" options={{ title: t('settings.title') }} />
+          <Stack.Screen name="action-items" options={{ title: t('list.myTasks') }} />
+          {/* Sozlamalar: hub + har qator o'z sahifasi (URL `/settings` o'zgarmaydi). */}
+          <Stack.Screen name="settings/index" options={{ title: t('settings.title') }} />
+          <Stack.Screen name="settings/account" options={{ title: t('set.profile') }} />
+          <Stack.Screen name="settings/connections" options={{ title: t('settings.connections') }} />
+          <Stack.Screen name="settings/memory" options={{ title: t('set.memory.title') }} />
+          <Stack.Screen name="settings/quick" options={{ title: t('settings.quick') }} />
+          <Stack.Screen name="settings/recording" options={{ title: t('set.recording') }} />
+          <Stack.Screen name="settings/language" options={{ title: t('set.language') }} />
+          <Stack.Screen name="settings/theme" options={{ title: t('settings.theme') }} />
+          <Stack.Screen name="settings/about" options={{ title: t('settings.about') }} />
+          <Stack.Screen name="settings/voice" options={{ title: t('nav.voice.settingsTitle') }} />
+          <Stack.Screen name="settings/calls" options={{ title: t('calls.settingsTitle') }} />
+          {/* "Ulashish -> Barno AI": kirilmagan bo'lsa login chiqadi, fayllar imports/ da kutadi (chiqishda o'chiriladi). */}
+          <Stack.Screen name="import" options={{ title: t('calls.import.title') }} />
+          {/* Jonli ovozli suhbat: to'liq ekran, doim qorong'i, o'z tugmalari bor (✕ / orqaga = tugatish). */}
+          <Stack.Screen name="voice" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', gestureEnabled: false }} />
         </Stack.Protected>
         <Stack.Protected guard={!signedIn}>
           <Stack.Screen name="login" options={{ headerShown: false }} />

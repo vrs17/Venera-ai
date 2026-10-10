@@ -15,7 +15,7 @@ def test_yaratish_idempotent_va_default_sarlavha(client, auth, monkeypatch, _iso
     cid = client_uuid()
     first = create_meeting(client, auth, clientId=cid)
     assert first["status"] == "uploading" and first["titleSource"] == "auto"
-    assert first["title"] == "Yig'ilish 9-oktyabr, 11:00"            # Toshkent vaqti
+    assert first["title"] == "Yig'ilish 9-oktabr, 11:00"            # Toshkent vaqti
     assert first["upload"] == {"receivedBytes": 0, "totalBytes": None, "maxChunkBytes": 4194304,
                                "complete": False}
     again = client.post("/api/v1/meetings", json={"clientId": cid, "recordedAt": "2026-10-09T06:00:00Z",

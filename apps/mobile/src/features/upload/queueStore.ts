@@ -15,6 +15,10 @@ export type QueueState = 'recording' | 'stopped' | 'creating' | 'uploading' | 'c
 export interface QueueRow {
   clientId: string;
   fileUri: string;
+  /**
+   * Yozuvchi doim `audio/aac` (ADTS) yozadi; import qilingan qo'ng'iroq / ulashilgan fayl
+   * (`source` = `call` | `share`, 2026-10-10) ko'pincha `audio/mp4` (.m4a). Server ikkalasini qabul qiladi.
+   */
   contentType: AudioContentType;
   language: Lang;
   template: TemplateId;
@@ -144,7 +148,8 @@ function fromDb(r: DbRow): QueueRow {
   return {
     clientId: String(r.clientId),
     fileUri: String(r.fileUri),
-    contentType: r.contentType as QueueRow['contentType'],
+    // Noma'lum qiymat (qo'lda buzilgan DB) serverda 415 bo'lardi - eski standart turga qaytamiz.
+    contentType: r.contentType === 'audio/mp4' ? 'audio/mp4' : 'audio/aac',
     language: r.language as Lang,
     template: r.template as TemplateId,
     expectedSpeakers: r.expectedSpeakers == null ? null : Number(r.expectedSpeakers),

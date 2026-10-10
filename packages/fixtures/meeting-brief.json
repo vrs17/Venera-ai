@@ -1,0 +1,434 @@
+{
+  "_about": "\"Qisqa xulosa\" (meeting brief) umumiy namunasi. Server (apps/api tests/test_meetings_brief_golden.py: export.build_document parts=brief + render_text/render_markdown) va mobil ilova (apps/mobile __tests__/briefGolden.test.ts: buildBrief + briefToText/briefToMarkdown) AYNAN shu matnni berishi shart - ilovadagi Nusxa/Ulashish va yuklab olingan fayl so'zma-so'z bir xil bo'lsin. Matn o'zgarsa - ikkala tomon birga o'zgaradi.",
+  "cases": [
+    {
+      "name": "egasi tasdiqlagan namuna (uz, qisqa qo'ng'iroq)",
+      "meeting": {
+        "title": "Yig'ilish 10-oktabr, 12:37",
+        "titleSource": "auto",
+        "recordedAt": "2026-10-10T07:37:00Z",
+        "durationSec": 113.2
+      },
+      "speakers": [
+        {
+          "id": "S1",
+          "name": null,
+          "mergedInto": null
+        },
+        {
+          "id": "S2",
+          "name": null,
+          "mergedInto": null
+        }
+      ],
+      "content": {
+        "language": "uz",
+        "title": "Transkripsiya va CRM integratsiyasi muhokamasi",
+        "purpose": "yangi transkripsiya va avtomatik vazifalar tizimining imkoniyatlarini muhokama qilish",
+        "overview": "tizim suhbatni yozib, spikerlarga ajratib matnga aylantirishi, mazmunidan CRM'ga vazifa yaratishi va loyihalar bo'yicha kontekst to'plashi muhokama qilindi.",
+        "meeting": {
+          "date": "2026-10-10",
+          "durationSec": 113.2,
+          "speakerCount": 2
+        },
+        "quality": {
+          "speakersAvailable": true
+        },
+        "topics": [],
+        "keyPoints": [
+          {
+            "id": "K1",
+            "text": "Transkript spikerlar bo'yicha ajratib chiqariladi",
+            "start": 4.0
+          },
+          {
+            "id": "K2",
+            "text": "Suhbat mazmunidan CRM'ga vazifa yaratiladi, tizim loyihalar bo'yicha kontekst to'plab boradi.",
+            "start": 20.0
+          },
+          {
+            "id": "K3",
+            "text": "G'oya: chatda yig'ilishdagi kelishuvga zid gap yozilsa, tizim ogohlantiradi va deadline'larni eslatadi.",
+            "start": 41.0
+          },
+          {
+            "id": "K4",
+            "text": "Yozuv paytida \"Muhim\" belgisi bilan kerakli joyni belgilash va izoh qo'shish mumkin.",
+            "start": 60.0
+          },
+          {
+            "id": "K5",
+            "text": "Ma'lumot manbalari (CRM, HRM va boshqalar) alohida yoqib-o'chiriladi.",
+            "start": 80.0
+          }
+        ],
+        "decisions": [],
+        "actionItems": [
+          {
+            "id": "A1",
+            "task": "Skriptni yuborish",
+            "owner": {
+              "speaker": "S2",
+              "name": null,
+              "kind": "person"
+            },
+            "due": {
+              "raw": null,
+              "date": null,
+              "time": null
+            },
+            "status": "open",
+            "needsConfirmation": false,
+            "verified": null,
+            "start": 95.0
+          }
+        ],
+        "openQuestions": [
+          {
+            "id": "Q1",
+            "text": "Suhbat paytida matn yozish (typing) imkoniyati qanday ishlaydi",
+            "start": 100.0
+          }
+        ]
+      },
+      "expectedMarkdown": "**Transkripsiya va CRM integratsiyasi muhokamasi**  \n10-oktabr 2026 (shanba), 12:37 · 1 daq 53 s · 2 ishtirokchi\n\n**Maqsad:** yangi transkripsiya va avtomatik vazifalar tizimining imkoniyatlarini muhokama qilish.\n\n**Qisqacha:** tizim suhbatni yozib, spikerlarga ajratib matnga aylantirishi, mazmunidan CRM'ga vazifa yaratishi va loyihalar bo'yicha kontekst to'plashi muhokama qilindi.\n\n**Asosiy fikrlar:**\n- Transkript spikerlar bo'yicha ajratib chiqariladi.\n- Suhbat mazmunidan CRM'ga vazifa yaratiladi, tizim loyihalar bo'yicha kontekst to'plab boradi.\n- G'oya: chatda yig'ilishdagi kelishuvga zid gap yozilsa, tizim ogohlantiradi va deadline'larni eslatadi.\n- Yozuv paytida \"Muhim\" belgisi bilan kerakli joyni belgilash va izoh qo'shish mumkin.\n- Ma'lumot manbalari (CRM, HRM va boshqalar) alohida yoqib-o'chiriladi.\n\n**Vazifa:**\n- Skriptni yuborish. Mas'ul: 2-ishtirokchi. Muddat belgilanmagan.\n\n**Ochiq savol:**\n- Suhbat paytida matn yozish (typing) imkoniyati qanday ishlaydi?\n",
+      "expectedText": "Transkripsiya va CRM integratsiyasi muhokamasi\n10-oktabr 2026 (shanba), 12:37 · 1 daq 53 s · 2 ishtirokchi\n\nMaqsad: yangi transkripsiya va avtomatik vazifalar tizimining imkoniyatlarini muhokama qilish.\n\nQisqacha: tizim suhbatni yozib, spikerlarga ajratib matnga aylantirishi, mazmunidan CRM'ga vazifa yaratishi va loyihalar bo'yicha kontekst to'plashi muhokama qilindi.\n\nAsosiy fikrlar:\n- Transkript spikerlar bo'yicha ajratib chiqariladi.\n- Suhbat mazmunidan CRM'ga vazifa yaratiladi, tizim loyihalar bo'yicha kontekst to'plab boradi.\n- G'oya: chatda yig'ilishdagi kelishuvga zid gap yozilsa, tizim ogohlantiradi va deadline'larni eslatadi.\n- Yozuv paytida \"Muhim\" belgisi bilan kerakli joyni belgilash va izoh qo'shish mumkin.\n- Ma'lumot manbalari (CRM, HRM va boshqalar) alohida yoqib-o'chiriladi.\n\nVazifa:\n- Skriptni yuborish. Mas'ul: 2-ishtirokchi. Muddat belgilanmagan.\n\nOchiq savol:\n- Suhbat paytida matn yozish (typing) imkoniyati qanday ishlaydi?\n"
+    },
+    {
+      "name": "ruscha xulosa: qaror holatlari, vazifa shakllari, birlashtirilgan spiker",
+      "meeting": {
+        "title": "Встреча по ценам",
+        "titleSource": "summary",
+        "recordedAt": "2026-09-14T05:00:00Z",
+        "durationSec": 3925.0
+      },
+      "speakers": [
+        {
+          "id": "S1",
+          "name": "Азиз",
+          "mergedInto": null
+        },
+        {
+          "id": "S2",
+          "name": null,
+          "mergedInto": null
+        },
+        {
+          "id": "S3",
+          "name": null,
+          "mergedInto": "S1"
+        }
+      ],
+      "content": {
+        "language": "ru",
+        "title": "Цены и отчёт с [S1]",
+        "purpose": "Согласовать цены на четвёртый квартал;",
+        "overview": "[S1] и [S2] обсудили цены. Решили поднять тариф на 5%. Отчёт будет в пятницу. Остальное позже.",
+        "meeting": {
+          "date": "2026-09-14",
+          "durationSec": 3925.0,
+          "speakerCount": 3
+        },
+        "quality": {
+          "speakersAvailable": true
+        },
+        "topics": [],
+        "keyPoints": [
+          {
+            "id": "K1",
+            "text": "Тариф растёт на 5% с ноября",
+            "start": 30.0
+          }
+        ],
+        "decisions": [
+          {
+            "id": "D1",
+            "text": "Поднять тариф на 5%.",
+            "status": "final",
+            "needsConfirmation": false,
+            "verified": true,
+            "start": 100.0
+          },
+          {
+            "id": "D2",
+            "text": "Скидок не давать!",
+            "status": "tentative",
+            "needsConfirmation": true,
+            "verified": null,
+            "start": 200.0
+          },
+          {
+            "id": "D3",
+            "text": "Перейти на годовой договор",
+            "status": "conditional",
+            "needsConfirmation": false,
+            "verified": null,
+            "start": 300.0
+          },
+          {
+            "id": "D4",
+            "text": "Старая цена",
+            "status": "reversed",
+            "needsConfirmation": false,
+            "verified": null,
+            "start": 400.0
+          },
+          {
+            "id": "D5",
+            "text": "Отчёт раз в месяц",
+            "status": "final",
+            "needsConfirmation": false,
+            "verified": false,
+            "start": 500.0
+          }
+        ],
+        "actionItems": [
+          {
+            "id": "A1",
+            "task": "Подготовить отчёт для [S2]",
+            "owner": {
+              "speaker": "S3",
+              "name": null,
+              "kind": "person"
+            },
+            "due": {
+              "raw": "в пятницу",
+              "date": "2026-09-18",
+              "time": "15:00"
+            },
+            "status": "open",
+            "needsConfirmation": false,
+            "verified": null,
+            "start": 120.0
+          },
+          {
+            "id": "A2",
+            "task": "Обновить прайс",
+            "owner": {
+              "speaker": null,
+              "name": null,
+              "kind": "team"
+            },
+            "due": {
+              "raw": "на следующей неделе",
+              "date": null,
+              "time": null
+            },
+            "status": "open",
+            "needsConfirmation": false,
+            "verified": null,
+            "start": 130.0
+          },
+          {
+            "id": "A3",
+            "task": "Позвонить клиенту",
+            "owner": {
+              "speaker": null,
+              "name": "Бобур",
+              "kind": "person"
+            },
+            "due": {
+              "raw": null,
+              "date": null,
+              "time": null
+            },
+            "status": "done_in_meeting",
+            "needsConfirmation": false,
+            "verified": null,
+            "start": 140.0
+          },
+          {
+            "id": "A4",
+            "task": "Отправить КП",
+            "owner": {
+              "speaker": null,
+              "name": null,
+              "kind": "unknown"
+            },
+            "due": {
+              "raw": null,
+              "date": null,
+              "time": null
+            },
+            "condition": "если клиент согласится",
+            "status": "open",
+            "needsConfirmation": false,
+            "verified": false,
+            "start": 150.0
+          }
+        ],
+        "openQuestions": [
+          {
+            "id": "Q1",
+            "text": "Кто согласует бюджет?",
+            "start": 600.0
+          },
+          {
+            "id": "Q2",
+            "text": "Нужен ли юрист",
+            "start": 700.0
+          }
+        ]
+      },
+      "expectedText": "Цены и отчёт с Азиз\n14 сентября 2026 (понедельник), 10:00 · 1 ч 5 мин · 2 участника\n\nЦель: Согласовать цены на четвёртый квартал.\n\nКратко: Азиз и Участник 2 обсудили цены. Решили поднять тариф на 5%.\n\nКлючевой момент:\n- Тариф растёт на 5% с ноября.\n\nРешения:\n- Поднять тариф на 5%.\n- Скидок не давать (предварительно, требует уточнения).\n- Перейти на годовой договор (условно).\n- Отчёт раз в месяц (требует уточнения).\n\nЗадачи:\n- Подготовить отчёт для Участник 2. Ответственный: Азиз. Срок: 18 сентября, 15:00.\n- Обновить прайс. Ответственный: Команда. Срок: на следующей неделе.\n- ✓ Позвонить клиенту. Ответственный: Бобур. Срок не указан.\n- Отправить КП (условие: если клиент согласится). Ответственный не назначен. Срок не указан. (требует уточнения)\n\nОткрытые вопросы:\n- Кто согласует бюджет?\n- Нужен ли юрист?\n"
+    },
+    {
+      "name": "inglizcha: odam qo'ygan nom, jonli vazifalar, ko'p fikr, spikerlar ajratilmagan",
+      "meeting": {
+        "title": "Pricing sync",
+        "titleSource": "user",
+        "recordedAt": "2026-10-11T19:30:00Z",
+        "durationSec": 1500.0
+      },
+      "speakers": [
+        {
+          "id": "S1",
+          "name": "Aziz",
+          "mergedInto": null
+        },
+        {
+          "id": "S2",
+          "name": null,
+          "mergedInto": null
+        }
+      ],
+      "content": {
+        "language": "en",
+        "title": "Q4 pricing with [S1]",
+        "purpose": null,
+        "overview": "The team reviewed Q4 prices. Version 1.2 ships on October 17 as planned. Marketing waits for the budget.",
+        "meeting": {
+          "date": "2026-10-12",
+          "durationSec": 1500.0,
+          "speakerCount": 2
+        },
+        "quality": {
+          "speakersAvailable": false
+        },
+        "topics": [],
+        "keyPoints": [
+          {
+            "id": "K1",
+            "text": "Point one.",
+            "start": 1.0
+          },
+          {
+            "id": "K2",
+            "text": "Point two",
+            "start": 2.0
+          },
+          {
+            "id": "K3",
+            "text": "Point three",
+            "start": 3.0
+          },
+          {
+            "id": "K4",
+            "text": "Point four",
+            "start": 4.0
+          },
+          {
+            "id": "K5",
+            "text": "Point five",
+            "start": 5.0
+          },
+          {
+            "id": "K6",
+            "text": "Point six",
+            "start": 6.0
+          },
+          {
+            "id": "K7",
+            "text": "Point seven",
+            "start": 7.0
+          }
+        ],
+        "decisions": [],
+        "actionItems": [
+          {
+            "id": "A1",
+            "task": "Ignored because live items win",
+            "owner": {
+              "speaker": "S1",
+              "name": null,
+              "kind": "person"
+            },
+            "due": {
+              "raw": null,
+              "date": null,
+              "time": null
+            },
+            "status": "open",
+            "needsConfirmation": false,
+            "verified": null,
+            "start": 10.0
+          }
+        ],
+        "openQuestions": []
+      },
+      "liveActions": [
+        {
+          "task": "Send the price list to [S2]",
+          "owner": {
+            "speaker": "S2",
+            "name": "Dilnoza",
+            "kind": "person"
+          },
+          "due": {
+            "date": "2026-10-14",
+            "time": null,
+            "raw": "Tuesday"
+          },
+          "status": "open",
+          "needsConfirmation": false
+        },
+        {
+          "task": "Book the venue",
+          "owner": {
+            "speaker": "S1",
+            "name": null,
+            "kind": "person"
+          },
+          "due": {
+            "date": null,
+            "time": "10:00",
+            "raw": null
+          },
+          "status": "done",
+          "needsConfirmation": true
+        },
+        {
+          "task": "Old idea",
+          "owner": {
+            "speaker": null,
+            "name": null,
+            "kind": "unknown"
+          },
+          "due": {
+            "date": null,
+            "time": null,
+            "raw": null
+          },
+          "status": "dismissed",
+          "needsConfirmation": false
+        },
+        {
+          "task": "Check the budget",
+          "owner": {
+            "speaker": null,
+            "name": null,
+            "kind": "team"
+          },
+          "due": {
+            "date": null,
+            "time": null,
+            "raw": null
+          },
+          "status": "open",
+          "needsConfirmation": false
+        }
+      ],
+      "expectedText": "Pricing sync\nOctober 12, 2026 (Monday), 00:30 · 25 min\n\nIn short: The team reviewed Q4 prices. Version 1.2 ships on October 17 as planned.\n\nKey points:\n- Point one.\n- Point two.\n- Point three.\n- Point four.\n- Point five.\n- Point six.\n\nAction items:\n- Send the price list to Speaker 2. Owner: Dilnoza. Due: October 14.\n- ✓ Book the venue. Owner: Aziz. Due: 10:00. (needs confirmation)\n- Check the budget. Owner: Team. No due date.\n"
+    }
+  ]
+}

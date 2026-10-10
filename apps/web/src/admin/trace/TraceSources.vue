@@ -10,7 +10,8 @@ import VMeter from '../../ui/charts/VMeter.vue'
 import { fmtNumber } from '../../ui/format'
 import type { TurnSource } from '../types'
 import StatusDot from '../components/StatusDot.vue'
-import { fromTurnSource, isLawSource, isToolSource, turnLawUrl } from './answerSources'
+import { platformIcon, platformName } from '../../components/chat/platforms'
+import { fromTurnSource, isExternalSource, isGuideKind, isToolSource, turnLawUrl } from './answerSources'
 
 /**
  * "Manbalar" yorlig'i: topilgan hujjat parchalari (nom, kalit, sahifa, moslik bali,
@@ -45,11 +46,13 @@ function openDoc(s: TurnSource) {
   open(fromTurnSource(s))
 }
 
-const toolName = (s: TurnSource) => lookupLabel(fromTurnSource(s), s.ref ?? '')
+const toolName = (s: TurnSource) => lookupLabel(fromTurnSource(s), s.ref ?? '', t)
 
-/** Qonun qatori uchun: havola (yoki null) va "LEX.UZ · qonunchilik" izohi. */
+/** Qonun / qo'llanma qatori uchun: havola (yoki null) va izoh ("LEX.UZ · qonunchilik" yoki
+ *  platforma nomi - "Biznes 24/7 qo'llanmalari"). */
 function law(s: TurnSource): { url: string | null; caption: string } {
   const url = turnLawUrl(s)
+  if (isGuideKind(s.kind)) return { url, caption: platformName(s.kind, t) }
   return { url, caption: t('chat.lawCaption', { site: lawSite(url) }) }
 }
 
@@ -75,9 +78,10 @@ function toolStatus(s: TurnSource): { status: string; label?: string } | null {
           <span class="ts-cite" aria-hidden="true">{{ s.citation ?? s.idx + 1 }}</span>
           <div class="ts-main">
             <p class="ts-title">{{ s.title || s.ref || t('sourceDocument') }}</p>
-            <template v-if="isLawSource(s.kind)">
+            <template v-if="isExternalSource(s.kind)">
               <p class="ts-meta ts-law">
-                <Scale :size="13" :stroke-width="1.75" aria-hidden="true" />
+                <!-- Qo'llanma - platforma belgisi (kitob, qutqaruv halqasi), qonun - tarozi. -->
+                <component :is="isGuideKind(s.kind) ? platformIcon(s.kind) : Scale" :size="13" :stroke-width="1.75" aria-hidden="true" />
                 <span>{{ law(s).caption }}</span>
               </p>
               <p v-if="s.ref" class="ts-meta t-mono">{{ s.ref }}</p>
@@ -113,7 +117,7 @@ function toolStatus(s: TurnSource): { status: string; label?: string } | null {
           </div>
           <!-- Qonun: LEX.UZ (yangi oyna, rel=noopener noreferrer - VIconButton qo'yadi). -->
           <VIconButton
-            v-if="isLawSource(s.kind) && law(s).url"
+            v-if="isExternalSource(s.kind) && law(s).url"
             class="ts-open"
             :icon="ExternalLink"
             size="sm"
@@ -122,7 +126,7 @@ function toolStatus(s: TurnSource): { status: string; label?: string } | null {
             :label="t('chat.lawOpen')"
           />
           <VIconButton
-            v-else-if="s.ref && !isLawSource(s.kind)"
+            v-else-if="s.ref && !isExternalSource(s.kind)"
             class="ts-open"
             :icon="BookOpen"
             size="sm"

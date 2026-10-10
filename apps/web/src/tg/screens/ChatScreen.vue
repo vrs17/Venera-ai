@@ -524,16 +524,17 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
+/* O'ng chetda, yozish maydoni ustida va uning o'ng cheti bilan bir chiziqda (2026-10-10, mobil
+   ilova bilan bir xil): o'rtada turganda javob matnining o'rtasini yopib qo'yardi. */
 .chat__jump {
   position: absolute;
-  left: 50%;
+  right: calc(var(--tg-chrome) + var(--tg-safe-right));
   bottom: calc(100% + var(--s-2));
   z-index: 1;
   display: grid;
   place-items: center;
   width: 40px;
   height: 40px;
-  margin-left: -20px;
   border: 1px solid var(--line);
   border-radius: var(--r-full);
   background: var(--surface);

@@ -8,7 +8,8 @@ transkriptdagi aniq qatorga BOG'LANGAN, ya'ni tekshirib bo'ladi.
 QUVUR (gemma4:31b, Ollama Cloud):
 
     0. darvoza     10 s yoki 30 so'zdan kam - xulosa yo'q (`too_short`)
-    1. shablon     `auto` -> qisqa qo'ng'iroq qoidasi, keyin tasniflovchi
+    1. shablon     `auto` -> qisqa qo'ng'iroq qoidasi, keyin tasniflovchi (telefon qo'ng'irog'i
+                   yozuvida - faqat qo'ng'iroq shablonlari: short_call, sales_call, ...)
     2a. bir o'tish matn <= 45K belgi - bitta chaqiruv
     2b. map        uzun matn - ~24K belgilik bo'laklar, ketma-ket; har tekshirilgan
                    bo'lak `summary_parts` da (yiqilsa qaytadan to'lanmaydi)
@@ -54,6 +55,22 @@ CAP_DEFAULT = 30
 
 _ITEM_LISTS = ("keyPoints", "decisions", "actionItems", "openQuestions", "risks", "numbers", "dates",
                "nextSteps", "highlights")
+
+#: "Haqiqiy mazmunli" transkript (so'z): shundan uzun yozuvda asosiy fikrlar bo'sh qaytsa - BITTA
+#: tuzatish urinishi. NEGA chegara: 30-40 so'zlik "eshityapsizmi?" sinov yozuvida fikr yo'qligi
+#: tabiiy - u yerda qo'shimcha chaqiruv befoyda (xulosa darvozasi - 30 so'z).
+REAL_CONTENT_WORDS = 40
+#: Tuzatish so'rovidagi sabab (ro'yxat boshida - `errors` 10 tadan oshsa ham tushib qolmasin).
+KEY_POINTS_MISSING = ('keyPoints: empty - write 3-6 short key points, one sentence each, every one with its '
+                      'sourceSegmentIds')
+
+#: Telefon qo'ng'irog'i (`source == "call"`, `auto` shablon): shundan qisqa (soniya yoki so'z) - tasniflovchisiz
+#: `short_call`; `CALL_LONG_SEC` dan uzuni ishonchsiz bo'lsa `general` (mavzular saqlansin). Tanlov faqat
+#: `CALL_TEMPLATES` dan - yig'ilish shablonlari (bayonnoma, stend-ap, ma'ruza) qo'ng'iroqqa mos emas.
+CALL_SHORT_SEC = 90
+CALL_SHORT_WORDS = 120
+CALL_LONG_SEC = 1200
+CALL_TEMPLATES = ("short_call", "sales_call", "one_on_one", "interview", "project_review")
 
 #: Tokenlar taxmini: o'lchangan 47K belgi ~ 21K token (o'zbekcha). Inglizcha ~4.4
 #: belgi/token - shuning uchun "prompt jim qisqartirildi" chegarasi 0.25 (0.5 da
@@ -318,6 +335,11 @@ class Validator:
     #: v3 javobi: matndagi `[1]` kabi manba raqamlari olib tashlanadi (v3 hujjat qidirsa
     #: qo'yadi; bizda manba - faqat `sourceSegmentIds`). Boshqa modellarda - avvalgidek.
     strip_refs: bool = False
+    #: Mazmunli yozuvda asosiy fikrlar (`keyPoints`) bo'sh - "Qisqa xulosa"ning yuragi yo'q.
+    #: `needs_repair` dan ALOHIDA: javobning qolgan qismi yaroqli bo'lishi mumkin - bitta tuzatish
+    #: so'raladi, u ham bo'sh (yoki yomonroq) qaytsa birinchi javob qabul qilinadi; zanjirda (`strict`)
+    #: shu sabab bilan butun xulosa keyingi modelga ketmaydi.
+    key_points_missing: bool = False
 
     def __post_init__(self) -> None:
         self.by_id = {int(s["id"]): s for s in self.segments}
@@ -340,6 +362,11 @@ class Validator:
     @property
     def needs_repair(self) -> bool:
         return self.bad_ratio > 0.3 or self.script_bad or self.shape_bad or self.language_bad
+
+    def require_key_points(self, points: list[Any], words: int) -> None:
+        """Mazmunli yozuvda (`REAL_CONTENT_WORDS`) tekshirilgan asosiy fikr yo'q - tuzatishga belgi."""
+        if not points and words >= REAL_CONTENT_WORDS:
+            self.key_points_missing = True
 
     def check_script(self, data: Any) -> None:
         """O'zbekcha chiqish LOTINDA bo'lsin: iqtiboslar, iboralar va ismlardan
@@ -1136,6 +1163,9 @@ class SummaryInput:
     language_warning: str | None = None
     #: Ilova aytgan ishtirokchilar soni - 4 dan ko'p bo'lsa bitta yorliqda bir necha odam bo'lishi mumkin.
     expected_speakers: int | None = None
+    #: Yozuv manbai (`EntrySource`): `call` - telefon qo'ng'irog'i yozuvi, `auto` shablon tanlovi va
+    #: meta qatori shunga moslashadi.
+    source: str = "app"
 
 
 @dataclass
@@ -1296,9 +1326,13 @@ class Pipeline:
         checker = check(data) if data is not None else None
         if truncated or salvaged:
             return data, checker, meta, True
-        if data is not None and checker is not None and not checker.needs_repair:
+        valid = data is not None and checker is not None and not checker.needs_repair
+        if valid and not checker.key_points_missing:
             return data, checker, meta, False
-        problems = (checker.errors if checker else []) or ["the reply was not one valid JSON object"]
+        problems = list(checker.errors if checker else [])
+        if checker is not None and checker.key_points_missing:
+            problems.insert(0, KEY_POINTS_MISSING)
+        problems = problems or ["the reply was not one valid JSON object"]
         repair = (user + "\n\nYour previous reply was invalid: " + "; ".join(problems[:10]) +
                   ". Return only the corrected JSON object.")
         if self.max_prompt_chars and not self._fits(system, repair):
@@ -1307,7 +1341,26 @@ class Pipeline:
         text2, meta2 = self._call(system, repair, num_predict=num_predict, temperature=0.0, op=op)
         data2, salvaged2 = read(text2)
         checker2 = check(data2) if data2 is not None else None
-        if self.strict and (data2 is None or salvaged2 or checker2 is None or checker2.needs_repair):
+        bad2 = data2 is None or salvaged2 or checker2 is None or checker2.needs_repair
+        if valid:
+            # Faqat asosiy fikrlar so'ralgan edi. Tuzatish - butunlay YANGI chiqarish (boshqa prompt,
+            # temperature 0): undan vazifa yoki qaror kamroq, mas'ul/muddat boshqacha chiqishi mumkin.
+            # Shuning uchun undan FAQAT asosiy fikrlar (va birinchisida bo'sh bo'lsa maqsad/umumiy
+            # xulosa) olinadi - vazifa va qarorlar birinchi javobdan qoladi (6-qoida: vazifalar eng
+            # muhim). Birlashgani qayta tekshiriladi (manba qatorlari). Yaroqsiz, kesilgan yoki yana
+            # fikrsiz tuzatishda - BIRINCHI (yaroqli) javob o'zi qoladi.
+            if not bad2 and not checker2.key_points_missing and not self._truncated(system, repair, meta2):
+                merged = dict(data)
+                merged["keyPoints"] = data2.get("keyPoints")
+                for key in ("purpose", "overview"):
+                    if not merged.get(key) and data2.get(key):
+                        merged[key] = data2[key]
+                checker_m = check(merged)
+                if checker_m is not None and not checker_m.needs_repair and not checker_m.key_points_missing:
+                    return merged, checker_m, meta, False
+            self.warnings.append("key_points_missing")
+            return data, checker, meta, False
+        if self.strict and bad2:
             # Zanjirda keyingi model bor: yaroqsiz javob "ogohlantirish bilan" qabul
             # qilinmaydi - chaqiruvchi buni "javob yo'q" deb oladi (bo'lak bo'linadi,
             # bo'lmasa butun xulosa keyingi model bilan yoziladi).
@@ -1317,6 +1370,8 @@ class Pipeline:
                 self.warnings.append("validation_errors")
             if checker2 is not None and checker2.script_bad:
                 self.warnings.append("wrong_script")
+            if checker2 is not None and checker2.key_points_missing:
+                self.warnings.append("key_points_missing")
             return data2, checker2, meta2, self._truncated(system, repair, meta2)
         if data is not None:
             self.warnings.append("validation_errors")
@@ -1343,7 +1398,8 @@ class Pipeline:
     def _meta(self, inp: SummaryInput) -> str:
         day = dates_mod.tashkent(inp.recorded_at)
         return prompts.meta_line(day.date(), dates_mod.WEEKDAYS["en"][day.weekday()], inp.duration_sec,
-                                 inp.speakers, inp.speakers_available, inp.expected_speakers)
+                                 inp.speakers, inp.speakers_available, inp.expected_speakers,
+                                 call=inp.source == "call")
 
     def _marks(self, inp: SummaryInput) -> list[dict[str, Any]]:
         out = []
@@ -1385,8 +1441,34 @@ class Pipeline:
     def _template(self, inp: SummaryInput, words: int) -> tuple[str, dict | None]:
         if inp.template != "auto":
             return inp.template, None
+        if inp.source == "call":
+            return self._call_template(inp, words)
         if (inp.duration_sec or 0) < 300 or words < 200:
             return "short_call", {"value": "short_call", "confidence": 1.0}
+        return self._classify(inp, prompts.CLASSIFY_SYSTEM, "general")
+
+    def _call_template(self, inp: SummaryInput, words: int) -> tuple[str, dict | None]:
+        """Telefon qo'ng'irog'i (`source == "call"`): tanlov qo'ng'iroq shablonlariga MOYIL.
+
+        NEGA: qo'ng'iroq odatda qisqa va ikki kishilik - "umumiy yig'ilish" shabloni uning uchun
+        ortiqcha bo'limlar (mavzular, xavflar) beradi. 5 daqiqalik mijoz qo'ng'irog'i esa oddiy
+        yozuvdagi "5 daqiqadan qisqa - short_call" qoidasida savdo shablonini yo'qotardi - shuning
+        uchun qo'ng'iroqda tasniflovchi faqat juda qisqa yozuvda o'tkazib yuboriladi. Ishonchsiz
+        javob - `short_call`; UZUN qo'ng'iroqda esa `general` (short_call mavzularni tashlaydi)."""
+        duration = inp.duration_sec or 0
+        long_call = duration >= CALL_LONG_SEC
+        fallback = "general" if long_call else "short_call"
+        if duration < CALL_SHORT_SEC or words < CALL_SHORT_WORDS:
+            return "short_call", {"value": "short_call", "confidence": 1.0}
+        template, meeting_type = self._classify(inp, prompts.CALL_CLASSIFY_SYSTEM, fallback,
+                                                allowed=CALL_TEMPLATES)
+        if template == "short_call" and long_call:
+            template = "general"
+        return template, meeting_type
+
+    def _classify(self, inp: SummaryInput, system: str, fallback: str,
+                  allowed: tuple[str, ...] | None = None) -> tuple[str, dict | None]:
+        """Tasniflovchi chaqiruvi: ishonch 0.55 dan past yoki ruxsat etilmagan tur - `fallback`."""
         names = self._names(inp)
         head, size = [], 0
         for seg in inp.segments:
@@ -1397,19 +1479,18 @@ class Pipeline:
             size += len(line) + 1
         user = (f"{self._meta(inp)}\nSpeakers: {len(inp.speakers)}.\n\n" + prompts.fence(head))
         try:
-            text, _ = self._call(prompts.CLASSIFY_SYSTEM, user, num_predict=200, temperature=0.0,
-                                 op="meeting_classify")
+            text, _ = self._call(system, user, num_predict=200, temperature=0.0, op="meeting_classify")
         except LlmFailed:
             if self.strict:
                 raise
             self.warnings.append("classifier_failed")
-            return "general", {"value": "general", "confidence": 0.0}
+            return fallback, {"value": fallback, "confidence": 0.0}
         data, _ = parse_json(text)
         if self.strict and (data is None or "template" not in data):
             # Zanjirda: bitta tuzatish urinishi (agent birinchi javobni so'z bilan boshlashi mumkin),
             # keyin ham JSON bo'lmasa - bu model JSON yozmayapti: keyingisiga, keyingi qadamlar
             # bekorga sarflanmasin.
-            text, _ = self._call(prompts.CLASSIFY_SYSTEM, user + "\n\nYour previous reply was not the requested "
+            text, _ = self._call(system, user + "\n\nYour previous reply was not the requested "
                                  "JSON object. Return only the JSON object.", num_predict=200, temperature=0.0,
                                  op="meeting_classify")
             data, _ = parse_json(text)
@@ -1418,15 +1499,16 @@ class Pipeline:
         value = str((data or {}).get("template") or "")
         confidence = Validator.number((data or {}).get("confidence"), 0.0)
         tpl = templates.TEMPLATES.get(value)
-        if tpl is None or not tpl.auto or confidence < 0.55:
-            return "general", {"value": value if tpl and tpl.auto else "general", "confidence": round(confidence, 2)}
+        ok = tpl is not None and tpl.auto and (allowed is None or value in allowed)
+        if not ok or confidence < 0.55:
+            return fallback, {"value": value if ok else fallback, "confidence": round(confidence, 2)}
         return value, {"value": value, "confidence": round(confidence, 2)}
 
     def _single_prompt(self, inp: SummaryInput, template: str, lines: list[str],
                        marks: list[dict]) -> tuple[str, str]:
         system = prompts.extract_system(template)
         user = prompts.user_message(meta=self._meta(inp), language=inp.language, template_id=template,
-                                    marks=prompts.marks_block(marks), running="", lines=lines)
+                                    marks=prompts.marks_block(marks), running="", lines=lines, final=True)
         return system, user
 
     def _single_fits(self, inp: SummaryInput, template: str, lines: list[str], marks: list[dict]) -> bool:
@@ -1438,10 +1520,12 @@ class Pipeline:
 
     def _single(self, inp: SummaryInput, template: str, lines: list[str], marks: list[dict]) -> dict[str, Any]:
         system, user = self._single_prompt(inp, template, lines, marks)
+        words = sum(len(str(seg["text"]).split()) for seg in inp.segments)
 
         def validate(data: dict) -> Validator:
             checker = self._validator(inp, inp.segments, template)
             checker.result = checker.items(data)
+            checker.require_key_points(checker.result["keyPoints"], words)
             self._check_text(checker, data)
             return checker
 
@@ -1704,11 +1788,18 @@ class Pipeline:
 
         def validate(data: dict) -> Validator:
             checker = self._validator(inp, inp.segments, template)
+            good = 0
             for i, kp in enumerate(data.get("keyPoints") or [] if isinstance(data.get("keyPoints"), list) else []):
                 checker.total += 1
                 if not isinstance(kp, dict) or not [x for x in checker.ids(kp.get("sourceSegmentIds")) if x in allowed]:
                     checker.invalid += 1
                     checker._err(f"keyPoints[{i}]", "sourceSegmentIds must come from the given items")
+                elif checker.text(kp.get("text"), 400):
+                    good += 1
+            # Uzun yig'ilish - doim mazmunli: yozuvchi asosiy fikrlarni tashlab ketsa, bir marta so'raladi
+            # (bo'lak fikrlari zahira, lekin ular yig'ilish boshiga og'ib qolgan va 3-6 tadan ko'p).
+            if not good:
+                checker.key_points_missing = True
             self._check_text(checker, data)
             return checker
 
@@ -2018,8 +2109,9 @@ class Pipeline:
                 for g in ex.get("templateSections") or [] if g["items"]],
         }
         if template == "short_call":
-            # Qisqa qo'ng'iroqda ham narx, ochiq savol, keyingi uchrashuv va muhim lahza QOLADI.
-            for key in ("topics", "keyPoints", "risks", "nextSteps", "keywords", "templateSections"):
+            # Qisqa qo'ng'iroqda ham narx, ochiq savol, keyingi uchrashuv, muhim lahza va asosiy
+            # fikrlar ("Qisqa xulosa", 2026-10-10) QOLADI.
+            for key in ("topics", "risks", "nextSteps", "keywords", "templateSections"):
                 content[key] = []
             content["sentiment"] = None
         elif len(inp.segments) >= 20:

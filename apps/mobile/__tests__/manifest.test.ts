@@ -85,6 +85,10 @@ describe('app config', () => {
     expect(c.android.blockedPermissions).toEqual(
       expect.arrayContaining(['android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK', 'android.permission.SYSTEM_ALERT_WINDOW']),
     );
+    // Qo'ng'iroq yozuvlari Android 8-12 da READ_EXTERNAL_STORAGE (maxSdk 32) bilan o'qiladi -
+    // bloklansa tools:node="remove" venera-entry e'lonini ham o'chiradi. Yozish ruxsati esa bloklangan qoladi.
+    expect(c.android.blockedPermissions).not.toContain('android.permission.READ_EXTERNAL_STORAGE');
+    expect(c.android.blockedPermissions).toContain('android.permission.WRITE_EXTERNAL_STORAGE');
     const audio = c.plugins.find((p: unknown) => Array.isArray(p) && p[0] === 'expo-audio');
     expect(audio[1]).toMatchObject({ enableBackgroundRecording: true, enableBackgroundPlayback: false, recordAudioAndroid: true });
     const bp = c.plugins.find((p: unknown) => Array.isArray(p) && p[0] === 'expo-build-properties');
