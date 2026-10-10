@@ -60,6 +60,28 @@ ExecStartPre=/bin/rm -f %t/%n.ctr-id
 #
 # Sayt ochiladi, SPA yuklanadi - faqat login ishlamaydi. Shuning uchun buzilish
 # darhol ko'zga tashlanmaydi.
+#
+# `mtu=1500` HAM MAJBURIY (2026-10-10 o'lchangan). Podman default'i 65520 va u
+# bilan nginx -> backend yo'lida ~64 KB dan katta HAR BIR javob AYNAN 5 s kech
+# yetib keladi (TTS bo'lagi, eksport, uzun tarix). Backend javobni millisekundda
+# yozib bo'ladi - baytlar slirp4netns ichida turib qoladi. Sabab (tcpdump bilan
+# isbotlangan): libslirp segmentni 32768 bayt bilan cheklaydi va window scaling
+# bilmaydi; birinchi 32768 baytdan keyin nginx tomoni 32712 baytlik oyna e'lon
+# qiladi - bu bitta segmentdan ham, eng katta oynaning yarmidan ham kichik.
+# libslirp (BSD TCP) "silly window" himoyasi bilan yubormay turadi va faqat
+# persist taymerida (minimal 5 s) davom etadi. MTU 1500 da segment ~1460 bayt,
+# oyna undan ancha katta - to'xtash yo'q; bizdagi hajmlarda tezlik farqi
+# sezilmaydi (20 MB javob ~0.03 s). nginx'dagi `proxy_buffering` bunga TA'SIR
+# QILMAYDI - o'chirib ko'rilgan, 5 s qolgan.
+#
+# PROD'DAGI O'RNATILGAN UNIT bu fayldan farq qiladi: unda eski Mini App'ning
+# ikkita mount'i bor (`~/.local/share/venera-tg-conf/default.conf.template` ->
+# /etc/nginx/templates/..., `~/.local/share/venera-tg` -> /usr/share/nginx/tg).
+# 2026-10-10 tekshirilgan: mount qilingan template image'dagisi bilan BAYTMA-BAYT
+# bir xil, /tg/ esa image ichidagi tg-app.html dan beriladi - ya'ni ikkalasi
+# hozir ortiqcha. Shunga qaramay prod'ni yangilashda bu faylni ustiga
+# KO'CHIRMANG: faqat `--network` qatorini tahrirlang (template keyin
+# o'zgartirilgan bo'lsa, mount'siz u jimgina yo'qoladi).
 ExecStart=/usr/bin/podman run \
     --cidfile=%t/%n.ctr-id \
     --cgroups=no-conmon \
@@ -68,7 +90,7 @@ ExecStart=/usr/bin/podman run \
     -d \
     --replace \
     --name venera-frontend \
-    --network slirp4netns:allow_host_loopback=true \
+    --network slirp4netns:allow_host_loopback=true,mtu=1500 \
     -p 0.0.0.0:5173:8080 \
     -e API_UPSTREAM=http://host.containers.internal:8000 \
     -e API_READ_TIMEOUT=120s \

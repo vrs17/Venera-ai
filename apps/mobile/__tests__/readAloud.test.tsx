@@ -116,7 +116,9 @@ describe('read-aloud controls', () => {
     const { api, player, controls } = await setup();
     controls().preview();
     expect(useReadAloud.getState().key).toBe(PREVIEW_KEY);
-    expect(api.calls[0].text).toBe(PREVIEW_TEXT.split('!')[0] + '!');
+    // Qisqa ochilish ("Salom!") birinchi bo'lakda keyingi gap(lar) bilan qo'shiladi (<=60, ibora chegarasida).
+    expect(api.calls[0].text).toBe('Salom! Men Barno. Savolingizni ovoz bilan bering,');
+    expect(PREVIEW_TEXT.startsWith(api.calls[0].text)).toBe(true);
     useChat.setState((s) => ({ epoch: s.epoch + 1 }));
     expect(useReadAloud.getState().key).toBeNull();
     expect(api.calls[0].opts.signal?.aborted).toBe(true);

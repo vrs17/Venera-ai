@@ -65,6 +65,11 @@ export class AuthRequiredError extends ApiError {
 export interface TokenProvider {
   /** Amaldagi JWT (kerak bo'lsa yangilab). Login bo'lmasa AuthRequiredError. */
   getToken(): Promise<string>;
+  /**
+   * Xotirada turgan va hali uzoq yashaydigan token - SINXRON (SecureStore'ga bormaydi), yo'q
+   * bo'lsa null (unda `getToken()`). Ixtiyoriy: kechikishga sezgir so'rovlar uchun (ovoz).
+   */
+  peekToken?(): string | null;
   /** 401 dan keyin: tokenni majburan yangilash. */
   refreshToken(): Promise<string>;
 }

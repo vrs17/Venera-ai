@@ -28,6 +28,7 @@ import { realClock, type ClipPlayer, type MicPort } from './ports';
 import { stopReadAloud } from './readAloud';
 import { createVoiceSession, type VoiceSession } from './session';
 import { createSpeaker } from './speaker';
+import { devVoiceTrace } from './trace';
 import type { LevelListener, UseVoiceSession, VoiceActions, VoiceSnapshot } from './types';
 import { SPEED_VALUE, useVoiceSettings } from './voiceSettings';
 
@@ -88,6 +89,7 @@ export function buildVoiceSession(services: Services, mic: MicPort): VoiceSessio
       const v = useVoiceSettings.getState();
       return { voice: v.voice, speed: SPEED_VALUE[v.speed] };
     },
+    trace: devVoiceTrace('live'),
   });
   return createVoiceSession({
     mic,

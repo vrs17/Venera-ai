@@ -156,12 +156,13 @@ describe('voice session - full Uzbek turn', () => {
     expect(h.snap().holdText).toBe('Bir daqiqa, tekshiryapman');
     expect(h.player.plays).toHaveLength(1);
 
-    stream.onFrame({ type: 'token', text: 'Bugun uch kishi kechikdi. Ali, Vali va Sardor kech keldi.' });
+    // Birinchi gap >= 40 belgi: qisqaroq ochilish ikkinchi gap bilan bitta bo'lakka qo'shilardi.
+    stream.onFrame({ type: 'token', text: "Bugun bo'limda uch nafar xodim ishga kechikdi. Ali, Vali va Sardor kech keldi." });
     stream.onFrame({ type: 'done' });
     stream.resolve();
     await flush();
     // Javobning birinchi gapi klip yangrayotganda SINTEZ qilinadi...
-    expect(h.api.calls.map((c) => c.text)).toEqual(['Bugun uch kishi kechikdi.']);
+    expect(h.api.calls.map((c) => c.text)).toEqual(["Bugun bo'limda uch nafar xodim ishga kechikdi."]);
     h.api.ok(0);
     await flush();
     // ...lekin klip kesilmaydi
@@ -179,7 +180,7 @@ describe('voice session - full Uzbek turn', () => {
     h.player.finish();
     await flush();
     expect(h.snap()).toMatchObject({ status: 'listening', speakingId: null });
-    expect(useChat.getState().exchanges[0]).toMatchObject({ status: 'done', answer: 'Bugun uch kishi kechikdi. Ali, Vali va Sardor kech keldi.' });
+    expect(useChat.getState().exchanges[0]).toMatchObject({ status: 'done', answer: "Bugun bo'limda uch nafar xodim ishga kechikdi. Ali, Vali va Sardor kech keldi." });
   });
 
   it('barge-in while Barno speaks PAUSES the audio; a real question then stops it and is sent', async () => {
@@ -556,7 +557,8 @@ describe('voice session - review fixes', () => {
 
   it('coming back after a pause mid-answer continues from the interrupted chunk, not from the start', async () => {
     const h = setup();
-    await speaking(h, 'Birinchi gap. Ikkinchi gap. Uchinchi gap.');
+    // Har gap >= 40 belgi: qisqaroq ochilish birinchi bo'lakka qo'shilib ketardi (chunker FIRST_MIN).
+    await speaking(h, 'Birinchi gap bugungi uchrashuvlar haqida edi. Ikkinchi gap ertangi rejalar haqida gapiradi. Uchinchi gap esa hisobot haqida.');
     h.api.ok(1);
     await flush();
     h.player.finish();
@@ -569,7 +571,7 @@ describe('voice session - review fixes', () => {
     await flush();
     expect(h.snap().status).toBe('thinking');
     const texts = h.api.calls.map((c) => c.text);
-    expect(texts[texts.length - 1].startsWith('Ikkinchi gap.')).toBe(true);
+    expect(texts[texts.length - 1].startsWith('Ikkinchi gap ertangi rejalar haqida gapiradi.')).toBe(true);
     // Audio rejim qayta qo'yildi (qo'ng'iroq uni o'zgartirgan bo'lishi mumkin)
     expect(h.mode.log.filter((x) => x.startsWith('enter'))).toHaveLength(2);
   });

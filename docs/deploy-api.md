@@ -964,6 +964,19 @@ podman logs venera-frontend | grep 'Network is unreachable'
 Sayt ochiladi va SPA yuklanadi — faqat login ishlamaydi, shuning uchun
 buzilish darhol ko'zga tashlanmaydi.
 
+**~64 KB dan katta `/api/*` javobi AYNAN 5 s kech keladi.** Frontend
+xizmatida `--network slirp4netns:allow_host_loopback=true` ga `,mtu=1500`
+qo'shilmagan (podman default'i 65520). uvicorn log'ida javob vaqtida
+boshlanadi, nginx log'ida esa 5 s keyin tugaydi; ~64 KB dan kichik javoblar
+darhol keladi. Baytlar slirp4netns ichida turib qoladi: libslirp 32768
+baytlik segment ishlatadi va window scaling bilmaydi, birinchi segmentdan
+keyingi oyna (32712) "silly window" hisoblanadi va persist taymeri (5 s)
+kutiladi. nginx buferlashi bunga aloqador EMAS. Tekshirish:
+
+```bash
+ps -eo args | grep '[s]lirp4netns' | grep -o 'mtu=[0-9]*'   # mtu=1500 bo'lishi kerak
+```
+
 **Swagger sahifasi BO'SH ochiladi, curl esa 200 qaytaradi.** Eng aldamchi
 xato. Frontend nginx butun saytga `script-src 'self'` CSP qo'yadi, FastAPI
 ning tayyor `get_swagger_ui_html()` funksiyasi esa sahifaga INLINE

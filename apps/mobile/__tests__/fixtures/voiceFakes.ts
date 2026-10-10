@@ -233,7 +233,7 @@ export class FakePlayer implements ClipPlayer {
 
 interface ClipCall {
   text: string;
-  opts: { voice?: string; speed?: number; turnId?: string | null; signal?: AbortSignal };
+  opts: { voice?: string; speed?: number; turnId?: string | null; signal?: AbortSignal; onHeaders?: (h: { durationMs: number | null; sampleRate: number | null }) => void; onSent?: () => void };
   resolve: (w?: Uint8Array) => void;
   reject: (e: unknown) => void;
 }
@@ -255,6 +255,7 @@ export class FakeVoiceApi {
         };
         opts.signal?.addEventListener('abort', () => reject(new StreamAbortedError()));
         this.calls.push(call);
+        opts.onSent?.();
       }),
   );
   hold = jest.fn(async (clip: string, voice: string) => {
@@ -263,6 +264,15 @@ export class FakeVoiceApi {
   });
   get inFlight(): number {
     return this.calls.filter((c) => !(c as { done?: boolean }).done).length;
+  }
+  /** i-chi so'rovning 200 sarlavhasi keldi (server sintezni tugatdi), tana hali yo'lda. */
+  headers(i: number, durationMs: number | null = null) {
+    this.calls[i].opts.onHeaders?.({ durationMs, sampleRate: 8000 });
+  }
+  /** Tana sarlavhadan keyin uzildi (tarmoq). */
+  dropBody(i: number) {
+    (this.calls[i] as { done?: boolean }).done = true;
+    this.calls[i].reject(new ApiError(0, 'network', 'x'));
   }
   /** i-chi so'rovni muvaffaqiyatli yakunlash. */
   ok(i: number, wav?: Uint8Array) {

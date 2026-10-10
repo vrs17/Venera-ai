@@ -25,7 +25,8 @@ class SpeakRequest(BaseModel):
 
 
 #: Bitta `/tts/clip` so'rovidagi eng ko'p belgi. Klient javobni GAP
-#: chegarasida o'zi bo'laklaydi (birinchisi <=160, keyingilari <=350), ya'ni
+#: chegarasida o'zi bo'laklaydi (birinchisi <=60, ibora chegarasi bo'lmasa <=100;
+#: keyingilari <=350), ya'ni
 #: 600 - zaxira bilan qo'yilgan to'siq. Kichik bo'lishi SHART: TTS ning ikki
 #: sloti BARCHA foydalanuvchilarga umumiy, va qisqa so'rov slotni ~2 s ushlaydi,
 #: 3000 belgilik oqim esa ~40 s.

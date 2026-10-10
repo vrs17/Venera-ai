@@ -111,6 +111,66 @@ describe('session', () => {
   });
 });
 
+describe('session.peekToken (in-memory token for latency-sensitive requests)', () => {
+  it('is null until the store was read; then returns the token synchronously while it has > 10 min left', async () => {
+    const s = setup({ [KEYS.token]: 'cur', [KEYS.tokenExpiresAt]: iso(NOW + REFRESH_WINDOW_MS + 60_000), [KEYS.deviceToken]: 'dt' });
+    expect(s.session.peekToken?.()).toBeNull();
+    await s.session.getToken();
+    expect(s.session.peekToken?.()).toBe('cur');
+  });
+
+  it('inside the refresh window it is null (getToken() refreshes); after the refresh it is the fresh token', async () => {
+    const s = setup({ [KEYS.token]: 'old', [KEYS.tokenExpiresAt]: iso(NOW + 5 * 60_000), [KEYS.deviceToken]: 'dt' });
+    const p = s.session.getToken();
+    expect(s.session.peekToken?.()).toBeNull();
+    await expect(p).resolves.toBe('fresh-1');
+    expect(s.session.peekToken?.()).toBe('fresh-1');
+  });
+
+  it('follows login, Mini App token adoption, expiry (401 on refresh) and logout', async () => {
+    const s = setup();
+    await s.session.login('a', 'b', { deviceName: 'd', platform: 'android', appVersion: '1' });
+    expect(s.session.peekToken?.()).toBe(loginResponse.token);
+    const other = jwt({ sub: 'u-2', exp: Math.floor((NOW + 3 * 3600_000) / 1000) });
+    await s.session.adoptToken(other);
+    expect(s.session.peekToken?.()).toBe(other);
+    await s.session.logout();
+    expect(s.session.peekToken?.()).toBeNull();
+
+    const e = setup({ [KEYS.token]: 'old', [KEYS.tokenExpiresAt]: iso(NOW + 5 * 60_000), [KEYS.deviceToken]: 'dt' });
+    e.api.deviceSession.mockRejectedValueOnce(new ApiError(401, 'unauthorized', 'Token bekor'));
+    await expect(e.session.refreshToken()).rejects.toBeInstanceOf(AuthRequiredError);
+    expect(e.session.peekToken?.()).toBeNull();
+  });
+
+  it('a slow read that started before a write does not overwrite the newer token', async () => {
+    const s = setup({ [KEYS.token]: 'old', [KEYS.tokenExpiresAt]: iso(NOW + 3600_000) });
+    // Birinchi o'qish qo'lda qo'yib yuboriladi (sekin Keystore), yozuv esa shu orada tugaydi.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const slowStore = {
+      ...s.store,
+      getToken: jest.fn(async () => {
+        const stored = await s.store.getToken();
+        await gate;
+        return stored;
+      }),
+    };
+    const session = createSession({ store: slowStore, authApi: s.api, now: () => NOW });
+    const read = session.getToken();
+    await new Promise((r) => setImmediate(r));
+    slowStore.getToken.mockImplementation(() => s.store.getToken());
+    await session.adoptToken(jwt({ sub: 'u-9', exp: Math.floor((NOW + 3 * 3600_000) / 1000) }));
+    const fresh = session.peekToken?.();
+    expect(fresh).not.toBe('old');
+    release();
+    await expect(read).resolves.toBe('old');
+    expect(session.peekToken?.()).toBe(fresh);
+  });
+});
+
 describe('session <- Mini App token (venera:auth)', () => {
   const DEVICE = { deviceName: 'SM-S921B', platform: 'android' as const, appVersion: '1.0.0' };
   const web = (sub: string, hours = 12) => jwt({ sub, exp: (NOW + hours * 3600_000) / 1000 });

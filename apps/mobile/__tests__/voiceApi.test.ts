@@ -19,6 +19,8 @@ interface Step {
   body?: Uint8Array;
   headers?: Record<string, string>;
   fail?: 'error' | 'timeout';
+  /** Sarlavha (readyState 2) va tana (onload) orasidagi kechikish, ms. */
+  bodyDelayMs?: number;
 }
 
 /** Soxta binar XHR: `responseType = 'arraybuffer'`, javob - `response` (ArrayBuffer). */
@@ -26,10 +28,12 @@ function fakeXhr(script: Step[]) {
   const sent: { method: string; url: string; headers: Record<string, string>; body: unknown; responseType: string; timeout: number }[] = [];
   let call = 0;
   class X {
+    readyState = 0;
     status = 0;
     response: ArrayBuffer | null = null;
     responseType = '';
     timeout = 0;
+    onreadystatechange: (() => void) | null = null;
     onload: (() => void) | null = null;
     onerror: (() => void) | null = null;
     ontimeout: (() => void) | null = null;
@@ -63,9 +67,15 @@ function fakeXhr(script: Step[]) {
         if (step.fail === 'timeout') return this.ontimeout?.();
         this.status = step.status ?? 200;
         this.res = step.headers ?? {};
-        const b = step.body ?? new Uint8Array(0);
-        this.response = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
-        this.onload?.();
+        this.readyState = 2;
+        this.onreadystatechange?.();
+        setTimeout(() => {
+          if (this.aborted) return;
+          const b = step.body ?? new Uint8Array(0);
+          this.response = b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
+          this.readyState = 4;
+          this.onload?.();
+        }, step.bodyDelayMs ?? 0);
       }, 0);
     }
   }
@@ -145,6 +155,69 @@ describe('createVoiceApi.clip', () => {
     await expect(p).rejects.toBeInstanceOf(StreamAbortedError);
     const none = createVoiceApi({ client: client(), tokens: null, xhr: fakeXhr([{ body: WAV }]).Xhr });
     await expect(none.clip('a')).rejects.toBeInstanceOf(AuthRequiredError);
+  });
+});
+
+describe('createVoiceApi.clip - latency', () => {
+  it('onHeaders fires when the 200 headers arrive, before the body (once, with duration)', async () => {
+    jest.useFakeTimers();
+    try {
+      const { Xhr } = fakeXhr([{ body: WAV, bodyDelayMs: 5000, headers: { 'X-Venera-Duration-Ms': '4840', 'X-Venera-Sample-Rate': '8000' } }]);
+      const api = createVoiceApi({ client: client(), tokens: tokens(), xhr: Xhr });
+      const onHeaders = jest.fn();
+      let done = false;
+      const p = api.clip('Salom.', { onHeaders }).then(() => {
+        done = true;
+      });
+      await jest.advanceTimersByTimeAsync(1);
+      expect(onHeaders).toHaveBeenCalledTimes(1);
+      expect(onHeaders).toHaveBeenCalledWith({ durationMs: 4840, sampleRate: 8000 });
+      expect(done).toBe(false);
+      await jest.advanceTimersByTimeAsync(5000);
+      await p;
+      expect(done).toBe(true);
+      expect(onHeaders).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('onHeaders is not called for an error status', async () => {
+    const { Xhr } = fakeXhr([{ status: 503, body: enc('{}') }]);
+    const api = createVoiceApi({ client: client(), tokens: tokens(), xhr: Xhr });
+    const onHeaders = jest.fn();
+    await expect(api.clip('a', { onHeaders })).rejects.toMatchObject({ status: 503 });
+    expect(onHeaders).not.toHaveBeenCalled();
+  });
+
+  it('a cached token (peekToken) sends the request synchronously, without awaiting SecureStore', () => {
+    const { Xhr, sent } = fakeXhr([{ body: WAV }]);
+    const tp: TokenProvider = { getToken: jest.fn(async () => 'slow'), refreshToken: jest.fn(async () => 'r'), peekToken: () => 'mem' };
+    const api = createVoiceApi({ client: client(), tokens: tp, xhr: Xhr });
+    void api.clip('Salom.');
+    // Hech qanday await'siz: so'rov shu chaqiruv ichida ketdi.
+    expect(sent).toHaveLength(1);
+    expect(sent[0].headers.Authorization).toBe('Bearer mem');
+    expect(tp.getToken).not.toHaveBeenCalled();
+  });
+
+  it('onSent fires right after the request is sent (latency trace)', () => {
+    const { Xhr, sent } = fakeXhr([{ body: WAV }]);
+    const tp: TokenProvider = { getToken: jest.fn(async () => 'slow'), refreshToken: jest.fn(async () => 'r'), peekToken: () => 'mem' };
+    const api = createVoiceApi({ client: client(), tokens: tp, xhr: Xhr });
+    const onSent = jest.fn(() => {
+      expect(sent).toHaveLength(1);
+    });
+    void api.clip('Salom.', { onSent });
+    expect(onSent).toHaveBeenCalledTimes(1);
+  });
+
+  it('no cached token -> falls back to getToken()', async () => {
+    const { Xhr, sent } = fakeXhr([{ body: WAV }]);
+    const tp: TokenProvider = { getToken: jest.fn(async () => 'stored'), refreshToken: jest.fn(async () => 'r'), peekToken: () => null };
+    const api = createVoiceApi({ client: client(), tokens: tp, xhr: Xhr });
+    await api.clip('Salom.');
+    expect(sent[0].headers.Authorization).toBe('Bearer stored');
   });
 });
 

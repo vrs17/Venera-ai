@@ -7,11 +7,16 @@
  *
  * NIMA UCHUN to'liq WAV (web'dagi PCM oqimi emas): expo-audio faqat TAYYOR faylni ijro
  * qiladi, xom PCM oqimini o'ynata olmaydi. Kechikishni gap-gap bo'lib so'rash qaytaradi:
- * birinchi qisqa gap ~1.2-2 s da tayyor, keyingilari oldingisi yangrayotganda sintez qilinadi.
+ * birinchi qisqa bo'lak (<=60 belgi) ~1.2-2.2 s da tayyor, keyingilari oldingisi yangrayotganda
+ * sintez qilinadi (`features/voice/chunker.ts` - o'lchovlar o'sha yerda).
  *
  * NIMA UCHUN o'z XHR'i (`client.request` emas): umumiy klient javobni MATN qilib o'qiydi -
  * WAV baytlari UTF-8 dekodlashda buziladi. Bu yerda `responseType = 'arraybuffer'`
  * (RN native'dan base64 qilib olib, o'zi ArrayBuffer'ga aylantiradi).
+ *
+ * `onHeaders` (klip): server sarlavhani sintez TUGAGACH yuboradi (`clip_wav` to'liq WAV ni
+ * yig'ib qaytaradi, TTS o'rni shu paytda bo'shaydi). Tana (77-440 KB) esa hali yo'lda. Gap
+ * navbati keyingi bo'lakni SHU PAYTDA so'raydi - tana yuklanishini kutmaydi (`speaker.ts`).
  */
 import {
   ApiError,
@@ -48,11 +53,20 @@ export interface WavBytes {
   truncated: boolean;
 }
 
+export interface ClipHeaders {
+  durationMs: number | null;
+  sampleRate: number | null;
+}
+
 export interface ClipOptions {
   voice?: VoiceId;
   speed?: number;
   turnId?: string | null;
   signal?: AbortSignal;
+  /** 200 sarlavhasi keldi (sintez tugadi), tana hali yuklanmoqda. Bir marta chaqiriladi. */
+  onHeaders?: (info: ClipHeaders) => void;
+  /** So'rov tarmoqqa jo'nadi (token olingandan keyin) - faqat kechikish izi uchun. */
+  onSent?: () => void;
 }
 
 export interface BinaryRequest {
@@ -65,6 +79,10 @@ export interface BinaryRequest {
   accept?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** 2xx sarlavhalari keldi (tana hali kelmagan) - bir marta. */
+  onHeaders?: (get: (name: string) => string | null) => void;
+  /** `xhr.send()` dan keyin (har urinishda). */
+  onSent?: () => void;
 }
 
 export interface BinaryResponse {
@@ -188,6 +206,21 @@ export function createVoiceApi(deps: VoiceApiDeps) {
       for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
       xhr.responseType = 'arraybuffer';
       xhr.timeout = req.timeoutMs ?? JSON_TIMEOUT_MS;
+      const onHeaders = req.onHeaders;
+      if (onHeaders) {
+        let seen = false;
+        xhr.onreadystatechange = () => {
+          // HEADERS_RECEIVED (2): RN native (OkHttp) sarlavhani tanani o'qishdan OLDIN yuboradi.
+          if (seen || xhr.readyState !== 2 || settled) return;
+          seen = true;
+          if (xhr.status < 200 || xhr.status >= 300) return;
+          try {
+            onHeaders((name) => xhr.getResponseHeader(name));
+          } catch {
+            // Chaqiruvchi xatosi so'rovni buzmasin - tana baribir onload'da keladi.
+          }
+        };
+      }
       xhr.onload = () =>
         settle(() => {
           const bytes = toBytes(xhr.response);
@@ -208,14 +241,28 @@ export function createVoiceApi(deps: VoiceApiDeps) {
         signal.addEventListener('abort', onAbort);
       }
       xhr.send(req.body !== undefined ? JSON.stringify(req.body) : null);
+      try {
+        req.onSent?.();
+      } catch {
+        // Iz yozuvchisi xatosi so'rovni buzmasin.
+      }
     });
   }
 
-  /** 401 - token BIR MARTA yangilanib qayta yuboriladi (umumiy klient bilan bir xil qoida). */
+  /**
+   * 401 - token BIR MARTA yangilanib qayta yuboriladi (umumiy klient bilan bir xil qoida).
+   *
+   * Xotiradagi yaroqli token (`peekToken`) bo'lsa SecureStore KUTILMAYDI va so'rov shu
+   * chaqiruv ichida (sinxron) jo'naydi. NIMA UCHUN: javob kadrlari kelayotganda JS oqimi har
+   * kadrda chatni qayta chizadi; `await getToken()` (Android Keystore) so'rovni o'sha
+   * navbatning ORQASIGA surib qo'yadi. Bu birinchi ovozdan oldingi ~1.8 s ning BIR sababi
+   * bo'lishi mumkin - TAXMIN, telefonda o'lchanmagan (dev build'dagi `[voice]` izi:
+   * `speak` -> `req` -> `sent` -> `headers` - qaysi qadam sekinligini ko'rsatadi).
+   */
   async function binary(path: string, req: BinaryRequest = {}): Promise<BinaryResponse> {
     const tokens = deps.tokens;
     if (!tokens) throw new AuthRequiredError();
-    const token = await tokens.getToken();
+    const token = tokens.peekToken?.() ?? (await tokens.getToken());
     try {
       return await once(path, req, token);
     } catch (e) {
@@ -234,12 +281,18 @@ export function createVoiceApi(deps: VoiceApiDeps) {
       if (text.length > CLIP_MAX_CHARS) throw new Error(`clip text too long (${text.length})`);
       const headers: Record<string, string> = {};
       if (opts.turnId && TURN_RE.test(opts.turnId)) headers['X-Venera-Turn'] = opts.turnId;
+      const onClipHeaders = opts.onHeaders;
       const res = await binary(`${V1}/tts/clip`, {
         method: 'POST',
         body: { text, language: 'uz', voice: opts.voice ?? undefined, speed: opts.speed ?? undefined },
         headers,
         signal: opts.signal,
         timeoutMs: CLIP_TIMEOUT_MS,
+        onSent: opts.onSent,
+        onHeaders: onClipHeaders
+          ? (get) =>
+              onClipHeaders({ durationMs: numberHeader(get('X-Venera-Duration-Ms')), sampleRate: numberHeader(get('X-Venera-Sample-Rate')) })
+          : undefined,
       });
       return wavFrom(res);
     },

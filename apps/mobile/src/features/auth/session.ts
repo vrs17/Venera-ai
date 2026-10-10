@@ -18,7 +18,7 @@ import type { AuthApi } from '@/api/meetings';
 import type { LoginResponse, RegisterDeviceRequest } from '@/api/types';
 
 import { decodeJwtClaims } from './jwt';
-import type { TokenStore } from './tokenStore';
+import type { StoredToken, TokenStore } from './tokenStore';
 
 /** Token shundan kam qolgan bo'lsa oldindan yangilanadi. */
 export const REFRESH_WINDOW_MS = 10 * 60 * 1000;
@@ -75,6 +75,46 @@ export interface Session extends TokenProvider {
 export function createSession(deps: SessionDeps): Session {
   const now = deps.now ?? Date.now;
   const listeners = new Set<(e: SessionEvent) => void>();
+
+  /**
+   * Token nusxasi XOTIRADA (`peekToken` uchun). NIMA UCHUN: har `getToken()` ikki marta
+   * SecureStore (Android Keystore) o'qiydi va natija JS navbatining oxirida keladi. Ovozli
+   * javobda birinchi TTS so'rovi shu kutish orqasida turib qolishi mumkin - prod'dagi ~1.8 s
+   * ning bir sababi deb TAXMIN qilingan, telefonda o'lchanmagan (dev build'dagi `[voice]` izi).
+   *
+   * Xavfsizlik: nusxa FAQAT shu modul orqali yangilanadi - token SecureStore'ga faqat shu yerda
+   * yoziladi/o'chiriladi. `version` - o'qish paytida yozuv/o'chirish bo'lsa, kechikkan eski
+   * o'qish yangi qiymatni bosib ketmasin.
+   */
+  let memo: StoredToken | null = null;
+  let version = 0;
+  const store: TokenStore = {
+    async getToken() {
+      const v = version;
+      const stored = await deps.store.getToken();
+      if (v === version) memo = stored;
+      return stored;
+    },
+    async setToken(token, expiresAtIso) {
+      version++;
+      memo = null;
+      await deps.store.setToken(token, expiresAtIso);
+      version++;
+      const expiresAt = Date.parse(expiresAtIso);
+      memo = { token, expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0 };
+    },
+    async clearAuth() {
+      version++;
+      memo = null;
+      await deps.store.clearAuth();
+      version++;
+      memo = null;
+    },
+    getDeviceToken: () => deps.store.getDeviceToken(),
+    setDeviceToken: (deviceToken) => deps.store.setDeviceToken(deviceToken),
+    getInstallKey: () => deps.store.getInstallKey(),
+    setInstallKey: (key) => deps.store.setInstallKey(key),
+  };
   let inflight: Promise<string> | null = null;
 
   let registering: Promise<boolean> | null = null;
@@ -84,12 +124,12 @@ export function createSession(deps: SessionDeps): Session {
   const emit = (e: SessionEvent) => listeners.forEach((l) => l(e));
 
   async function doRefresh(): Promise<string> {
-    const deviceToken = await deps.store.getDeviceToken();
+    const deviceToken = await store.getDeviceToken();
     if (!deviceToken) {
-      if (await deps.store.getToken()) {
+      if (await store.getToken()) {
         // Mini App bergan token (qurilma tokenisiz) tugadi yoki server rad etdi:
         // yangilab bo'lmaydi - bu haqiqatan "sessiya tugadi".
-        await deps.store.clearAuth();
+        await store.clearAuth();
         emit('expired');
       }
       // Hech qachon kirmagan (yoki chiqqan) - "sessiya tugadi" deyish noto'g'ri.
@@ -97,13 +137,13 @@ export function createSession(deps: SessionDeps): Session {
     }
     try {
       const res = await deps.authApi.deviceSession(deviceToken);
-      await deps.store.setToken(res.token, res.expiresAt);
+      await store.setToken(res.token, res.expiresAt);
       return res.token;
     } catch (e) {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
         // Token bekor qilingan / muddati o'tgan / admin bloklagan.
         // Navbat SAQLANADI (spec 7.6) - faqat sessiya ma'lumotlari o'chadi.
-        await deps.store.clearAuth();
+        await store.clearAuth();
         emit('expired');
         throw new AuthRequiredError(e.message);
       }
@@ -121,9 +161,9 @@ export function createSession(deps: SessionDeps): Session {
   }
 
   async function tokenValidFor(minMs: number): Promise<string> {
-    const stored = await deps.store.getToken();
+    const stored = await store.getToken();
     if (stored && stored.expiresAt - now() > minMs) return stored.token;
-    if (stored && stored.expiresAt - now() > MIN_USABLE_MS && !(await deps.store.getDeviceToken())) {
+    if (stored && stored.expiresAt - now() > MIN_USABLE_MS && !(await store.getDeviceToken())) {
       // Qurilma tokenisiz (Mini App bergan) - yangilab bo'lmaydi, muddati tugaguncha ishlatiladi.
       return stored.token;
     }
@@ -136,19 +176,26 @@ export function createSession(deps: SessionDeps): Session {
     getToken,
     refreshToken,
 
+    peekToken() {
+      // `getToken()` ning tez yo'li bilan AYNI shart: yangilash oynasiga kirgan token null -
+      // u holda chaqiruvchi `getToken()` ga boradi (yangilash shu yerda).
+      if (memo && memo.expiresAt - now() > REFRESH_WINDOW_MS) return memo.token;
+      return null;
+    },
+
     async login(username, password, device) {
       const res = await deps.authApi.login({ username: username.trim(), password });
-      await deps.store.setToken(res.token, res.expiresAt);
+      await store.setToken(res.token, res.expiresAt);
       try {
         const reg = await deps.authApi.registerDevice(device, res.token);
-        await deps.store.setDeviceToken(reg.deviceToken);
+        await store.setDeviceToken(reg.deviceToken);
       } catch (e) {
         if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
           // Yig'ilishlar bo'limi bu odam uchun yoqilmagan - chat baribir ishlaydi
           // (qurilma tokenisiz, JWT muddati tugaguncha).
           refusedTokens.add(res.token);
         } else {
-          await deps.store.clearAuth();
+          await store.clearAuth();
           throw e;
         }
       }
@@ -157,7 +204,11 @@ export function createSession(deps: SessionDeps): Session {
     },
 
     async logout(wipe) {
-      const deviceToken = await deps.store.getDeviceToken();
+      // Chiqish boshlandi - yangi so'rovlar xotiradagi tokenni olmasin.
+      version++;
+      memo = null;
+      const deviceToken = await store.getDeviceToken();
+      // To'g'ridan-to'g'ri (nusxasiz): chiqish paytida xotiradagi nusxa qayta to'lmasin.
       const stored = await deps.store.getToken();
       // Server chaqiruvlari best effort: tarmoq bo'lmasa ham telefon tozalanadi.
       if (deviceToken) {
@@ -175,13 +226,13 @@ export function createSession(deps: SessionDeps): Session {
         }
       }
       if (wipe) await wipe();
-      await deps.store.clearAuth();
+      await store.clearAuth();
       emit('signedOut');
     },
 
     async hasSession() {
-      if (await deps.store.getDeviceToken()) return true;
-      const stored = await deps.store.getToken();
+      if (await store.getDeviceToken()) return true;
+      const stored = await store.getToken();
       return !!stored && stored.expiresAt - now() > MIN_USABLE_MS;
     },
 
@@ -194,18 +245,18 @@ export function createSession(deps: SessionDeps): Session {
       const claims = decodeJwtClaims(token);
       const expiresAt = claims?.expiresAt ?? now() + WEB_TOKEN_TTL_MS;
       if (!token || expiresAt - now() <= MIN_USABLE_MS) return 'invalid';
-      const stored = await deps.store.getToken();
+      const stored = await store.getToken();
       if (stored?.token === token) return 'unchanged';
-      const deviceToken = await deps.store.getDeviceToken();
+      const deviceToken = await store.getDeviceToken();
       const prevSub = stored ? (decodeJwtClaims(stored.token)?.sub ?? null) : null;
       const sameUser = !!claims?.sub && claims.sub === prevSub;
       if (deviceToken && !sameUser) {
-        await deps.store.clearAuth();
+        await store.clearAuth();
         deps.authApi.revokeDevice(deviceToken).catch(() => {
           /* best effort: token telefondan allaqachon o'chdi */
         });
       }
-      await deps.store.setToken(token, new Date(expiresAt).toISOString());
+      await store.setToken(token, new Date(expiresAt).toISOString());
       emit('signedIn');
       return stored && !sameUser ? 'switched' : 'adopted';
     },
@@ -213,17 +264,17 @@ export function createSession(deps: SessionDeps): Session {
     ensureDevice(device) {
       if (!registering) {
         registering = (async () => {
-          if (await deps.store.getDeviceToken()) return true;
-          const stored = await deps.store.getToken();
+          if (await store.getDeviceToken()) return true;
+          const stored = await store.getToken();
           if (!stored || stored.expiresAt - now() <= MIN_USABLE_MS || refusedTokens.has(stored.token)) return false;
           try {
             const reg = await deps.authApi.registerDevice(device, stored.token);
             // Shu orada chiqilgan yoki boshqa odam kirgan bo'lsa - qurilma eski sessiyaga bog'lanmasin.
-            if ((await deps.store.getToken())?.token !== stored.token) {
+            if ((await store.getToken())?.token !== stored.token) {
               deps.authApi.revokeDevice(reg.deviceToken).catch(() => {});
               return false;
             }
-            await deps.store.setDeviceToken(reg.deviceToken);
+            await store.setDeviceToken(reg.deviceToken);
             return true;
           } catch (e) {
             // 403/404 - bo'lim bu odam uchun yoqilmagan: Mini App tokeni bilan qolamiz.

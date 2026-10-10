@@ -205,8 +205,14 @@ def clip_wav(body: ClipRequest, request: Request,
     NEGA OQIM EMAS. Mobil pleyer (expo-audio) faqat TAYYOR faylni o'ynata
     oladi - xom PCM oqimini ocholmaydi. Qisqa to'liq fayl esa diskdan darhol
     o'ynaydi. Oqimning TTFB afzalligini klient boshqa yo'l bilan qaytaradi:
-    javobni GAP chegarasida bo'laklaydi (birinchisi <=160 belgi, ~1.2-2 s
-    sintez), keyingi bo'lak oldingisi o'ynayotganda tayyorlanadi.
+    javobni GAP chegarasida bo'laklaydi (birinchisi <=60 belgi, ~1.2-2.2 s
+    sintez), keyingi bo'lak oldingisi o'ynayotganda tayyorlanadi. Klient
+    keyingi bo'lakni shu javobning SARLAVHASI kelishi bilan so'raydi: sarlavha
+    sintez tugab, TTS o'rni va `_clip_slot` bo'shagandan keyin ketadi - ya'ni
+    bu bir foydalanuvchida bir vaqtda ikkita sintez qilmaydi. SHU SABABLI
+    `/clip` HECH QACHON `StreamingResponse` ga o'tkazilmasin: sarlavha sintezdan
+    OLDIN ketsa har foydalanuvchi ikkala umumiy TTS o'rnini egallab, boshqalarni
+    503 ga tushiradi (`test_clip_slotlar_javob_sarlavhasidan_oldin_qaytadi`).
 
     NEGA <=600 BELGI. Bu BITTA bo'lak (klient <=350 yuboradi). TTS ning ikki
     sloti BARCHA foydalanuvchilarga umumiy: qisqa so'rov slotni ~2 s ushlaydi,
