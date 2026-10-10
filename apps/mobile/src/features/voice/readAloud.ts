@@ -1,8 +1,8 @@
 /**
  * "Tinglash" - chatdagi javobni ovoz chiqarib o'qish (javob ostidagi 🔊 va kichik pleer).
  *
- * Jonli suhbat bilan AYNI dvigatel (`speaker.ts` + gap navbati): birinchi gap ~1.2-2 s da
- * yangraydi, qolgani o'qilayotganda tayyorlanadi. Bir vaqtda BITTA javob o'qiladi -
+ * Jonli suhbat bilan AYNI dvigatel (`speaker.ts` + gap navbati): birinchi bo'lak (<=60 belgi,
+ * ~2.2 s sintez) yangraydi, qolgani o'qilayotganda tayyorlanadi. Bir vaqtda BITTA javob o'qiladi -
  * boshqasi bosilsa avvalgisi to'xtaydi (web `readAloud.ts` bilan bir xil qoida).
  *
  * Dvigatel birinchi bosishda yaratiladi (import paytida EMAS): native pleer faqat kerak
@@ -29,6 +29,7 @@ import { createAudioFiles, createAudioModePort, createClipPlayer, keepScreenOn }
 import { realClock, type AudioFiles, type AudioModePort, type ClipPlayer } from './ports';
 import { createSpeaker, ttsOffThisRun, type Speaker, type SpeakerDeps, type SpeakerEvent } from './speaker';
 import { answerBody, cleanForSpeech, isSpeakable } from './speechText';
+import { devVoiceTrace } from './trace';
 import type { ReadAloudControls, ReadAloudState } from './types';
 import { SPEED_VALUE, useVoiceSettings } from './voiceSettings';
 
@@ -98,6 +99,7 @@ function buildEngine(parts: ReadAloudParts): ReadAloudEngine {
       const v = useVoiceSettings.getState();
       return { voice: v.voice, speed: SPEED_VALUE[v.speed] };
     },
+    trace: devVoiceTrace('read'),
   });
   return { speaker, mode: parts.mode };
 }

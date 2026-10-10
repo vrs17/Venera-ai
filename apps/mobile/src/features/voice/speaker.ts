@@ -3,9 +3,15 @@
  * shu dvigateldan foydalanadi.
  *
  * Qoidalar (har biri o'lchovdan):
- *  - Bir vaqtda ko'pi bilan BITTA sintez so'rovi: serverdagi 2 ta TTS o'rni HAMMA
- *    foydalanuvchilar uchun umumiy; ikkinchi parallel so'rov boshqalarni 503 ga tushirardi.
- *  - Oldindan ko'pi bilan 2 ta tayyor bo'lak - keyingi gap oldingisi yangrayotganda tayyor.
+ *  - Bir vaqtda ko'pi bilan BITTA SINTEZ: serverdagi 2 ta TTS o'rni HAMMA foydalanuvchilar
+ *    uchun umumiy; ikkinchi parallel sintez boshqalarni 503 ga tushirardi.
+ *  - Keyingi bo'lak oldingisining SARLAVHASI kelishi bilan so'raladi, tanasini kutmaydi.
+ *    Server sarlavhani sintez tugagach yuboradi (TTS o'rni shu paytda bo'shagan), 77-440 KB
+ *    tana esa hali yo'lda. Ilgari keyingi so'rov tana to'liq kelib, faylga yozilgach ketardi:
+ *    har chegarada GPU 0.4-1 s bo'sh turdi, tana kechiksa (2026-10-10: proksi har >64 KB
+ *    javobni 5 s ushlab turgan) bu kechikish gaplar orasidagi jimlikka aylanardi.
+ *  - Oldinda ko'pi bilan 2 ta bo'lak (sintez/yuklanish/tayyor) - keyingi gap oldingisi
+ *    yangrayotganda tayyor. Ijro QAT'IY tartibda: oldingisi yuklanmaguncha keyingisi kutadi.
  *  - Kutish ovozi (hold) HECH QACHON kesilmaydi: javob o'sha klip tugashini kutadi (web'da
  *    yarim gapda kesilgan klip "buzilgan" eshitilgan). Lekin javobning birinchi bo'lagi shu
  *    vaqtda SINTEZ qilinaveradi - kutish kechikish qo'shmaydi. Javob navbatga tushgach
@@ -13,8 +19,10 @@
  *  - Bir vaqtda bitta kutish ovozi; keyingisi navbatga qo'yilmaydi, tashlanadi.
  *  - 503 / tarmoq uzilishi - 400 ms va 1200 ms dan keyin qayta; ovoz hali yangrayotgan
  *    bo'lsa (bufer bor) yana 2 s va 4 s kutib urinadi - bitta uzilish javobning qolganini
- *    o'chirib yubormasin. 400/422 (bitta g'alati bo'lak) - o'sha bo'lak tashlanadi, qolgani
- *    o'qiladi. 501 - ovoz serverda yoqilmagan (ilova ishlayotgan davomida qayta so'ralmaydi).
+ *    o'chirib yubormasin. Tana sarlavhadan keyin uzilsa - o'sha bo'lak o'z o'rnida qayta
+ *    so'raladi (tartib buzilmaydi). 400/422 (bitta g'alati bo'lak) - o'sha bo'lak tashlanadi,
+ *    qolgani o'qiladi. 501 - ovoz serverda yoqilmagan (ilova ishlayotgan davomida qayta
+ *    so'ralmaydi). Boshqa xato - javob shu bo'lakdan kesiladi (undan keyingilari ham tashlanadi).
  *  - Har klipga "qo'riqchi" taymer (davomiyligi + 1.5 s): pleer "tugadi" demasa ham (buzuq
  *    fayl, pleer xatosi) navbat osilib qolmaydi.
  */
@@ -45,7 +53,15 @@ export interface SpeakerDeps {
    * yopilganda o'z papkasini tozalaydi - shu payt boshlangan o'qishning fayli o'chib ketmasin.
    */
   dir?: 'voice' | 'voice-read';
+  /**
+   * Kechikish izi (faqat dev build ulaydi, `trace.ts`). NIMA UCHUN: javob tugagandan birinchi
+   * bo'lak so'rovigacha ~1.8 s (prod, 2026-10-10) - server log'i bu vaqtning telefondagi
+   * qismini ajrata olmaydi. Iz: speak -> req -> sent -> headers -> body -> play.
+   */
+  trace?: (event: SpeakerTraceEvent, detail: string) => void;
 }
+
+export type SpeakerTraceEvent = 'speak' | 'req' | 'sent' | 'headers' | 'body' | 'play';
 
 export interface SpeakerOutput {
   level: number;
@@ -101,11 +117,35 @@ const UNKNOWN_CLIP_MS = 6000;
 const EXTRA_RETRY_MS: readonly number[] = [2000, 4000];
 /** Ketma-ket shuncha bo'lak o'ynamasa - javob tashlanadi. */
 const MAX_PLAY_FAILURES = 3;
+/** Oldinda (yangrayotgandan tashqari) ko'pi bilan shuncha bo'lak: sintez + yuklanish + tayyor. */
+const AHEAD_MAX = 2;
+/**
+ * Qisqa ochilish ("Albatta!") keyingi gapni ko'pi bilan shuncha kutadi - matn o'smasa.
+ * NIMA UCHUN: oqim kirish gapidan keyin to'xtashi mumkin (agent vosita chaqiradi); bu paytda
+ * kutish ovozi ham o'chiq (javob boshlangan) - chegarasiz kutish to'liq jimlik bo'lardi.
+ * Token oqimida keyingi so'zlar 0.1-0.3 s da keladi, 0.5 s esa ochilishning o'zidan qisqa.
+ */
+export const OPENER_WAIT_MS = 500;
 
-interface Ready {
-  uri: string;
-  env: Envelope | null;
+/**
+ * Javobning bitta bo'lagi, tartib bilan:
+ *  - synth: so'rov ketdi, server sintez qilyapti (sarlavha hali yo'q) - SINTEZ O'RNI shu bo'lakda;
+ *  - body: sarlavha keldi (sintez tugadi), tana yuklanmoqda;
+ *  - backoff: xatodan keyin kutish (sarlavhagacha bo'lsa sintez o'rnini ushlab turadi);
+ *  - retry: qayta so'rashga navbatda (sintez o'rni bo'shashi bilan, yangi matndan OLDIN);
+ *  - ready: fayl diskda, ijroga tayyor.
+ */
+interface Slot {
+  /** Javobdagi tartib raqami (1 dan) - faqat iz uchun. */
+  n: number;
   text: string;
+  phase: 'synth' | 'body' | 'backoff' | 'retry' | 'ready';
+  ctl: AbortController | null;
+  uri: string | null;
+  env: Envelope | null;
+  attempt: number;
+  extraAttempt: number;
+  dead: boolean;
 }
 
 interface Playing {
@@ -137,8 +177,10 @@ export function createSpeaker(deps: SpeakerDeps): Speaker {
   let key: string | null = null;
   let source: SentenceQueue | null = null;
   let turnId: string | null = null;
-  let inFlight: AbortController | null = null;
-  const ready: Ready[] = [];
+  /** Yangrayotgandan keyingi bo'laklar, ijro tartibida. */
+  const ahead: Slot[] = [];
+  /** Sintez o'rnini egallagan bo'lak (sarlavhasi hali kelmagan) - bir vaqtda bittadan ko'p emas. */
+  let synthSlot: Slot | null = null;
   let playing: Playing | null = null;
   let holdFetch: AbortController | null = null;
   let started = false;
@@ -149,6 +191,11 @@ export function createSpeaker(deps: SpeakerDeps): Speaker {
   let paused = false;
   let disposed = false;
   let lastText: string | null = null;
+  let slotSeq = 0;
+  /** Ochilish kutish taymeri va u qo'yilgandagi matn uzunligi (o'sish belgisi). */
+  let openerTimer: unknown = null;
+  let openerMark: number | null = null;
+  const trace = deps.trace;
   // --- qo'riqchi taymer ---
   let watchdog: unknown = null;
   let watchdogLeft = 0;
@@ -190,11 +237,48 @@ export function createSpeaker(deps: SpeakerDeps): Speaker {
     armWatchdog(dur + WATCHDOG_EXTRA_MS);
   }
 
+  function killSlot(slot: Slot) {
+    slot.dead = true;
+    slot.ctl?.abort();
+    slot.ctl = null;
+    if (slot.uri) files.remove(slot.uri);
+    slot.uri = null;
+    if (synthSlot === slot) synthSlot = null;
+  }
+
+  function clearOpener() {
+    if (openerTimer != null) clock.clearTimeout(openerTimer);
+    openerTimer = null;
+    openerMark = null;
+  }
+
+  /** `take()` ochilishni kutib null berdi - matn o'smasa OPENER_WAIT_MS dan keyin yolg'iz aytiladi. */
+  function armOpener() {
+    const src = source;
+    const mark = src?.openerWait ?? null;
+    if (!src || mark === null) {
+      clearOpener();
+      return;
+    }
+    // Matn o'smagan - eski taymer davom etadi (har pump'da qayta qo'yilsa hech qachon tugamasdi).
+    if (openerTimer != null && openerMark === mark) return;
+    clearOpener();
+    openerMark = mark;
+    const g = gen;
+    openerTimer = clock.setTimeout(() => {
+      openerTimer = null;
+      openerMark = null;
+      if (g !== gen || source !== src) return;
+      src.releaseOpener();
+      pump();
+    }, OPENER_WAIT_MS);
+  }
+
   function resetAnswer() {
-    inFlight?.abort();
-    inFlight = null;
-    for (const r of ready) files.remove(r.uri);
-    ready.length = 0;
+    clearOpener();
+    for (const slot of ahead.splice(0)) killSlot(slot);
+    synthSlot = null;
+    slotSeq = 0;
     if (playing?.kind === 'answer') {
       clearWatchdog();
       try {
@@ -217,7 +301,7 @@ export function createSpeaker(deps: SpeakerDeps): Speaker {
 
   function maybeDone() {
     if (!key || !source) return;
-    if (!(failed || source.finished) || inFlight || ready.length || playing) return;
+    if (!(failed || source.finished) || ahead.length || playing) return;
     const k = key;
     const e: SpeakerEvent = { type: 'speech_end', key: k, shortened: source.shortened, played };
     key = null;
@@ -238,70 +322,106 @@ export function createSpeaker(deps: SpeakerDeps): Speaker {
   }
 
   function fail(forKey: string, code: 'busy' | 'off' | 'failed') {
-    failed = true;
     if (code === 'off') ttsOff = true;
-    const g = gen;
-    emit({ type: 'error', key: forKey, code });
-    if (g !== gen) return;
+    // Bitta javobga bitta xato xabari. NIMA UCHUN: endi bir vaqtda ikki bo'lak yo'lda bo'lishi
+    // mumkin (biri sintezda, oldingisi tana yuklayapti) - ikkalasi ham yiqilsa foydalanuvchi
+    // ikkita "ovoz ishlamadi" xabarini ko'rardi. Javob birinchi xatodayoq kesilgan.
+    const reported = failed && forKey === key;
+    failed = true;
+    if (!reported) {
+      const g = gen;
+      emit({ type: 'error', key: forKey, code });
+      if (g !== gen) return;
+    }
     pump();
   }
 
-  function synth(text: string) {
+  /** `slot` uchun so'rov (yangi yoki qayta). Sintez o'rnini sarlavha kelguncha egallaydi. */
+  function request(slot: Slot) {
     const myGen = gen;
     const ctl = new AbortController();
-    inFlight = ctl;
+    slot.ctl = ctl;
+    slot.phase = 'synth';
+    synthSlot = slot;
     const { voice, speed } = deps.settings();
     const forKey = key as string;
     const turn = turnId;
-    const stale = () => myGen !== gen || inFlight !== ctl;
+    const stale = () => myGen !== gen || slot.dead || slot.ctl !== ctl;
+    const onHeaders = () => {
+      if (stale() || slot.phase !== 'synth') return;
+      trace?.('headers', `#${slot.n}`);
+      // Sarlavha = sintez tugadi: keyingi bo'lak shu zahoti so'raladi, tana yuklanishini kutmaydi.
+      slot.phase = 'body';
+      if (synthSlot === slot) synthSlot = null;
+      pump();
+    };
+    const onSent = trace ? () => trace('sent', `#${slot.n}`) : undefined;
+    trace?.('req', `#${slot.n} ${slot.text.length}ch`);
     void (async () => {
-      let attempt = 0;
-      let extraAttempt = 0;
-      for (;;) {
-        try {
-          const wav = await deps.api.clip(text, { voice, speed, turnId: turn, signal: ctl.signal });
-          if (stale()) return;
-          const env = envelopeOf(parseWav(wav.bytes));
-          const uri = files.write(dir, `clip-${Date.now().toString(36)}-${++fileSeq}.wav`, wav.bytes);
-          inFlight = null;
-          ready.push({ uri, env, text });
-          pump();
-          return;
-        } catch (err) {
-          if (stale()) return;
-          if (retryable(err)) {
-            // Avval qisqa qayta urinishlar; ovoz hali yangrayotgan bo'lsa (kutish bepul) - uzunroq.
-            let wait: number | null = null;
-            if (attempt < TTS_RETRY_MS.length) wait = TTS_RETRY_MS[attempt++];
-            else if ((playing?.kind === 'answer' || ready.length > 0) && extraAttempt < EXTRA_RETRY_MS.length) wait = EXTRA_RETRY_MS[extraAttempt++];
-            if (wait !== null) {
-              await sleep(wait);
-              if (stale()) return;
-              continue;
-            }
+      try {
+        const wav = await deps.api.clip(slot.text, { voice, speed, turnId: turn, signal: ctl.signal, onHeaders, onSent });
+        if (stale()) return;
+        trace?.('body', `#${slot.n} ${wav.bytes.length}B`);
+        const env = envelopeOf(parseWav(wav.bytes));
+        const uri = files.write(dir, `clip-${Date.now().toString(36)}-${++fileSeq}.wav`, wav.bytes);
+        slot.ctl = null;
+        slot.uri = uri;
+        slot.env = env;
+        slot.phase = 'ready';
+        if (synthSlot === slot) synthSlot = null;
+        pump();
+      } catch (err) {
+        if (stale()) return;
+        if (retryable(err)) {
+          // Avval qisqa qayta urinishlar; ovoz hali yangrayotgan bo'lsa (kutish bepul) - uzunroq.
+          let wait: number | null = null;
+          if (slot.attempt < TTS_RETRY_MS.length) wait = TTS_RETRY_MS[slot.attempt++];
+          else if ((playing?.kind === 'answer' || ahead.some((s) => s !== slot && s.phase === 'ready')) && slot.extraAttempt < EXTRA_RETRY_MS.length) {
+            wait = EXTRA_RETRY_MS[slot.extraAttempt++];
           }
-          inFlight = null;
-          if (skippable(err)) {
-            // Bitta bo'lakni server o'qiy olmadi - uni tashlab, keyingisiga o'tamiz.
+          if (wait !== null) {
+            // Sarlavhagacha uzilgan bo'lsa sintez o'rni kutish davomida ham shu bo'lakda qoladi
+            // (yangi bo'lak so'ralmaydi); tana uzilgan bo'lsa o'rin allaqachon boshqasida bo'lishi mumkin.
+            slot.phase = 'backoff';
+            await sleep(wait);
+            if (stale()) return;
+            if (synthSlot === slot) synthSlot = null;
+            slot.phase = 'retry';
             pump();
             return;
           }
-          const code: 'busy' | 'off' | 'failed' = err instanceof ApiError && err.status === 501 ? 'off' : retryable(err) ? 'busy' : 'failed';
-          fail(forKey, code);
+        }
+        if (skippable(err)) {
+          // Bitta bo'lakni server o'qiy olmadi - uni tashlab, keyingisiga o'tamiz.
+          dropSlot(slot);
+          pump();
           return;
         }
+        const code: 'busy' | 'off' | 'failed' = err instanceof ApiError && err.status === 501 ? 'off' : retryable(err) ? 'busy' : 'failed';
+        // Javob shu bo'lakdan kesiladi: undan keyingilar ham tashlanadi (teshik bilan o'qilmasin).
+        const at = ahead.indexOf(slot);
+        for (const s of at >= 0 ? ahead.splice(at) : [slot]) killSlot(s);
+        fail(forKey, code);
       }
     })();
   }
 
+  function dropSlot(slot: Slot) {
+    killSlot(slot);
+    const at = ahead.indexOf(slot);
+    if (at >= 0) ahead.splice(at, 1);
+  }
+
   function playNext() {
-    const clip = ready.shift() as Ready;
+    const clip = ahead.shift() as Slot;
+    const uri = clip.uri as string;
     const k = key as string;
+    trace?.('play', `#${clip.n}`);
     try {
-      startPlaying({ kind: 'answer', uri: clip.uri, env: clip.env, startedAt: clock.now(), temp: true, text: clip.text });
+      startPlaying({ kind: 'answer', uri, env: clip.env, startedAt: clock.now(), temp: true, text: clip.text });
     } catch {
       clearWatchdog();
-      files.remove(clip.uri);
+      files.remove(uri);
       playing = null;
       // Bitta bo'lak o'ynamadi - keyingisi bilan davom etamiz; bir necha marta ketma-ket bo'lsa - xato.
       if (++playFailures >= MAX_PLAY_FAILURES) {
@@ -343,12 +463,24 @@ export function createSpeaker(deps: SpeakerDeps): Speaker {
 
   function pump() {
     if (disposed || !key || !source) return;
-    // Avval ijro (navbatdan bittasi chiqadi), keyin sintez - bufer 2 tadan oshmasin, lekin bo'sh ham qolmasin.
-    if (!playing && !paused && ready.length) playNext();
+    // Avval ijro (faqat navbat BOSHIDAGI bo'lak tayyor bo'lsa - tartib qat'iy), keyin sintez -
+    // oldinda 2 tadan oshmasin, lekin bo'sh ham qolmasin.
+    if (!playing && !paused && ahead[0]?.phase === 'ready') playNext();
     if (!key || !source) return;
-    if (!failed && !inFlight && ready.length < 2) {
-      const text = source.take();
-      if (text) synth(text);
+    if (!synthSlot) {
+      // Qayta so'raladigan bo'lak yangi matndan oldin (u tartibda oldinroq). `failed` bo'lsa ham:
+      // xatodan OLDINGI bo'lak tushib qolmasin.
+      const again = ahead.find((s) => s.phase === 'retry');
+      if (again) request(again);
+      else if (!failed && ahead.length < AHEAD_MAX) {
+        const text = source.take();
+        if (text) {
+          clearOpener();
+          const slot: Slot = { n: ++slotSeq, text, phase: 'synth', ctl: null, uri: null, env: null, attempt: 0, extraAttempt: 0, dead: false };
+          ahead.push(slot);
+          request(slot);
+        } else armOpener();
+      }
     }
     maybeDone();
   }
@@ -427,6 +559,7 @@ export function createSpeaker(deps: SpeakerDeps): Speaker {
       key = k;
       source = src;
       turnId = turn;
+      trace?.('speak', k);
       if (ttsOff) {
         failed = true;
         const g = gen;
@@ -490,7 +623,7 @@ export function createSpeaker(deps: SpeakerDeps): Speaker {
     },
 
     progress() {
-      const remaining = !!key && (!!playing || ready.length > 0 || !!inFlight || !(source?.finished ?? true));
+      const remaining = !!key && (!!playing || ahead.length > 0 || !(source?.finished ?? true));
       return { key, spoken, remaining };
     },
 

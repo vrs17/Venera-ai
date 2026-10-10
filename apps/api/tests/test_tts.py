@@ -913,6 +913,31 @@ def test_clip_odam_sloti_muvaffaqiyat_va_xatoda_qaytadi(client, auth, server, cl
     assert module._clip_inflight == {}, "odam sloti qaytmadi"
 
 
+def test_clip_slotlar_javob_sarlavhasidan_oldin_qaytadi(client, auth, server, clip_tts,
+                                                       monkeypatch):
+    """Mobil klient keyingi bo'lakni shu javobning SARLAVHASI kelishi bilan so'raydi
+    (77-440 KB tanani kutmaydi). Bu faqat sarlavha ketishidan OLDIN ikkala o'rin -
+    TTS semaforasi va odam sloti - bo'shagan bo'lsa to'g'ri: aks holda keyingi so'rov
+    o'z odamining chegarasiga urilib 503 olardi va bir odam ikki sintezni ushlardi.
+    `Response` yaratilishi - sarlavha ketishidan oldingi oxirgi nuqta."""
+    import app.api.v1.tts as module
+
+    seen: list[tuple[dict, int]] = []
+    real = module.Response
+
+    class Spy(real):
+        def __init__(self, *args, **kwargs):
+            seen.append((dict(module._clip_inflight), clip_tts.busy()))
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(module, "Response", Spy)
+    monkeypatch.setattr(module, "_CLIP_PER_USER", 1)
+    assert _clip(client, auth).status_code == 200
+    assert seen == [({}, 0)], "sarlavha ketayotganda o'rin hali band"
+    # Ketma-ket ikkinchi so'rov (klient sarlavhada yuboradi) - 503 emas.
+    assert _clip(client, auth).status_code == 200
+
+
 def test_clip_oqim_ortasida_uzilsa_502_va_slot_qaytadi(client, auth, server, clip_tts):
     """HAMMASI YOKI HECH NARSA: yarim WAV klientda gapning yarmini o'ynatardi.
     200 hali yuborilmagan - shuning uchun bu yerda HAQIQIY xato statusi."""
