@@ -33,13 +33,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: 'Barno AI',
   slug: 'venera-yozuv',
-  version: '1.1.1',
+  version: '1.2.0',
   scheme: 'venera-rec',
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
   android: {
     package: 'uz.brbtech.venera.meetings',
-    versionCode: 3,
+    versionCode: 4,
     // Yozuvlar va tokenlar Google zaxirasiga tushmasligi kerak (spec 2.3, 4.4).
     allowBackup: false,
     // Mikrofon/bildirishnoma ruxsatlarini expo-audio plagini qo'shadi.
