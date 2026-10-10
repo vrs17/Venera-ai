@@ -20,6 +20,18 @@ DAVOMI. Odamning shu guruhdagi CRM so'rovlari - bitta suhbat (agent xotirasi,
 shaxsiy chatdagi kabi): Venera javobiga javob yozilsa ("nomini o'zgartir")
 agent taklifni yangilaydi. Uzoq jimlikdan keyin - yangi suhbat.
 
+MAXFIYLIK, 2026-10-10 (F0, `architecture/boundary.md` 3.0):
+  * javob qilingan xabar ham guruhdagi boshqa xabarlar kabi NIQOBLANADI
+    (`message_text`) - avval xom matni agentga ketardi;
+  * agentdagi suhbat (`chat_id`) guruhga bog'lab `groups.db` ga yoziladi
+    (`GroupCrmState`), odamning SHAXSIY tarixida ko'rinmaydi (`AGENT_CHAT_PREFIX`,
+    `api/v1/chats.py`) va agentda o'chiriladi (`sweep`): muddati tugaganda,
+    guruh ro'yxatdan olib tashlanganda, saqlash muddati o'tganda;
+  * suhbat, xabar egalari va tugma tokenlari diskda - qayta ishga tushganda
+    kutayotgan tasdiq yo'qolmaydi. Noma'lum tugma - avvalgidek "eskirgan".
+Agentdagi o'chirish hozircha YUMSHOQ (`DELETE /api/chats`): haqiqiy o'chirish
+agent jamoasining ishi (`boundary.md` 6.5).
+
 Jurnalga matn va ism yozilmaydi - faqat id va sonlar.
 """
 
@@ -28,12 +40,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sqlite3
 import threading
 import time
-import uuid
+import urllib.error
 
 from collections import OrderedDict
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable
 
@@ -41,7 +53,8 @@ from ..schemas.auth import AuthUser
 from ..services.analytics import TurnRecorder
 from ..services.integrations.assistant import AssistantError
 from ..services.integrations.telegram import TelegramApi, TelegramError
-from ..services.tg_groups import GroupStore, Row, strip_forward_time
+from ..services.tg_groups import (CRM_RETRY_MAX, CrmOwner, GroupCrmState, GroupStore, Row, is_group_agent_chat,
+                                  mask_secrets, mask_text, message_text, new_agent_chat_id, strip_forward_time)
 from . import render
 from .groups import TZ, uz_date
 from .render import esc
@@ -54,10 +67,21 @@ QUESTION_MAX = 1900
 CONTEXT_HOURS = 6.0
 CONTEXT_ROWS = 30
 LINE_MAX = 240
-#: Odamning guruhdagi CRM suhbati shuncha jimlikdan keyin yangidan boshlanadi.
+#: Odamning guruhdagi CRM suhbati shuncha jimlikdan keyin yangidan boshlanadi -
+#: eskisi shundan keyin agentda o'chiriladi (`sweep`).
 IDLE = 6 * 3600.0
-#: Venera xabarlari egasi (davomi va tasdiqlash uchun) - xotirada shuncha.
+#: Venera xabarlari egasi - xotiradagi ZAXIRA (ombor yozilmasa) shuncha.
 OWNED_MAX = 2000
+#: Oxirgi savoldan keyin shuncha kutib o'chiriladi: oqimda turgan javob (eng uzog'i
+#: `hrm_assistant_max_stream_seconds`, 600 s) tugasin - aks holda u o'chirilgan
+#: suhbatga yozib, uni agentda tiklab yuborardi.
+DELETE_MARGIN = 900.0
+#: Tozalovchi shuncha vaqtda bir aylanadi va bir aylanishda shuncha suhbat o'chiradi.
+SWEEP_EVERY = 600.0
+SWEEP_BATCH = 50
+
+#: Eski nom - `runner.py` va testlar uchun.
+Owner = CrmOwner
 
 _CRM = re.compile(r"(?<!\w)(?:crm|црм)", re.IGNORECASE)
 _TASK = re.compile(r"(?<!\w)(?:task|taks|vazifa|topshiriq|zadach|задач|таск|тикет|issue)\w*", re.IGNORECASE)
@@ -91,14 +115,18 @@ def crm_intent(text: str) -> bool:
     return bool(_CRM.search(norm) or (_TASK.search(norm) and _MAKE.search(norm)))
 
 
-@dataclass(frozen=True)
-class Owner:
-    """Venera'ning guruhdagi CRM xabari kimniki."""
+def _agent_down(exc: AssistantError) -> bool:
+    """Xato agentning O'ZIDA (hamma suhbatga tegishli): tarmoq, vaqt tugashi, 5xx, kalit
+    (401) yoki tezlik chegarasi (429). Bunda aylanishni davom ettirish ma'nosiz.
 
-    actor_id: int
-    tg_id: int
-    name: str
-    conversation: str
+    `AssistantError.status` - FOYDALANUVCHIGA ko'rsatiladigan status (401/429/500 u
+    yerda 502 ga aylangan), shuning uchun agentning HAQIQIY kodi `__cause__` dan."""
+    cause = exc.__cause__
+    upstream = cause.code if isinstance(cause, urllib.error.HTTPError) else None
+    if upstream is not None:
+        return upstream >= 500 or upstream in (401, 429)
+    return exc.status in (501, 503, 504) or exc.reason in (
+        "queue_full", "upstream_unreachable", "upstream_timeout", "upstream_busy")
 
 
 def _line(text: str, limit: int = LINE_MAX) -> str:
@@ -118,10 +146,106 @@ class GroupActions:
         self._resolve = resolve
         self._username = username
         self._clock = clock
+        #: Suhbatlar, xabar egalari va tugmalar - `groups.db` da (qayta ishga tushishdan omon).
+        self.state = GroupCrmState(store, clock=clock)
         self._lock = threading.Lock()
-        self._conversations: dict[tuple[int, int], tuple[str, float]] = {}
+        #: ZAXIRA: ombor yozilmasa yoki o'qilmasa - avvalgidek xotirada (ish to'xtamasin).
         self._owned: OrderedDict[tuple[int, int], Owner] = OrderedDict()
         self._tokens: OrderedDict[str, tuple[int, Owner]] = OrderedDict()
+        #: Agentdagi eski suhbatlarni o'chiruvchi fon ipi (`start`, `kick`).
+        self._stop = threading.Event()
+        self._wake = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    # --- agentdagi suhbatlarni tozalash --------------------------------------------------
+
+    def start(self) -> None:
+        """Fon tozalovchisi: darhol bir marta (qayta ishga tushishdan oldingilari), keyin
+        har `SWEEP_EVERY` da va guruh o'chirilganda (`kick`). Faqat jonli botda."""
+        if self._thread is not None or not callable(getattr(self.backend, "forget_chat", None)):
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._sweep_loop, name="tg-group-crm-sweep", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._wake.set()
+
+    def kick(self, *_: Any) -> None:
+        """Navbatdagi aylanishni kutmasdan tozalash (guruh ro'yxatdan olib tashlandi)."""
+        self._wake.set()
+
+    def _sweep_loop(self) -> None:
+        while not self._stop.is_set():
+            # Tozalashdan OLDIN: tozalash paytida kelgan `kick` yo'qolmasin - keyingi aylanish darhol.
+            self._wake.clear()
+            try:
+                self.sweep()
+            except Exception:  # noqa: BLE001 - ip o'lmasin, keyingi aylanishda qayta
+                log.exception("Telegram guruh CRM: tozalash yiqildi")
+            self._wake.wait(SWEEP_EVERY)
+
+    def sweep(self, *, limit: int = SWEEP_BATCH) -> int:
+        """Agentda o'chirilishi kerak guruh CRM suhbatlarini o'chiradi (`GroupCrmState.due`).
+        Natija: o'chirilganlar soni. Hech bir suhbat unutilmaydi - yiqilgani qayta urinadi.
+
+        XATOLAR (sharh, 2026-10-10 - avval bitta "zaharli" suhbat hammasini to'sardi):
+          * 404 - agentda bunday suhbat yo'q (birinchi savol yetib bormagan): o'chirilgan;
+          * agentning O'ZI ishlamayapti (tarmoq, 5xx, 401 kalit, 429) - aylanish TO'XTAYDI,
+            keyingisida qayta (boshqa suhbatlar ham baribir o'chmasdi);
+          * boshqa 4xx (400, 403, 409, 422) yoki kutilmagan xato - faqat SHU suhbat:
+            tanaffus bilan keyinroq (`failed(retry_in=...)`), qolganlari davom etadi.
+            400 ham "yo'q" EMAS: agent so'rovni rad etgan, suhbat esa joyida turibdi;
+          * `tgcrm-` prefiksisiz yozuv (buzilgan ombor) - agentga BORILMAYDI: biz ochmagan
+            suhbatni o'chirib yubormaylik; uzoq tanaffus va jurnalda ogohlantirish."""
+        forget = getattr(self.backend, "forget_chat", None)
+        if not callable(forget):
+            return 0
+        try:
+            due = self.state.due(idle=IDLE, margin=DELETE_MARGIN, limit=limit)
+        except sqlite3.Error as exc:
+            log.warning("Telegram guruh CRM: tozalash ro'yxati o'qilmadi: %s", exc)
+            return 0
+        done = 0
+        for conversation, user_id in due:
+            if not is_group_agent_chat(conversation):
+                log.warning("Telegram guruh CRM: prefiksisiz suhbat yozuvi - agentga borilmaydi")
+                self._failed(conversation, retry_in=float(CRM_RETRY_MAX))
+                continue
+            try:
+                forget(conversation, user_id)
+            except AssistantError as exc:
+                if exc.status != 404:
+                    if _agent_down(exc):
+                        log.warning("Telegram guruh CRM: agent ishlamayapti (%s) - keyingi aylanishda",
+                                    exc.reason or exc.status)
+                        self._failed(conversation)
+                        break
+                    log.warning("Telegram guruh CRM: agentdagi suhbat o'chirilmadi (%s) - keyinroq qayta",
+                                exc.status)
+                    self._failed(conversation, retry_in=SWEEP_EVERY)
+                    continue
+            except Exception as exc:  # noqa: BLE001 - bitta suhbat qolganlarini to'xtatmasin
+                log.warning("Telegram guruh CRM: o'chirishda kutilmagan xato (%s) - keyinroq qayta",
+                            type(exc).__name__)
+                self._failed(conversation, retry_in=SWEEP_EVERY)
+                continue
+            try:
+                self.state.deleted(conversation)
+            except sqlite3.Error as exc:
+                log.warning("Telegram guruh CRM: o'chirilgani yozilmadi: %s", exc)
+                break
+            done += 1
+        if done:
+            log.info("Telegram guruh CRM: agentda %d ta eski suhbat o'chirildi", done)
+        return done
+
+    def _failed(self, conversation: str, *, retry_in: float | None = None) -> None:
+        try:
+            self.state.failed(conversation, retry_in=retry_in)
+        except sqlite3.Error as exc:
+            log.warning("Telegram guruh CRM: urinish yozilmadi: %s", exc)
 
     # --- qaysi xabar bizniki ----------------------------------------------------------
 
@@ -141,16 +265,32 @@ class GroupActions:
         return crm_intent(text)
 
     def owner(self, token: str, chat_id: int) -> Owner | None:
-        """Taklif tugmasi egasi - shu guruhdagi taklif bo'lsa."""
+        """Taklif tugmasi egasi - shu guruhdagi taklif bo'lsa. Noma'lum - `None`
+        ("Tugma eskirgan")."""
+        try:
+            found = self.state.token_owner(token, chat_id)
+        except sqlite3.Error as exc:
+            log.warning("Telegram guruh CRM: tugma egasi o'qilmadi: %s", exc)
+            found = None
+        if found is not None:
+            return found
         with self._lock:
-            found = self._tokens.get(token)
-        return found[1] if found and found[0] == chat_id else None
+            kept = self._tokens.get(token)
+        return kept[1] if kept and kept[0] == chat_id else None
 
     def _replied_owner(self, msg: dict[str, Any]) -> Owner | None:
         reply = msg.get("reply_to_message")
         chat_id = (msg.get("chat") or {}).get("id")
-        if not isinstance(reply, dict) or not isinstance(reply.get("message_id"), int):
+        if not isinstance(reply, dict) or not isinstance(reply.get("message_id"), int) \
+                or not isinstance(chat_id, int):
             return None
+        try:
+            found = self.state.owner_of(chat_id, reply["message_id"])
+        except sqlite3.Error as exc:
+            log.warning("Telegram guruh CRM: xabar egasi o'qilmadi: %s", exc)
+            found = None
+        if found is not None:
+            return found
         with self._lock:
             return self._owned.get((chat_id, reply["message_id"]))
 
@@ -177,7 +317,7 @@ class GroupActions:
             self._send(chat_id, esc(NO_CRM), reply_to=message_id, thread=thread, markup=self._open_button())
             return
         follow = replied is not None and replied.actor_id == user.actorId
-        conversation = self._conversation(chat_id, user.actorId)
+        conversation = self._conversation(chat_id, user)
         question = self._question(msg, text, user, follow=follow)
         rec = TurnRecorder(user, "bot", "bot", _line(text, 500) or "CRM", chat_id=conversation, locale="uz")
         try:
@@ -274,20 +414,29 @@ class GroupActions:
                 "so'zlarni shunga qarab aniq sanaga aylantiring.",
                 f"So'ragan: {_line(user.fullName or user.email or telegram_name, 80)}"
                 + (f" (Telegram: {_line(telegram_name, 60)})" if telegram_name else ""),
-                f"So'rov: {_line(text, 400) or _DEFAULT_ASK}"]
+                # So'rovchining O'Z matni: sirlar (token, `parol: ...`) har doim niqoblanadi.
+                # Telefon va email QOLADI - CRM vazifasiga kerak bo'lishi mumkin ("mijozga
+                # qo'ng'iroq qil: +998..."); ularni ham yashirish - egasining qarori.
+                f"So'rov: {_line(mask_secrets(text), 400) or _DEFAULT_ASK}"]
         if follow:
             head.append("Bu - shu odamning oldingi CRM so'rovi davomi (taklifni yangilash bo'lishi mumkin).")
         reply = msg.get("reply_to_message")
+        quoted = ""
         if isinstance(reply, dict):
-            quoted = render.plain(str(reply.get("text") or reply.get("caption") or ""))
+            # Javob qilingan xabar - guruhdagi BOSHQA xabarlar kabi (`groups.py`, ombor):
+            # `message_text` niqoblaydi (telefon, email, karta, token) va turini qo'shadi
+            # (`[rasm]`, forward muallifi). Avval xom matn agentga va so'ragan odamning
+            # agentdagi suhbatiga ketardi. `plain` dan keyin yana niqob: HTML belgisi
+            # (`&#43;998…`) ochilib, niqobdan qochib qolmasin.
+            quoted = mask_text(render.plain(message_text(reply)))
             author = " ".join(str((reply.get("from") or {}).get(k) or "") for k in ("first_name", "last_name")).strip()
             if quoted:
                 head.append(f"Javob qilingan xabar: {_line(author, 60)}: {_line(strip_forward_time(quoted), 400)}")
         rows = self._recent(chat.get("id"), msg.get("message_thread_id") if msg.get("is_topic_message") else None)
         people = [sender] + ([reply.get("from")] if isinstance(reply, dict) and isinstance(reply.get("from"), dict)
                              else [])
-        mentioned = " ".join([text, str((reply or {}).get("text") or "") if isinstance(reply, dict) else ""]
-                             + [row.text for row in rows])
+        # @username lar ham NIQOBLANGAN matndan: xom emaildagi "@domen" "guruh a'zosi" bo'lib chiqmasin.
+        mentioned = " ".join([mask_text(text), quoted] + [row.text for row in rows])
         names = self._names(mentioned, rows, people)
         tail = [f"Ismlar: {'; '.join(names)}"] if names else []
         used = sum(len(x) + 1 for x in head + tail) + 40
@@ -349,21 +498,30 @@ class GroupActions:
                 out.append(f"@{handle} - guruh a'zosi")
         return [_line(x, 120) for x in out]
 
-    def _conversation(self, chat_id: int, actor_id: int) -> str:
-        now = self._clock()
-        key = (chat_id, actor_id)
-        with self._lock:
-            current = self._conversations.get(key)
-            if current is None or now - current[1] > IDLE:
-                current = (str(uuid.uuid4()), now)
-            self._conversations[key] = (current[0], now)
-            if len(self._conversations) > 5000:
-                self._conversations = {k: v for k, v in self._conversations.items() if now - v[1] <= IDLE}
-            return current[0]
+    def _conversation(self, chat_id: int, user: AuthUser) -> str:
+        """Odamning shu guruhdagi agent suhbati - `groups.db` da guruhga bog'langan
+        (keyin agentda o'chirish uchun). Ombor ishlamasa - yangi suhbat: so'rov
+        to'xtamaydi, shaxsiy tarixda baribir ko'rinmaydi (prefiks), lekin agentda
+        o'chirilmaydi - jurnalda ogohlantirish."""
+        try:
+            return self.state.conversation(chat_id, user.actorId, self._agent_user(user), idle=IDLE)
+        except sqlite3.Error as exc:
+            log.warning("Telegram guruh CRM (%s): suhbat yozilmadi - ro'yxatsiz suhbat: %s", user.actorId, exc)
+            return new_agent_chat_id()
+
+    def _agent_user(self, user: AuthUser) -> str:
+        """Agentdagi `user_id` - suhbat SHU kalit bilan o'chiriladi (`chat.assistant_user_id`)."""
+        name = getattr(self.backend, "agent_user_id", None)
+        return str(name(user)) if callable(name) else f"venera:{user.actorId}"
 
     def _remember(self, chat_id: int, message_id: int | None, owner: Owner, *, token: str | None = None) -> None:
         if message_id is None:
             return
+        try:
+            self.state.remember(chat_id, message_id, owner, token=token)
+            return
+        except sqlite3.Error as exc:
+            log.warning("Telegram guruh CRM: xabar egasi yozilmadi - xotirada: %s", exc)
         with self._lock:
             self._owned[(chat_id, message_id)] = owner
             while len(self._owned) > OWNED_MAX:

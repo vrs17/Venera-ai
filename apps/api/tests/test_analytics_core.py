@@ -71,10 +71,13 @@ def _turn(adb: Database, turn_id: str) -> dict:
 SPEC_TABLES = {"turns", "turn_events", "turn_sources", "api_calls", "auth_events", "reports",
                "user_admin", "audit_log",
                # Sxema v3 (2026-10-04): dvigatelni admin panel boshqaradi.
-               "engine_policy", "engine_access"}
+               "engine_policy", "engine_access",
+               # Sxema v4 (2026-10-10): miya flag'lari va shadow taqqoslash.
+               "brain_routing", "shadow_results"}
 SPEC_INDEXES = {"turns_started", "turns_actor", "turns_channel", "turns_chat",
                 "turn_sources_ref", "api_calls_ts", "api_calls_service", "api_calls_turn",
-                "auth_events_ts", "reports_status", "turns_engine"}
+                "auth_events_ts", "reports_status", "turns_engine",
+                "shadow_results_ts", "shadow_results_feature"}
 TURN_COLUMNS = [
     "id", "started_at", "ended_at", "actor_id", "user_name", "user_login", "channel", "kind",
     "input_mode", "locale", "chat_id", "request_id", "question", "answer", "route", "status",
@@ -87,7 +90,7 @@ TURN_COLUMNS = [
 
 
 def test_sxema_spetsifikatsiya_boyicha(adb):
-    assert adb.version() == SCHEMA_VERSION == 3
+    assert adb.version() == SCHEMA_VERSION == 4
     tables = {r["name"] for r in adb.rows(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
     assert tables == SPEC_TABLES
@@ -114,8 +117,8 @@ def test_migratsiya_takrorlansa_hech_narsa_buzilmaydi(adb):
     # Xuddi shu fayl - yangi obyekt (qayta ishga tushish) va to'g'ridan-to'g'ri
     # qayta chaqiruv: ikkalasi ham jim o'tadi, ma'lumot joyida.
     again = Database(adb.path)
-    assert again.version() == 3
-    assert _migrate(again.connect()) == 3
+    assert again.version() == SCHEMA_VERSION
+    assert _migrate(again.connect()) == SCHEMA_VERSION
     assert again.scalar("SELECT COUNT(*) FROM reports") == 1
     again.close_all()
 
@@ -128,7 +131,7 @@ def test_bir_vaqtda_ochilgan_ikki_jarayon(tmp_path):
     def open_it() -> None:
         try:
             database = Database(path)
-            assert database.version() == 3
+            assert database.version() == SCHEMA_VERSION
             database.close_all()
         except BaseException as exc:                        # noqa: BLE001
             errors.append(exc)
@@ -159,7 +162,7 @@ def test_v1_ombor_v2_ga_otadi_malumot_joyida(tmp_path):
     old.close()
 
     database = Database(path)
-    assert database.version() == 3
+    assert database.version() == SCHEMA_VERSION
     columns = [r["name"] for r in database.rows("PRAGMA table_info(turns)")]
     assert columns == TURN_COLUMNS
     assert "turns_engine" in {r["name"] for r in database.rows(
@@ -181,14 +184,14 @@ def test_eski_kod_yangi_omborni_ochsa_ishlaydi(tmp_path):
 
     path = tmp_path / "venera.db"
     fresh = Database(path)
-    assert fresh.version() == 3
+    assert fresh.version() == SCHEMA_VERSION
     fresh.close_all()
     conn = sqlite3.connect(str(path), isolation_level=None)
     conn.row_factory = sqlite3.Row
     original = db_module.SCHEMA_VERSION
     try:
         db_module.SCHEMA_VERSION = 1
-        assert db_module._migrate(conn) == 3
+        assert db_module._migrate(conn) == original
     finally:
         db_module.SCHEMA_VERSION = original
     conn.execute("INSERT INTO turns (id, started_at, channel, question, status) "

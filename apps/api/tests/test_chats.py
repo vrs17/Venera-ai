@@ -68,6 +68,8 @@ class FakeChats:
         self.calls: list[dict] = []
         self.status: int | None = None
         self.deleted = False
+        #: Ro'yxatdagi qo'shimcha suhbatlar (masalan guruhdagi CRM suhbati).
+        self.extra: list[dict] = []
 
     def open(self, request, timeout=None):
         parts = urllib.parse.urlsplit(request.full_url)
@@ -89,7 +91,7 @@ class FakeChats:
                                                   "message": "No such chat for this user."}}).encode()))
         if parts.path == "/api/chats":
             query = dict(urllib.parse.parse_qsl(parts.query))
-            return _JsonResponse({"items": [SUMMARY], "limit": int(query.get("limit", 50)),
+            return _JsonResponse({"items": [SUMMARY, *self.extra], "limit": int(query.get("limit", 50)),
                                   "offset": int(query.get("offset", 0))})
         if parts.path.endswith("/restore"):
             self.deleted = False
@@ -287,3 +289,49 @@ def test_api_yaroqsiz_kalit_400(api, auth, server):
     response = api.get("/api/v1/chats/a%20b", headers=auth)
     assert response.status_code == 400
     assert server.calls == []
+
+
+# --- guruhdagi CRM suhbatlari shaxsiy tarixda yo'q (2026-10-10, F0) -----------------------
+
+
+GROUP_CHAT = "tgcrm-3f0c2b9e-8f6e-4d7a-9b1c-2a4e5d6f7a8b"
+
+
+def test_api_guruh_crm_suhbati_royxatda_korinmaydi(api, auth, server):
+    server.extra = [{**SUMMARY, "chat_id": GROUP_CHAT, "title": "AI team: crmga kiritib qo'y"},
+                    {**SUMMARY, "chat_id": "c-2", "title": "Ta'til"}]
+    body = api.get("/api/v1/chats", headers=auth).json()
+    assert [item["chat_id"] for item in body["items"]] == [CHAT, "c-2"]
+    # Sahifa so'rovi o'zgarmagan - xizmatga avvalgidek boradi.
+    assert server.calls[0]["query"] == {"user_id": "venera:1", "limit": "50", "offset": "0"}
+
+
+def test_api_guruh_crm_suhbati_ochilmaydi_va_tiklanmaydi(api, auth, server):
+    for response in (api.get(f"/api/v1/chats/{GROUP_CHAT}", headers=auth),
+                     api.patch(f"/api/v1/chats/{GROUP_CHAT}", json={"title": "Meniki"}, headers=auth),
+                     api.post(f"/api/v1/chats/{GROUP_CHAT}/restore", headers=auth)):
+        assert response.status_code == 404
+        assert response.json()["message"] == "Suhbat topilmadi"
+    assert server.calls == [], "guruh suhbati uchun xizmatga borilmaydi"
+    # O'chirish - zararsiz (agentda yumshoq yashirish), avvalgidek o'tadi.
+    assert api.delete(f"/api/v1/chats/{GROUP_CHAT}", headers=auth).status_code == 200
+    assert [c["method"] for c in server.calls] == ["DELETE"]
+
+
+def test_api_guruh_crm_suhbatida_savol_berilmaydi(api, auth, server):
+    """`POST /chat/stream` guruhdagi CRM suhbatini shaxsiy chatda davom ettirmaydi."""
+    response = api.post("/api/v1/chat/stream", json={"question": "davom et", "chatId": GROUP_CHAT}, headers=auth)
+    assert response.status_code == 404
+    assert server.calls == []
+
+
+def test_bot_shikoyat_surati_guruh_crm_suhbatini_olmaydi(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.bot.runner import Backend
+
+    seen = []
+    monkeypatch.setattr(chat_api._assistant, "get_chat", lambda *a, **k: seen.append(a))
+    with pytest.raises(AssistantError):
+        Backend().history(GROUP_CHAT, SimpleNamespace(actorId=1))
+    assert seen == []

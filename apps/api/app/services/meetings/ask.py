@@ -142,12 +142,14 @@ def answer(llm: Any, *, question: str, language: str, meta: str, segments: list[
 
 
 def answer_chain(providers: list[Any], *, deadline: float = 0.0, clock: Callable[[], float] = time.monotonic,
-                 **kwargs: Any) -> tuple[dict[str, Any], Any]:
+                 agent_ok: bool = True, **kwargs: Any) -> tuple[dict[str, Any], Any]:
     """Savol zanjir bo'yicha (`llm.run_chain`): birinchi javob bergan model. Odam kutib
     turibdi - o'z navbatimiz band bo'lsa ham keyingi modelga o'tiladi.
 
     `deadline` - hamma model uchun UMUMIY muddat (s; 0 - yo'q): oxirgisidan boshqasiga
     qolgan vaqtning 2/3 qismi, oxirgisiga - qolgani. Oshsa - keyingi model / 503.
+    `agent_ok=False` (telefon qo'ng'irog'i) - yangi agent bo'g'ini va shadow YO'Q: bugungi
+    zanjir o'zgarmaydi (`brain.meeting_agent_ok`).
     -> (javob, ishlagan provayder)."""
     from .llm import DeadlineExceeded, run_chain, within
 
@@ -164,5 +166,14 @@ def answer_chain(providers: list[Any], *, deadline: float = 0.0, clock: Callable
             raise DeadlineExceeded("savol: umumiy muddat tugadi")
         return within(run, left * 2 / 3 if strict else left, what=f"{provider.name} savol")
 
-    result, used, _ = run_chain(providers, attempt, busy_falls_through=True, what="savol")
+    from .. import brain as _brain
+
+    # `meeting_ask` flag'i: `agent` - zanjir boshida agent bo'g'ini (yiqilsa bugungi zanjir);
+    # `local` (default) - zanjir o'zgarmaydi; `shadow` - javobdan keyin fonda taqqoslash.
+    started = time.monotonic()
+    chain = (_brain.meeting_ask_providers(list(providers), language=str(kwargs.get("language") or "uz"))
+             if agent_ok else list(providers))
+    result, used, _ = run_chain(chain, attempt, busy_falls_through=True, what="savol")
+    if agent_ok and getattr(used, "name", "") != "agent":
+        _brain.meeting_ask_shadow(kwargs, result, (time.monotonic() - started) * 1000.0)
     return result, used

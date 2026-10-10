@@ -70,6 +70,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sqlite3
 import threading
 import time
 import urllib.parse
@@ -283,6 +284,21 @@ class Backend:
 
         return _chat.has_own_crm(user)
 
+    def agent_user_id(self, user: AuthUser) -> str:
+        """Agentdagi kimlik (`venera:{actorId}`) - guruh CRM suhbati shu kalit bilan
+        yoziladi va keyin o'chiriladi (`group_actions.sweep`)."""
+        from ..api.v1 import chat as _chat
+
+        return _chat.assistant_user_id(user)
+
+    def forget_chat(self, chat_id: str, user_id: str) -> None:
+        """Guruh CRM suhbatini agentda o'chirish (2026-10-10, F0 maxfiylik): ichida
+        guruhdagi boshqa odamlarning xabarlari bor - guruh o'chirilganda, saqlash
+        muddati yoki suhbat muddati tugaganda. Agentdagi o'chirish hozircha YUMSHOQ."""
+        from ..api.v1 import chat as _chat
+
+        _chat._assistant.delete_chat(chat_id, user_id=user_id)
+
     def action(self, verb: str, token: str, user: AuthUser, *, own_tokens: bool = False) -> dict[str, Any]:
         """Taklifni tasdiqlash / rad etish. `own_tokens` - guruhdagi taklif: faqat
         odamning o'z CRM tokeni (u qanday yaratilgan bo'lsa, shunday)."""
@@ -315,7 +331,12 @@ class Backend:
         Telemetriyada savollar bo'lsa umuman chaqirilmaydi."""
         from ..api.v1 import chat as _chat
         from ..services import reports as _reports
+        from ..services.integrations.assistant import AssistantError
+        from ..services.tg_groups import is_group_agent_chat
 
+        if is_group_agent_chat(chat_id):
+            # Guruhdagi CRM suhbati shikoyat suratiga olinmaydi (`api/v1/reports.py` dagi qoida).
+            raise AssistantError("Suhbat topilmadi", status=404)
         return _chat._assistant.get_chat(chat_id, user_id=_chat.assistant_user_id(user),
                                          limit=_reports.SNAPSHOT_TURNS * 2)
 
@@ -492,6 +513,10 @@ class VeneraBot:
             self.group_actions = GroupActions(api, groups.store, self.backend, resolve=self._member_of,
                                               username=lambda: self.username)
             groups.actions = self.group_actions
+            hooks = getattr(getattr(admin, "registry", None), "removed_hooks", None)
+            if isinstance(hooks, list):
+                # Guruh ro'yxatdan olib tashlansa - agentdagi CRM suhbatlari darhol o'chirilsin.
+                hooks.append(self.group_actions.kick)
         self.webapp_url = webapp_url
         self.typing_every = typing_every
         self.username = ""
@@ -538,11 +563,16 @@ class VeneraBot:
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="tg-bot", daemon=True)
         self._thread.start()
+        if self.group_actions is not None:
+            # Agentdagi eski guruh CRM suhbatlarini o'chiruvchi (`group_actions.sweep`).
+            self.group_actions.start()
 
     def stop(self) -> None:
         self._stop.set()
         if self._pool is not None:
             self._pool.shutdown(wait=False, cancel_futures=True)
+        if self.group_actions is not None:
+            self.group_actions.stop()
         if self.groups is not None:
             self.groups.stop()
         if self.briefs is not None:
@@ -566,7 +596,19 @@ class VeneraBot:
             "webhook": dict(self._webhook) if self._webhook else None,
             #: Oxirgi 10 daqiqada boshqa nusxa bilan to'qnashuvlar (409).
             "conflicts_10min": sum(1 for t in list(self._conflicts) if time.time() - t <= 600),
+            #: Guruhdagi CRM suhbatlari (agentda o'chirish navbati) - faqat sonlar.
+            "groupCrm": self._group_crm_counts(),
         }
+
+    def _group_crm_counts(self) -> dict[str, int] | None:
+        """`tiqilgan` (`stuck`) > 0 - agentda o'chmayotgan guruh suhbatlari bor: health
+        ogohlantiradi (ichida guruhdagi boshqa odamlarning xabarlari)."""
+        if self.group_actions is None:
+            return None
+        try:
+            return self.group_actions.state.counts()
+        except sqlite3.Error:
+            return None
 
     def _run(self) -> None:
         if self.mode == "webhook":

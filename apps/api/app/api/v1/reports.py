@@ -22,6 +22,7 @@ from ...schemas.auth import AuthUser
 from ...schemas.reports import ReportCreate, ReportCreated
 from ...services import reports as _reports
 from ...services.analytics import bind
+from ...services.tg_groups import is_group_agent_chat
 from . import chat as _chat
 from ..deps import current_user
 
@@ -44,6 +45,9 @@ def create_report(
 
     def upstream(chat_id: str):
         # Odamning O'Z kaliti bilan - boshqa odamning suhbati 404 beradi.
+        if is_group_agent_chat(chat_id):
+            # Savol kaliti (`turnId`) orqali kelgan guruh CRM suhbati ham agentdan olinmaydi.
+            raise LookupError("guruh CRM suhbati")
         return _chat._assistant.get_chat(chat_id, user_id=_chat.assistant_user_id(user),
                                          limit=_reports.SNAPSHOT_TURNS * 2)
 
@@ -53,7 +57,9 @@ def create_report(
             result = _reports.create(
                 user,
                 channel=channel,
-                chat_id=body.chatId,
+                # Guruhdagi CRM suhbati (`tgcrm-`) shikoyat suratiga OLINMAYDI: ichida guruhdagi
+                # boshqa odamlarning xabarlari bor, surat esa admin panelda ko'rinadi.
+                chat_id=None if is_group_agent_chat(body.chatId) else body.chatId,
                 turn_id=body.turnId,
                 reason=body.reason,
                 comment=body.comment,

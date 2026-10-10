@@ -296,3 +296,13 @@ def test_analitika_ochirilgan_bolsa_ham_shikoyat_saqlanadi(client, demo, upstrea
     response = _post(client, demo, {"chatId": CHAT})
     assert response.status_code == 201
     assert _row(response.json()["id"])["snapshot"]["source"] == "upstream"
+
+
+def test_guruh_crm_suhbati_suratga_olinmaydi(client, demo, upstream):
+    """2026-10-10: guruhdagi CRM suhbati (`tgcrm-`) - ichida guruhdagi boshqa odamlarning
+    xabarlari: shikoyat suratiga ham, kaliti ham yozilmaydi, xizmatga borilmaydi."""
+    response = _post(client, demo, {"chatId": "tgcrm-3f0c2b9e-8f6e-4d7a-9b1c-2a4e5d6f7a8b", "reason": "wrong"})
+    assert response.status_code == 201
+    assert upstream.calls == []
+    row = _row(response.json()["id"])
+    assert row["chat_id"] is None and row["snapshot"].get("source") != "upstream"

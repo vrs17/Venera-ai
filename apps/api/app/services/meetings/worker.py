@@ -42,6 +42,7 @@ import uuid
 from typing import Any
 
 from ...core.config import settings
+from .. import brain as _brain
 from ..analytics import bind
 from . import llm as llm_mod
 from . import store as store_mod
@@ -205,12 +206,21 @@ def _run_one(rt: Any, m: dict[str, Any], s: dict[str, Any], now: float, owner: s
     # Shu xulosada avval yiqilgan modellar (qayta navbatdan keyin) - boshidan takrorlanmaydi.
     skip = _failures(rt, memo_key)
     failed: list[str] = []
+    started = time.monotonic()
     try:
         inp = summary_input(rt, m, s)
         with bind(m["actor_id"], m.get("channel") or "mobile"):
             # Zanjir (`llm.py`): BUTUN xulosa bitta model bilan; yiqilsa - keyingisi bilan boshidan.
+            # `meeting_summary` flag'i `agent` bo'lsa boshida agent bo'g'ini (`services/brain`);
+            # default `local` - zanjir o'zgarmaydi.
+            # Telefon qo'ng'irog'i (`source == "call"`) agentga HECH QAYSI holatda bormaydi:
+            # ikkinchi tomonning ovozi va mijoz raqami - server rozilik yozuvi va huquqiy
+            # qarordan keyin, alohida `call_summary` flag'i bilan (`boundary.md` 5.3, D8).
+            providers = llm_mod.summary_providers(rt, m["actor_id"])
+            if _brain.meeting_agent_ok(m):
+                providers = _brain.meeting_summary_providers(providers, language=inp.language)
             result, used, _ = llm_mod.run_chain(
-                llm_mod.summary_providers(rt, m["actor_id"]),
+                providers,
                 lambda provider, strict: _attempt(rt, m, s, provider, strict, progress, inp),
                 skip=skip, failed=failed)
     except Cancelled:
@@ -284,6 +294,11 @@ def _run_one(rt: Any, m: dict[str, Any], s: dict[str, Any], now: float, owner: s
     if primary:
         apply_primary(rt, m, s["id"], result.template, result.content, now)
         store.update_meeting(m["id"], now=now, retries=0)
+    if used.name != "agent" and _brain.meeting_agent_ok(m):
+        # Shadow (flag `shadow` bo'lsa, namuna bo'yicha): agent xuddi shu xulosani FONDA
+        # yozadi va taqqoslanadi - foydalanuvchi faqat yuqoridagi natijani ko'radi.
+        with bind(m["actor_id"], m.get("channel") or "mobile"):
+            _brain.meeting_summary_shadow(inp, result.content, (time.monotonic() - started) * 1000.0)
 
 
 #: Xulosada yiqilgan provayderlar xotirasi shuncha yashaydi (s): keyinroq (masalan v3

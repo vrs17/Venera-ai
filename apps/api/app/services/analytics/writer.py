@@ -410,6 +410,9 @@ class Writer:
         return True
 
     def _purge(self) -> None:
+        # Shadow qatorlari O'Z muddati bilan (30 kun) - umumiy muddat (180 kun yoki
+        # o'chiq) ularga taalluqli emas: ular faqat ko'chish davri uchun kerak.
+        self._purge_shadow()
         days = self._retention if self._retention is not None else _db.retention_days()
         if days <= 0:
             return
@@ -423,6 +426,44 @@ class Writer:
             self._purged[name] = self._purged.get(name, 0) + value
         if any(counts.values()):
             log.info("Analitika tozalandi (%d kundan eski): %s", days, counts)
+
+    def _purge_shadow(self) -> None:
+        try:
+            days = int(_db.setting("shadow_results_days", 30))
+        except (TypeError, ValueError):
+            days = 30
+        if days <= 0:
+            return
+        try:
+            removed = purge_shadow(self.db, days)
+        except Exception:                                   # noqa: BLE001
+            log_limited("analytics.purge_shadow", "Shadow qatorlari tozalanmadi", exc_info=True)
+            return
+        if removed:
+            self._purged["shadowResults"] = self._purged.get("shadowResults", 0) + removed
+            log.info("Shadow qatorlari tozalandi (%d kundan eski): %d", days, removed)
+
+
+def purge_shadow(db: Database, days: int, *, now: float | None = None,
+                 chunk: int = _PURGE_CHUNK) -> int:
+    """`shadow_results` dan `days` kundan eskilarini o'chiradi (bo'laklab). Jadval
+    hali yo'q bo'lsa (eski sxema) - 0: tozalash umumiy tozalashni to'xtatmasin."""
+    if days <= 0:
+        return 0
+    cutoff = (now if now is not None else time.time()) - days * 86400.0
+    conn = db.connect()
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shadow_results'"
+                    ).fetchone() is None:
+        return 0
+    total = 0
+    while True:
+        with db.transaction():
+            removed = conn.execute(
+                "DELETE FROM shadow_results WHERE id IN "
+                "(SELECT id FROM shadow_results WHERE ts < ? LIMIT ?)", (cutoff, chunk)).rowcount
+        total += removed
+        if removed < chunk:
+            return total
 
 
 def _group(ops: list[tuple]) -> list[tuple[str, Any, list]]:

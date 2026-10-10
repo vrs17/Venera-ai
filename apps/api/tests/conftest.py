@@ -148,7 +148,8 @@ _CODE_DEFAULTS = ("hold_enabled", "wake_log_enabled", "local_login_enabled",
                   "admin_logins", "sso_trusted_roles", "hrm_assistant_engine",
                   "hrm_assistant_engine_by_channel", "hrm_assistant_max_stream_seconds",
                   "meetings_enabled", "meetings_logins", "meetings_llm_chain", "meetings_ask_chain",
-                  "meetings_openai_model", "openai_api_key", "openai_base_url", "meetings_v3_max_chars")
+                  "meetings_openai_model", "openai_api_key", "openai_base_url", "meetings_v3_max_chars",
+                  "meetings_ask_platforms", "brief_crm_platforms")
 
 
 @pytest.fixture(autouse=True)
@@ -236,6 +237,43 @@ def _isolated_contacts(tmp_path, monkeypatch):
     from app.services.contacts import ContactStore
 
     monkeypatch.setattr(contacts, "store", ContactStore(tmp_path / "contacts" / "contacts.db"))
+
+
+#: Miya (agentga ko'chish) sozlamalari - testlar KODDAGI default'ni kutadi.
+_BRAIN_DEFAULTS = ("agent_v4_enabled", "agent_v4_base_url", "hold_classifier", "agent_shadow_sample_rate",
+                   "group_summary_engine", "group_ask_engine", "brief_extract_engine", "brief_crm_engine",
+                   "meeting_summary_engine", "meeting_ask_engine", "hold_classify_engine")
+
+
+@pytest.fixture(autouse=True)
+def _brain_isolated(monkeypatch):
+    """Miya flag'lari HAR TESTDA: `.env` emas, sozlama obyekti (koddagi default -
+    hammasi `local`, agent o'chiq). Mashinada `AGENT_V4_ENABLED=true` yoki
+    `HOLD_CLASSIFIER=keyword` turgani testni o'zgartirmasin. Agent mijozlari,
+    imkoniyatlar keshi va shadow navbati - yangi (tarmoqqa chiqilmaydi). Jonli
+    o'qishning o'zi `test_brain_routing.py` da vaqtinchalik `.env` bilan sinaladi."""
+    from app.core import config as config_module
+    from app.services.brain import routing, shadow
+
+    fields = type(settings).model_fields
+    for name in _BRAIN_DEFAULTS:
+        monkeypatch.setattr(settings, name, fields[name].default, raising=False)
+    monkeypatch.setattr(config_module, "agent_v4_enabled_now", lambda: bool(settings.agent_v4_enabled))
+
+    def hold_now() -> str:
+        value = str(settings.hold_classifier or "llm").strip().lower()
+        return value if value in config_module.HOLD_CLASSIFIERS else "keyword"
+
+    monkeypatch.setattr(config_module, "hold_classifier_now", hold_now)
+    monkeypatch.setattr(config_module, "brain_engine_now",
+                        lambda feature: str(getattr(settings, f"{feature}_engine", "") or "").strip().lower())
+    # Maxfiylik qaytarish kalitlari (`MEETINGS_ASK_PLATFORMS`, `BRIEF_CRM_PLATFORMS`) - sozlama obyektidan.
+    monkeypatch.setattr(config_module, "platforms_now", lambda key: frozenset(
+        x.strip().lower() for x in str(getattr(settings, key, "") or "").split(",") if x.strip()))
+    routing.reset_for_tests()
+    shadow.reset_for_tests()
+    yield
+    shadow.reset_for_tests()
 
 
 class _OfflineUpstream:

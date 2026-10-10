@@ -1247,14 +1247,17 @@ def ask(user: AuthUser, meeting_id: str, question: str, language: str | None) ->
     meta = prompts.meta_line(day.date(), dates.WEEKDAYS["en"][day.weekday()], float(m.get("duration_sec") or 0),
                              [{"id": sp["id"], "name": sp.get("name")} for sp in speakers],
                              bool(m.get("speakers_available")), call=m.get("source") == "call")
+    from .. import brain as _brain
     from ..analytics import bind
 
     try:
         with bind(user.actorId):
             providers = _ask_providers(rt, user)
             # Umumiy muddat: hamma model birga `MEETINGS_ASK_DEADLINE` ga sig'adi (odam kutib turibdi).
+            # Telefon qo'ng'irog'i - yangi agent yo'li (bo'g'in va shadow) yo'q (`brain.meeting_agent_ok`).
             result, used = ask_mod.answer_chain(
-                providers, deadline=settings.meetings_ask_deadline, question=question,
+                providers, deadline=settings.meetings_ask_deadline, agent_ok=_brain.meeting_agent_ok(m),
+                question=question,
                 language=language or m.get("language") or "uz", meta=meta,
                 segments=segments, speakers=[{"id": sp["id"], "name": sp.get("name")} for sp in speakers],
                 summary=summary)
@@ -1289,10 +1292,15 @@ def live_assistant(rt: Any) -> Any:
 
 def assistant_identity(user: AuthUser) -> tuple[str, dict[str, str]]:
     """Savol-javob (Ask) uchun (`user_id`, platforma tokenlari) - chat bilan AYNAN bir xil
-    (`chat.assistant_user_id`, `chat._live_tokens`)."""
+    (`chat.assistant_user_id`, `chat._live_tokens`), lekin FAQAT `meetings_ask_platforms`
+    dagilari (default `crm`): yig'ilish savoliga HRM tokeni kerak emas (2026-10-10, F0)."""
     from ...api.v1 import chat as _chat
 
-    return _chat.assistant_user_id(user), dict(_chat._live_tokens(user))
+    from ...core.config import platforms_now
+
+    allowed = platforms_now("meetings_ask_platforms")
+    tokens = {k: v for k, v in dict(_chat._live_tokens(user)).items() if k in allowed}
+    return _chat.assistant_user_id(user), tokens
 
 
 def crm_identity(user: AuthUser) -> tuple[str, dict[str, str]]:

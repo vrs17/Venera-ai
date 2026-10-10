@@ -29,6 +29,15 @@ GURUHLAR RO'YXATI (`groups` jadvali, `GroupRegistry`) - qaysi guruhni Venera
 o'qiydi va guruh turi (support / loyiha). Rahbar uni botning o'zida
 boshqaradi (`app/bot/group_admin.py`); `.env` dagi `TELEGRAM_GROUPS` ham
 ishlayveradi - qoida `_effective` da.
+
+GURUHDAGI CRM HOLATI (`crm_chats`, `crm_messages`, `GroupCrmState`, 2026-10-10) -
+`app/bot/group_actions.py` uchun. NEGA DISKDA: avval faqat xotirada edi - API qayta
+ishga tushsa kutayotgan tasdiq tugmalari "eskirgan" bo'lib qolardi, agentdagi
+suhbatlar (ichida guruhdagi BOSHQA odamlarning xabarlari bor) esa hech qayerda
+yozilmagani uchun o'chirilmasdi. Endi har agent suhbati (`chat_id`) guruhga bog'lab
+yoziladi va agentda o'chiriladi: muddati (`IDLE`) tugaganda, guruh ro'yxatdan
+olib tashlanganda va saqlash muddati (`days`) o'tganda. Xabar MATNI bu jadvallarda
+YO'Q - faqat id, vaqt va so'ragan odam ismi.
 """
 
 from __future__ import annotations
@@ -42,6 +51,7 @@ import sqlite3
 import stat
 import threading
 import time
+import uuid
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -113,7 +123,37 @@ CREATE TABLE IF NOT EXISTS groups (
     updated_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS groups_state ON groups (state);
-PRAGMA user_version = 4;
+-- 5: guruhdagi CRM (`GroupCrmState`): agentdagi suhbatlar va Venera'ning CRM xabarlari egasi.
+-- Matn yo'q - faqat id va vaqt: suhbatning o'zi agentda turadi va shu yerdan o'chiriladi.
+CREATE TABLE IF NOT EXISTS crm_chats (
+    conversation TEXT PRIMARY KEY,
+    chat_id      INTEGER NOT NULL,
+    actor_id     INTEGER NOT NULL,
+    user_id      TEXT NOT NULL,
+    created_at   INTEGER NOT NULL,
+    last_at      INTEGER NOT NULL,
+    closed_at    INTEGER,
+    deleted_at   INTEGER,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    -- Agentda o'chirilmagan suhbat qachon qayta urinadi (bo'sh - darhol). NEGA: bitta
+    -- "zaharli" suhbat (doim 4xx) navbat boshida turib qolib, qolganlarini to'smasin.
+    next_at      INTEGER
+);
+CREATE INDEX IF NOT EXISTS crm_chats_owner ON crm_chats (chat_id, actor_id, last_at);
+CREATE INDEX IF NOT EXISTS crm_chats_pending ON crm_chats (deleted_at, last_at);
+CREATE TABLE IF NOT EXISTS crm_messages (
+    chat_id      INTEGER NOT NULL,
+    message_id   INTEGER NOT NULL,
+    conversation TEXT NOT NULL,
+    actor_id     INTEGER NOT NULL,
+    tg_id        INTEGER NOT NULL,
+    name         TEXT NOT NULL,
+    token        TEXT,
+    created_at   INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS crm_messages_token ON crm_messages (token);
+PRAGMA user_version = 5;
 """
 #: Forward belgisidagi asl vaqt: `[forward: Ism, 15.07 10:00]` (eski yozuvlar uchun).
 _FWD_TIME = re.compile(r"^\[forward: [^\]]*?(\d{2})\.(\d{2}) (\d{2}):(\d{2})\]")
@@ -124,9 +164,18 @@ _DAY_SHIFT = 5 * 3600
 
 # --- niqoblash ------------------------------------------------------------------
 
-#: Har biri qator ICHIDA ishlaydi - qator uzilishlari saqlanadi (xulosa uchun
-#: kerak). `analytics.redact` bunga to'g'ri kelmaydi: u bo'shliqlarni yig'adi.
-_MASKS: tuple[tuple[re.Pattern[str], str], ...] = (
+def _intl_phone(match: re.Match[str]) -> str:
+    """`+7 916 123-45-67`, `+44 20 7946 0958` - faqat 8 va undan ko'p raqam bo'lsa
+    telefon (`+15 %` kabi qisqa son o'z holicha qoladi)."""
+    found = match.group(0)
+    return "<telefon>" if sum(ch.isdigit() for ch in found) >= 8 else found
+
+
+#: Faqat SIRLAR: tokenlar, kalitlar, `parol: ...`. Guruhda CRM so'ragan odamning O'Z
+#: so'rovi shu bilan o'tadi (`group_actions._question`): telefon va email esa CRM
+#: vazifasi uchun kerak bo'lishi mumkin ("mijozga qo'ng'iroq qil: +998...") - ularni
+#: niqoblash egasining mahsulot qarori.
+_SECRET_MASKS: tuple[tuple[re.Pattern[str], Any], ...] = (
     # Tokenlar va kalitlar (`analytics/meter.py` dagi shakllar).
     (re.compile(r"(?i)\bbearer\s+[\w.~+/=-]+"), "Bearer <token>"),
     (re.compile(r"eyJ[\w-]{8,}(?:\.[\w-]+){0,2}"), "<token>"),
@@ -134,21 +183,44 @@ _MASKS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\b[0-9a-f]{32}\.[\w-]{16,}"), "<key>"),
     (re.compile(r"(?i)\b((?:parol|пароль|password|passwd|token|secret|api[_-]?key)\s*[:=]\s*)\S+"),
      r"\1***"),
+)
+
+#: Har biri qator ICHIDA ishlaydi - qator uzilishlari saqlanadi (xulosa uchun
+#: kerak). `analytics.redact` bunga to'g'ri kelmaydi: u bo'shliqlarni yig'adi.
+#: Faqat QO'SHILADI (2026-10-10, sharh): xalqaro raqam, nuqtali telefon, JSHSHIR
+#: (PINFL) va pasport - avval ular niqobsiz o'tardi.
+_MASKS: tuple[tuple[re.Pattern[str], Any], ...] = _SECRET_MASKS + (
     # Email.
     (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}"), "<email>"),
     # Karta raqami: 16 raqam, guruhlab yoki yaxlit.
     (re.compile(r"(?<!\d)(?:\d{4}[ -]?){3}\d{4}(?!\d)"), "<karta>"),
-    # Telefon: +998 bilan har qanday shaklda; usiz - faqat ajratilgan shaklda
-    # (`90 123 45 67`, `(90) 123-45-67`), aks holda har 9 xonali son
-    # (buyurtma raqami) telefon bo'lib qolardi.
-    (re.compile(r"(?<![\w+])\+?998[\s-]?\(?\d{2}\)?[\s-]?\d{3}[\s-]?\d{2}[\s-]?\d{2}(?!\d)"), "<telefon>"),
+    # JSHSHIR (PINFL): 14 raqam, birinchisi 3-6 (jins va asr). Kartadan KEYIN - 16 lik
+    # karta ichidan 14 talik bo'lak olinmasin.
+    (re.compile(r"(?<!\w)[3-6]\d{13}(?!\w)"), "<jshshir>"),
+    # Pasport / ID karta: `AA1234567`, `AD 1234567`.
+    (re.compile(r"(?<!\w)[A-Z]{2} ?\d{7}(?!\w)"), "<pasport>"),
+    # Telefon: +998 bilan har qanday shaklda (bo'shliq, chiziq yoki nuqta bilan); usiz -
+    # faqat ajratilgan shaklda (`90 123 45 67`, `(90) 123-45-67`, `90.123.45.67`), aks
+    # holda har 9 xonali son (buyurtma raqami) telefon bo'lib qolardi.
+    (re.compile(r"(?<![\w+])\+?998[\s.-]?\(?\d{2}\)?[\s.-]?\d{3}[\s.-]?\d{2}[\s.-]?\d{2}(?!\d)"), "<telefon>"),
+    # Boshqa davlat raqami: `+` va mamlakat kodi bilan (`+7 916 123-45-67`) - usiz shakldan OLDIN,
+    # aks holda `+49 30 1234567` ning dumi mahalliy raqam bo'lib, `+49` ochiq qolardi.
+    (re.compile(r"(?<![\w+])\+\d{1,3}(?:[\s.-]?\(?\d{2,4}\)?){2,6}(?!\d)"), _intl_phone),
     (re.compile(r"(?<![\w+])\(?\d{2}\)?[\s-]\d{3}[\s-]?\d{2}[\s-]?\d{2}(?!\d)"), "<telefon>"),
+    (re.compile(r"(?<![\w+.])\(?\d{2}\)?\.\d{3}\.\d{2}\.\d{2}(?!\.?\d)"), "<telefon>"),
 )
 
 
 def mask_text(text: str) -> str:
-    """Telefon, email, karta va tokenlarni niqoblaydi, qatorlarni saqlaydi."""
+    """Telefon, email, karta, JSHSHIR, pasport va tokenlarni niqoblaydi, qatorlarni saqlaydi."""
     for pattern, replacement in _MASKS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def mask_secrets(text: str) -> str:
+    """Faqat tokenlar, kalitlar va parollar (`_SECRET_MASKS`) - telefon va email qoladi."""
+    for pattern, replacement in _SECRET_MASKS:
         text = pattern.sub(replacement, text)
     return text
 
@@ -286,6 +358,10 @@ class GroupStore:
                             # 3: forward'ning asl vaqti. Eski yozuvlar - belgidagi sanadan.
                             conn.execute("ALTER TABLE messages ADD COLUMN orig_date INTEGER")
                             _backfill_orig(conn)
+                        crm = {r[1] for r in conn.execute("PRAGMA table_info(crm_chats)")}
+                        if crm and "next_at" not in crm:
+                            # 5 ning dastlabki shakli (sinov omborlari): qayta urinish vaqti ustuni.
+                            conn.execute("ALTER TABLE crm_chats ADD COLUMN next_at INTEGER")
                         conn.executescript(_SCHEMA)
                         conn.commit()
                     finally:
@@ -380,10 +456,15 @@ class GroupStore:
 
     @staticmethod
     def _delete_chat(conn: sqlite3.Connection, chat_id: int) -> int:
-        """Guruhning BARCHA saqlangan ma'lumoti: xabarlar, brif keshi, nomi."""
+        """Guruhning BARCHA saqlangan ma'lumoti: xabarlar, brif keshi, nomi.
+
+        Guruhdagi CRM: tugma egalari o'chadi (tugma - "eskirgan"), agentdagi
+        suhbatlar "yopiladi" - ularni agentda `GroupActions.sweep` o'chiradi
+        (tarmoq chaqiruvi tranzaksiya ichida bo'lmasin)."""
         removed = conn.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,)).rowcount
         conn.execute("DELETE FROM brief_events WHERE chat_id = ?", (chat_id,))
         conn.execute("DELETE FROM chats WHERE chat_id = ?", (chat_id,))
+        _close_crm(conn, chat_id)
         return removed
 
     @staticmethod
@@ -410,6 +491,9 @@ class GroupStore:
         conn.execute("INSERT OR IGNORE INTO chats (chat_id, title, updated_at)"
                      " SELECT ?, title, updated_at FROM chats WHERE chat_id = ?", (new, old))
         conn.execute("DELETE FROM chats WHERE chat_id = ?", (old,))
+        # Eski id dagi CRM suhbatlari davom etmaydi (eski guruh endi o'qilmaydi) - agentda
+        # o'chiriladi; yangi id da so'rov yangi suhbat ochadi.
+        _close_crm(conn, old)
         return moved
 
     def day_markers(self, chat_id: int, since: float, until: float) -> dict[str, str]:
@@ -521,6 +605,18 @@ class GroupStore:
             gone = "SELECT chat_id FROM groups WHERE state IN ('removed', 'migrated')"
             conn.execute(f"DELETE FROM messages WHERE chat_id IN ({gone})")
             conn.execute(f"DELETE FROM brief_events WHERE chat_id IN ({gone})")
+            # Guruhdagi CRM ham shu saqlash muddatiga bo'ysunadi: agentdagi suhbat ichida
+            # guruh xabarlari bor - muddatdan eskisi (yoki o'chirilgan guruhniki) agentda
+            # o'chiriladi (`GroupActions.sweep`); o'chirilganining izi ham muddatdan keyin
+            # ketadi. Tugma egalari - `CRM_MESSAGE_TTL` dan keyin.
+            stamp = int(now)
+            conn.execute("UPDATE crm_chats SET closed_at = ? WHERE closed_at IS NULL AND deleted_at IS NULL"
+                         " AND created_at < ?", (stamp, cutoff))
+            conn.execute(f"UPDATE crm_chats SET closed_at = ? WHERE closed_at IS NULL AND chat_id IN ({gone})",
+                         (stamp,))
+            conn.execute("DELETE FROM crm_chats WHERE deleted_at IS NOT NULL AND deleted_at < ?", (cutoff,))
+            conn.execute("DELETE FROM crm_messages WHERE created_at < ?", (int(now - CRM_MESSAGE_TTL),))
+            conn.execute(f"DELETE FROM crm_messages WHERE chat_id IN ({gone})")
             # Hech kim qaror qilmagan "kutilayotgan" guruh - ro'yxatdan tushadi.
             conn.execute("DELETE FROM groups WHERE state = 'pending' AND decided_by IS NULL AND kind IS NULL"
                          " AND updated_at < ?", (int(now - PENDING_DAYS * 86400),))
@@ -639,6 +735,10 @@ class GroupRegistry:
         self._cache_gen = -1
         self._error_at = 0.0
         self._seen: dict[int, float] = {}
+        #: Guruh ro'yxatdan olib tashlangandan KEYIN chaqiriladi (`remove`, chat_id bilan).
+        #: NEGA: guruhdagi CRM suhbatlari agentda turadi - ularni o'chiruvchi
+        #: (`GroupActions.kick`) navbatdagi aylanishni kutmasdan darhol ishga tushsin.
+        self.removed_hooks: list[Callable[[int], None]] = []
 
     # --- o'qish -------------------------------------------------------------------
 
@@ -995,5 +1095,173 @@ class GroupRegistry:
                              " notice_id = NULL, updated_at = ? WHERE chat_id = ?", (actor_id, stamp, stamp, chat_id))
             removed = GroupStore._delete_chat(conn, chat_id)
         self.invalidate()
+        for hook in list(self.removed_hooks):
+            try:
+                hook(chat_id)
+            except Exception:  # noqa: BLE001 - o'chirish baribir bajarildi; tozalovchi keyin ham ishlaydi
+                log.exception("Guruhlar: o'chirishdan keyingi ilova yiqildi")
         return removed
+
+
+# --- guruhdagi CRM holati -----------------------------------------------------------------
+
+#: Guruhdagi CRM suhbatlari agentda shu prefiks bilan ochiladi. NEGA: odamning shaxsiy
+#: suhbatlar tarixi (`/api/v1/chats`) ularni bazaga qaramasdan taniydi va yashiradi -
+#: ombor o'qilmasa ham guruh yozishmasi shaxsiy tarixga chiqib qolmaydi.
+AGENT_CHAT_PREFIX = "tgcrm-"
+#: Venera'ning guruhdagi CRM xabari egasi va tasdiq tugmasi shuncha saqlanadi. Agentdagi
+#: taklif 15 daqiqada eskiradi - bu chegara faqat "eskirgan" javobini agentning o'zidan
+#: olish uchun (tugmalar tozalanadi); undan keyin - bizning "Tugma eskirgan".
+CRM_MESSAGE_TTL = 7 * 86400
+#: Agentda shuncha marta o'chirilmagan suhbat "tiqilgan" (`counts()["stuck"]`, health
+#: ogohlantirishi): urinish davom etadi, lekin odam ko'rishi kerak.
+CRM_DELETE_STUCK = 5
+#: Qayta urinishlar orasidagi eng uzun tanaffus (s): 10 daq, 20, 40, ... - eng ko'pi 1 kun.
+CRM_RETRY_MAX = 86400
+
+
+def new_agent_chat_id() -> str:
+    """Guruh CRM suhbati uchun yangi agent `chat_id` si (`AGENT_CHAT_PREFIX` bilan)."""
+    return f"{AGENT_CHAT_PREFIX}{uuid.uuid4()}"
+
+
+def is_group_agent_chat(chat_id: Any) -> bool:
+    """Agentdagi shu suhbat guruhdagi CRM suhbatimi (shaxsiy tarixda ko'rinmaydi)."""
+    return isinstance(chat_id, str) and chat_id.startswith(AGENT_CHAT_PREFIX)
+
+
+def _close_crm(conn: sqlite3.Connection, chat_id: int) -> None:
+    """Guruhning CRM suhbatlari endi davom etmaydi (agentda o'chiriladi), tugmalari - yo'q."""
+    conn.execute("UPDATE crm_chats SET closed_at = ? WHERE chat_id = ? AND closed_at IS NULL",
+                 (int(time.time()), chat_id))
+    conn.execute("DELETE FROM crm_messages WHERE chat_id = ?", (chat_id,))
+
+
+@dataclass(frozen=True)
+class CrmOwner:
+    """Venera'ning guruhdagi CRM xabari kimniki (davomi va tasdiqlash uchun)."""
+
+    actor_id: int
+    tg_id: int
+    name: str
+    conversation: str
+
+
+class GroupCrmState:
+    """Guruhdagi CRM holati `groups.db` da: agent suhbatlari, xabar egalari, tugmalar.
+
+    NEGA DISKDA (avval faqat xotirada edi): qayta ishga tushganda kutayotgan tasdiq
+    va davomi yo'qolmasin; agentdagi suhbatlar (ichida guruhdagi boshqa odamlarning
+    xabarlari) ro'yxatda bo'lsin - ularni keyin agentda o'chirish uchun. Noma'lum
+    yoki muddati o'tgan tugma - `None` (chaqiruvchi "Tugma eskirgan" deydi).
+
+    `sqlite3.Error` chaqiruvchiga chiqadi - u xotiradagi zaxiraga tushadi.
+    """
+
+    def __init__(self, store: GroupStore, *, clock: Callable[[], float] = time.time) -> None:
+        self.store = store
+        self._clock = clock
+
+    def conversation(self, chat_id: int, actor_id: int, user_id: str, *, idle: float) -> str:
+        """Odamning shu guruhdagi CRM suhbati: `idle` dan beri so'ramagan bo'lsa - yangisi.
+        Eskisi "yopiladi" - u endi HECH QACHON davom ettirilmaydi (agentda yangi xabar
+        o'chirilgan suhbatni tiklab yuborardi), keyin agentda o'chiriladi (`due`)."""
+        now = int(self._clock())
+        with self.store._tx() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT conversation, last_at FROM crm_chats WHERE chat_id = ? AND actor_id = ?"
+                " AND closed_at IS NULL AND deleted_at IS NULL ORDER BY last_at DESC LIMIT 1",
+                (chat_id, actor_id)).fetchone()
+            if row is not None and now - row[1] <= idle:
+                conn.execute("UPDATE crm_chats SET last_at = ? WHERE conversation = ?", (now, row[0]))
+                return row[0]
+            conn.execute("UPDATE crm_chats SET closed_at = ? WHERE chat_id = ? AND actor_id = ?"
+                         " AND closed_at IS NULL", (now, chat_id, actor_id))
+            conversation = new_agent_chat_id()
+            conn.execute("INSERT INTO crm_chats (conversation, chat_id, actor_id, user_id, created_at, last_at)"
+                         " VALUES (?, ?, ?, ?, ?, ?)", (conversation, chat_id, actor_id, user_id, now, now))
+            return conversation
+
+    def remember(self, chat_id: int, message_id: int, owner: CrmOwner, *, token: str | None = None) -> None:
+        """Venera'ning guruhdagi CRM xabari (javob yoki taklif kartasi) va tugma tokeni."""
+        with self.store._tx() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO crm_messages (chat_id, message_id, conversation, actor_id, tg_id, name,"
+                " token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (chat_id, message_id, owner.conversation, owner.actor_id, owner.tg_id, owner.name[:NAME_MAX * 2],
+                 token or None, int(self._clock())))
+
+    def owner_of(self, chat_id: int, message_id: int) -> CrmOwner | None:
+        """Shu xabar Venera'ning CRM xabarimi va kimniki (muddati o'tmagan bo'lsa)."""
+        since = int(self._clock() - CRM_MESSAGE_TTL)
+        with self.store._tx() as conn:
+            row = conn.execute("SELECT actor_id, tg_id, name, conversation FROM crm_messages"
+                               " WHERE chat_id = ? AND message_id = ? AND created_at >= ?",
+                               (chat_id, message_id, since)).fetchone()
+        return CrmOwner(*row) if row else None
+
+    def token_owner(self, token: str, chat_id: int) -> CrmOwner | None:
+        """Taklif tugmasi egasi - FAQAT shu guruhdagi taklif bo'lsa."""
+        if not token:
+            return None
+        since = int(self._clock() - CRM_MESSAGE_TTL)
+        with self.store._tx() as conn:
+            row = conn.execute("SELECT actor_id, tg_id, name, conversation FROM crm_messages"
+                               " WHERE token = ? AND chat_id = ? AND created_at >= ?"
+                               " ORDER BY created_at DESC LIMIT 1", (token, chat_id, since)).fetchone()
+        return CrmOwner(*row) if row else None
+
+    def due(self, *, idle: float, margin: float, limit: int = 50) -> list[tuple[str, str]]:
+        """Agentda o'chirilishi kerak suhbatlar: (chat_id, user_id). Yopilgan (guruh
+        o'chirildi, saqlash muddati o'tdi, yangisi ochildi) yoki `idle` dan beri
+        jim. `margin` - oxirgi savoldan keyin shuncha kutiladi: shu payt oqimda turgan
+        javob tugasin (aks holda o'chirilgan suhbatga yozib, uni tiklab yuborardi).
+
+        Tartib - avval KAM urinilganlar (`attempts`), keyin eskisi; qayta urinish vaqti
+        (`next_at`) kelmaganlari olinmaydi. NEGA: doim yiqiladigan bitta suhbat har
+        aylanishda boshda turib, qolganlarini abadiy to'sib qo'ymasin (sharh, 2026-10-10)."""
+        now = int(self._clock())
+        with self.store._tx() as conn:
+            rows = conn.execute(
+                "SELECT conversation, user_id FROM crm_chats WHERE deleted_at IS NULL AND last_at < ?"
+                " AND (closed_at IS NOT NULL OR last_at < ?) AND (next_at IS NULL OR next_at <= ?)"
+                " ORDER BY attempts, last_at LIMIT ?",
+                (now - int(margin), now - int(idle), now, int(limit))).fetchall()
+        return [(conversation, user_id) for conversation, user_id in rows]
+
+    def deleted(self, conversation: str) -> None:
+        """Agentda o'chirildi. Iz (`deleted_at`) saqlash muddatigacha qoladi (`purge`)."""
+        now = int(self._clock())
+        with self.store._tx() as conn:
+            conn.execute("UPDATE crm_chats SET deleted_at = ?, closed_at = COALESCE(closed_at, ?)"
+                         " WHERE conversation = ?", (now, now, conversation))
+
+    def failed(self, conversation: str, *, retry_in: float | None = None) -> None:
+        """Agentda o'chirilmadi. `retry_in` yo'q - keyingi aylanishda yana (agentning
+        o'zi ishlamayapti: aybi suhbatda emas); bor - shu suhbat uchun tanaffus, har
+        urinishda ikki baravar (`CRM_RETRY_MAX` gacha): faqat shu suhbat yiqilyapti."""
+        now = int(self._clock())
+        with self.store._tx() as conn:
+            if retry_in is None:
+                conn.execute("UPDATE crm_chats SET attempts = attempts + 1 WHERE conversation = ?",
+                             (conversation,))
+                return
+            row = conn.execute("SELECT attempts FROM crm_chats WHERE conversation = ?", (conversation,)).fetchone()
+            tried = int(row[0]) if row else 0
+            wait = min(float(retry_in) * (2 ** min(tried, 20)), float(CRM_RETRY_MAX))
+            conn.execute("UPDATE crm_chats SET attempts = attempts + 1, next_at = ? WHERE conversation = ?",
+                         (now + int(max(1.0, wait)), conversation))
+
+    def counts(self) -> dict[str, int]:
+        """Holat sonlari (`/api/health/detail`, testlar): ochiq, o'chirilishi kutilayotgan,
+        o'chirilgan va tiqilgan (`CRM_DELETE_STUCK` martadan ko'p o'chirilmagan)."""
+        with self.store._tx() as conn:
+            open_, pending, deleted, stuck = conn.execute(
+                "SELECT COALESCE(SUM(closed_at IS NULL AND deleted_at IS NULL), 0),"
+                " COALESCE(SUM(closed_at IS NOT NULL AND deleted_at IS NULL), 0),"
+                " COALESCE(SUM(deleted_at IS NOT NULL), 0),"
+                " COALESCE(SUM(deleted_at IS NULL AND attempts >= ?), 0) FROM crm_chats",
+                (CRM_DELETE_STUCK,)).fetchone()
+        return {"open": int(open_), "closing": int(pending), "deleted": int(deleted), "stuck": int(stuck)}
 
