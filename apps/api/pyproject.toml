@@ -13,6 +13,11 @@ dependencies = [
     # `File`/`Form` (ovoz yuklash) busiz ILOVA UMUMAN KO'TARILMAYDI -
     # FastAPI ishga tushishda RuntimeError beradi.
     "python-multipart>=0.0.9",
+    # Yig'ilish eksporti (`GET /meetings/{id}/export`): Word va PDF fayl. ANIQ versiya - fayl
+    # ko'rinishi kutubxona yangilanishi bilan jim o'zgarmasin. Ikkalasi ham funksiya ichida
+    # import qilinadi: o'rnatilmagan serverda faqat shu format 503, ilova ko'tariladi.
+    "python-docx==1.2.0",
+    "reportlab==4.4.10",
 ]
 
 [project.optional-dependencies]

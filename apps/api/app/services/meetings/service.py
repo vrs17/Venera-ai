@@ -554,9 +554,13 @@ def retranscribe(user: AuthUser, meeting_id: str, body: Any, now: float | None =
 # --- 12-15. transkript va spikerlar ------------------------------------------------------------------
 
 
+def _transcript_ready(m: dict[str, Any]) -> bool:
+    return bool(int(m.get("transcript_rev") or 0) > 0 and m.get("stt_engine")
+                and m.get("status") in ("summarizing", "ready"))
+
+
 def _require_transcript(m: dict[str, Any]) -> None:
-    if not (int(m.get("transcript_rev") or 0) > 0 and m.get("stt_engine")
-            and m.get("status") in ("summarizing", "ready")):
+    if not _transcript_ready(m):
         raise MeetingProblem(409, "not_ready", "Transkript hali tayyor emas")
 
 
@@ -576,7 +580,8 @@ def transcript(user: AuthUser, meeting_id: str) -> dict[str, Any]:
 def rename_speaker(user: AuthUser, meeting_id: str, speaker_id: str, name: str | None) -> dict[str, Any]:
     store = runtime().store
     m = _owned(user.actorId, meeting_id)
-    clean = " ".join((name or "").split()) or None
+    # Boshqaruv belgilari (`\x01`, U+FFFF ...) ismda kerak emas va DOCX eksportini buzardi.
+    clean = " ".join(export.clean(name).split()) or None
     if clean is not None and len(clean) > 60:
         raise MeetingProblem(400, "invalid_name", "Ism 60 belgidan oshmasin")
     if store.execute("UPDATE speakers SET name=? WHERE meeting_id=? AND id=?",
@@ -805,6 +810,141 @@ def export_transcript(user: AuthUser, meeting_id: str, fmt: str, *, with_speaker
                                   with_timestamps=with_timestamps), "text/plain; charset=utf-8", f"{name}.txt")
 
 
+#: 503 xabarlari: DOCX/PDF kutubxonasi yoki PDF shrifti serverda yo'q, yoki navbat to'la.
+_RENDER_MESSAGES = {
+    "pdf_unavailable": "PDF hozircha tayyorlab bo'lmaydi - DOCX yoki matn ko'rinishida yuklab oling",
+    "docx_unavailable": "Word fayli hozircha tayyorlab bo'lmaydi - PDF yoki matn ko'rinishida yuklab oling",
+    "export_busy": "Hozir boshqa fayllar tayyorlanmoqda - birozdan keyin qayta urinib ko'ring",
+}
+
+_export_cond = threading.Condition()
+#: Eksport kutayotgan YOKI chizilayotgan odamlar (`actorId`) va hozir chizilayotganlar soni.
+_export_users: set[int] = set()
+_export_active = 0
+
+
+@contextlib.contextmanager
+def _export_slot(actor_id: int):
+    """Bir vaqtdagi eksportlar chegarasi.
+
+    NEGA: endpoint sync - kutayotgan har so'rov umumiy threadpool'dan (anyio, ~40 ip) bitta
+    ipni band qiladi, API ning deyarli hamma handleri ham sync. Soatlik chegara (30) bir
+    vaqtdagi so'rovlarni to'xtatmaydi: bitta odam 30 ta PDF ni BIRDAN yuborsa, ular navbatda
+    o'tirib qolgan API ni ipsiz qoldirardi. Shuning uchun:
+
+    * bitta odam - bir vaqtda BITTA eksport: ikkinchisi kutmaydi, darhol 429 `export_busy`
+      (+ `Retry-After`) - ilova "tayyorlanmoqda" deydi;
+    * butun jarayon - bir vaqtda `MEETINGS_EXPORT_CONCURRENCY` ta; navbat qisqa
+      (`MEETINGS_EXPORT_WAIT_SEC`), oshsa 503 `export_busy`.
+
+    Rad etilgan so'rov soatlik chegarani yemaydi (u slot olingandan keyin hisoblanadi)."""
+    global _export_active
+    actor = int(actor_id)
+    limit = max(1, int(settings.meetings_export_concurrency))
+    with _export_cond:
+        if actor in _export_users:
+            raise MeetingProblem(429, "export_busy", "Oldingi fayl hali tayyorlanmoqda",
+                                 headers={"Retry-After": "5"})
+        _export_users.add(actor)
+        if not _export_cond.wait_for(lambda: _export_active < limit,
+                                     timeout=max(0.0, float(settings.meetings_export_wait_sec))):
+            _export_users.discard(actor)
+            raise MeetingProblem(503, "export_busy", _RENDER_MESSAGES["export_busy"], headers={"Retry-After": "10"})
+        _export_active += 1
+    try:
+        yield
+    finally:
+        with _export_cond:
+            _export_active -= 1
+            _export_users.discard(actor)
+            _export_cond.notify_all()
+
+
+def export_meeting(user: AuthUser, meeting_id: str, fmt: str, *, summary_id: str | None = None,
+                   parts: str | None = None, lang: str = "uz", now: float | None = None) -> tuple[bytes, str, str]:
+    """To'liq hujjat (DOCX/PDF/MD/TXT) -> (baytlar, Content-Type, Content-Disposition).
+
+    Xulosa - `summaryId` yoki asosiy xulosa. `parts` bo'sh - nima TAYYOR bo'lsa hammasi:
+    xulosa hali yozilmagan bo'lsa ham transkriptning o'zi beriladi. Aniq so'ralgan qism
+    tayyor bo'lmasa - 409 `not_ready` (+ `missing`, `available`: ilova "faqat transkript"
+    deb qayta so'ray oladi). Chegara (`MEETINGS_EXPORT_PER_HOUR`) faqat haqiqiy faylga
+    sarflanadi - 404/409 hisobga kirmaydi."""
+    now = time.time() if now is None else now
+    store = runtime().store
+    m = _owned(user.actorId, meeting_id)
+    if fmt not in export.FORMATS:
+        # Router `pattern` bu yerga yetkazmaydi (422); funksiya to'g'ridan-to'g'ri chaqirilsa
+        # KeyError -> 500 bo'lmasin.
+        raise MeetingProblem(400, "invalid_format", "Format: docx, pdf, md yoki txt")
+    try:
+        wanted = export.parse_parts(parts)
+    except ValueError as exc:
+        raise MeetingProblem(400, "invalid_parts", f"Noma'lum qism: {exc}") from None
+    if summary_id:
+        s = _summary_or_404(m, summary_id)
+    else:
+        s = store.summary(m["id"], m["primary_summary_id"]) if m.get("primary_summary_id") else None
+    summary_ready = bool(s and s["status"] == "ready" and s.get("content_json"))
+    transcript_ready = _transcript_ready(m)
+    available = [p for p in export.PARTS if (transcript_ready if p == "transcript" else summary_ready)]
+    if wanted is None:
+        if summary_id and not summary_ready:
+            # Aniq tanlangan xulosa tayyor emas - jim "faqat transkript" berish chalg'itardi.
+            raise MeetingProblem(409, "not_ready", "Xulosa hali tayyor emas", missing=["summary"],
+                                 available=available)
+        wanted = available
+        if not wanted:
+            raise MeetingProblem(409, "not_ready", "Yig'ilish hali tayyor emas", missing=list(export.PARTS),
+                                 available=[])
+    missing = [p for p in wanted if p not in available]
+    if missing:
+        message = ("Xulosa hali tayyor emas" if any(p in export.SUMMARY_PARTS for p in missing)
+                   else "Transkript hali tayyor emas")
+        raise MeetingProblem(409, "not_ready", message, missing=missing, available=available)
+    with _export_slot(user.actorId):
+        _rate("export", user.actorId, settings.meetings_export_per_hour)
+        data, title, recorded_at = _export_render(m, s, wanted, summary_ready, fmt, lang, now)
+    media, ext = export.FORMATS[fmt]
+    ascii_name, real_name = export.file_names(title, recorded_at, ext)
+    log.info("Yig'ilish %s: eksport %s, %d bayt, qismlar=%s", m["id"], fmt, len(data), ",".join(wanted))
+    return data, media, export.content_disposition(ascii_name, real_name)
+
+
+def _export_render(m: dict[str, Any], s: dict[str, Any] | None, wanted: list[str], summary_ready: bool, fmt: str,
+                   lang: str, now: float) -> tuple[bytes, str, float]:
+    """Hujjatni yig'ib chizadi -> (baytlar, sarlavha, yozilgan vaqt). 503 - `MeetingProblem`."""
+    store = runtime().store
+    speakers = {sp["id"]: sp for sp in store.speakers(m["id"])}
+    content: dict[str, Any] | None = None
+    actions: list[dict[str, Any]] | None = None
+    if s and summary_ready and any(p in export.SUMMARY_PARTS for p in wanted):
+        content = _map_merged(jload(s["content_json"], {}) or {}, _merged_map(list(speakers.values())))
+        if "actions" in wanted or "mindmap" in wanted:
+            if s["id"] == m.get("primary_summary_id"):
+                # Asosiy xulosa - JONLI vazifalar: odam tahrirlagani/qo'shgani, holati va CRM kaliti.
+                rows = sorted(store.action_items(m["id"]), key=_action_order)
+                rows = [{**a, "crm_result": jload(a.get("crm_result"))} for a in rows]
+                actions = export.actions_from_rows(rows, speakers, lang)
+            else:
+                actions = export.actions_from_content(content, speakers, lang)
+    segments = store.segments(m["id"]) if "transcript" in wanted else None
+    recorded_at = float(m.get("recorded_at") or m.get("created_at") or 0)
+    title = m.get("title") or (content or {}).get("title") or default_title(recorded_at, lang)
+    duration = float(m.get("duration_sec") or ((content or {}).get("meeting") or {}).get("durationSec") or 0)
+    stale = bool(s and summary_ready and int(s.get("transcript_rev") or 0) < int(m.get("transcript_rev") or 0))
+    doc = export.build_document(title=title, recorded_at=recorded_at, duration_sec=duration, speakers=speakers,
+                                lang=lang, now=now, parts=wanted, template=s["template"] if s else None,
+                                content=content, actions=actions, segments=segments, stale=stale,
+                                text_lang=(s or {}).get("language") or m.get("language"))
+    try:
+        data = export.render(doc, fmt, font_dir=settings.meetings_export_font_dir)
+    except export.RenderUnavailable as exc:
+        log.warning("Yig'ilish %s: %s eksporti bo'lmadi (%s)", m["id"], fmt, exc.code)
+        headers = {"Retry-After": "10"} if exc.code == "export_busy" else None
+        raise MeetingProblem(503, exc.code, _RENDER_MESSAGES.get(exc.code), headers=headers) from None
+    return data, title, recorded_at
+
+
 # --- 22-25. vazifalar --------------------------------------------------------------------------------
 
 
@@ -843,12 +983,16 @@ def _starts(meeting_id: str) -> dict[int, float]:
 _STATUS_ORDER = {"open": 0, "done": 1, "dismissed": 2}
 
 
+def _action_order(a: dict[str, Any]) -> tuple:
+    """Vazifalar tartibi (ro'yxat va eksport jadvali bir xil): holat, muddat, xulosadagi raqam."""
+    return (_STATUS_ORDER.get(a["status"], 3), a.get("due_date") or "9999-12-31",
+            a.get("summary_item_id") is None, _item_number(a), a["created_at"], a["id"])
+
+
 def action_items(user: AuthUser, meeting_id: str) -> dict[str, Any]:
     m = _owned(user.actorId, meeting_id)
     starts = _starts(m["id"])
-    items = sorted(runtime().store.action_items(m["id"]),
-                   key=lambda a: (_STATUS_ORDER.get(a["status"], 3), a.get("due_date") or "9999-12-31",
-                                  a.get("summary_item_id") is None, _item_number(a), a["created_at"], a["id"]))
+    items = sorted(runtime().store.action_items(m["id"]), key=_action_order)
     return {"items": [action_view(a, starts) for a in items]}
 
 
@@ -1173,8 +1317,22 @@ def questions(user: AuthUser, meeting_id: str) -> dict[str, Any]:
 _remux_lock = threading.Lock()
 
 
-def audio_file(user: AuthUser, meeting_id: str) -> tuple[Path, str, dict[str, str]]:
+def audio_file(user: AuthUser, meeting_id: str, *, download: bool = False) -> tuple[Path, str, dict[str, str]]:
+    """Tinglash uchun audio. `download` - ulashish uchun: o'sha fayl, lekin `attachment` va
+    odamga tushunarli nom (`haftalik-reja-2026-10-10.m4a`) bilan - alohida endpoint shart emas."""
     m = _owned(user.actorId, meeting_id)
+    path, media, headers = _audio_path(m)
+    if download:
+        recorded_at = float(m.get("recorded_at") or m.get("created_at") or 0)
+        ascii_name, real_name = export.file_names(m.get("title") or default_title(recorded_at, "uz"), recorded_at,
+                                                  "m4a" if media == "audio/mp4" else "aac")
+        # Shaxsiy yozuv: oraliq kesh (proksi) saqlab qolmasin - eksport fayli bilan bir xil.
+        headers = {**headers, "Content-Disposition": export.content_disposition(ascii_name, real_name),
+                   "Cache-Control": "private, no-store"}
+    return path, media, headers
+
+
+def _audio_path(m: dict[str, Any]) -> tuple[Path, str, dict[str, str]]:
     if not m.get("completed_at"):
         raise MeetingProblem(409, "not_ready", "Audio hali yuklanmagan")
     path = Path(m["audio_path"]) if m.get("audio_path") else None

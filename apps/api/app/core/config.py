@@ -692,6 +692,19 @@ class Settings(BaseSettings):
     #: `CrmAuth` hisobi va HRM tokeni yuborilmaydi - vazifa so'ragan odam nomidan. `false` -
     #: o'z ulanishi bo'lmasa umumiy CRM hisobi (HRM baribir yuborilmaydi).
     meetings_crm_own_tokens: bool = True
+    #: To'liq hujjat eksporti (`GET /meetings/{id}/export`: DOCX/PDF/MD/TXT) - odamga soatiga
+    #: shuncha fayl. Uzun transkriptli PDF bir necha soniya CPU oladi: tugmani qayta-qayta
+    #: bosish serverni band qilmasin.
+    meetings_export_per_hour: int = 30
+    #: Bir vaqtda chiziladigan eksportlar (butun jarayon) va navbatda kutish (soniya). Endpoint
+    #: sync: kutayotgan har so'rov umumiy threadpool ipini band qiladi - navbat qisqa bo'lsin,
+    #: oshsa 503 `export_busy`. Bitta odamning ikkinchi parallel eksporti - darhol 429 `export_busy`.
+    meetings_export_concurrency: int = 2
+    meetings_export_wait_sec: float = 10.0
+    #: PDF shrifti papkasi: `DejaVuSans.ttf` (+ `DejaVuSans-Bold.ttf`). reportlab'ning o'z
+    #: Helvetica'si kirill va o'zbek `oʻ`/`gʻ` ni chizmaydi ("qora qutilar"). Fayl yo'q bo'lsa
+    #: PDF 503 `pdf_unavailable` qaytaradi, qolgan formatlar ishlayveradi.
+    meetings_export_font_dir: Path = Path("/usr/share/fonts/truetype/dejavu")
     #: Qurilma tokeni (mobil ilova) - oxirgi ishlatilgandan shuncha kun yashaydi.
     device_token_days: int = 30
     #: Qurilma tokenlari ombori (faqat xeshlar). `data/` gitignore'da, 600.

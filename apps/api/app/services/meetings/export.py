@@ -3,6 +3,13 @@
 `[S1]` tokenlari ismga almashtiriladi (ism bo'lmasa "1-ishtirokchi" /
 "Участник 1" / "Speaker 1"), birlashtirilgan spikerlar (`mergedInto`)
 qo'llanadi, sarlavhalar `layout` dan, sanalar til bo'yicha.
+
+TO'LIQ HUJJAT (2026-10-10, `GET /meetings/{id}/export`): Plaud'dagidek bitta fayl -
+sarlavha, sana, davomiylik, ishtirokchilar, xulosa bo'limlari (shablon tartibida),
+vazifalar JADVALI (CRM kaliti bilan), aqliy xarita (ierarxiya ko'rinishida) va
+to'liq transkript. Avval `build_document` bitta neytral `Document` yasaydi, keyin
+uni to'rt format chizadi (MD/TXT - shu yerda, DOCX/PDF - `export_render.py`): to'rt
+fayl MAZMUNI bir xil bo'lsin, biri ikkinchisidan "orqada qolmasin".
 """
 
 from __future__ import annotations
@@ -10,10 +17,16 @@ from __future__ import annotations
 import re
 import unicodedata
 
-from typing import Any
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Sequence
+from urllib.parse import quote
 
 from . import dates
 from .prompts import clock, hms
+from .templates import SECTION_TITLES
+from .templates import get as get_template
+from .templates import layout as template_layout
 
 _TOKEN = re.compile(r"\[(S\d{1,2})\]")
 
@@ -53,7 +66,9 @@ def speaker_name(sid: str | None, speakers: dict[str, dict[str, Any]], lang: str
     sid = resolve_speaker(sid, speakers)
     if not sid:
         return "?"
-    name = (speakers.get(sid) or {}).get("name")
+    # NEGA `one_line`: `rename_speaker` faqat bo'shliqlarni yig'adi - eski yozuvlarda boshqaruv
+    # belgili ism (`Aziz\x01`) qolgan bo'lishi mumkin, u DOCX XML ni buzib 500 berardi.
+    name = one_line((speakers.get(sid) or {}).get("name"))
     if name:
         return name
     number = re.sub(r"\D", "", sid) or "?"
@@ -64,10 +79,22 @@ def render_tokens(text: Any, speakers: dict[str, dict[str, Any]], lang: str) -> 
     return _TOKEN.sub(lambda m: speaker_name(m.group(1), speakers, lang), str(text or ""))
 
 
+#: O'zbekcha tutuq belgilari (`o'`, `oʻ`, `g'`, `gʻ`): slug'da so'zni BO'LMASIN - aks holda bir xil
+#: sarlavha `bo-yicha` va `boyicha` bo'lib ikki xil nom olardi.
+_APOSTROPHES = re.compile(r"['`´ʹʻʼʽ‘’]")
+#: Kirill -> lotin (faqat ASCII fayl nomi uchun; haqiqiy nom `filename*` da o'zgarmaydi):
+#: aks holda ruscha sarlavhali hamma fayl `meeting-<sana>` bo'lib, bir-biridan ajralmasdi.
+_CYRILLIC = dict(zip("абвгдезийклмнопрстуфыэіқғҳґ", "abvgdeziyklmnoprstufyeiqghg"))
+_CYRILLIC.update({"ё": "yo", "ж": "zh", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch", "ъ": "", "ь": "",
+                  "ю": "yu", "я": "ya", "є": "ye", "ї": "yi", "ў": "o"})
+
+
 def slug(title: str) -> str:
-    value = unicodedata.normalize("NFKD", title or "").encode("ascii", "ignore").decode("ascii")
-    value = re.sub(r"[^A-Za-z0-9]+", "-", value).strip("-").lower()
-    return value[:60] or "meeting"
+    value = _APOSTROPHES.sub("", (title or "").lower())
+    value = "".join(_CYRILLIC.get(ch, ch) for ch in value)
+    value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    value = re.sub(r"[^a-z0-9]+", "-", value).strip("-")
+    return value[:60].strip("-") or "meeting"
 
 
 def _ts(start: Any) -> str:
@@ -220,3 +247,719 @@ def transcript_srt(segments: list[dict[str, Any]], speakers: dict[str, dict[str,
             text = f"{speaker_name(seg['speaker'], speakers, lang)}: {text}"
         cues.append(f"{number}\n{_srt_time(seg['start'])} --> {_srt_time(end)}\n{text}\n")
     return "\n".join(cues)
+
+
+# --- to'liq hujjat: DOCX / PDF / MD / TXT (2026-10-10) ----------------------------------------
+#
+# Mazmun TILI o'zgarmaydi (xulosa qaysi tilda yozilgan bo'lsa - o'shanda), lekin kod
+# chizadigan hamma narsa - bo'lim sarlavhalari, jadval ustunlari, sanalar, "1-ishtirokchi" -
+# ilova tilida (`Accept-Language`): odam o'z tilidagi ilovadan bosgan faylda sarlavhalar
+# ham o'z tilida bo'lsin.
+
+#: Hujjat qismlari - `?parts=` qiymatlari, hujjatdagi tartibda.
+PARTS = ("summary", "actions", "mindmap", "transcript")
+#: Tayyor xulosa kerak bo'lgan qismlar (transkript xulosasiz ham eksport qilinadi).
+SUMMARY_PARTS = ("summary", "actions", "mindmap")
+
+#: Format -> (Content-Type, kengaytma).
+FORMATS: dict[str, tuple[str, str]] = {
+    "docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"),
+    "pdf": ("application/pdf", "pdf"),
+    "md": ("text/markdown; charset=utf-8", "md"),
+    "txt": ("text/plain; charset=utf-8", "txt"),
+}
+
+#: Pastki yozuvdagi mahsulot nomi (texnik id lar `venera` bo'lib qoladi).
+BRAND = "Barno AI"
+
+#: Jadval katagi va aqliy xarita tuguni - shundan uzun matn qisqartiriladi: PDF da bitta
+#: qator sahifadan baland bo'lsa reportlab chiza olmaydi, xaritada esa uzun gap "shoxni" yo'qotadi.
+CELL_CHARS = 600
+NODE_CHARS = 160
+#: Hujjat sarlavhasi. NEGA chegara shu yerda: DOCX `core_properties.title` 255 belgidan oshsa
+#: python-docx ValueError beradi va xato matni (yig'ilish nomi) logga tushardi. Yig'ilish nomi
+#: API da 120 bilan cheklangan, lekin `build_document` boshqa joydan ham chaqirilishi mumkin.
+TITLE_CHARS = 200
+#: Transkript: bitta spikerning ketma-ket bo'laklari (oralig'i shundan kam) - BITTA paragraf.
+#: ASR gapni mayda bo'laklarga bo'ladi; har biri alohida qator bo'lsa hujjat "uzuq-yuluq"
+#: o'qiladi (Plaud ham qo'shadi). Paragraf juda cho'zilib ketmasin - belgilar chegarasi.
+MERGE_GAP_SEC = 3.0
+MERGE_CHARS = 1200
+
+
+def _t(uz: str, ru: str, en: str) -> dict[str, str]:
+    return {"uz": uz, "ru": ru, "en": en}
+
+
+_LABELS: dict[str, dict[str, str]] = {
+    "date": _t("Sana", "Дата", "Date"),
+    "duration": _t("Davomiyligi", "Длительность", "Duration"),
+    "participants": _t("Ishtirokchilar", "Участники", "Participants"),
+    "type": _t("Xulosa turi", "Шаблон", "Summary type"),
+    "mindmap": _t("Aqliy xarita", "Интеллект-карта", "Mind map"),
+    "transcript": _t("Transkript", "Расшифровка", "Transcript"),
+    "no": _t("№", "№", "#"),
+    "task": _t("Vazifa", "Задача", "Task"),
+    "owner": _t("Mas'ul", "Ответственный", "Owner"),
+    "due": _t("Muddat", "Срок", "Due"),
+    "status": _t("Holat", "Статус", "Status"),
+    "crm": _t("CRM", "CRM", "CRM"),
+    "open": _t("ochiq", "открыта", "open"),
+    "done": _t("bajarildi", "выполнена", "done"),
+    "crm_created": _t("yaratildi", "создана", "created"),
+    # NEGA buyruq emas ("tekshiring"): vazifa matniga yopishib "sahifani yangilash (tekshiring)"
+    # vazifaning bir qismidek o'qilardi. Bu - Barno ishonchi komil emasligi haqidagi OGOHLANTIRISH.
+    "check": _t("⚠ aniqlashtirish kerak", "⚠ требует уточнения", "⚠ needs confirmation"),
+    "talk_share": _t("nutq ulushi", "доля речи", "talk share"),
+    "agenda": _t("Kun tartibi", "Повестка", "Agenda"),
+    "generated": _t("Yaratildi", "Создано", "Generated"),
+    # Fayl boshqa shaharda ham ochiladi - vaqt qaysi mintaqada ekani ko'rinsin.
+    "tz": _t("Toshkent vaqti", "время Ташкента", "Tashkent time"),
+    "stale": _t("Transkript bu xulosadan keyin o'zgartirilgan - xulosa eski matn bo'yicha.",
+                "Расшифровка изменена после этого резюме - резюме по старому тексту.",
+                "The transcript was edited after this summary was written."),
+    "no_speakers": _t("Spikerlar ajratilmagan", "Спикеры не разделены", "Speakers not separated"),
+}
+
+#: Faqat eksportdagi bo'lim nomlari (`SECTION_TITLES` ilova bilan umumiy - unga tegmaymiz).
+#: NEGA: hujjatda "Asosiy fikrlar" va "Muhim lahzalar" yonma-yon sinonimdek o'qiladi (ikkinchisi
+#: aslida iqtiboslar), "Ishtirokchilar" esa sarlavha qatorida ham bor.
+_EXPORT_TITLES: dict[str, dict[str, str]] = {
+    "highlights": _t("Iqtiboslar", "Цитаты", "Quotes"),
+    "participants": _t("Ishtirokchilar faolligi", "Активность участников", "Participation"),
+}
+
+_OUTCOME = {
+    "uz": {"decided": "qaror qabul qilindi", "open": "ochiq", "info": "ma'lumot"},
+    "ru": {"decided": "решено", "open": "открыто", "info": "информация"},
+    "en": {"decided": "decided", "open": "open", "info": "info"},
+}
+_SEVERITY = {
+    "uz": {"high": "yuqori", "medium": "o'rta", "low": "past"},
+    "ru": {"high": "высокий", "medium": "средний", "low": "низкий"},
+    "en": {"high": "high", "medium": "medium", "low": "low"},
+}
+_SENTIMENT = {
+    "uz": {"positive": "ijobiy", "neutral": "neytral", "mixed": "aralash", "negative": "salbiy", "tense": "keskin"},
+    "ru": {"positive": "позитивное", "neutral": "нейтральное", "mixed": "смешанное", "negative": "негативное",
+           "tense": "напряжённое"},
+    "en": {"positive": "positive", "neutral": "neutral", "mixed": "mixed", "negative": "negative", "tense": "tense"},
+}
+_DURATION = {"uz": ("soat", "daqiqa", "soniya"), "ru": ("ч", "мин", "с"), "en": ("h", "min", "s")}
+
+#: Mazmun tili -> Word/PDF til kodi. NEGA: python-docx shabloni `en-US` - Word o'zbekcha matnning
+#: deyarli HAR so'zini qizil chiziq bilan belgilardi. `uz-Latn-UZ` uchun lug'at odatda o'rnatilmagan
+#: - Word u holda tekshirmaydi; ruscha matn esa ruscha lug'at bilan to'g'ri tekshiriladi.
+WORD_LANGS = {"uz": "uz-Latn-UZ", "ru": "ru-RU", "en": "en-US"}
+
+
+def label(key: str, lang: str) -> str:
+    return _LABELS[key].get(lang) or _LABELS[key]["uz"]
+
+
+def section_title(key: str, lang: str) -> str:
+    titles = _EXPORT_TITLES.get(key) or SECTION_TITLES.get(key) or {}
+    return titles.get(lang) or titles.get("uz") or key
+
+
+class RenderUnavailable(Exception):
+    """DOCX/PDF chizib bo'lmaydi (kutubxona yoki shrift yo'q, yoki PDF navbati to'la) - endpoint
+    503 qaytaradi. `code` - mobil ilova ko'radigan kod (`pdf_unavailable` | `docx_unavailable` |
+    `export_busy`)."""
+
+    def __init__(self, code: str, reason: str = "") -> None:
+        super().__init__(f"{code}: {reason}" if reason else code)
+        self.code = code
+        self.reason = reason
+
+
+@dataclass
+class Document:
+    """Formatdan mustaqil hujjat. `blocks` - ketma-ket bloklar (`kind` bo'yicha):
+
+    * `h2` {text} - bo'lim sarlavhasi; `h3` {text, sub} - mavzu (sub - vaqt/natija);
+    * `p` {text} - paragraf (qator ichida `\\n` bo'lishi mumkin); `muted` {text} - izoh;
+    * `ul` {items: [(daraja 0..2, matn)]}; `quote` {text, who};
+    * `table` {head, rows, widths, muted} - `widths` nisbiy kengliklar, katakda `\\n` - yangi
+      qator, `muted` - kulrang chiziladigan qatorlar (bajarilgan vazifalar, 0 dan);
+    * `tree` {root: {text, children}} - aqliy xarita;
+    * `transcript` {lines: [(vaqt, kim, matn)]}.
+
+    `lang` - ilova tili (sarlavhalar), `text_lang` - mazmun tili (imlo tekshiruvi, PDF `/Lang`).
+    """
+
+    lang: str
+    title: str
+    meta: list[tuple[str, str]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    blocks: list[dict[str, Any]] = field(default_factory=list)
+    footer: str = ""
+    text_lang: str = ""
+
+
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f￾￿]")
+_SPACES = re.compile(r"\s+")
+
+
+def xml_safe(value: Any) -> str:
+    """XML ga (DOCX) yozib bo'ladigan matn: boshqaruv belgilari va juft bo'lmagan surrogatlar
+    olib tashlanadi, bo'shliqlarga TEGILMAYDI (`"Ism: "` oxiridagi bo'shliq kerak). DOCX
+    chizuvchisi HAR matnni shundan o'tkazadi - yig'uvchi biror joyda `clean` ni unutsa ham
+    fayl 500 bilan yiqilmasin."""
+    text = "" if value is None else str(value)
+    return _CONTROL.sub("", text.encode("utf-8", "replace").decode("utf-8"))
+
+
+def clean(value: Any) -> str:
+    """Faylga yoziladigan matn: boshqaruv belgilari (DOCX XML ni buzadi, PDF da "quti")
+    va juft bo'lmagan surrogatlar (UTF-8 ga yozilmaydi) olib tashlanadi."""
+    return xml_safe(value).replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ").strip()
+
+
+def one_line(value: Any, limit: int = 0) -> str:
+    text = _SPACES.sub(" ", clean(value)).strip()
+    if limit and len(text) > limit:
+        text = text[:limit - 1].rstrip() + "…"
+    return text
+
+
+def flat(cell: Any) -> str:
+    """Ko'p qatorli jadval katagi -> bir qator (MD/TXT): `ochiq\\n⚠ ...` -> `ochiq · ⚠ ...`."""
+    return " · ".join(x for x in (one_line(part) for part in str(cell or "").split("\n")) if x)
+
+
+def parse_parts(raw: str | None) -> list[str] | None:
+    """`?parts=summary,transcript` -> hujjat tartibidagi ro'yxat; bo'sh - `None` (default:
+    hammasi, nima tayyor bo'lsa). Noma'lum qism - `ValueError` (400)."""
+    names = [p.strip().lower() for p in (raw or "").split(",") if p.strip()]
+    if not names:
+        return None
+    unknown = [p for p in names if p not in PARTS]
+    if unknown:
+        raise ValueError(", ".join(unknown[:5]))
+    return [p for p in PARTS if p in names]
+
+
+def format_moment(epoch: float, lang: str) -> str:
+    """Yil bilan: `2026-yil 10-oktyabr, 16:00` / `10 октября 2026, 16:00` / `October 10, 2026, 16:00`
+    (fayl yillar o'tib ham ochiladi - ilovadagi yilsiz sana yetmaydi)."""
+    moment = dates.tashkent(epoch)
+    hhmm = moment.strftime("%H:%M")
+    month = dates.MONTHS.get(lang, dates.MONTHS["uz"])[moment.month - 1]
+    if lang == "ru":
+        return f"{moment.day} {month} {moment.year}, {hhmm}"
+    if lang == "en":
+        return f"{month} {moment.day}, {moment.year}, {hhmm}"
+    return f"{moment.year}-yil {moment.day}-{month}, {hhmm}"
+
+
+def format_duration(seconds: Any, lang: str) -> str:
+    h_word, m_word, s_word = _DURATION.get(lang, _DURATION["uz"])
+    total = max(0, int(round(float(seconds or 0))))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours} {h_word} {minutes} {m_word}" if minutes else f"{hours} {h_word}"
+    if minutes:
+        return f"{minutes} {m_word}"
+    return f"{secs} {s_word}"
+
+
+def _when(day: Any, hhmm: Any, raw: Any, lang: str) -> str:
+    text = dates.format_date(day, lang) if day else (raw or "")
+    if hhmm:
+        # Vergul bilan: "17-oktyabr, 10:00" - "17-oktyabr 10:00" da sana va vaqt qo'shilib o'qiladi.
+        text = f"{text}, {hhmm}" if str(text).strip() else str(hhmm)
+    return one_line(text)
+
+
+def _crm_key(row: dict[str, Any], lang: str) -> str:
+    """CRM da YARATILGAN vazifaning kaliti (`DVSIB-231`); taklif kutilayotgan yoki rad
+    etilgan bo'lsa - bo'sh (hujjatda "CRM da bor" degan yolg'on chiqmasin)."""
+    if row.get("crm_status") != "executed":
+        return ""
+    result = row.get("crm_result")
+    if isinstance(result, dict):
+        for key in ("key", "id", "number"):
+            if result.get(key) not in (None, ""):
+                return one_line(result[key], 40)
+    return label("crm_created", lang)
+
+
+def actions_from_rows(rows: Sequence[dict[str, Any]], speakers: dict[str, dict[str, Any]],
+                      lang: str) -> list[dict[str, Any]]:
+    """Jonli vazifalar (`action_items`: odam tahrirlagani, qo'shgani, CRM kaliti) - jadval
+    qatorlari. `crm_result` - JSON matn emas, allaqachon o'qilgan qiymat (`jload`)."""
+    out = []
+    for row in rows:
+        if row.get("status") == "dismissed":
+            continue
+        owner = row.get("owner_name") or (speaker_name(row["owner_speaker"], speakers, lang)
+                                          if row.get("owner_speaker") else "")
+        out.append({"task": one_line(row.get("task")), "owner": one_line(owner),
+                    "due": _when(row.get("due_date"), row.get("due_time"), row.get("due_raw"), lang),
+                    "done": row.get("status") == "done", "check": bool(row.get("needs_confirmation")),
+                    "crm": _crm_key(row, lang)})
+    return out
+
+
+def actions_from_content(content: dict[str, Any], speakers: dict[str, dict[str, Any]],
+                         lang: str) -> list[dict[str, Any]]:
+    """Asosiy bo'lmagan xulosa: vazifalar xulosaning o'zidan (CRM kaliti yo'q)."""
+    out = []
+    for item in content.get("actionItems") or []:
+        owner = item.get("owner") or {}
+        person = (speaker_name(owner["speaker"], speakers, lang) if owner.get("speaker") else "") \
+            or owner.get("name") or ""
+        due = item.get("due") or {}
+        task = render_tokens(item.get("task"), speakers, lang)
+        if item.get("condition"):
+            task = f"{task} ({_CONDITION.get(lang, 'shart')}: {render_tokens(item['condition'], speakers, lang)})"
+        out.append({"task": one_line(task), "owner": one_line(person),
+                    "due": _when(due.get("date"), due.get("time"), due.get("raw"), lang),
+                    "done": item.get("status") == "done_in_meeting", "check": bool(item.get("needsConfirmation")),
+                    "crm": ""})
+    return out
+
+
+def _actions_table(actions: list[dict[str, Any]], lang: str) -> dict[str, Any]:
+    rows, muted = [], []
+    for number, a in enumerate(actions, start=1):
+        # Ogohlantirish vazifa matnida EMAS, holat ustunida (alohida qatorda).
+        status = f"✓ {label('done', lang)}" if a.get("done") else label("open", lang)
+        if a.get("check"):
+            status += "\n" + label("check", lang)
+        if a.get("done"):
+            muted.append(number - 1)
+        rows.append([str(number), one_line(a["task"], CELL_CHARS), one_line(a["owner"], 120), one_line(a["due"], 80),
+                     status, a.get("crm") or ""])
+    head = [label(k, lang) for k in ("no", "task", "owner", "due", "status", "crm")]
+    # Kengliklar DejaVu 8.8 pt da o'lchangan (uz/ru/en): "Ответственный", "16 октября, 18:00",
+    # "✓ выполнена", "aniqlashtirish" va `DVSIB-231` so'z o'rtasidan bo'linmasin; qolgani - vazifaga.
+    return {"kind": "table", "head": head, "rows": rows, "widths": [5, 31, 18, 19, 15, 12], "muted": muted}
+
+
+def _participants(content: dict[str, Any], speakers: dict[str, dict[str, Any]], lang: str) -> list[str]:
+    """Xulosadagi ishtirokchilar - birlashtirilgan spikerlar BITTA qator (ulushlar qo'shiladi)."""
+    merged: dict[str, dict[str, Any]] = {}
+    for p in content.get("participants") or []:
+        sid = resolve_speaker(p.get("speaker"), speakers) or p.get("speaker") or "?"
+        slot = merged.setdefault(sid, {"share": 0.0, "note": ""})
+        slot["share"] += float(p.get("talkShare") or 0)
+        if p.get("contribution") and not slot["note"]:
+            slot["note"] = render_tokens(p["contribution"], speakers, lang)
+    out = []
+    share_word = label("talk_share", lang)
+    for sid, slot in merged.items():
+        note = f": {slot['note']}" if slot["note"] else ""
+        out.append(one_line(f"{speaker_name(sid, speakers, lang)} — {share_word} {round(slot['share'] * 100)}%{note}"))
+    return out
+
+
+def _norm(value: Any) -> str:
+    return one_line(value).casefold()
+
+
+def _without_repeated_questions(content: dict[str, Any]) -> dict[str, Any]:
+    """"Hal qilinmagan masalalar" (`followUps`) har ochiq savolni SABABI bilan allaqachon
+    beradi: "Ochiq savollar" bo'limida o'sha matn yana chiqsa hujjat "to'ldirilgan"dek o'qiladi.
+    Faqat hujjat bo'limlari uchun (aqliy xarita to'liq mazmundan chiziladi); ilovaga tegmaydi."""
+    follow_ups = content.get("followUps") or []
+    questions = content.get("openQuestions") or []
+    if not follow_ups or not questions:
+        return content
+    refs = {f.get("ref") for f in follow_ups if f.get("ref") and f.get("kind") in (None, "openQuestion")}
+    texts = {_norm(f.get("text")) for f in follow_ups}
+    kept = [q for q in questions if q.get("id") not in refs and _norm(q.get("text")) not in texts]
+    return {**content, "openQuestions": kept}
+
+
+def _section(key: str, content: dict[str, Any], speakers: dict[str, dict[str, Any]], lang: str,
+             actions: list[dict[str, Any]] | None, stamp: Any = clock) -> list[dict[str, Any]]:
+    """Bitta xulosa bo'limining bloklari (sarlavhasiz). Bo'sh bo'lim - bo'sh ro'yxat.
+    `stamp` - vaqt formati (transkript bilan BIR XIL: `build_document` tanlaydi)."""
+    def t(value: Any) -> str:
+        return one_line(render_tokens(value, speakers, lang))
+
+    def who(sid: Any) -> str:
+        return one_line(speaker_name(sid, speakers, lang)) if sid else ""
+
+    def ts(start: Any) -> str:
+        return f" ({stamp(start)})" if isinstance(start, (int, float)) else ""
+
+    def bullets(lines: list[str]) -> list[dict[str, Any]]:
+        items = [(0, line) for line in lines if line]
+        return [{"kind": "ul", "items": items}] if items else []
+
+    check = label("check", lang)
+    if key == "overview":
+        out = []
+        if content.get("overview"):
+            out.append({"kind": "p", "text": clean(render_tokens(content["overview"], speakers, lang))})
+        if content.get("purpose"):
+            title = SECTION_TITLES["purpose"].get(lang, "Maqsad")
+            out.append({"kind": "p", "text": f"{title}: {t(content['purpose'])}"})
+        return out
+    if key == "actionItems":
+        return [_actions_table(actions, lang)] if actions else []
+    if key == "decisions":
+        lines = []
+        for d in content.get("decisions") or []:
+            status = _STATUS.get(lang, _STATUS["uz"]).get(d.get("status") or "final", "")
+            cond = f" ({t(d['condition'])})" if d.get("condition") else ""
+            # Holat va ogohlantirish BITTA qavsda: "[taxminiy · ⚠ aniqlashtirish kerak]".
+            tags = " · ".join(x for x in (status, check if d.get("needsConfirmation") else "") if x)
+            lines.append(f"{t(d.get('text'))}{cond}{' [' + tags + ']' if tags else ''}{ts(d.get('start'))}")
+        return bullets(lines)
+    if key == "followUps":
+        reasons = _REASONS.get(lang, _REASONS["uz"])
+        lines = []
+        for f in content.get("followUps") or []:
+            why = ", ".join(reasons.get(r, r) for r in f.get("reasons") or [])
+            lines.append(f"{t(f.get('text'))}{' — ' + why if why else ''}{ts(f.get('start'))}")
+        return bullets(lines)
+    if key == "topics":
+        out = []
+        outcomes = _OUTCOME.get(lang, _OUTCOME["uz"])
+        for topic in content.get("topics") or []:
+            span = ""
+            if isinstance(topic.get("start"), (int, float)):
+                span = stamp(topic["start"])
+                if isinstance(topic.get("end"), (int, float)) and topic["end"] > topic["start"]:
+                    span += f"–{stamp(topic['end'])}"
+            sub = " · ".join(x for x in (span, outcomes.get(topic.get("outcome") or "", "")) if x)
+            out.append({"kind": "h3", "text": t(topic.get("title")), "sub": sub})
+            if topic.get("summary"):
+                out.append({"kind": "p", "text": clean(render_tokens(topic["summary"], speakers, lang))})
+            out += bullets([t(kp.get("text")) for kp in topic.get("keyPoints") or []])
+        return out
+    if key in ("keyPoints", "openQuestions", "nextSteps"):
+        return bullets([f"{t(item.get('text'))}{ts(item.get('start'))}" for item in content.get(key) or []])
+    if key == "risks":
+        lines = []
+        levels = _SEVERITY.get(lang, _SEVERITY["uz"])
+        for r in content.get("risks") or []:
+            level = f" [{levels[r['severity']]}]" if r.get("severity") in levels else ""
+            mitigation = f" → {t(r['mitigation'])}" if r.get("mitigation") else ""
+            lines.append(f"{t(r.get('text'))}{level}{mitigation}{ts(r.get('start'))}")
+        return bullets(lines)
+    if key == "numbers":
+        lines = []
+        for n in content.get("numbers") or []:
+            unit = f" {n['unit']}" if n.get("unit") else ""
+            what = t(n.get("what"))
+            value = n.get("value") if n.get("value") is not None else ""
+            lines.append(one_line(f"{value}{unit}{' — ' + what if what else ''}"))
+        return bullets(lines)
+    if key == "dates":
+        lines = []
+        for d in content.get("dates") or []:
+            what = t(d.get("what"))
+            lines.append(one_line(f"{_when(d.get('date'), d.get('time'), d.get('raw'), lang)}"
+                                  f"{' — ' + what if what else ''}"))
+        return bullets(lines)
+    if key == "nextMeeting":
+        nm = content.get("nextMeeting")
+        if not nm:
+            return []
+        out = []
+        when = _when(nm.get("date"), nm.get("time"), nm.get("raw"), lang)
+        if when:
+            out.append({"kind": "p", "text": when})
+        agenda = [t(a) for a in nm.get("agenda") or [] if a]
+        if agenda:
+            out.append({"kind": "p", "text": f"{label('agenda', lang)}:"})
+            out += bullets(agenda)
+        return out
+    if key == "highlights":
+        return [{"kind": "quote", "text": one_line(h.get("quote")),
+                 "who": f"{who(h.get('speaker')) or '?'}{ts(h.get('start'))}"}
+                for h in content.get("highlights") or [] if h.get("quote")]
+    if key == "participants":
+        return bullets(_participants(content, speakers, lang))
+    if key == "keywords":
+        words = [one_line(w) for w in content.get("keywords") or [] if w]
+        return [{"kind": "p", "text": ", ".join(words)}] if words else []
+    if key == "sentiment":
+        s = content.get("sentiment")
+        if not s:
+            return []
+        mood = _SENTIMENT.get(lang, _SENTIMENT["uz"]).get(s.get("overall") or "", s.get("overall") or "")
+        note = f": {t(s['note'])}" if s.get("note") else ""
+        return [{"kind": "p", "text": f"{one_line(mood)}{note}"}] if mood else []
+    if key == "followUpMessage":
+        fu = content.get("followUpMessage")
+        if not fu:
+            return []
+        out = []
+        if fu.get("subject"):
+            out.append({"kind": "p", "text": t(fu["subject"])})
+        if fu.get("body"):
+            out.append({"kind": "p", "text": clean(render_tokens(fu["body"], speakers, lang))})
+        return out
+    sections = {g.get("key"): g.get("items") or [] for g in content.get("templateSections") or []}
+    lines = []
+    for item in sections.get(key) or []:
+        person = f"{who(item.get('speaker'))}: " if item.get("speaker") else ""
+        lines.append(f"{person}{t(item.get('text'))}")
+    return bullets(lines)
+
+
+def mindmap_tree(title: str, content: dict[str, Any], speakers: dict[str, dict[str, Any]], lang: str,
+                 actions: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Aqliy xarita: ildiz - sarlavha, shoxlar - mavzular (asosiy fikrlari bilan), keyin
+    qarorlar, vazifalar va ochiq savollar. Telefon xaritani xulosa mazmunidan O'ZI chizadi
+    (qo'shimcha model chaqiruvi yo'q); hujjatda esa u ierarxiya ro'yxati.
+
+    Holat tushib qolmaydi: faqat xaritani o'qigan odam taxminiy qarorni yakuniy, bajarilgan
+    vazifani ochiq deb tushunmasin - qarorga holati, vazifaga mas'ul, muddat va "✓"."""
+    def t(value: Any) -> str:
+        return one_line(render_tokens(value, speakers, lang), NODE_CHARS)
+
+    def node(text: str, children: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        return {"text": text, "children": children or []}
+
+    branches = []
+    outcomes = _OUTCOME.get(lang, _OUTCOME["uz"])
+    for topic in content.get("topics") or []:
+        leaves = [node(t(kp.get("text"))) for kp in topic.get("keyPoints") or [] if kp.get("text")]
+        if not leaves and topic.get("summary"):
+            leaves = [node(t(topic["summary"]))]
+        outcome = outcomes.get(topic.get("outcome") or "", "")
+        branches.append(node(f"{t(topic.get('title'))}{' (' + outcome + ')' if outcome else ''}", leaves))
+    if not branches and content.get("keyPoints"):
+        branches.append(node(section_title("keyPoints", lang),
+                             [node(t(k.get("text"))) for k in content["keyPoints"] if k.get("text")]))
+    statuses = _STATUS.get(lang, _STATUS["uz"])
+    decisions = []
+    for d in content.get("decisions") or []:
+        if not d.get("text"):
+            continue
+        status = d.get("status") or "final"
+        tag = f" ({statuses.get(status, status)})" if status != "final" else ""
+        decisions.append(node(one_line(f"{t(d['text'])}{tag}", NODE_CHARS + 30)))
+    if decisions:
+        branches.append(node(section_title("decisions", lang), decisions))
+    if actions:
+        tasks = []
+        for a in actions:
+            text = a["task"] + "".join(f"{sep}{a[k]}" for sep, k in ((" — ", "owner"), (" · ", "due")) if a.get(k))
+            if a.get("done"):
+                text = f"✓ {text} ({label('done', lang)})"
+            tasks.append(node(one_line(text, NODE_CHARS + 60)))
+        branches.append(node(section_title("actionItems", lang), tasks))
+    questions = [node(t(q.get("text"))) for q in content.get("openQuestions") or [] if q.get("text")]
+    if questions:
+        branches.append(node(section_title("openQuestions", lang), questions))
+    return node(one_line(title, NODE_CHARS), branches)
+
+
+def transcript_lines(segments: Sequence[dict[str, Any]], speakers: dict[str, dict[str, Any]], lang: str,
+                     stamp: Any = hms) -> list[tuple[str, str, str]]:
+    """Transkript qatorlari (vaqt, kim, matn): bitta spikerning ketma-ket, oralig'i
+    `MERGE_GAP_SEC` dan kam bo'laklari bitta paragrafga qo'shiladi (vaqti - birinchisiniki)."""
+    merged: list[dict[str, Any]] = []
+    last_end: float | None = None
+    for seg in segments:
+        text = clean(seg.get("text"))
+        if not text:
+            continue
+        who = one_line(speaker_name(seg["speaker"], speakers, lang)) if seg.get("speaker") else ""
+        start = float(seg.get("start") or 0)
+        prev = merged[-1] if merged else None
+        if (prev and prev["who"] == who and last_end is not None and start - last_end <= MERGE_GAP_SEC
+                and len(prev["text"]) + len(text) < MERGE_CHARS):
+            prev["text"] += " " + text
+        else:
+            merged.append({"start": start, "who": who, "text": text})
+        last_end = float(seg.get("end") or start)
+    return [(stamp(x["start"]), x["who"], x["text"]) for x in merged]
+
+
+def build_document(*, title: str, recorded_at: float, duration_sec: float, speakers: dict[str, dict[str, Any]],
+                   lang: str, now: float, parts: Sequence[str], template: str | None = None,
+                   content: dict[str, Any] | None = None, actions: list[dict[str, Any]] | None = None,
+                   segments: list[dict[str, Any]] | None = None, stale: bool = False,
+                   text_lang: str | None = None) -> Document:
+    """To'liq hujjat. `content` - `_map_merged` qilingan xulosa (yoki `None`), `actions` -
+    `actions_from_rows`/`actions_from_content` natijasi, `segments` - transkript qatorlari,
+    `text_lang` - yig'ilish tili (xulosa bo'lmasa mazmun tili shundan)."""
+    lang = lang if lang in _FALLBACK else "uz"
+    content = content or {}
+    doc = Document(lang=lang, title=one_line(title, TITLE_CHARS) or BRAND)
+    body_lang = content.get("language") or text_lang or lang
+    doc.text_lang = body_lang if body_lang in WORD_LANGS else lang
+    # Vaqt formati hujjat bo'ylab BIR XIL (xulosadagi "(00:14)" transkriptdagi "[00:14]" ga mos
+    # kelsin): soatdan uzun yig'ilishda hammasi `hh:mm:ss`, qisqasida `mm:ss`.
+    longest = max(float(duration_sec or 0),
+                  max((float(s.get("end") or s.get("start") or 0) for s in segments or []), default=0.0))
+    stamp = hms if longest >= 3600 else clock
+    if recorded_at:
+        doc.meta.append((label("date", lang), format_moment(recorded_at, lang)))
+    if duration_sec:
+        doc.meta.append((label("duration", lang), format_duration(duration_sec, lang)))
+    people = [speaker_name(sid, speakers, lang) for sid, sp in speakers.items() if not sp.get("merged_into")]
+    if people:
+        doc.meta.append((label("participants", lang), ", ".join(one_line(p) for p in people)))
+    has_summary = bool(content) and any(p in SUMMARY_PARTS for p in parts)
+    if has_summary and template:
+        doc.meta.append((label("type", lang), get_template(template).title.get(lang, template)))
+    if has_summary and stale:
+        doc.notes.append(label("stale", lang))
+
+    table_done = False
+    if "summary" in parts and content:
+        keys = [entry["key"] for entry in template_layout(template or "general", lang)]
+        sections = _without_repeated_questions(content) if "followUps" in keys else content
+        for key in keys:
+            if key == "actionItems" and "actions" not in parts:
+                continue
+            blocks = _section(key, sections, speakers, lang, actions, stamp)
+            if blocks:
+                doc.blocks.append({"kind": "h2", "text": section_title(key, lang)})
+                doc.blocks += blocks
+                table_done = table_done or key == "actionItems"
+    if "actions" in parts and not table_done and actions:
+        # Shablonda vazifalar bo'limi yo'q (yoki faqat `actions` so'ralgan) - jadval alohida bo'lim.
+        doc.blocks.append({"kind": "h2", "text": section_title("actionItems", lang)})
+        doc.blocks.append(_actions_table(actions, lang))
+    if "mindmap" in parts and content:
+        root = mindmap_tree(doc.title, content, speakers, lang, actions)
+        if root["children"]:
+            doc.blocks.append({"kind": "h2", "text": label("mindmap", lang)})
+            doc.blocks.append({"kind": "tree", "root": root})
+    if "transcript" in parts and segments is not None:
+        doc.blocks.append({"kind": "h2", "text": label("transcript", lang)})
+        if not speakers:
+            doc.blocks.append({"kind": "muted", "text": label("no_speakers", lang)})
+        doc.blocks.append({"kind": "transcript", "lines": transcript_lines(segments, speakers, lang, stamp)})
+    doc.footer = f"{BRAND} · {label('generated', lang)}: {format_moment(now, lang)} ({label('tz', lang)})"
+    return doc
+
+
+# --- MD va TXT ----------------------------------------------------------------------------------
+
+
+def _md_cell(value: str) -> str:
+    return flat(value).replace("\\", "\\\\").replace("|", "\\|") or " "
+
+
+def render_markdown(doc: Document) -> str:
+    out = [f"# {doc.title}", ""]
+    for name, value in doc.meta:
+        out.append(f"**{name}:** {value}  ")
+    if doc.meta:
+        out.append("")
+    for note in doc.notes:
+        out += [f"> {note}", ""]
+    for block in doc.blocks:
+        kind = block["kind"]
+        if kind == "h2":
+            out += [f"## {block['text']}", ""]
+        elif kind == "h3":
+            out.append(f"### {block['text']}")
+            if block.get("sub"):
+                out.append(f"_{block['sub']}_")
+            out.append("")
+        elif kind == "p":
+            out += ["  \n".join(block["text"].split("\n")), ""]
+        elif kind == "muted":
+            out += [f"_{block['text']}_", ""]
+        elif kind == "ul":
+            out += [f"{'  ' * level}- {text}" for level, text in block["items"]] + [""]
+        elif kind == "quote":
+            out += [f"> «{block['text']}» — {block['who']}", ""]
+        elif kind == "table":
+            out.append("| " + " | ".join(_md_cell(h) for h in block["head"]) + " |")
+            out.append("|" + "|".join("---" for _ in block["head"]) + "|")
+            out += ["| " + " | ".join(_md_cell(c) for c in row) + " |" for row in block["rows"]]
+            out.append("")
+        elif kind == "tree":
+            def walk(node: dict[str, Any], depth: int) -> None:
+                text = f"**{node['text']}**" if depth < 2 else node["text"]
+                out.append(f"{'  ' * depth}- {text}")
+                for child in node["children"]:
+                    walk(child, depth + 1)
+            walk(block["root"], 0)
+            out.append("")
+        elif kind == "transcript":
+            for stamp, who, text in block["lines"]:
+                head = f"**[{stamp}] {who}:**" if who else f"**[{stamp}]**"
+                out += [f"{head} {text}", ""]
+    out += ["---", f"_{doc.footer}_"]
+    return "\n".join(out).rstrip() + "\n"
+
+
+def render_text(doc: Document) -> str:
+    out = [doc.title, "=" * max(3, len(doc.title))]
+    out += [f"{name}: {value}" for name, value in doc.meta]
+    out += [f"! {note}" for note in doc.notes]
+    out.append("")
+    for block in doc.blocks:
+        kind = block["kind"]
+        if kind == "h2":
+            out += ["", block["text"], "-" * max(3, len(block["text"]))]
+        elif kind == "h3":
+            out += ["", block["text"] + (f" [{block['sub']}]" if block.get("sub") else "")]
+        elif kind in ("p", "muted"):
+            out += [block["text"], ""]
+        elif kind == "ul":
+            out += [f"{'  ' * level}- {text}" for level, text in block["items"]] + [""]
+        elif kind == "quote":
+            out += [f"«{block['text']}» — {block['who']}", ""]
+        elif kind == "table":
+            head = block["head"]
+            for row in block["rows"]:
+                out.append(f"{row[0]}. {flat(row[1])}")
+                extra = [f"{head[i]}: {flat(row[i])}" for i in range(2, len(row)) if row[i]]
+                if extra:
+                    out.append("   " + " · ".join(extra))
+            out.append("")
+        elif kind == "tree":
+            def walk(node: dict[str, Any], depth: int) -> None:
+                out.append(f"{'  ' * depth}{'- ' if depth else ''}{node['text']}")
+                for child in node["children"]:
+                    walk(child, depth + 1)
+            walk(block["root"], 0)
+            out.append("")
+        elif kind == "transcript":
+            out += [f"[{stamp}] {who + ': ' if who else ''}{text}" for stamp, who, text in block["lines"]]
+            out.append("")
+    out += ["", "---", doc.footer]
+    return "\n".join(out).strip() + "\n"
+
+
+def render(doc: Document, fmt: str, *, font_dir: Path | str | None = None) -> bytes:
+    """Hujjat -> fayl baytlari. DOCX/PDF kutubxonalari faqat shu yerda (kerak bo'lganda)
+    yuklanadi: ular o'rnatilmagan serverda butun ilova emas, faqat shu format 503 bo'ladi."""
+    if fmt == "md":
+        return render_markdown(doc).encode("utf-8")
+    if fmt == "txt":
+        return render_text(doc).encode("utf-8")
+    from . import export_render
+
+    if fmt == "docx":
+        return export_render.docx_bytes(doc)
+    if fmt == "pdf":
+        return export_render.pdf_bytes(doc, Path(font_dir) if font_dir else None)
+    raise ValueError(fmt)
+
+
+# --- fayl nomi ----------------------------------------------------------------------------------
+
+_UNSAFE_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f\x7f]+')
+
+
+def file_names(title: str, recorded_at: float, ext: str) -> tuple[str, str]:
+    """(ASCII nom, haqiqiy nom): `haftalik-reja-2026-10-10.pdf` va `Haftalik reja 2026-10-10.pdf`.
+    ASCII - eski klientlar uchun (`filename=`), haqiqiy - kirill/o'zbek sarlavha (`filename*=`)."""
+    day = dates.tashkent(recorded_at).date().isoformat() if recorded_at else ""
+    ascii_name = "-".join(x for x in (slug(title), day) if x)
+    real = one_line(_UNSAFE_NAME.sub(" ", clean(title)), 100) or "Barno AI"
+    return f"{ascii_name}.{ext}", f"{real}{' ' + day if day else ''}.{ext}"
+
+
+def content_disposition(ascii_name: str, real_name: str) -> str:
+    """RFC 6266: `filename` (ASCII) + `filename*` (UTF-8, foiz bilan kodlangan) - sarlavha
+    latin-1 dan tashqariga chiqmaydi, telefon esa haqiqiy nomni ko'rsatadi."""
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(real_name, safe='')}"
