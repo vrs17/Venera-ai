@@ -155,7 +155,7 @@ def _basic_challenge(message: str) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail=message,
-        headers={"WWW-Authenticate": 'Basic realm="Venera API - hujjat"'},
+        headers={"WWW-Authenticate": 'Basic realm="Barno API - hujjat"'},
     )
 
 

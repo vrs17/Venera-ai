@@ -30,9 +30,12 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -116,6 +119,149 @@ def _multipart(audio: bytes, filename: str, content_type: str) -> tuple[bytes, s
     body += json.dumps(_SETTINGS).encode()
     body += f"\r\n--{boundary}--\r\n".encode()
     return bytes(body), f"multipart/form-data; boundary={boundary}"
+
+
+#: YIG'ILISH sozlamalari (`services/meetings/`). Chat diktovkasining
+#: `_SETTINGS` iga TEGILMAYDI - u boshqa vazifa (bitta odamning bitta gapi).
+#:
+#: HAR KALIT ATAYLAB YOZILGAN. Yuborilmagan kalit GAPI loyihasining
+#: sozlamasidan olinadi, yangi loyihada esa pullik va BIOMETRIK opsiyalar
+#: yoqiq turadi: `speaker_identification` - ovoz izi (biometrik ma'lumot,
+#: rozilik kerak), `emotion`/`pii` - narx x2.2 tuzog'i (modul izohi),
+#: `gender` - odam haqida taxmin. Bizga faqat "kim qachon gapirdi" kerak:
+#: `diarization`. `max_speakers` - 0 (model o'zi aniqlaydi) yoki
+#: `meeting_settings()` dagi kutilgan son (GAPI 4 dan ortig'ini ajratmaydi).
+#: Testi: `tests/test_gapi_meeting.py` - kalitlar to'plami aynan shu.
+_MEETING_SETTINGS = {"diarization": True, "max_speakers": 0, "speaker_roles": False,
+                     "call_outcome": False, "stereo_channels_as_speakers": False,
+                     "speaker_identification": False, "gender": False,
+                     "language_detection": True, "word_timestamps": False,
+                     "emotion": False, "pii": False}
+
+#: GAPI ajrata oladigan eng ko'p ovoz.
+MAX_MEETING_SPEAKERS = 4
+
+
+def meeting_settings(expected_speakers: int | None = None) -> dict[str, Any]:
+    """Yig'ilish uchun sozlamalar NUSXASI; `max_speakers` = min(kutilgan, 4)."""
+    out = dict(_MEETING_SETTINGS)
+    if expected_speakers:
+        out["max_speakers"] = max(1, min(int(expected_speakers), MAX_MEETING_SPEAKERS))
+    return out
+
+
+class _StreamBody:
+    """`multipart/form-data` tanasi - fayl DISKDAN bo'laklab o'qiladi.
+
+    NEGA. 3 soatlik yozuv ~65 MB. `_multipart` uni xotiraga butunligicha
+    yig'ardi: server 3 GB RAM, ustida jonli Venera turadi, va ikkita
+    yig'ilish bir vaqtda yuborilsa xotira bir lahzada 130+ MB ga sakraydi.
+    Bu yerda xotirada faqat bosh va oxir (bir necha yuz bayt) turadi,
+    `Content-Length` esa oldindan hisoblanadi (bosh + fayl + oxir) -
+    urllib bo'laklangan uzatishga o'tmaydi.
+
+    `http.client` tanani `read(blocksize)` bilan o'qiydi.
+    """
+
+    def __init__(self, head: bytes, path: Path, tail: bytes, *, chunk: int = 64 * 1024) -> None:
+        self._head = head
+        self._tail = tail
+        self._path = Path(path)
+        self._chunk = max(1024, int(chunk))
+        self._stage = 0
+        self._pos = 0
+        self._fh = None
+        self.length = len(head) + self._path.stat().st_size + len(tail)
+        #: Eng katta bitta o'qish (testlar "fayl butunligicha o'qilmadi" deb tekshiradi).
+        self.max_read = 0
+
+    def read(self, size: int = -1) -> bytes:
+        if size is None or size < 0 or size > self._chunk:
+            size = self._chunk
+        while True:
+            if self._stage == 0:
+                if self._pos < len(self._head):
+                    data = self._head[self._pos:self._pos + size]
+                    self._pos += len(data)
+                    return data
+                self._stage, self._pos = 1, 0
+                self._fh = open(self._path, "rb")
+            if self._stage == 1:
+                data = self._fh.read(size)
+                if data:
+                    self.max_read = max(self.max_read, len(data))
+                    return data
+                self._fh.close()
+                self._fh = None
+                self._stage, self._pos = 2, 0
+            if self._stage == 2:
+                if self._pos < len(self._tail):
+                    data = self._tail[self._pos:self._pos + size]
+                    self._pos += len(data)
+                    return data
+                self._stage = 3
+            return b""
+
+    def close(self) -> None:
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
+
+
+def _multipart_stream(path: Path, filename: str, content_type: str,
+                      settings: dict[str, Any]) -> tuple[_StreamBody, str]:
+    """`file` + `settings` - `_multipart` bilan bir xil shakl, lekin oqimli."""
+    boundary = f"----venera{uuid.uuid4().hex}"
+    head = (f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="settings"\r\n\r\n'
+            f"{json.dumps(settings)}\r\n"
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: {content_type}\r\n\r\n").encode()
+    tail = f"\r\n--{boundary}--\r\n".encode()
+    return _StreamBody(head, path, tail), f"multipart/form-data; boundary={boundary}"
+
+
+@dataclass
+class MeetingTranscript:
+    """GAPI vazifa natijasi - XOM shaklda (normallashtirish:
+    `services/meetings/transcribe.normalize`)."""
+
+    segments: list[dict[str, Any]] = field(default_factory=list)
+    audio_seconds: float = 0.0
+    language: Any = None
+    diarization_error: bool = False
+    speakers: int | None = None
+    options: dict[str, Any] = field(default_factory=dict)
+    keys: list[str] = field(default_factory=list)
+
+
+def parse_meeting_result(payload: Any) -> MeetingTranscript:
+    """`GET /jobs/{id}/result` javobi -> `MeetingTranscript`. Hech qachon xato bermaydi:
+    hujjatda yo'q shakl kelsa ham bo'sh ro'yxat qaytadi, va ishchi buni
+    "segment yo'q" deb aniq aytadi."""
+    if not isinstance(payload, dict):
+        return MeetingTranscript()
+    # Ba'zi javoblar natijani `result` ichiga o'raydi.
+    if not isinstance(payload.get("segments"), list) and isinstance(payload.get("result"), dict):
+        payload = payload["result"]
+    segments = [s for s in (payload.get("segments") or []) if isinstance(s, dict)]
+    try:
+        audio_seconds = float(payload.get("audio_seconds") or payload.get("duration") or 0.0)
+    except (TypeError, ValueError):
+        audio_seconds = 0.0
+    speakers = payload.get("speakers")
+    if isinstance(speakers, list):
+        speakers = len(speakers)
+    return MeetingTranscript(
+        segments=segments,
+        audio_seconds=audio_seconds,
+        language=payload.get("language"),
+        diarization_error=bool(payload.get("diarization_error")),
+        speakers=speakers if isinstance(speakers, int) and not isinstance(speakers, bool) else None,
+        options=payload.get("options") if isinstance(payload.get("options"), dict) else {},
+        keys=sorted(str(k) for k in payload.keys()),
+    )
 
 
 class GapiSttClient:
@@ -351,7 +497,134 @@ class GapiSttClient:
                 error.retry_after = float(exc.headers.get("Retry-After") or 0) or None
             except (TypeError, ValueError):
                 error.retry_after = None
+        # Yig'ilish ishchisi uchun (`services/meetings/transcribe.py`): xatoning
+        # ASL kodi va GAPI nomi. `status` 401/403 da 502 ga almashtirilgan
+        # (chat uchun to'g'ri), ishchi esa `stt_auth`, `insufficient_balance`,
+        # `result_not_ready` larni ajratishi kerak. Chat bu maydonlarni o'qimaydi.
+        error.gapi_status = status
+        error.gapi_code = code
         return error
+
+    # --- yig'ilish vazifalari (asinxron, `services/meetings/`) ---------------
+    #
+    # Chat yo'li (`transcribe`) BU YERGA TEGMAYDI. Yig'ilish uzun (3 soatgacha):
+    # audio `POST /jobs` bilan yuboriladi, javob darhol `202` + vazifa raqami,
+    # natija esa ishchi tomonidan keyin so'raladi. Qayta urinish va kutish
+    # ISHCHINING ishi (`attempts=1` klient) - u holatni diskda saqlaydi va
+    # xizmat qayta ishga tushsa ham vazifani yo'qotmaydi.
+
+    def submit_job(self, path: Path | str, content_type: str,
+                   settings: dict[str, Any]) -> dict[str, Any]:
+        """Audio faylni (diskdan, oqim bilan) yuboradi -> `{id, state, estimatedSeconds, resultUrl}`.
+
+        Fayl nomi `meeting.aac` / `meeting.m4a` - odamning ismi ham, id si
+        ham GAPI ga ketmaydi (spetsifikatsiya 4.4)."""
+        if not self.configured:
+            raise SttError("GAPI STT sozlanmagan (GAPI_API_KEY)", status=501)
+        filename = "meeting.m4a" if "mp4" in (content_type or "") else "meeting.aac"
+        body, ctype = _multipart_stream(Path(path), filename, content_type, settings)
+        request = urllib.request.Request(
+            f"{self.base_url}/jobs", data=body, method="POST",
+            headers={**self._headers(), "Content-Type": ctype,
+                     "Content-Length": str(body.length)},
+        )
+        if not self._slots.acquire(timeout=1.0):
+            busy = SttError(f"ilova GAPI chegarasida ({self.max_concurrent} parallel)",
+                            status=503, retryable=True)
+            # So'rov KETMAGAN (o'z slotimiz band): ishchi buni urinish deb sanamaydi.
+            busy.local = True
+            raise busy
+        try:
+            # YUBORILGAN urinish - javob kelmasa ham pul ketishi mumkin (`spend`).
+            with self._spend_lock:
+                self._spend_sent += 1
+            payload, header_id = self._send_any(request)
+        finally:
+            body.close()
+            self._slots.release()
+        if not isinstance(payload, dict):
+            payload = {}
+        job_id = str(payload.get("id") or payload.get("job_id") or header_id or "")
+        if not job_id:
+            raise SttError("GAPI vazifa raqamini bermadi", status=502)
+        return {
+            "id": job_id,
+            "state": str(payload.get("state") or "queued"),
+            "estimatedSeconds": _num(payload.get("estimated_seconds")),
+            "resultUrl": str(payload.get("result_url") or "") or None,
+        }
+
+    def get_job(self, job_id: str) -> dict[str, Any]:
+        """Vazifa holati (`state`, `progress_seconds`, `audio_seconds`, ...) - xom."""
+        payload, _ = self._send_any(self._get_request(f"/jobs/{urllib.parse.quote(job_id, safe='')}"))
+        return payload if isinstance(payload, dict) else {}
+
+    def list_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Oxirgi vazifalar - `POST` va `202` orasida uzilgan yuborishni topish uchun."""
+        payload, _ = self._send_any(self._get_request(f"/jobs?limit={int(limit)}"))
+        if isinstance(payload, dict):
+            for key in ("jobs", "items", "data", "results"):
+                if isinstance(payload.get(key), list):
+                    payload = payload[key]
+                    break
+        return [j for j in payload if isinstance(j, dict)] if isinstance(payload, list) else []
+
+    def get_result(self, job_id: str, result_url: str | None = None) -> dict[str, Any]:
+        """Natija. `result_url` FAQAT sozlangan GAPI manzili bilan boshlansa
+        ishlatiladi: aks holda javobdagi istalgan manzilga KALITIMIZ bilan
+        so'rov ketardi (token boshqa hostga oqib chiqadi)."""
+        prefix = self.base_url.rstrip("/") + "/"
+        if result_url and str(result_url).startswith(prefix):
+            request = urllib.request.Request(str(result_url), headers=self._headers())
+        else:
+            request = self._get_request(f"/jobs/{urllib.parse.quote(job_id, safe='')}/result")
+        payload, _ = self._send_any(request)
+        return payload if isinstance(payload, dict) else {}
+
+    def cancel_job(self, job_id: str) -> bool:
+        """`DELETE /jobs/{id}` - eng yaxshi urinish. GAPI ma'lumotni baribir
+        30 kun saqlaydi, bu faqat yashiradi. Xato BERMAYDI."""
+        request = urllib.request.Request(
+            f"{self.base_url}/jobs/{urllib.parse.quote(job_id, safe='')}",
+            method="DELETE", headers=self._headers())
+        try:
+            self._send_any(request)
+            return True
+        except SttError as exc:
+            log.info("GAPI vazifasini o'chirib bo'lmadi: %s", exc)
+            return False
+
+    def usage(self) -> dict[str, Any]:
+        """`GET /usage` (bepul) - balans: `available_g`, `topup_target_g`."""
+        payload, _ = self._send_any(self._get_request("/usage"))
+        return payload if isinstance(payload, dict) else {}
+
+    def note_meeting_audio(self, seconds: float) -> None:
+        """Yig'ilish natijasi keldi - kunlik sarfga qo'shiladi (`spend`)."""
+        self._account(seconds)
+
+    def _get_request(self, path: str) -> urllib.request.Request:
+        return urllib.request.Request(f"{self.base_url}{path}", headers=self._headers())
+
+    def _send_any(self, request: urllib.request.Request) -> tuple[Any, str]:
+        """`_send` kabi, lekin javob ro'yxat ham bo'lishi mumkin (`GET /jobs`).
+        `_send` ning o'ziga tegilmaydi - chat yo'li o'zgarmasin."""
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                raw = response.read()
+                job_id = response.headers.get("X-Job-Id") or ""
+        except urllib.error.HTTPError as exc:
+            raise self._from_http(exc) from None
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise SttError(f"GAPI ga ulanib bo'lmadi: {_safe(str(exc), self._api_key)}",
+                           status=503, retryable=True) from exc
+        if not raw:
+            return {}, job_id
+        try:
+            return json.loads(raw.decode("utf-8")), job_id
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise SttError(f"GAPI javobi o'qilmadi: {_safe(str(exc), self._api_key)}",
+                           status=502) from exc
 
     # --- javobni o'qish ---------------------------------------------------
 
@@ -388,3 +661,10 @@ class GapiSttClient:
                  result.backend, result.model, result.duration_sec,
                  result.elapsed_sec, len(result.text))
         return result
+
+
+def _num(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None

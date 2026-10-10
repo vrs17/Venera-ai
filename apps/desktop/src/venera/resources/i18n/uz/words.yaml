@@ -34,7 +34,7 @@ particles: [ni, ga, da, dan, ning]
 # Matn boshidan olib tashlanadigan uyg'otish so'zlari.
 # "venera chrome och" -> "chrome och". Yolg'iz qolsa kesilmaydi, shuning
 # uchun "venerani och" buyrug'i buzilmaydi.
-wake_prefixes: [venera, venere, vinera, vener]
+wake_prefixes: [barno, barna, parno, borno, venera, venere, vinera, vener]
 
 # `rules.yaml` naqshlarida `{nom}` ko'rinishida ishlatiladi.
 # `str.format` ISHLATILMAYDI (regexdagi `{2,3}` KeyError berardi) - faqat

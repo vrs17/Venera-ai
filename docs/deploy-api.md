@@ -1,4 +1,4 @@
-# Venera API — tarqatish
+# Barno API — tarqatish
 
 Backend (`apps/api`) host'da, `apps/api/venv` ichidagi uvicorn bilan ishlaydi,
 systemd `--user` xizmati sifatida. Frontend (`apps/web`) esa root'siz podman
@@ -290,11 +290,14 @@ curl -s http://10.10.50.4:8200/health | python3 -m json.tool      # model, GPU, 
 journalctl --user -u venera-api.service -o cat | grep 'TTS'       # sintez va token log'i
 ```
 
-## Uyg'otish so'zi: "Salom Venera"
+## Uyg'otish so'zi: "Salom Barno"
 
-Suhbat sahifasi mikrofonni ochiq tutadi va "Salom Venera" eshitilganda ovoz
+Suhbat sahifasi mikrofonni ochiq tutadi va "Salom Barno" eshitilganda ovoz
 paneli o'zi ochilib, salomlashib, tinglashni boshlaydi. **Sukut bo'yicha
 YOQIQ** - tizimga kirgan zahoti ishlaydi, hech narsa bosish shart emas.
+O'tish davrida eski "Salom Venera" ham jimgina qabul qilinadi - server
+moslashtirgichi ikkala nomni taniydi, interfeys esa faqat "Salom Barno" ni
+ko'rsatadi.
 
 Yon paneldagi tugma qoladi (mikrofonning O'CHIRISH tugmasi har doim bo'lishi
 kerak), lekin faqat aniq `'0'` uni o'chiradi: yangi login, yangi brauzer,
@@ -312,8 +315,14 @@ berayotganini eshitish buni hal qiladi. Yozuv tayyor bo'lgani uchun ikkala
 yo'lda ham kutish yo'q.
 
 **Salomlashish OLDINDAN tayyorlangan.** Matn o'zgarmas, sintez esa ~2 s
-oladi va bitta GPU navbatida turadi - "Salom Venera" degan odam shuncha
+oladi va bitta GPU navbatida turadi - "Salom Barno" degan odam shuncha
 kutmasligi kerak. Fayl bir marta yasaladi:
+
+> **Hozir (Barno nomiga o'tish):** mavjud `greeting-uz.wav` hali "Men Venera"
+> deydi, shuning uchun `apps/web/src/api/greeting.ts` da `PREPARED = []` -
+> salomlashish jonli sintez qilinadi (~2 s sekinroq; `uz-Cyrl` da ovoz yo'q,
+> chunki TTS faqat lotin o'zbekcha). Pastdagi buyruq bilan faylni qayta
+> yasang va `PREPARED` ga `['uz', 'uz-Cyrl']` ni qaytaring.
 
 ```bash
 cd ~/Venera/apps/api && venv/bin/python tools/make_greeting.py
@@ -339,7 +348,7 @@ uchta lokal filtr bor (`src/composables/useWakeWord.ts`):
 | Filtr | Nima qiladi |
 |---|---|
 | Energiya (RMS) | sukunat brauzerdan UMUMAN chiqmaydi |
-| Uzunlik 350-3000 ms | nutqning o'zi o'lchanadi (jimlik kesib tashlangach). "Salom Venera" ~1 s; undan uzun - oddiy suhbat, so'rovsiz TASHLANADI |
+| Uzunlik 350-3000 ms | nutqning o'zi o'lchanadi (jimlik kesib tashlangach). "Salom Barno" ~1 s; undan uzun - oddiy suhbat, so'rovsiz TASHLANADI |
 | Sovish 2.5 s | uzluksiz gap-so'z ham daqiqasiga ~24 so'rovdan oshmaydi |
 
 Ya'ni jim xonada nol so'rov. Uyg'otish tekshiruvi 503 da QAYTA URINMAYDI -
@@ -384,17 +393,25 @@ chiqarishda, jimgina. Eskirgan tugun bu muammodan xoli.
 
 **Moslashtirgich** qoidalari:
 
-* Nom Levenshtein masofasi <=2 bilan taqqoslanadi - model bir xil tovushni
-  "venera", "vinera", "venira" deb yozadi. Nomzod so'z uzunligi >=5 bo'lishi
-  shart, aks holda "vera", "era" ham nom deb qabul qilinardi.
-* Nom uzun so'z ICHIDA ham qidiriladi: model so'zlarni qo'shib yuboradi
+* **"barno"** QAT'IY taqqoslanadi: butun so'z, uzunligi 5-6, Levenshtein
+  masofasi <=1; salomga yopishgan nom ("salombarno") va ikkiga bo'lingan
+  ("bar no") ham qabul qilinadi, kirillcha transkript ("Салом Барно") lotinga
+  o'giriladi. Eski nomdagi keng chegara bu qisqa nomda xavfli: "barcha",
+  "barmoq", "bardam" ham nom bo'lib qolardi, "salom barcha" esa eng ko'p
+  uchraydigan salom. Aniq variantlar va chegaralar `app/services/wake.py` da;
+  "barno" hali jonli o'lchanmagan.
+* Eski nom **"venera"** o'tish davrida jimgina qabul qilinadi, qoidasi
+  o'zgarmagan: Levenshtein masofasi <=2 - model bir xil tovushni "venera",
+  "vinera", "venira" deb yozadi. Nomzod so'z uzunligi >=5 bo'lishi shart, aks
+  holda "vera", "era" ham nom deb qabul qilinardi.
+* Eski nom uzun so'z ICHIDA ham qidiriladi: model so'zlarni qo'shib yuboradi
   ("salomvenera") yoki bo'g'inni noto'g'ri joyda ajratadi - jonli o'lchovda
   "Salom Venera, qalaysan" `salom, vener aqlaysan` bo'lib qaytdi.
 * Salom + nom -> uyg'onadi.
 * 2 yoki undan kam so'z bo'lsa NOMNING O'ZI yetarli. Salomni MAJBURIY qilish
   amalda ko'p o'tkazib yuborishga olib keldi: VAD salomning boshini kesib
   qoladi yoki model uni yutib yuboradi. Uzun gap baribir o'tmaydi.
-* 5 so'zdan uzun gap chaqiriq emas: "Venera tizimi haqida ayting" da ham nom
+* 5 so'zdan uzun gap chaqiriq emas: "Barno tizimi haqida ayting" da ham nom
   bor, lekin panelni ochish kerak emas.
 
 ### Urinishlar yozib boriladi
@@ -446,7 +463,7 @@ bilan bir joyda yozilishi kerak, qoidalarni o'zgartirish frontend obrazini
 qayta yig'ishni talab qilmasligi kerak, va ikki tilda ikki nusxa vaqt o'tib
 albatta ajralib ketardi.
 
-Jonli o'lchangan (TTS -> STT aylanmasi orqali):
+Jonli o'lchangan (TTS -> STT aylanmasi orqali; ESKI nom "Venera" bilan - "Barno" uchun hali o'lchanmagan):
 
 | Aytilgan | STT qaytargani | Uyg'otadimi |
 |---|---|---|
@@ -462,13 +479,13 @@ Faqat `uz` va `uz-Cyrl` tillarida ko'rinadi: so'zning o'zi o'zbekcha.
 
 ## Savol-javob: HR Assistant
 
-Chat javobi Venera ichida yasalmaydi. U yuqoridagi **BRB-TECH HR Assistant
+Chat javobi Barno ichida yasalmaydi. U yuqoridagi **BRB-TECH HR Assistant
 API** dan keladi (`10.10.50.4:8080`): o'sha xizmat hujjatlar bo'yicha RAG va
-HRM connector'ini o'z ichida birlashtiradi, ya'ni Venera uchun bu BITTA
+HRM connector'ini o'z ichida birlashtiradi, ya'ni Barno uchun bu BITTA
 endpoint.
 
 ```
-brauzer -> /api/v1/chat/stream (Venera)  ->  POST /api/{v1|v2|v3}/chat/stream (Assistant)
+brauzer -> /api/v1/chat/stream (Barno)   ->  POST /api/{v1|v2|v3}/chat/stream (Assistant)
                                               |-> hujjatlar (RAG, Qdrant)
                                               |-> qonunchilik (LEX.UZ, v2)
                                               `-> HRM connector (hrm-mcp)
@@ -480,7 +497,7 @@ brauzer -> /api/v1/chat/stream (Venera)  ->  POST /api/{v1|v2|v3}/chat/stream (A
    bundle'ida va tarmoq panelida ochiq turardi.
 2. `10.10.50.4` ichki manzil - brauzer unga umuman yetib bormaydi
    (foydalanuvchi `llm.brb-tech.uz` orqali keladi).
-3. Kimlik: `user_id` server tomonidan Venera token'idan qo'yiladi. Klient
+3. Kimlik: `user_id` server tomonidan Barno token'idan qo'yiladi. Klient
    uni o'zi yuborsa, boshqa xodimning suhbat tarixiga kirardi - xizmatda
    xotira `(user_id, chat_id)` bo'yicha saqlanadi.
 
@@ -504,7 +521,7 @@ Xizmat versiyali - so'rov va javob shakli bir xil, yo'l boshqa:
 |---|---|---|
 | `v2` (default) | `/api/v2/chat/stream` | yangi: javobni model yozadi, Mehnat kodeksi moddalari LEX.UZ havolasi bilan, **"Pro"** |
 | `v1` | `/api/v1/chat/stream` | barqaror: 29-sentabrgacha bo'lgan javoblar |
-| `v3` | `/api/v3/chat/stream` | **"Venera Core"** (2026-10-08, API 3.3): hamma imkoniyat bitta vazifa-siklida, vazifa holati xabarlar orasida saqlanadi, yozishdan oldin nomlar aniqlanadi; "Pro" bor. `done` ga `trace_id` va vazifa holati (`task`) keladi - admin panel savol izida. Avval odamga ALOHIDA (Versiyalar sahifasi), sinovdan keyin hammaga |
+| `v3` | `/api/v3/chat/stream` | **"Barno Core"** (upstream nomi "Venera Core"; 2026-10-08, API 3.3): hamma imkoniyat bitta vazifa-siklida, vazifa holati xabarlar orasida saqlanadi, yozishdan oldin nomlar aniqlanadi; "Pro" bor. `done` ga `trace_id` va vazifa holati (`task`) keladi - admin panel savol izida. Avval odamga ALOHIDA (Versiyalar sahifasi), sinovdan keyin hammaga |
 | bo'sh | `/api/chat/stream` | versiyasiz - xizmat default'i (bugun = v1). **Hozirgi prod shu yo'lda** |
 
 Kanal bo'yicha istisno: `HRM_ASSISTANT_ENGINE_BY_CHANNEL=miniapp=v1,bot=v1`
@@ -537,7 +554,7 @@ eski kod uni e'tiborsiz qoldiradi.
 | `error` | tokenlar o'rniga: `code` va foydalanuvchiga xavfsiz `text` |
 
 **Qonunchilik havolasi tekshiriladi.** `kind: "law"` manbaning `url` i
-brauzerda havola bo'lib ochiladi, shuning uchun Venera FAQAT `https://` ni
+brauzerda havola bo'lib ochiladi, shuning uchun Barno FAQAT `https://` ni
 o'tkazadi: `javascript:`, `data:`, login-parolli va boshqa `http://` manzil
 `null` ga aylanadi (manbaning nomi qoladi), `http://lex.uz` esa `https` ga
 ko'tariladi. LEX.UZ dan boshqa `https` domen o'tadi, lekin jurnalga yoziladi
@@ -546,7 +563,7 @@ ko'tariladi. LEX.UZ dan boshqa `https` domen o'tadi, lekin jurnalga yoziladi
 
 ### Navbat: "Savol-javob xizmati band" (503)
 
-Venera yordamchiga bir vaqtda ko'pi bilan `HRM_ASSISTANT_MAX_CONCURRENT` ta
+Barno yordamchiga bir vaqtda ko'pi bilan `HRM_ASSISTANT_MAX_CONCURRENT` ta
 oqim ochadi; oshsa savol yordamchiga BORMASDAN 503 oladi. 29-sentabrda prod
 shu navbat "oqib ketgani" sababli bir soatdan ko'p har savolga 503 berdi -
 yordamchiga birorta so'rov bormagan holda (klient tanadan oldin uzilsa oqim
@@ -570,7 +587,7 @@ Sababi foydalanuvchiga bir xil ("xizmat band"), lekin jurnal va savol izida
 | `upstream_busy` | yordamchining O'ZI 503 qaytardi | yordamchi jamoasi |
 | `open_failed` | boshqa ochilish xatosi (401, 422, 5xx) | `http_status` va `error_text` ga qarang |
 
-Yordamchi holati uchun keshlangan "o'chiq" belgisi (circuit breaker) Venera'da
+Yordamchi holati uchun keshlangan "o'chiq" belgisi (circuit breaker) Barnoda
 YO'Q: har savol yordamchiga qayta urinadi, ya'ni u qaytishi bilan chat ham
 qaytadi. `UpstreamHealth` (STT/TTS) 30 s keshlanadi, lekin faqat tashxis
 uchun - so'rovlarni to'smaydi.
@@ -588,7 +605,7 @@ hamma narsa birdan. Ya'ni:
 * **Tokenlarni xizmatning O'ZI birdan yuboradi**: 57 token 0.02 s ichida.
   To'g'ridan-to'g'ri `10.10.50.4:8080` ga borilganda ham AYNAN shunday
   (15.24 s, 0.02 s cho'zilish), ya'ni bu bizning qatlamimizdan emas.
-  Venera qo'shadigan ustama ~0.4 s.
+  Barno qo'shadigan ustama ~0.4 s.
 * Shu sababli hozir ko'zga ko'rinadigan foyda - **jonli `stage` matni**
   ("Savol turi aniqlanmoqda..."), harf-harf yozilish emas. Xizmat
   tokenlarni sekinlashtira boshlasa (kadrlarda `paced: true` bor), UI
@@ -598,9 +615,9 @@ Buni tekshirish oson: birinchi kadr qancha vaqtda kelganini qarash kifoya.
 Agar u ham oxirgisi bilan birga kelsa - buferlash yoqilib qolgan.
 
 **Fayl havolalari qayta yoziladi.** Xizmat bergan `docx_url` ichki manzilni
-ko'rsatadi; Venera uni `/api/v1/chat/artifact/{token}/{kind}` ga o'giradi va
+ko'rsatadi; Barno uni `/api/v1/chat/artifact/{token}/{kind}` ga o'giradi va
 faylni o'zi olib beradi. Iqtibos qilingan hujjat uchun
-`/api/v1/chat/doc/{doc_id}`. Ikkalasi ham Venera sessiyasini talab qiladi,
+`/api/v1/chat/doc/{doc_id}`. Ikkalasi ham Barno sessiyasini talab qiladi,
 shu sababli frontend ularni `<a href>` bilan emas, token bilan `fetch`
 qilib yuklab oladi.
 
@@ -617,7 +634,7 @@ berilgan havolalar ham bekor bo'ladi.
 
 "Men bugun kechikdimmi?" kabi savol uchun xizmat foydalanuvchining HRM
 sessiyasini (`hrm_token`) talab qiladi va boshqa odamning huquqi bilan hech
-qachon javob bermaydi. Venera kimligi (`config/users.yaml`) esa HRM
+qachon javob bermaydi. Barno kimligi (`config/users.yaml`) esa HRM
 kimligidan alohida - ya'ni sessiyadan olinadigan token bizda yo'q.
 
 **Hozirgi bosqich: `.env` da bitta umumiy token.**
@@ -628,7 +645,7 @@ HRM_TOKEN=<HRM JWT>
 
 Buning OCHIQ oqibati bor va u xizmat hujjatida yozilgan: *"With a token, the
 token's own account is the default"* - ya'ni token bilan **"men" degani
-TOKEN EGASI**. Venera'ning qaysi foydalanuvchisi so'rasa ham, jonli javob
+TOKEN EGASI**. Barnoning qaysi foydalanuvchisi so'rasa ham, jonli javob
 o'sha bitta odam haqida bo'ladi. Shuning uchun:
 
 * `/api/health` bu token qo'yilganini **ogohlantirish** sifatida ko'rsatadi
@@ -696,7 +713,7 @@ boshqa odamning huquqi bilan javob berishdan ko'ra javob bermaslik yaxshi.
 **Hujjatlar va qoidalar bo'yicha savollar har holatda ishlaydi.**
 
 **Doimiy yechim** (hali qilinmagan): foydalanuvchi o'z HRM hisobi bilan
-kirsin va token sessiyadan olinsin. Ikki yo'l bor - Venera'ga kirishning
+kirsin va token sessiyadan olinsin. Ikki yo'l bor - Barnoga kirishning
 o'zi HRM orqali bo'lishi, yoki HRM hisobi alohida ulanishi. Kod tomonida
 ikkalasi ham bitta joyni o'zgartiradi: `api/v1/chat.py` dagi
 `hrm_token=settings.hrm_token or None`.
@@ -929,7 +946,7 @@ out" bo'ldi va ovozli savol ~80 s kechikdi (GAPI 1.6 s, javob 7 s). Tarmoq
 tuzatilsa - bitta qator bilan yoqiladi. Polling'ga qaytishda webhook qo'lda
 o'chiriladi (`deleteWebhook`), aks holda `getUpdates` 409 oladi.
 
-**Hisobni ulash - faqat mini app orqali.** Odam botdagi "Venera" tugmasi bilan
+**Hisobni ulash - faqat mini app orqali.** Odam botdagi "Barnoni ochish" tugmasi bilan
 mini app'ni ochib kiradi; ilova `POST /api/v1/telegram/link` ga Telegram
 imzolagan `initData` ni yuboradi. Isbot ikkita: sessiya (kim kirgan) va
 imzo (kim ochgan) - `user.id` klientdan olinmaydi. Botda parol so'ralmaydi.
@@ -960,7 +977,7 @@ xatosi = boshqa nusxa shu botni o'qiyapti. O'chirish: `.env` da `TELEGRAM_BOT_EN
 
 F.I.SH, Telegram, telefon, email - `apps/api/data/contacts/contacts.db` (SQLite,
 gitignore'da, 600). Shaxsiy ma'lumot: jurnalga qiymatlar yozilmaydi, tashqi
-LLM ga yuborilmaydi - qidiruv Venera'ning o'zida (`services/contacts.py`).
+LLM ga yuborilmaydi - qidiruv Barnoning o'zida (`services/contacts.py`).
 
 **Chatda ISHLATILMAYDI (2026-10-07 dan).** Avval `services/contacts_chat.py`
 har savolni yordamchidan OLDIN kalit so'zlar bilan tekshirib, kontakt savoliga
@@ -983,3 +1000,90 @@ venv/bin/python -m app.tools.contacts_import --export nusxa.csv
 Qayta yuklash xavfsiz: email yoki F.I.SH bo'yicha topilgan xodimning faqat
 TO'LDIRILGAN maydonlari yangilanadi, bo'sh katak mavjud qiymatni o'chirmaydi,
 faylda yo'q xodim o'chirilmaydi. Birinchi yuklash: 2026-09-25, 77 xodim.
+
+## Yig'ilish yozuvchisi "Venera Yozuv" (mobil ilova backend'i)
+
+Spetsifikatsiya: `docs/plans/meeting-recorder.md`. Kod: `apps/api/app/services/meetings/`,
+yo'llar `/api/v1/meetings/*` va `/api/v1/auth/devices*`.
+
+**Default O'CHIQ.** `MEETINGS_ENABLED=false` bo'lsa butun bo'lim 404 qaytaradi, fon ishchisi
+esa diskka hech narsa yozmaydi. Yoqish - foydalanuvchi maxfiylik bo'limini (4.4: audio GAPI ga,
+transkript Ollama Cloud ga) tasdiqlagandan KEYIN, jonli `.env` da (restart kerak emas):
+
+```bash
+MEETINGS_ENABLED=true
+MEETINGS_LOGINS=y.mamajonov,a.aliyev     # sinov guruhi (ADMIN lar har doim ochiq)
+```
+
+Ma'lumot: `apps/api/data/meetings/` (SQLite `meetings.db`, `uploads/`, `audio/<actorId>/`) va
+`apps/api/data/devices.db` - papkalar 700, fayllar 600, `data/` gitignore'da. Tozalash har soatda:
+audio 30 kun (`MEETINGS_AUDIO_DAYS`), butun yig'ilish 180 kun, tugallanmagan yuklash 72 soat,
+`too_long` audio 24 soat, qurilma tokenlari 30 kun ishlatilmasa. Muddat yozilgan vaqtdan, lekin
+serverga kelgandan ko'pi bilan 7 (audio) / 30 (yig'ilish) kun oldindan hisoblanadi; ishlanayotgan
+yozuvga tegilmaydi. Bayroq o'chirilsa yoki odam `MEETINGS_LOGINS` dan chiqarilsa, telefonning
+qurilma tokeni ham sessiya bermaydi (401).
+
+**Model byudjeti** (jonli `ollama` o'lchovidan keyin aniqlanadi; defaultlar ehtiyotkor):
+`MEETINGS_LLM_TIMEOUT=300`, `MEETINGS_SINGLE_PASS_CHARS=30000`, `MEETINGS_MAP_CHARS=20000`,
+`MEETINGS_EXTRACT_NUM_PREDICT=8192`, `MEETINGS_MAP_NUM_PREDICT=6144`, `MEETINGS_LLM_THINK=` (bo'sh -
+yuborilmaydi; o'lchov "o'ylash" matnini ko'rsatsa `false`). Skript tavsiyani o'zi chiqaradi.
+
+**nginx:** bo'laklar 4 MiB (`MEETINGS_CHUNK_BYTES`); `client_max_body_size` undan katta bo'lsin
+(12m faraz qilingan).
+
+**Jonli tekshiruv** (faqat qo'lda, PULLIK rejimlar `--yes-spend` bilan; kalitlar chop etilmaydi):
+
+```bash
+cd ~/Venera/apps/api
+venv/bin/python tools/meetings_live_check.py                       # GAPI balansi (bepul)
+venv/bin/python tools/meetings_live_check.py gapi --file s.aac --yes-spend --speakers 2
+venv/bin/python tools/meetings_live_check.py ollama --yes-spend --chars 45000 [--num-ctx 32768] [--think false]
+venv/bin/python tools/meetings_live_check.py e2e --file s.aac --yes-spend
+```
+
+`/api/health/detail` -> `meetings`: holatlar bo'yicha sonlar, bugungi daqiqalar, eng eski navbat
+yoshi, ishchi tirikligi; GAPI kaliti rad etilsa (401/403) - ogohlantirish. Mazmun (matn, xulosa)
+u yerda YO'Q, admin uchun yig'ilish mazmuni endpointi ham yo'q.
+
+### Model zanjiri: v3 -> OpenAI -> Ollama (2026-10-09)
+
+Yig'ilish ilovasi HAMMA joyda yordamchining v3 ("Venera Core") dvigatelini ishlatadi: xulosa,
+savol-javob (Ask) va vazifani CRM ga yuborish. Ilovadagi chat - Mini App, kanal `mobile`; uni v3 ga
+kod emas, siyosat yo'naltiradi: `HRM_ASSISTANT_ENGINE_BY_CHANNEL=mobile=v3` (yoki admin panel).
+
+```bash
+MEETINGS_LLM_CHAIN=v3,openai,ollama   # default: ollama (hech narsa o'zgarmaydi)
+OPENAI_API_KEY=...                    # jonli o'qiladi, jurnal va health ga chiqmaydi
+MEETINGS_OPENAI_MODEL=<GPT model id>  # bo'sh - OpenAI o'chiq (default model YO'Q)
+```
+
+- **Bitta xulosa - bitta model.** Biror qadam (bir o'tish yoki map-reduce, yozuvchi, tekshiruvchi)
+  yiqilsa yoki JSON bitta tuzatishdan keyin ham tekshiruvdan o'tmasa, BUTUN xulosa keyingi model
+  bilan boshidan yoziladi; oxirgi model avvalgidek "yumshoq" ishlaydi. `GET .../summaries/{id}` ->
+  `generatedBy: {provider, model}`; o'tib ketilgan model `content.quality.warnings` da
+  `provider_failed:v3` bo'lib ko'rinadi. Sozlanmagan bo'g'in (v3 kalitlari yo'q, OpenAI kaliti yoki
+  modeli yo'q) o'tkazib yuboriladi.
+- **v3 xulosada hech narsaga kira olmaydi:** `tokens={}`, `user_id=venera-meet:{actorId}`, `chat_id`
+  yo'q (odamning suhbat xotirasi to'lmaydi). Ishchining o'z v3 navbati (`MEETINGS_V3_MAX_CONCURRENT=1`)
+  - band bo'lsa xulosa 30 s dan keyin qayta olinadi, pastki modelga tushmaydi.
+- **Savol chegarasi:** chatning 2000 belgisi bu yerga tegishli emas - `MEETINGS_V3_MAX_CHARS=20000`.
+  Xulosa ko'rsatmalari o'zi ~14 ming belgi, shuning uchun bitta v3 chaqiruviga ~4 ming belgi transkript
+  sig'adi va quvur shunga qarab bo'laklaydi (10 daqiqalik yig'ilish - 3-4 bo'lak). v3 uzun savolni
+  qabul qilishi jonli tasdiqlangach 40000+ qo'yish chaqiruvlar sonini kamaytiradi.
+- **OpenAI:** Chat Completions, `response_format: json_schema` (`strict`, sxema -
+  `services/meetings/shapes.py`); xizmat sxemani rad etsa (400) bir marta oddiy JSON rejimida. Harorat
+  yuborilmaydi; `MEETINGS_OPENAI_MAX_OUTPUT_TOKENS`, `MEETINGS_OPENAI_REASONING_EFFORT` - faqat berilsa.
+  429/5xx - keyingi model. Hisob: admin paneldagi `openai` xizmati (`meeting_extract`, ...).
+- **Savol-javob (Ask):** `MEETINGS_ASK_CHAIN` (bo'sh - xulosa zanjiri). v3 ga odamning O'Z tokenlari va
+  kimligi (`venera:{actorId}`) bilan; javob shakli o'zgarmaydi, v3 ning `stage`/`sources` kadrlari
+  e'tiborsiz. v3 yiqilsa yoki band bo'lsa - keyingi model.
+- **Vazifani CRM ga:** `POST /api/v1/meetings/{id}/action-items/{itemId}/crm` (ixtiyoriy tana
+  `{project?, force?}`) -> v3 ga aniq o'zbekcha so'rov (vazifa, mas'ul, muddat, loyiha ishorasi, manba
+  yig'ilish), odamning o'z tokenlari bilan. Javob: `proposed` + taklif (web `ActionCard` maydonlari),
+  `answered` + matn yoki `failed` + sabab (`crm_not_connected`, `assistant_busy`, ...). Tasdiqlash -
+  chatdagi AYNI `POST /api/v1/actions/{token}/confirm`; natija vazifaga yoziladi (`item.crm`).
+  Chegara `MEETINGS_CRM_PER_HOUR=20`, kutish `MEETINGS_CRM_TIMEOUT=120`.
+- **Ombor sxemasi v2** (o'zi ko'chadi, `PRAGMA user_version`): `summaries.provider`,
+  `action_items.crm_*`.
+
+`/api/health/detail` -> `meetings.llmChain`: har bo'g'in, sozlanganmi va modeli (kalitsiz).

@@ -44,7 +44,7 @@ Copy-Item (Join-Path $PSScriptRoot "install.ps1")   $stage
 Copy-Item (Join-Path $PSScriptRoot "uninstall.ps1") $stage
 
 $readme = @"
-Venera AI Assistant $Version
+Barno AI Assistant $Version
 ==============================
 
 O'RNATISH

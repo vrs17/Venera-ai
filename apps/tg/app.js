@@ -851,7 +851,7 @@
     if (who !== 'system') {
       const w = document.createElement('span');
       w.className = 'who';
-      w.textContent = who === 'you' ? 'Siz' : 'Venera';
+      w.textContent = who === 'you' ? 'Siz' : 'Barno';
       el.appendChild(w);
     }
     el.appendChild(document.createTextNode(text));
@@ -2724,7 +2724,7 @@
     cdlgBadge.appendChild(icon(CONNECTOR_ICONS[c.id]));
     if (dialogConfirming) {
       cdlgTitle.textContent = c.label + ' dan uzilasizmi?';
-      cdlgSub.textContent = 'Venera ' + c.label + ' dan javob bermay qo\'yadi. Qayta ulash uchun login va parol kerak bo\'ladi.';
+      cdlgSub.textContent = 'Barno ' + c.label + ' dan javob bermay qo\'yadi. Qayta ulash uchun login va parol kerak bo\'ladi.';
     } else if (connected) {
       cdlgTitle.textContent = c.label;
       cdlgSub.textContent = (c.login || '') + ' sifatida ulangan';

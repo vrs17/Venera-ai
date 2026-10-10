@@ -26,7 +26,9 @@ import threading
 import time
 from pathlib import Path
 
-APP_NAME = "Venera AI Assistant"
+APP_NAME = "Barno AI Assistant"
+# Qayta nomlashdan oldingi yorliq nomlari (0.3.0 gacha) - yangilanishda olib tashlanadi.
+LEGACY_APP_NAMES = ("Venera AI Assistant",)
 EXE_NAME = "Venera.exe"
 PROCESS_NAME = "Venera.exe"
 PAYLOAD_DIR = "payload"
@@ -120,6 +122,25 @@ def start_menu_shortcut() -> Path:
 def desktop_shortcut() -> Path:
     profile = os.environ.get("USERPROFILE") or str(Path.home())
     return Path(profile) / "Desktop" / f"{APP_NAME}.lnk"
+
+
+def legacy_start_menu_shortcuts() -> list[Path]:
+    base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    return [Path(base) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / f"{name}.lnk"
+            for name in LEGACY_APP_NAMES]
+
+
+def legacy_desktop_shortcuts() -> list[Path]:
+    profile = os.environ.get("USERPROFILE") or str(Path.home())
+    return [Path(profile) / "Desktop" / f"{name}.lnk" for name in LEGACY_APP_NAMES]
+
+
+def _remove_quietly(items) -> None:
+    for item in items:
+        try:
+            item.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def run_hidden(args: list[str], timeout: float = 60.0) -> tuple[int, str]:
@@ -227,7 +248,7 @@ def register_uninstall(exe: Path, size_kb: int) -> bool:
             strings = {
                 "DisplayName": APP_NAME,
                 "DisplayVersion": app_version(),
-                "Publisher": "Venera",
+                "Publisher": "Barno",
                 "InstallLocation": str(exe.parent),
                 "DisplayIcon": str(exe),
                 "UninstallString": f'"{exe}" --uninstall',
@@ -275,7 +296,7 @@ def perform_install(autostart: bool, desktop: bool, launch: bool, report,
         # o'chirilgan, ishlamaydigan o'rnatma bo'lardi. Eski versiya butun
         # qolgani buzilganidan yaxshiroq.
         return False, ("Ilova to'xtamadi - o'rnatish bekor qilindi. "
-                       "Venera'ni qo'lda yoping va qaytadan urinib ko'ring.")
+                       "Barnoni qo'lda yoping va qaytadan urinib ko'ring.")
 
     report(15, "Eski versiya tozalanmoqda...")
     if target.exists():
@@ -316,9 +337,15 @@ def perform_install(autostart: bool, desktop: bool, launch: bool, report,
     setup_log("Fayllar ko'chirildi")
 
     report(60, "Yorliqlar yaratilmoqda...")
-    make_shortcut(start_menu_shortcut(), exe)
-    if desktop:
-        make_shortcut(desktop_shortcut(), exe)
+    # Nom o'zgardi (Venera -> Barno): eski yorliq dublikat bo'lib qolmasin. Eskisi
+    # faqat yangisi HAQIQATAN yaratilgandan keyin o'chiriladi; ish stolida eski
+    # yorliq bo'lgan bo'lsa (jim yangilanishda desktop=False), o'rniga yangisi qo'yiladi.
+    legacy_desktop = [p for p in legacy_desktop_shortcuts() if p.exists()]
+    if make_shortcut(start_menu_shortcut(), exe):
+        _remove_quietly(legacy_start_menu_shortcuts())
+    if desktop or legacy_desktop:
+        if make_shortcut(desktop_shortcut(), exe):
+            _remove_quietly(legacy_desktop)
 
     report(72, "Ro'yxatga qo'shilmoqda...")
     register_uninstall(exe, folder_size_kb(target))

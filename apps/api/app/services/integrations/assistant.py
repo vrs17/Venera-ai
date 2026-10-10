@@ -296,6 +296,7 @@ class AssistantClient:
         max_chars: int = 2000,
         mode: str = "standard",
         engine: str = "",
+        op: str = "stream",
     ) -> AnswerStream:
         """Savolni yuboradi va kadr generatorini qaytaradi.
 
@@ -307,6 +308,10 @@ class AssistantClient:
         `engine` - `v1` | `v2` | `""` (versiyasiz, xizmat default'i). Default
         `""`: klient o'zi tanlamaydi - qaysi dvigatel ekanini chaqiruvchi
         (`chat.open_stream`, kanal bo'yicha) aytadi.
+
+        `op` - hisobdagi amal nomi (`assistant / <op>`). Chat - `stream`; yig'ilish
+        xulosasi o'z nomlari bilan (`meeting_extract`, ...) - admin panelda chat
+        savollari va fondagi xulosa yuki ajralib ko'rinsin.
         """
         if engine not in ROUTES:
             # Dasturchi xatosi: `core/engines.py` faqat shu qiymatlarni beradi.
@@ -376,7 +381,7 @@ class AssistantClient:
         # Hisob: chaqiruv ULANISHDAN boshlanadi va oqim TUGAGANDA yopiladi,
         # ya'ni davomiyligi - butun javob. Kim/qaysi savol - `begin` shu
         # paytdagi kontekstdan oladi (oqim keyin boshqa ipda o'qilsa ham).
-        end = _StreamEnd(begin("assistant", "stream"), lease)
+        end = _StreamEnd(begin("assistant", op or "stream"), lease)
         try:
             with _mapped_errors(self.client_secret):
                 response = self._open(path, body, accept="application/x-ndjson",

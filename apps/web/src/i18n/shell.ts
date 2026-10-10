@@ -14,8 +14,8 @@ const en = {
     blocked: 'This account is blocked. Contact an administrator.',
     accountSetup: 'Your password is correct, but the account has an unfinished step: sign in to CRM once in a browser, then try again.',
     openCrm: 'Open CRM',
-    network: 'Can’t reach Venera. Check your connection.',
-    unavailable: 'Venera is temporarily unavailable. Try again shortly.',
+    network: 'Can’t reach Barno. Check your connection.',
+    unavailable: 'Barno is temporarily unavailable. Try again shortly.',
   },
   desktop: {
     title: 'Desktop app',
@@ -29,8 +29,8 @@ const uz: Mirror<typeof en> = {
     blocked: 'Hisob bloklangan. Administratorga murojaat qiling.',
     accountSetup: 'Parol toʻgʻri, lekin hisobda tugallanmagan qadam bor: CRM saytiga brauzerda bir marta kiring va qayta urinib koʻring.',
     openCrm: 'CRM ni ochish',
-    network: 'Venera bilan aloqa yoʻq. Internetni tekshiring.',
-    unavailable: 'Venera vaqtincha ishlamayapti. Birozdan soʻng urinib koʻring.',
+    network: 'Barno bilan aloqa yoʻq. Internetni tekshiring.',
+    unavailable: 'Barno vaqtincha ishlamayapti. Birozdan soʻng urinib koʻring.',
   },
   desktop: {
     title: 'Desktop ilova',
@@ -44,8 +44,8 @@ const uzCyrl: Mirror<typeof en> = {
     blocked: 'Ҳисоб блокланган. Администраторга мурожаат қилинг.',
     accountSetup: 'Парол тўғри, лекин ҳисобда тугалланмаган қадам бор: CRM сайтига браузерда бир марта киринг ва қайта уриниб кўринг.',
     openCrm: 'CRM ни очиш',
-    network: 'Венера билан алоқа йўқ. Интернетни текширинг.',
-    unavailable: 'Венера вақтинча ишламаяпти. Бироздан сўнг уриниб кўринг.',
+    network: 'Барно билан алоқа йўқ. Интернетни текширинг.',
+    unavailable: 'Барно вақтинча ишламаяпти. Бироздан сўнг уриниб кўринг.',
   },
   desktop: {
     title: 'Десктоп илова',

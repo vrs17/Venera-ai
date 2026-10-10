@@ -41,7 +41,7 @@ admin_only = require_roles("ADMIN")
 
 router = APIRouter(prefix="/admin/engines", tags=["admin"], dependencies=[Depends(admin_only)])
 
-_ACTOR = Path(ge=0, le=2**53, description="Venera `actorId`")
+_ACTOR = Path(ge=0, le=2**53, description="Barno `actorId`")
 
 
 def _fail(exc: _admin.AdminError):

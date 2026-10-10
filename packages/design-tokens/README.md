@@ -1,4 +1,4 @@
-# Venera — dizayn tokenlari
+# Barno — dizayn tokenlari
 
 Ikkala mahsulot (desktop va web) ulashadigan rang qiymatlarining **yagona manbasi**.
 

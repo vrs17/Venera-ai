@@ -293,6 +293,15 @@ def test_words_book_faol_tildan_keladi():
     assert kitob.normalize("Chromeni ochib ber, iltimos!") == "chromeni ochib ber"
 
 
+def test_uygotish_sozi_barno_va_eski_venera():
+    """Qayta nomlash (Venera -> Barno): yangi nom kesiladi, eskisi o'tish davrida ham."""
+    kitob = i18n.words()
+    assert kitob.strip_wake("barno to'xta") == "to'xta"
+    assert kitob.strip_wake("venera to'xta") == "to'xta"
+    assert kitob.strip_wake("barno") == "barno"
+    assert kitob.strip_wake("barnoni och") == "barnoni och"
+
+
 # --- transliteratsiya -------------------------------------------------------
 
 

@@ -1,4 +1,4 @@
-# Venera — Linux serverda
+# Barno AI — Linux serverda
 
 Bu server ikki ish qiladi: kod bilan ishlash va relizni tarqatish.
 

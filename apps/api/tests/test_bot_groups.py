@@ -123,6 +123,9 @@ def replies(world):
     ("/xulosa bugun", Request("summary", "bugun")),
     ("/askvenera Makhmud nima qildi?", Request("ask", "Makhmud nima qildi?")),
     (f"/ASKVENERA@{BOT.upper()}\nmini app?", Request("ask", "mini app?")),
+    ("/askbarno Makhmud nima qildi?", Request("ask", "Makhmud nima qildi?")),
+    (f"/ASKBARNO@{BOT.upper()}\nmini app?", Request("ask", "mini app?")),
+    ("/barno mini app?", Request("ask", "mini app?")),
     (f"@{BOT} bu hafta nima kelishildi?", Request("ask", "bu hafta nima kelishildi?")),
     (f"salom @{BOT}", Request("ask", "salom")),
     ("/help", Request("help", "")),
@@ -281,7 +284,7 @@ def test_sorov_matni():
                           people={"makhmud_x": "Makhmud"}, quoted="Aziza: login ishlamayapti")
     assert "Hozir: 7-oktyabr 2026, chorshanba, 15:30. Vaqt - Toshkent bo'yicha." in prompt
     assert "Eng eski 3 ta xabar sig'madi" in prompt
-    assert "Venera bu guruh xabarlarini 7-oktyabr 14:30 dan beri saqlaydi" in prompt
+    assert "Barno bu guruh xabarlarini 7-oktyabr 14:30 dan beri saqlaydi" in prompt
     assert "@makhmud_x - Makhmud" in prompt and "Aziza: login ishlamayapti" in prompt
     assert "Turi: SAVOL\nSo'rov: @makhmud_x nima qildi?" in prompt
     assert prompt.endswith("<<<XABARLAR-abcd\n[07.10 15:00] Makhmud: test\nXABARLAR-abcd>>>")
@@ -314,7 +317,7 @@ def test_xulosa(world):
     assert "Turi: XULOSA\nSo'rov: shu davr xulosasi.\n" in prompt and "CI" not in prompt
     [reply] = replies(world)
     assert reply["reply_to"] == ask["message_id"] and reply["thread_id"] is None
-    assert reply["text"].startswith("📋 <b>Venera — oxirgi 24 soat</b>\n<i>2 ta xabar")
+    assert reply["text"].startswith("📋 <b>Barno — oxirgi 24 soat</b>\n<i>2 ta xabar")
     assert "<b>Muhokama</b>" in reply["text"]
     assert world.backend.questions == []                          # HR yordamchisiga hech narsa
     [menu] = world.tg.sent("set_my_commands")
@@ -375,7 +378,7 @@ def test_forum_mavzusi(world):
 def test_yordam_tugma_bilan(world):
     send(world, gmsg(f"/help@{BOT}"))
     [reply] = replies(world)
-    assert "/summary" in reply["text"] and "/askvenera" in reply["text"]
+    assert "/summary" in reply["text"] and "/askbarno" in reply["text"]
     assert reply["reply_markup"] == {"inline_keyboard": [[{"text": "Shaxsiy chatni ochish",
                                                            "url": f"https://t.me/{BOT}"}]]}
     assert world.writer.calls == []
@@ -508,7 +511,7 @@ def test_xulosa_sarlavhasi_bo_limlari_va_mavzular_soni(world):
     text = reply["text"]
     header, _, body = text.partition("\n\n")
     # 2 mavzu: 📌 ichidagi `👤 **Alisher**` mavzu emas.
-    assert header == "📋 <b>Venera — oxirgi 24 soat</b>\n<i>2 ta xabar · 2 ta mavzu</i>"
+    assert header == "📋 <b>Barno — oxirgi 24 soat</b>\n<i>2 ta xabar · 2 ta mavzu</i>"
     assert "Xulosa" not in text                                    # modelning sarlavhasi takrorlanmaydi
     assert body.startswith("⚡ <b>Asosiy o'zgarishlar</b>\n• 🟢 Mini app")
     # Har bo'lim, mavzu va vazifa egasi - alohida xat boshi (bo'sh qator bilan);
@@ -532,7 +535,7 @@ def test_xulosa_sarlavhasi_eski_va_kesilgan_xabarlar(world):
     send(world, gmsg("/summary hafta"))
     header = replies(world)[-1]["text"].split("\n\n")[0]
     first = world.store.first_date(GROUP)
-    assert header == (f"📋 <b>Venera — oxirgi 7 kun</b>\n<i>1 ta xabar · "
+    assert header == (f"📋 <b>Barno — oxirgi 7 kun</b>\n<i>1 ta xabar · "
                       f"{uz_date(first, with_time=True)} dan beri</i>")
 
 
@@ -566,7 +569,7 @@ def test_polish_bosh_qatorlar_va_sarlavha():
     long = "Xulosa qilib aytganda " + "juda uzun gap " * 6
     assert polish_summary(long)[0] == long.strip()
     assert polish_summary("Xulosa uchun ma'lumot yetarli emas.")[0] == "Xulosa uchun ma'lumot yetarli emas."
-    for title in ("**📋 Venera — oxirgi 24 soat**", "📋 Xulosa:", "## Xulosa"):
+    for title in ("**📋 Barno — oxirgi 24 soat**", "**📋 Venera — oxirgi 24 soat**", "📋 Xulosa:", "## Xulosa"):
         assert polish_summary(f"{title}\n✅ **Qarorlar**\n- B")[0] == "✅ **Qarorlar**\n- B"
 
 

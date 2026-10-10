@@ -10,7 +10,7 @@ param([switch]$KeepSettings)
 
 $ErrorActionPreference = "Continue"
 
-$appName   = "Venera AI Assistant"
+$appName   = "Barno AI Assistant"
 $installTo = Join-Path $env:LOCALAPPDATA "Programs\Venera"
 $taskName  = "Venera\AI Assistant"
 
@@ -26,6 +26,7 @@ Start-Sleep -Milliseconds 700
 
 Write-Host "3/4  Yorliq va fayllar..."
 Remove-Item (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$appName.lnk") -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Venera AI Assistant.lnk") -Force -ErrorAction SilentlyContinue
 Remove-Item $installTo -Recurse -Force -ErrorAction SilentlyContinue
 
 if ($KeepSettings) {

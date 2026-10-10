@@ -174,10 +174,14 @@ class SttClient:
         # Semafora: 1 s kutamiz (navbatdagi so'rov tez bo'shashi mumkin),
         # keyin taslim - Router 503 si bilan bir xil ma'noda.
         if not self._slots.acquire(timeout=1.0):
-            raise SttError(
+            busy = SttError(
                 f"ilova STT chegarasida ({self.max_concurrent} parallel)",
                 status=503, retryable=True,
             )
+            # Qo'shimcha belgi (chat uni o'qimaydi): so'rov Router'ga KETMAGAN -
+            # yig'ilish ishchisi buni urinish deb sanamaydi.
+            busy.local = True
+            raise busy
         try:
             return self._with_retries(audio, safe_filename(content_type), content_type,
                                       language, budget)

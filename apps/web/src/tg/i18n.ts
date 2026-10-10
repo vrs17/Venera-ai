@@ -23,11 +23,11 @@ const en = {
     submit: 'Sign in',
     busy: 'Signing in…',
     required: 'Enter your login and password',
-    footnote: 'Next time Venera opens on its own',
+    footnote: 'Next time Barno opens on its own',
     passwordChange: 'Set a new password in the web app first, then sign in here.',
   },
   boot: {
-    failed: 'Couldn’t reach Venera',
+    failed: 'Couldn’t reach Barno',
     hint: 'Check the connection and try again.',
   },
   top: {
@@ -137,11 +137,11 @@ const uz: Mirror<typeof en> = {
     submit: 'Kirish',
     busy: 'Kirilmoqda…',
     required: 'Login va parolni kiriting',
-    footnote: 'Keyingi safar Venera oʻzi ochiladi',
+    footnote: 'Keyingi safar Barno oʻzi ochiladi',
     passwordChange: 'Avval veb ilovada yangi parol qoʻying, soʻng shu yerda kiring.',
   },
   boot: {
-    failed: 'Veneraga ulanib boʻlmadi',
+    failed: 'Barnoga ulanib boʻlmadi',
     hint: 'Internetni tekshirib, qayta urinib koʻring.',
   },
   top: {
@@ -251,11 +251,11 @@ const uzCyrl: Mirror<typeof en> = {
     submit: 'Кириш',
     busy: 'Кирилмоқда…',
     required: 'Логин ва паролни киритинг',
-    footnote: 'Кейинги сафар Венера ўзи очилади',
+    footnote: 'Кейинги сафар Барно ўзи очилади',
     passwordChange: 'Аввал веб иловада янги парол қўйинг, сўнг шу ерда киринг.',
   },
   boot: {
-    failed: 'Венерага уланиб бўлмади',
+    failed: 'Барнога уланиб бўлмади',
     hint: 'Интернетни текшириб, қайта уриниб кўринг.',
   },
   top: {
@@ -365,11 +365,11 @@ const ru: Mirror<typeof en> = {
     submit: 'Войти',
     busy: 'Вход…',
     required: 'Введите логин и пароль',
-    footnote: 'В следующий раз Венера откроется сама',
+    footnote: 'В следующий раз Барно откроется сама',
     passwordChange: 'Сначала задайте новый пароль в веб-приложении, затем войдите здесь.',
   },
   boot: {
-    failed: 'Не удалось связаться с Венерой',
+    failed: 'Не удалось связаться с Барно',
     hint: 'Проверьте соединение и попробуйте снова.',
   },
   top: {

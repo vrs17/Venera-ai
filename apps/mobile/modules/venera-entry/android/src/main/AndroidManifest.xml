@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  venera-entry manifest qismi (spec 2.2). Gradle ilova manifestiga birlashtiradi.
+
+  RecordLauncherActivity - ikkinchi, IXTIYORIY launcher belgisi "Yozish".
+    android:enabled="false": foydalanuvchi Sozlamalar > Tez yozish da yoqmaguncha
+    ko'rinmaydi. Samsung "Yon tugma > Ikki marta bosish > Ilovani ochish" shu
+    belgini tanlay oladi. Shaffof, tarixda qolmaydi, darhol deep link yuborib yopiladi.
+    Belgisi adaptive (mipmap-anydpi-v26): rangli fon + oq mikrofon; oq ic_record faqat plitka uchun.
+
+  RecordTileService - Quick Settings "Yozish" plitkasi (toggle: bo'sh -> boshlash,
+    yozilmoqda -> to'xtatish).
+
+  RecordKeyService - "Maxsus imkoniyatlar" xizmati: ovozni pasaytirish tugmasini ikki
+    marta bosish = boshlash/to'xtatish. Foydalanuvchi Android sozlamasida o'zi yoqadi.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <activity
+      android:name="uz.brbtech.venera.entry.RecordLauncherActivity"
+      android:enabled="false"
+      android:excludeFromRecents="true"
+      android:exported="true"
+      android:icon="@mipmap/venera_entry_ic_record_launcher"
+      android:label="@string/venera_entry_launcher_label"
+      android:noHistory="true"
+      android:roundIcon="@mipmap/venera_entry_ic_record_launcher"
+      android:taskAffinity=""
+      android:theme="@android:style/Theme.Translucent.NoTitleBar">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+
+    <service
+      android:name="uz.brbtech.venera.entry.RecordTileService"
+      android:exported="true"
+      android:icon="@drawable/ic_record"
+      android:label="@string/venera_entry_tile_label"
+      android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+      <intent-filter>
+        <action android:name="android.service.quicksettings.action.QS_TILE" />
+      </intent-filter>
+      <meta-data
+        android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+        android:value="true" />
+    </service>
+
+    <service
+      android:name="uz.brbtech.venera.entry.RecordKeyService"
+      android:exported="true"
+      android:label="@string/venera_entry_key_service_label"
+      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+      <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService" />
+      </intent-filter>
+      <meta-data
+        android:name="android.accessibilityservice"
+        android:resource="@xml/venera_entry_key_service" />
+    </service>
+  </application>
+</manifest>

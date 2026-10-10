@@ -205,7 +205,7 @@ def project_view(items: list[dict[str, Any]], now: float) -> ProjectView:
                        more_owners=max(0, len(owners) - OWNERS_MAX))
 
 
-PROJECT_PROMPT = """Sen Venera - rahbariyat yordamchisisan. Quyida BITTA loyiha guruhining shu davrdagi tekshirilgan faktlari bor (CRM holati qo'shilgan). Rahbar uchun loyiha holatini yoz.
+PROJECT_PROMPT = """Sen Barno - rahbariyat yordamchisisan. Quyida BITTA loyiha guruhining shu davrdagi tekshirilgan faktlari bor (CRM holati qo'shilgan). Rahbar uchun loyiha holatini yoz.
 Javob - FAQAT JSON: {"summary": "...", "done": "...", "progress": "...", "blockers": "..."}
 - summary - BITTA gap: loyihaning hozirgi holati.
 - done - 1-3 gap: nima bajarildi. Muhim natija bo'lsa "Tabriklayman!" bilan boshlash mumkin. Bajarilgan ish bo'lmasa - "".

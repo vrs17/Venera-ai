@@ -61,6 +61,7 @@ def _run(call, user: AuthUser, token: str, what: str, verb: str | None = None) -
         if verb and exc.status in EXPIRED_STATUSES:
             # Taklifning muddati o'tgan (15 daqiqa) - izda ham shunday.
             set_proposal_status(token, "expired")
+            _meeting_item(user, token, "expired")
         status = exc.status if exc.status in _MESSAGES else 502
         raise error_status(status, _MESSAGES[status]) from exc
     log.info("Amal %s (%s): token=%s holat=%s ok=%s", what, user.email, token,
@@ -69,7 +70,20 @@ def _run(call, user: AuthUser, token: str, what: str, verb: str | None = None) -
         outcome = proposal_outcome(verb, result)
         if outcome:
             set_proposal_status(token, outcome)
+            _meeting_item(user, token, outcome, result.get("result"))
     return ActionResult(**{k: v for k, v in result.items() if k in ActionResult.model_fields})
+
+
+def _meeting_item(user: AuthUser, token: str, outcome: str, result: object = None) -> None:
+    """Taklif yig'ilish vazifasidan kelgan bo'lsa (`POST /meetings/.../crm`) - vazifaning CRM
+    holati ham yangilanadi. Bo'lim hech qachon yoqilmagan bo'lsa ombor yaratilmaydi, xato
+    esa tasdiq javobiga ta'sir qilmaydi (`note_crm_outcome` o'zi ushlaydi)."""
+    try:
+        from ...services.meetings import service as _meetings
+
+        _meetings.note_crm_outcome(user.actorId, token, outcome, result)
+    except Exception:                                              # noqa: BLE001
+        log.warning("Yig'ilish vazifasi CRM holati yangilanmadi", exc_info=True)
 
 
 def proposal_outcome(verb: str, result: dict) -> str | None:

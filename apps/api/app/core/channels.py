@@ -4,6 +4,7 @@
     miniapp   Telegram mini app (`apps/tg`, `/tg/` ostida)
     bot       Telegram bot - chatning o'zida (`app/bot/`)
     desktop   desktop klient
+    mobile    mobil ilova "Venera Yozuv" (`apps/mobile`, yig'ilish yozuvchisi)
     api       boshqa hamma narsa (curl, skript, eski build)
 
 NEGA KLIENT O'ZI AYTADI. Server tomonida web va mini app so'rovi bir xil
@@ -29,13 +30,15 @@ import urllib.parse
 from typing import Any
 
 #: Hamma kanallar - admin panel filtrlari shu tartibda.
-CHANNELS: tuple[str, ...] = ("web", "miniapp", "bot", "desktop", "api")
+CHANNELS: tuple[str, ...] = ("web", "miniapp", "bot", "desktop", "mobile", "api")
 
 #: Klient sarlavhasi.
 HEADER = "X-Venera-Client"
 
 #: Sarlavha orqali e'lon qilinishi mumkin bo'lgan kanallar (`bot` yo'q).
-CLIENT_CHANNELS = frozenset({"web", "miniapp", "desktop"})
+#: `mobile` - yig'ilish yozuvchisi: uning audio va xulosa chaqiruvlari (GAPI,
+#: Ollama) hisobda alohida ko'rinsin, `api` ga aralashib ketmasin.
+CLIENT_CHANNELS = frozenset({"web", "miniapp", "desktop", "mobile"})
 
 #: Boshqacha yozilishlar - bitta nomga keltiriladi.
 _ALIASES = {
@@ -69,7 +72,7 @@ def normalize(value: Any, default: str | None = _DEFAULT) -> str | None:
 def channel_of(request: Any) -> str:
     """So'rovning kanali. Tartib:
 
-      1. `X-Venera-Client` - `web`, `miniapp` yoki `desktop` bo'lsa, o'sha;
+      1. `X-Venera-Client` - `web`, `miniapp`, `desktop` yoki `mobile` bo'lsa, o'sha;
       2. aks holda `Referer` / `Origin` yo'li `/tg/` yoki `/tg-beta/` bilan
          boshlansa - `miniapp`;
       3. aks holda `api`.

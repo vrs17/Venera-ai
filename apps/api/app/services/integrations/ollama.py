@@ -168,7 +168,15 @@ class HoldClassifier:
 
 
 class OllamaError(Exception):
-    """Matn yozilmadi: kalit yo'q, tarmoq, HTTP xato yoki bo'sh javob."""
+    """Matn yozilmadi: kalit yo'q, tarmoq, HTTP xato yoki bo'sh javob.
+
+    `status` - HTTP kodi (bo'lsa). Yig'ilish xulosasi 429 ni ("kutib
+    qayta urin") boshqa xatolardan ajratadi (`services/meetings/summarize.py`).
+    """
+
+    def __init__(self, message: str = "", status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class OllamaChat:
@@ -205,18 +213,40 @@ class OllamaChat:
         Ollama Cloud, gemma4:31b): talab QAT'IY emas - javob baribir
         ```json ... ``` ichida keladi, ya'ni o'qiydigan kod chegarani o'zi
         olib tashlashi kerak (`briefs.parse_events`)."""
+        text, _ = self.complete_meta(system, user, num_predict=num_predict,
+                                     temperature=temperature, op=op, format=format)
+        return text
+
+    def complete_meta(self, system: str, user: str, *, num_predict: int = 1200,
+                      temperature: float = 0.2, op: str = "group", format: str | None = None,
+                      options: dict[str, Any] | None = None,
+                      think: bool | None = None) -> tuple[str, dict[str, Any]]:
+        """`complete` + javob haqida ma'lumot: `(matn, {doneReason, tokensIn, tokensOut})`.
+
+        Yig'ilish xulosasi uchun (`services/meetings/summarize.py`): javob
+        `num_predict` da KESILGANINI (`done_reason == "length"`) yoki prompt
+        jimgina qisqartirilganini (`prompt_eval_count` kutilgandan ancha kam)
+        faqat shu ma'lumot aytadi - matnning o'zidan buni bilib bo'lmaydi.
+        `options` - qo'shimcha Ollama sozlamalari (masalan `num_ctx`).
+        `think` - berilsa Ollama `think` maydoni (None - yuborilmaydi, eski xatti-harakat);
+        `meta.thinkingChars` - model "o'ylash" matni qaytardimi (ular ham `num_predict` dan yeyiladi)."""
         key = self._key() or ""
         if not (self.base_url and self.model and key):
             raise OllamaError("Ollama sozlanmagan")
+        model_options: dict[str, Any] = {"temperature": temperature, "num_predict": num_predict}
+        for name, value in (options or {}).items():
+            model_options.setdefault(name, value)
         payload_in: dict[str, Any] = {
             "model": self.model,
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
             "stream": False,
-            "options": {"temperature": temperature, "num_predict": num_predict},
+            "options": model_options,
         }
         if format:
             payload_in["format"] = format
+        if think is not None:
+            payload_in["think"] = bool(think)
         body = json.dumps(payload_in).encode("utf-8")
         request = urllib.request.Request(
             f"{self.base_url}/api/chat", data=body, method="POST",
@@ -232,7 +262,7 @@ class OllamaChat:
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             call.end("error", http_status=exc.code, error=f"Ollama HTTP {exc.code}")
-            raise OllamaError(f"Ollama HTTP {exc.code}") from exc
+            raise OllamaError(f"Ollama HTTP {exc.code}", status=exc.code) from exc
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             message = f"{type(exc).__name__}: {_safe(str(exc), key)}"
             call.end("error", error=message)
@@ -248,4 +278,10 @@ class OllamaChat:
                  error=None if content else "bo'sh javob")
         if not content:
             raise OllamaError("bo'sh javob")
-        return content
+        meta = {
+            "doneReason": str(payload.get("done_reason") or "") or None,
+            "tokensIn": payload.get("prompt_eval_count") if isinstance(payload.get("prompt_eval_count"), int) else None,
+            "tokensOut": payload.get("eval_count") if isinstance(payload.get("eval_count"), int) else None,
+            "thinkingChars": len(str((payload.get("message") or {}).get("thinking") or "")),
+        }
+        return content, meta

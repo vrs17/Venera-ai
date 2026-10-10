@@ -1,4 +1,4 @@
-# Venera API
+# Barno API
 
 Web ilova (`apps/web`) uchun backend. FastAPI, Python 3.10+.
 

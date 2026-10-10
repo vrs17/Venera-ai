@@ -28,7 +28,7 @@ const start = computed<RouteLocationRaw>(() => {
   <AuthShell width="wide" :brand="false">
     <section class="welcome" aria-labelledby="welcome-title">
       <div class="welcome__orb" aria-hidden="true" />
-      <h1 id="welcome-title" class="welcome__title">Venera</h1>
+      <h1 id="welcome-title" class="welcome__title">Barno</h1>
       <p class="welcome__sub">{{ t('splashSub') }}</p>
       <VButton :to="start" variant="primary" size="lg" pill class="welcome__cta">{{ t('getStarted') }}</VButton>
     </section>

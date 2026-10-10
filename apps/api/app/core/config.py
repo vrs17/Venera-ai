@@ -28,7 +28,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "Venera API"
+    app_name: str = "Barno API"
     #: Frontend `package.json` versiyasi bilan bog'liq emas - bu API versiyasi.
     version: str = "0.1.0"
     debug: bool = False
@@ -541,6 +541,162 @@ class Settings(BaseSettings):
     #: (`services/admin_users._effective_roles`).
     sso_trusted_roles: str = ""
 
+    # --- Yig'ilish yozuvchisi (Venera Yozuv, `services/meetings/`) ---
+    #
+    # Mobil ilova yig'ilishni yozadi, GAPI spikerlarni ajratib matnga
+    # o'giradi, gemma4:31b esa xulosa yozadi. Spetsifikatsiya:
+    # `docs/plans/meeting-recorder.md`.
+    #
+    #: BO'LIM O'CHIQ - default. Yig'ilish audiosi GAPI ga, matni Ollama
+    #: Cloud ga ketadi: bu YANGI ma'lumot turi (1:1, suhbat, mijoz
+    #: qo'ng'irog'i), va foydalanuvchi buni alohida tasdiqlamaguncha bo'lim
+    #: ko'rinmaydi (404). `.env` dan JONLI o'qiladi (`meetings_enabled_now`):
+    #: yoqish/o'chirish uchun restart kerak emas.
+    meetings_enabled: bool = False
+    #: Sinov guruhi: ADMIN rolidagilar VA shu loginlar (vergul/bo'shliq bilan,
+    #: registrga qaramaydi; SSO - logini, `users.yaml` - emaili). JONLI.
+    meetings_logins: str = ""
+    #: Ombor, audio va yuklanayotgan bo'laklar shu papkada. SHAXSIY
+    #: MA'LUMOT: papka 700, fayllar 600, `data/` gitignore'da.
+    meetings_dir: Path = BASE_DIR / "data" / "meetings"
+    #: Fon ishchisi (transkripsiya, xulosa, tozalash). Testlarda O'CHIQ:
+    #: `TestClient` ishga tushishi ip yaratmasin.
+    meetings_worker: bool = True
+    #: Bir vaqtda nechta yig'ilish ishlanadi. 2: biri GAPI ni kutayotganda
+    #: ikkinchisining xulosasi yozilsin; server 4 CPU / 3 GB - ko'pi zarar.
+    meetings_worker_threads: int = 2
+    #: Eng uzun yozuv (daqiqa). Ilova shundan 10 daqiqa oldin ogohlantiradi.
+    meetings_max_minutes: int = 180
+    #: Bitta yozuvning eng katta hajmi. 48 kbps ADTS da 3 soat ~65 MB -
+    #: 150 MB katta zahira (m4a yuklansa ham sig'adi).
+    meetings_max_upload_mb: int = 150
+    #: Bo'lak hajmi: nginx'ning `client_max_body_size` (12m deb faraz
+    #: qilingan) dan ancha kichik, mobil tarmoqda esa qayta yuborish arzon.
+    meetings_chunk_bytes: int = 4 * 1024 * 1024
+    #: Bitta odamga kuniga necha audio-daqiqa GAPI da o'giriladi. Oshsa
+    #: yozuv RAD ETILMAYDI - navbatda turadi (`waiting_quota`).
+    meetings_user_daily_minutes: int = 240
+    #: Yig'ilishlar uchun BUTUN xizmatning kunlik ulushi. Balansning
+    #: qolgani chat diktovkasi uchun.
+    meetings_gapi_daily_minutes: int = 180
+    #: GAPI balansida doim shuncha daqiqa qolsin - chatdagi ovozli savol
+    #: yig'ilish tufayli to'xtab qolmasin.
+    meetings_gapi_reserve_minutes: int = 60
+    #: Audio shuncha kundan keyin o'chiriladi; matn va xulosa qoladi.
+    meetings_audio_days: int = 30
+    #: Butun yig'ilish (matni bilan) shuncha kundan keyin o'chiriladi. 0 - saqlanadi.
+    meetings_retention_days: int = 180
+    #: Tugallanmagan yuklash oxirgi bo'lakdan shuncha soat keyin o'chiriladi.
+    meetings_upload_ttl_hours: int = 72
+    #: GAPI ga BITTA HTTP amal (yuklash, so'rash) uchun chegara.
+    meetings_stt_timeout: float = 120.0
+    #: GAPI vazifasini jami shuncha kutamiz, keyin `stt_timeout` (qayta
+    #: urinish o'sha vazifa raqami bilan - pul qayta yechilmaydi).
+    meetings_stt_deadline: float = 3600.0
+    #: Xulosa modeli. Bo'sh - `ollama_model` (gemma4:31b).
+    meetings_llm_model: str = ""
+    #: Bitta model chaqiruvi (va o'z navbatimizni kutish) chegarasi. 8K tokenlik
+    #: javob ~30-50 tok/s da 160-270 s - 180 s kam edi. Jonli o'lchovdan keyin aniqlanadi.
+    meetings_llm_timeout: float = 300.0
+    #: Ollama `num_ctx`. 0 - yuborilmaydi: Cloud'dagi kontekst oynasi hali
+    #: o'lchanmagan, jonli tekshiruv (`tools/meetings_live_check.py`) dan keyin qo'yiladi.
+    meetings_llm_num_ctx: int = 0
+    #: Ollama `think`: bo'sh - yuborilmaydi; `false` - model "o'ylash" tokenlarini
+    #: sarflamasin (ular `num_predict` dan yeyiladi). Jonli tekshiruv `thinking`
+    #: maydoni kelyaptimi - shuni ko'rsatadi, keyin qo'yiladi.
+    meetings_llm_think: str = ""
+    #: Shundan qisqa matn BITTA chaqiruvda xulosalanadi; uzunrog'i bo'laklab
+    #: (map-reduce). ~30 ming belgi ~ 14 ming token kirish va ~5-6 ming token
+    #: javob (45 daqiqalik yig'ilish JSON i ~6-7K token - 45K da javob kesilardi).
+    meetings_single_pass_chars: int = 30000
+    #: Map bosqichida bitta bo'lak hajmi (belgi).
+    meetings_map_chars: int = 20000
+    #: Javob byudjeti (token): bir o'tish va map bo'lagi. Ollama Cloud chiqish
+    #: chegarasi jonli tekshiruvda tasdiqlanadi (`meetings_live_check.py ollama`).
+    meetings_extract_num_predict: int = 8192
+    meetings_map_num_predict: int = 6144
+    #: Vazifa va qarorlarni ikkinchi chaqiruv bilan tekshirish.
+    meetings_verify: bool = True
+    #: Bitta odamning soatlik chegaralari: savol (Ask) va xulosa tabi.
+    meetings_ask_per_hour: int = 30
+    meetings_summary_per_hour: int = 10
+    #: Mobil ilova yozish manbasi (`voice_recognition` | `mic` | `camcorder`) -
+    #: `GET /meetings/config` orqali masofadan A/B sinash uchun.
+    meetings_audio_source: str = "voice_recognition"
+    #: Model ZANJIRI (`services/meetings/llm.py`): vergul bilan, tartibi - ustunlik.
+    #: `v3` - yordamchining "Venera Core" dvigateli, `openai` - OpenAI GPT
+    #: (kalit va model berilgandagina), `ollama` - gemma4:31b (oxirgi zahira).
+    #: BITTA xulosa BITTA modelda yoziladi: biror qadam yiqilsa yoki JSON tuzatishdan
+    #: keyin ham yaroqsiz bo'lsa, butun xulosa keyingi model bilan BOSHIDAN yoziladi
+    #: (aralash xulosa - bir bo'lagini bir model, boshqasini boshqasi - bo'lmasin).
+    #: Default `ollama`: sozlanmaguncha xulq o'zgarmaydi. Namoyish: `v3,openai,ollama`.
+    meetings_llm_chain: str = "ollama"
+    #: Savol-javob (Ask) zanjiri. Bo'sh - `meetings_llm_chain` bilan bir xil.
+    meetings_ask_chain: str = ""
+    #: v3 ga bitta savolning eng katta uzunligi (belgi). Chat qirqimi (2000) bu yerga
+    #: TEGISHLI EMAS - yuqoridagi `ChatReq.question` da chegara e'lon qilinmagan. Map
+    #: ko'rsatmalarining o'zi ~14 ming belgi (+ sarlavha, meta, shablon ~1.5-2 ming): 20000 da
+    #: bitta map chaqiruviga ~2.9 ming belgi transkript sig'adi (`general`; `sales_call` ~2.4
+    #: ming), ya'ni 10 daqiqalik (~9 ming belgi) yig'ilish ~3-4 map + yozuvchi + tekshiruv =
+    #: 5-6 v3 chaqiruvi, 30 daqiqa ~10-12, 1 soat ~22-27 (byudjetdan oshadi - keyingi model).
+    #: Jonli tekshiruvdan keyin 40000: 20 ming belgigacha bitta o'tish (2 chaqiruv).
+    meetings_v3_max_chars: int = 20000
+    #: v3 oqimida kadrlar ORASIDAGI eng uzun jimlik (soniya): agent katta matnni o'qib,
+    #: birinchi so'zni yozguncha chat savolidan ko'proq o'ylaydi.
+    meetings_v3_timeout: float = 120.0
+    #: Bitta v3 javobining eng uzun umri (soniya).
+    meetings_v3_max_stream_seconds: float = 300.0
+    #: Yig'ilish ishchisining O'Z v3 navbati: chatdagi odamlar xulosa tufayli kutmasin.
+    #: Shuncha xulosa bir vaqtda v3 da yoziladi; qolgani navbatda kutadi (30 s dan keyin).
+    meetings_v3_max_concurrent: int = 1
+    #: Ishchi ipi v3 slotini shuncha soniya kutadi (ikki chaqiruv orasida boshqa ip olgan bo'lsa).
+    meetings_v3_slot_wait: float = 30.0
+    #: v3 vaqtinchalik xatosida (503, uzilish, jimlik) shu savol necha marta qayta (5 s, 15 s).
+    meetings_v3_retries: int = 2
+    #: Zanjirda v3 ga BITTA xulosa uchun ajratilgan vaqt (soniya) va chaqiruvlar soni (0 -
+    #: chegarasiz). Oshsa (yoki yig'ilish oldindan sig'masa) - xulosa keyingi model bilan:
+    #: sekin, lekin tirik v3 xulosani o'nlab daqiqa ushlab turmasin.
+    meetings_v3_summary_budget_sec: float = 600.0
+    meetings_v3_summary_max_calls: int = 16
+    #: Savol-javob (Ask): odam kutib turgan umumiy muddat (soniya) - hamma model birga.
+    #: Oxirgisidan boshqasiga qolgan vaqtning 2/3 qismi beriladi.
+    meetings_ask_deadline: float = 90.0
+    #: OpenAI kaliti - `apps/api/.env` dan JONLI o'qiladi (`openai_key_now`); u yerda kalit
+    #: bo'lmasa - ishga tushishdagi qiymat (systemd `Environment=`). Jurnalga tushmaydi.
+    openai_api_key: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
+    #: OpenAI modeli (foydalanuvchi bergan GPT id si). BO'SH - provayder O'CHIQ: default
+    #: model ATAYLAB yo'q - qaysi model va qancha narx, foydalanuvchi hal qiladi.
+    meetings_openai_model: str = ""
+    #: Bitta OpenAI chaqiruvi chegarasi (soniya).
+    meetings_openai_timeout: float = 300.0
+    #: OpenAI konteksti katta: 1 soatlik yig'ilish (~70 ming belgi) BITTA chaqiruvda -
+    #: butun yig'ilishni bir ko'rishda yozilgan xulosa bo'laklardan yig'ilganidan yaxshiroq.
+    meetings_openai_single_pass_chars: int = 120000
+    meetings_openai_map_chars: int = 60000
+    #: `max_completion_tokens`. 0 - yuborilmaydi (modelning o'z chegarasi): "o'ylovchi"
+    #: modellarda bu son o'ylash tokenlarini ham o'z ichiga oladi, kichik son javobni kesardi.
+    meetings_openai_max_output_tokens: int = 0
+    #: `reasoning_effort` (low | medium | high). Bo'sh - yuborilmaydi (oddiy modellar uni rad etadi).
+    meetings_openai_reasoning_effort: str = ""
+    #: `temperature`. Bo'sh - yuborilmaydi ("o'ylovchi" modellar faqat default'ni qabul qiladi);
+    #: oddiy model (gpt-4.1/4o sinfi) uchun 0.1-0.2 - aks holda u 1.0 da yozadi.
+    meetings_openai_temperature: str = ""
+    #: OpenAI 5xx / tarmoq xatosida xulosa chaqiruvi necha marta qayta (3 s dan keyin).
+    meetings_openai_retries: int = 1
+    #: Vazifani CRM ga yuborish (v3 taklifi): odamga soatiga shuncha so'rov va bitta
+    #: so'rovning eng uzun kutishi (agent CRM dan loyiha va odamni qidiradi).
+    meetings_crm_per_hour: int = 20
+    meetings_crm_timeout: float = 120.0
+    #: CRM so'rovi FAQAT odamning O'Z CRM ulanishi bilan (guruhdagi CRM qoidasi): umumiy
+    #: `CrmAuth` hisobi va HRM tokeni yuborilmaydi - vazifa so'ragan odam nomidan. `false` -
+    #: o'z ulanishi bo'lmasa umumiy CRM hisobi (HRM baribir yuborilmaydi).
+    meetings_crm_own_tokens: bool = True
+    #: Qurilma tokeni (mobil ilova) - oxirgi ishlatilgandan shuncha kun yashaydi.
+    device_token_days: int = 30
+    #: Qurilma tokenlari ombori (faqat xeshlar). `data/` gitignore'da, 600.
+    devices_db: Path = BASE_DIR / "data" / "devices.db"
+
     # --- CORS ---
     #: Bo'sh bo'lsa CORS o'chirilgan: frontend nginx orqali BIR XIL originda
     #: turadi (`/api` proxy), ya'ni CORS umuman kerak emas. Faqat frontend
@@ -614,6 +770,14 @@ def ollama_key_now() -> str:
         _env_token("venera_api_url", settings.venera_api_url)
 
 
+def openai_key_now() -> str:
+    """OpenAI kaliti - `apps/api/.env` dan JONLI: kalit qo'yilgach yig'ilish xulosasi
+    restartsiz OpenAI ga o'ta oladi (model - `MEETINGS_OPENAI_MODEL` - esa restart bilan).
+    `.env` da kalit yo'q bo'lsa - ishga tushishdagi qiymat: systemd `Environment=` bilan
+    berilgan kalit jim e'tiborsiz qolmasin. Qiymat hech qayerga (jurnal, health) chiqmaydi."""
+    return _env_token("openai_api_key", settings.openai_api_key) or settings.openai_api_key
+
+
 def hrm_token_now() -> str:
     """HRM sessiya token'i."""
     return _env_token("hrm_token", settings.hrm_token)
@@ -648,6 +812,31 @@ def telegram_group_limits_now() -> tuple[tuple[int, float], tuple[int, float]]:
 def telegram_brief_logins_now() -> frozenset[str]:
     """Brif ochiq loginlar (`telegram_brief_logins`) - `.env` dan JONLI, kichik harfda."""
     raw = _env_token("telegram_brief_logins", settings.telegram_brief_logins)
+    return frozenset(part.strip().lower() for part in re.split(r"[,\s;]+", raw or "") if part.strip())
+
+
+def _env_flag(key: str, default: bool) -> bool:
+    """`.env` dagi mantiqiy qiymat - JONLI. Kalit yo'q bo'lsa `default`
+    (sozlama obyekti: muhit o'zgaruvchisi yoki koddagi default)."""
+    raw = (_env_token(key, "") or "").strip().lower()
+    if not raw:
+        return bool(default)
+    return raw in ("1", "true", "yes", "on")
+
+
+def meetings_enabled_now() -> bool:
+    """Yig'ilishlar bo'limi yoqilganmi - `.env` dan JONLI.
+
+    Yoqish ham, o'chirish ham restartsiz: bo'lim maxfiy ma'lumot bilan
+    ishlaydi, va "darhol yopish" kerak bo'lib qolsa xizmatni qayta ishga
+    tushirish ayni paytda yuklanayotgan yozuvlarni uzib qo'yardi.
+    """
+    return _env_flag("meetings_enabled", settings.meetings_enabled)
+
+
+def meetings_logins_now() -> frozenset[str]:
+    """Yig'ilishlar bo'limi ochiq loginlar - `.env` dan JONLI, kichik harfda."""
+    raw = _env_token("meetings_logins", "") or settings.meetings_logins
     return frozenset(part.strip().lower() for part in re.split(r"[,\s;]+", raw or "") if part.strip())
 
 

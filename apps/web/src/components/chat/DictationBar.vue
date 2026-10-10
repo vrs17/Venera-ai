@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, X } from 'lucide-vue-next'
+import { ArrowUp, Check, Square, X } from 'lucide-vue-next'
 import { BAR_MS } from '../../composables/useDictation'
 import type { DictationState, LevelStream } from '../../composables/useDictation'
 import { useTheme } from '../../theme'
@@ -20,15 +20,23 @@ import { usePrefersReducedMotion } from '../../ui/composables/useMediaQuery'
  *
  * Canvas, DOM emas: sekundiga ~14 ustun qo'shiladi va hammasi siljiydi -
  * yuzlab <span> ni har kadrda qayta joylash o'rniga bitta chizish arzon.
+ *
+ * `sendable` (Mini App, telefon): "Tayyor" o'rnida IKKI tugma - ■ "to'xtatib
+ * tahrirlash" (matn maydonga tushadi) va ↑ "darhol yuborish" (matn maydonga
+ * tushib, o'zi ketadi). Telefonda gapni aytib, ko'rib o'tirmasdan bir bosishda
+ * yuborish - eng ko'p ishlatiladigan yo'l (Claude ilovasidagi kabi). `pending` -
+ * qaysi biri bosilgani: matnga aylantirilayotganda o'sha tugmada aylana turadi.
  */
 const props = defineProps<{
   state: Exclude<DictationState, 'idle'>
   /** Yozuv davomiyligi, soniya. */
   elapsed: number
   levels: LevelStream
+  sendable?: boolean
+  pending?: 'done' | 'send' | null
 }>()
 
-const emit = defineEmits<{ (e: 'cancel'): void; (e: 'done'): void }>()
+const emit = defineEmits<{ (e: 'cancel'): void; (e: 'done'): void; (e: 'send'): void }>()
 
 const { t } = useI18n({ useScope: 'global' })
 const reduced = usePrefersReducedMotion()
@@ -50,6 +58,14 @@ watch(
   { immediate: true },
 )
 const { theme } = useTheme()
+
+const statusKey = computed(() =>
+  props.state === 'starting'
+    ? 'composer.dictate.starting'
+    : props.pending === 'send'
+      ? 'composer.dictate.sending'
+      : 'composer.dictate.transcribing',
+)
 
 const rootRef = ref<HTMLElement | null>(null)
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -260,11 +276,36 @@ defineExpose({ focusDone })
     <div class="dict__wave">
       <canvas ref="canvasRef" class="dict__canvas" aria-hidden="true" />
       <span v-if="state === 'transcribing' || (state === 'starting' && startingSlow)" class="dict__status">
-        <span class="dict__shimmer">{{ t(state === 'transcribing' ? 'composer.dictate.transcribing' : 'composer.dictate.starting') }}</span>
+        <span class="dict__shimmer">{{ t(statusKey) }}</span>
       </span>
     </div>
     <span class="dict__time" aria-hidden="true">{{ clock }}</span>
+    <template v-if="sendable">
+      <VIconButton
+        class="dict__stop"
+        variant="secondary"
+        size="sm"
+        :label="t('composer.dictate.stop')"
+        :disabled="state !== 'recording'"
+        :loading="state === 'transcribing' && pending !== 'send'"
+        @click="emit('done')"
+      >
+        <Square :size="11" :stroke-width="0" fill="currentColor" aria-hidden="true" />
+      </VIconButton>
+      <VIconButton
+        class="dict__send"
+        variant="primary"
+        size="sm"
+        :label="t('composer.dictate.send')"
+        :disabled="state !== 'recording'"
+        :loading="state === 'transcribing' && pending === 'send'"
+        @click="emit('send')"
+      >
+        <ArrowUp :size="18" :stroke-width="2.25" aria-hidden="true" />
+      </VIconButton>
+    </template>
     <VIconButton
+      v-else
       ref="doneRef"
       class="dict__done"
       variant="primary"

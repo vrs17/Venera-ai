@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 
 from pathlib import Path
 
@@ -114,7 +115,7 @@ log = logging.getLogger(__name__)
 app = FastAPI(
     title=settings.app_name,
     version=settings.version,
-    description="Venera AI - web ilova uchun backend.",
+    description="Barno AI - web ilova uchun backend.",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -258,6 +259,32 @@ def _stop_telegram_bot() -> None:
     bot.stop()
 
 
+@app.on_event("startup")
+def _start_meetings_worker() -> None:
+    """Yig'ilish yozuvchisining fon ishchisi (`services/meetings/worker.py`).
+
+    `MEETINGS_WORKER=false` bo'lsa ip yo'q. Bo'lim o'chiq va ombor yo'q
+    bo'lsa ip faqat kutadi - diskka hech narsa yozmaydi."""
+    from .services import meetings
+
+    meetings.start()
+
+
+@app.on_event("shutdown")
+def _stop_meetings_worker() -> None:
+    from .services import meetings
+
+    meetings.stop()
+
+
+def meetings_state() -> dict:
+    """Yig'ilishlar holati - `/api/health/detail` uchun: SONLAR va daqiqalar,
+    mazmun (matn, xulosa, ism) YO'Q."""
+    from .services import meetings
+
+    return meetings.status()
+
+
 @app.on_event("shutdown")
 def _flush_analytics() -> None:
     """Analitika navbatida qolgan yozuvlarni diskka tushiradi.
@@ -286,9 +313,15 @@ def stt_variants() -> dict:
     aylanma bog'liqlik yasaydi (`main` -> `api` -> `main`).
     """
     from .api.v1.stt import _fallbacks, _gapi_client, _gapi_wake_client, _wake_budget
+    from .services.meetings import runtime as meetings_runtime
 
     spend = _gapi_client.spend()
     wake_spend = _gapi_wake_client.spend()
+    # Uchinchi klient - yig'ilishlar (alohida slot). Kunlik balans BITTA, shuning
+    # uchun sarfi umumiy songa qo'shiladi va alohida ham ko'rsatiladi.
+    meeting_client = meetings_runtime().gapi
+    meeting_spend = meeting_client.spend() if callable(getattr(meeting_client, "spend", None)) \
+        else {"audio_sec": 0.0, "calls": 0, "sent": 0}
     return {
         "provider": settings.stt_provider,
         "wake_provider": settings.stt_wake_provider,
@@ -297,13 +330,16 @@ def stt_variants() -> dict:
         # daqiqa (28800 s) va u Toshkent yarim kechasida to'ldiriladi.
         "gapi_spend": {
             "day": spend["day"],
-            "audio_sec": round(float(spend["audio_sec"]) + float(wake_spend["audio_sec"]), 1),
-            "calls": int(spend["calls"]) + int(wake_spend["calls"]),
+            "audio_sec": round(float(spend["audio_sec"]) + float(wake_spend["audio_sec"])
+                               + float(meeting_spend["audio_sec"]), 1),
+            "calls": int(spend["calls"]) + int(wake_spend["calls"]) + int(meeting_spend["calls"]),
             # `sent` > `calls` degani: urinish yuborilgan, javob kelmagan -
             # va o'lchangan holda javobsiz urinishning ham puli ketadi.
-            "sent": int(spend["sent"]) + int(wake_spend["sent"]),
+            "sent": int(spend["sent"]) + int(wake_spend["sent"]) + int(meeting_spend["sent"]),
             "wake_audio_sec": wake_spend["audio_sec"],
             "wake_calls": wake_spend["calls"],
+            "meeting_audio_sec": meeting_spend["audio_sec"],
+            "meeting_calls": meeting_spend["calls"],
         },
         "wake_budget": _wake_budget.snapshot(),
         # Zahira qachon ishlagani. `last_5min > 0` degani "2-variant
@@ -511,6 +547,14 @@ def _diagnostics() -> dict:
                 "tushishi mumkin; @BotFather'da tokenni yangilab, faqat jonli .env ga qo'ying"
             )
 
+    # Yig'ilish yozuvchisi: navbat, bugungi daqiqalar, ishchi tirikligi. GAPI
+    # kaliti rad etilgan bo'lsa (401/403) - yozuvlar jimgina `failed` bo'lmasin.
+    meetings = meetings_state()
+    if meetings.get("lastAuthFailureAt") and time.time() - float(meetings["lastAuthFailureAt"]) < 86400:
+        warnings.append("Yig'ilishlar: GAPI kaliti rad etildi (401/403) - GAPI_API_KEY ni tekshiring")
+    if meetings.get("enabled") and settings.meetings_worker and not meetings.get("worker", {}).get("alive"):
+        warnings.append("Yig'ilishlar bo'limi yoqilgan, lekin fon ishchisi ishlamayapti")
+
     return {
         "status": "degraded" if warnings else "ok",
         "upstream": upstream,
@@ -540,6 +584,8 @@ def _diagnostics() -> dict:
         },
         # Telegram bot: ishlayaptimi va nechta odam ulangan. TOKEN YO'Q.
         "telegram": telegram,
+        # Yig'ilishlar: holatlar bo'yicha sonlar, bugungi daqiqalar, ishchi. MAZMUN YO'Q.
+        "meetings": meetings,
         "warnings": warnings,
     }
 

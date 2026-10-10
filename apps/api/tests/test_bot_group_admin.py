@@ -338,7 +338,7 @@ def test_turi_tanlansa_elon_qadaladi_va_oqiladi(w):
     w.bot.handle_update(press(f"g:on:{G_NEW}:s", tg_id=EXEC_TG))
     assert w.registry.allowed_ids() == frozenset({G_ENV, G_NEW}) and w.registry.kind_of(G_NEW) == "support"
     [notice] = to(w, G_NEW)
-    for part in ("/summary", "/askvenera", "rahbariyati", "90 kun", "maosh, ta'til, kasallik"):
+    for part in ("/summary", "/askbarno", "rahbariyati", "90 kun", "maosh, ta'til, kasallik"):
         assert part in notice["text"], part
     assert w.tg.sent("pin_message") == [{"chat_id": G_NEW, "message_id": notice["message_id"], "silent": True}]
     assert w.registry.get(G_NEW).notice_id == notice["message_id"]

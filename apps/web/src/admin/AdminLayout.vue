@@ -212,7 +212,7 @@ palette.register(
       <VIconButton :icon="Menu" :label="t('admin.nav.menu')" :dot="newReports > 0" @click="navOpen = true" />
       <span class="admin__bar-brand">
         <span class="admin__spark" aria-hidden="true"><BrandSpark :size="16" /></span>
-        <span class="admin__word">Venera</span>
+        <span class="admin__word">Barno</span>
         <span class="admin__badge">{{ t('admin.title') }}</span>
       </span>
       <VIconButton :icon="Search" :label="t('admin.nav.search')" @click="palette.open()" />

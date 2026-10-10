@@ -1,0 +1,248 @@
+/**
+ * Sessiya: "bir marta kirasiz, keyin avtomatik" (spec 7.4, 7.6, 3.2 #29-31).
+ *
+ * Venera JWT 12 soat yashaydi va refresh yo'q. Shuning uchun login'dan keyin
+ * qurilma ro'yxatdan o'tadi va uzoq muddatli `deviceToken` oladi. JWT eskirsa
+ * (10 daqiqadan kam qolsa) `POST /auth/devices/session` yangisini beradi.
+ *
+ * Single-flight: bir vaqtda 5 ta so'rov 401 olsa ham yangilash BITTA bo'ladi -
+ * aks holda server rate-limit (6/min) qurilmani bloklaydi.
+ *
+ * QURILMA TOKENI FAQAT YIG'ILISHLAR BO'LIMI YOQILGANLARGA (server 403/404 beradi).
+ * Chat esa hammaga kerak: bo'lim yoqilmagan odam ham kiradi - JWT muddati
+ * (12 soat) tugaguncha ishlatiladi, keyin qayta kirish so'raladi.
+ * `adoptToken`/`ensureDevice` - tashqaridan kelgan tokenni sessiyaga aylantirish.
+ */
+import { ApiError, AuthRequiredError, type TokenProvider } from '@/api/client';
+import type { AuthApi } from '@/api/meetings';
+import type { LoginResponse, RegisterDeviceRequest } from '@/api/types';
+
+import { decodeJwtClaims } from './jwt';
+import type { TokenStore } from './tokenStore';
+
+/** Token shundan kam qolgan bo'lsa oldindan yangilanadi. */
+export const REFRESH_WINDOW_MS = 10 * 60 * 1000;
+/** Qurilma tokenisiz (Mini App bergan) token shundan kam qolsa ishlatilmaydi - so'rov yo'lda o'lardi. */
+export const MIN_USABLE_MS = 60 * 1000;
+/** Token `exp` i o'qilmasa - server default'i (`token_ttl_hours` = 12). */
+export const WEB_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
+
+export class FeatureDisabledError extends Error {
+  constructor(message = "Bu funksiya siz uchun hali yoqilmagan") {
+    super(message);
+    this.name = 'FeatureDisabledError';
+  }
+}
+
+/** expired - device token o'tmadi (server bekor qilgan); signedOut - foydalanuvchi o'zi chiqdi. */
+export type SessionEvent = 'signedIn' | 'signedOut' | 'expired';
+
+/**
+ * adopted - yangi token saqlandi (avval token yo'q edi yoki o'sha odamniki);
+ * switched - saqlandi, lekin oldingi token BOSHQA (yoki noma'lum) odamniki edi -
+ * chaqiruvchi keshni va ismni tozalashi kerak; unchanged - aynan shu token
+ * allaqachon bor; invalid - muddati o'tgan/buzuq.
+ */
+export type AdoptResult = 'adopted' | 'switched' | 'unchanged' | 'invalid';
+
+export interface SessionDeps {
+  store: TokenStore;
+  authApi: Pick<AuthApi, 'login' | 'logout' | 'registerDevice' | 'deviceSession' | 'revokeDevice'>;
+  now?: () => number;
+}
+
+export interface Session extends TokenProvider {
+  /** Login + qurilmani ro'yxatdan o'tkazish. 403/404 -> FeatureDisabledError, tokenlar o'chadi. */
+  login(username: string, password: string, device: RegisterDeviceRequest): Promise<LoginResponse>;
+  /** Server tomonda revoke + logout (best effort), keyin `wipe` (navbat, fayllar), keyin tokenlar. */
+  logout(wipe?: () => Promise<void>): Promise<void>;
+  /** Kirgan holatmi: device token bor YOKI yaroqli (Mini App bergan) token bor. Tarmoqqa chiqmaydi. */
+  hasSession(): Promise<boolean>;
+  subscribe(listener: (event: SessionEvent) => void): () => void;
+  /**
+   * Mini App bergan token (`venera:auth`). Tarmoqsiz: SecureStore'ga yoziladi va
+   * darhol ishlatiladi. Boshqa odamning tokeni (JWT `sub` boshqa yoki noma'lum)
+   * bo'lsa eski qurilma tokeni tashlanadi - aks holda yangilash OLDINGI odamning
+   * sessiyasini qaytarardi; serverda bekor qilish fon rejimida (best effort).
+   */
+  adoptToken(token: string): Promise<AdoptResult>;
+  /** Qurilma tokeni yo'q bo'lsa - joriy token bilan ro'yxatdan o'tkazish (best effort, single-flight). */
+  ensureDevice(device: RegisterDeviceRequest): Promise<boolean>;
+  /** WebView'ga beriladigan token: kamida `minValidityMs` yashaydigan (kerak bo'lsa yangilab). Yo'q - null, xato tashlamaydi. */
+  webToken(minValidityMs?: number): Promise<string | null>;
+}
+
+export function createSession(deps: SessionDeps): Session {
+  const now = deps.now ?? Date.now;
+  const listeners = new Set<(e: SessionEvent) => void>();
+  let inflight: Promise<string> | null = null;
+
+  let registering: Promise<boolean> | null = null;
+  /** Bo'lim yoqilmagan (403/404) tokenlar - shu jarayonda qayta urinilmaydi. */
+  const refusedTokens = new Set<string>();
+
+  const emit = (e: SessionEvent) => listeners.forEach((l) => l(e));
+
+  async function doRefresh(): Promise<string> {
+    const deviceToken = await deps.store.getDeviceToken();
+    if (!deviceToken) {
+      if (await deps.store.getToken()) {
+        // Mini App bergan token (qurilma tokenisiz) tugadi yoki server rad etdi:
+        // yangilab bo'lmaydi - bu haqiqatan "sessiya tugadi".
+        await deps.store.clearAuth();
+        emit('expired');
+      }
+      // Hech qachon kirmagan (yoki chiqqan) - "sessiya tugadi" deyish noto'g'ri.
+      throw new AuthRequiredError();
+    }
+    try {
+      const res = await deps.authApi.deviceSession(deviceToken);
+      await deps.store.setToken(res.token, res.expiresAt);
+      return res.token;
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+        // Token bekor qilingan / muddati o'tgan / admin bloklagan.
+        // Navbat SAQLANADI (spec 7.6) - faqat sessiya ma'lumotlari o'chadi.
+        await deps.store.clearAuth();
+        emit('expired');
+        throw new AuthRequiredError(e.message);
+      }
+      throw e;
+    }
+  }
+
+  function refreshToken(): Promise<string> {
+    if (!inflight) {
+      inflight = doRefresh().finally(() => {
+        inflight = null;
+      });
+    }
+    return inflight;
+  }
+
+  async function tokenValidFor(minMs: number): Promise<string> {
+    const stored = await deps.store.getToken();
+    if (stored && stored.expiresAt - now() > minMs) return stored.token;
+    if (stored && stored.expiresAt - now() > MIN_USABLE_MS && !(await deps.store.getDeviceToken())) {
+      // Qurilma tokenisiz (Mini App bergan) - yangilab bo'lmaydi, muddati tugaguncha ishlatiladi.
+      return stored.token;
+    }
+    return refreshToken();
+  }
+
+  const getToken = () => tokenValidFor(REFRESH_WINDOW_MS);
+
+  return {
+    getToken,
+    refreshToken,
+
+    async login(username, password, device) {
+      const res = await deps.authApi.login({ username: username.trim(), password });
+      await deps.store.setToken(res.token, res.expiresAt);
+      try {
+        const reg = await deps.authApi.registerDevice(device, res.token);
+        await deps.store.setDeviceToken(reg.deviceToken);
+      } catch (e) {
+        if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
+          // Yig'ilishlar bo'limi bu odam uchun yoqilmagan - chat baribir ishlaydi
+          // (qurilma tokenisiz, JWT muddati tugaguncha).
+          refusedTokens.add(res.token);
+        } else {
+          await deps.store.clearAuth();
+          throw e;
+        }
+      }
+      emit('signedIn');
+      return res;
+    },
+
+    async logout(wipe) {
+      const deviceToken = await deps.store.getDeviceToken();
+      const stored = await deps.store.getToken();
+      // Server chaqiruvlari best effort: tarmoq bo'lmasa ham telefon tozalanadi.
+      if (deviceToken) {
+        try {
+          await deps.authApi.revokeDevice(deviceToken);
+        } catch {
+          /* best effort */
+        }
+      }
+      if (stored && stored.expiresAt > now()) {
+        try {
+          await deps.authApi.logout();
+        } catch {
+          /* best effort */
+        }
+      }
+      if (wipe) await wipe();
+      await deps.store.clearAuth();
+      emit('signedOut');
+    },
+
+    async hasSession() {
+      if (await deps.store.getDeviceToken()) return true;
+      const stored = await deps.store.getToken();
+      return !!stored && stored.expiresAt - now() > MIN_USABLE_MS;
+    },
+
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+
+    async adoptToken(token) {
+      const claims = decodeJwtClaims(token);
+      const expiresAt = claims?.expiresAt ?? now() + WEB_TOKEN_TTL_MS;
+      if (!token || expiresAt - now() <= MIN_USABLE_MS) return 'invalid';
+      const stored = await deps.store.getToken();
+      if (stored?.token === token) return 'unchanged';
+      const deviceToken = await deps.store.getDeviceToken();
+      const prevSub = stored ? (decodeJwtClaims(stored.token)?.sub ?? null) : null;
+      const sameUser = !!claims?.sub && claims.sub === prevSub;
+      if (deviceToken && !sameUser) {
+        await deps.store.clearAuth();
+        deps.authApi.revokeDevice(deviceToken).catch(() => {
+          /* best effort: token telefondan allaqachon o'chdi */
+        });
+      }
+      await deps.store.setToken(token, new Date(expiresAt).toISOString());
+      emit('signedIn');
+      return stored && !sameUser ? 'switched' : 'adopted';
+    },
+
+    ensureDevice(device) {
+      if (!registering) {
+        registering = (async () => {
+          if (await deps.store.getDeviceToken()) return true;
+          const stored = await deps.store.getToken();
+          if (!stored || stored.expiresAt - now() <= MIN_USABLE_MS || refusedTokens.has(stored.token)) return false;
+          try {
+            const reg = await deps.authApi.registerDevice(device, stored.token);
+            // Shu orada chiqilgan yoki boshqa odam kirgan bo'lsa - qurilma eski sessiyaga bog'lanmasin.
+            if ((await deps.store.getToken())?.token !== stored.token) {
+              deps.authApi.revokeDevice(reg.deviceToken).catch(() => {});
+              return false;
+            }
+            await deps.store.setDeviceToken(reg.deviceToken);
+            return true;
+          } catch (e) {
+            // 403/404 - bo'lim bu odam uchun yoqilmagan: Mini App tokeni bilan qolamiz.
+            if (e instanceof ApiError && (e.status === 403 || e.status === 404)) refusedTokens.add(stored.token);
+            return false;
+          }
+        })().finally(() => {
+          registering = null;
+        });
+      }
+      return registering;
+    },
+
+    async webToken(minValidityMs = REFRESH_WINDOW_MS) {
+      try {
+        return await tokenValidFor(minValidityMs);
+      } catch {
+        return null;
+      }
+    },
+  };
+}

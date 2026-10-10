@@ -64,13 +64,14 @@ TZ = ZoneInfo("Asia/Tashkent")
 #: Guruh menyusi (`setMyCommands`, faqat shu guruh uchun - `scope: chat`).
 GROUP_COMMANDS = [
     {"command": "summary", "description": "Guruh xulosasi: /summary, /summary 3 kun"},
-    {"command": "askvenera", "description": "Guruh yozishmasi bo'yicha savol"},
-    {"command": "help", "description": "Venera guruhda nima qila oladi"},
+    {"command": "askbarno", "description": "Guruh yozishmasi bo'yicha savol"},
+    {"command": "help", "description": "Barno guruhda nima qila oladi"},
 ]
 #: CRM yoqilgan guruhda menyuga qo'shiladi (`group_actions.py`).
 TASK_COMMAND = {"command": "task", "description": "CRM: yozishmadan vazifa taklifi"}
 _SUMMARY = frozenset({"summary", "xulosa"})
-_ASK = frozenset({"askvenera", "ask", "venera"})
+#: `askvenera`, `venera` - eski nomlar (qadalgan e'lonlar va odat), jim ishlayveradi.
+_ASK = frozenset({"askbarno", "barno", "ask", "askvenera", "venera"})
 _TASK = frozenset({"task", "vazifa", "crm"})
 
 #: Bir vaqtda kutayotgan so'rovlar - ortig'i rad etiladi.
@@ -88,24 +89,25 @@ _MAX_PARTS = 2
 
 _BUSY = "⏳ So'rovlar ko'payib ketdi. Bir necha daqiqadan keyin qayta urinib ko'ring."
 _FAILED = "⚠️ Hozir javob tayyorlab bo'lmadi. Birozdan keyin qayta urinib ko'ring."
-_NOTHING_YET = ("Hali saqlangan xabar yo'q. Venera bu guruh xabarlarini endi yozib boradi - "
+_NOTHING_YET = ("Hali saqlangan xabar yo'q. Barno bu guruh xabarlarini endi yozib boradi - "
                 "biroz suhbatdan keyin so'rang.")
 
 
 def help_text(username: str, days: int = 90, *, crm: bool = False) -> str:
-    mention = f"• @{esc(username)} deb yozsangiz ham /askvenera kabi javob beraman.\n" if username else ""
-    task = ("• CRM: <code>/task</code> yoki xabarga javob tarzida «@venera crmga kiritib qo'y» - yozishmadan "
+    mention = f"• @{esc(username)} deb yozsangiz ham /askbarno kabi javob beraman.\n" if username else ""
+    who = f"@{esc(username)}" if username else "Barno"
+    task = (f"• CRM: <code>/task</code> yoki xabarga javob tarzida «{who} crmga kiritib qo'y» - yozishmadan "
             "vazifa taklifi chiqadi; faqat so'ragan odam tasdiqlaydi, o'z CRM ulanishi bilan.\n" if crm else "")
-    source = ("/summary va /askvenera javobi faqat shu guruh xabarlaridan tuziladi - HRM ma'lumoti "
+    source = ("/summary va /askbarno javobi faqat shu guruh xabarlaridan tuziladi - HRM ma'lumoti "
               "ishlatilmaydi." if crm else
               "Javob faqat shu guruh xabarlaridan tuziladi - HRM/CRM ma'lumoti ishlatilmaydi.")
     return (
-        "<b>Venera</b> - guruh yordamchisi.\n\n"
+        "<b>Barno</b> - guruh yordamchisi.\n\n"
         "• /summary - oxirgi 24 soat xulosasi. Davr bilan: <code>/summary bugun</code>, "
         "<code>/summary 3 kun</code>, <code>/summary hafta</code>\n"
-        "• /askvenera - yozishma bo'yicha savol: "
-        "<code>/askvenera Makhmud bu hafta nima qildi?</code>, "
-        "<code>/askvenera mini app bo'yicha nima kelishildi?</code>\n"
+        "• /askbarno - yozishma bo'yicha savol: "
+        "<code>/askbarno Makhmud bu hafta nima qildi?</code>, "
+        "<code>/askbarno mini app bo'yicha nima kelishildi?</code>\n"
         f"{task}{mention}\n"
         f"{source} Xabarlar {days} kun saqlanadi. Shaxsiy savollar - shaxsiy chatda."
     )
@@ -238,7 +240,7 @@ def parse_period(text: str, kind: str, now: float, *, max_days: int = 90,
 
 # --- modelga so'rov ---------------------------------------------------------------------
 
-SYSTEM_PROMPT = """Sen Venera - kompaniyaning AI yordamchisisan. Hozir ish guruhidasan: guruh a'zosi guruh yozishmasi bo'yicha so'rov yubordi.
+SYSTEM_PROMPT = """Sen Barno - kompaniyaning AI yordamchisisan. Hozir ish guruhidasan: guruh a'zosi guruh yozishmasi bo'yicha so'rov yubordi.
 
 Senga beriladi: so'rov turi (XULOSA yoki SAVOL), davr va shu davrdagi guruh xabarlari. Har qator: "[vaqt] kim: matn".
 - "(→ X)" - X ning xabariga javob.
@@ -255,7 +257,7 @@ QOIDALAR
 7. Format - Telegram uchun oddiy Markdown: **qalin** bo'lim nomi va "-" bilan ro'yxat. Jadval va # sarlavha ishlatma.
 
 XULOSA - kun bo'yi guruhda bo'lmagan rahbar uni 20-30 soniyada o'qib, ISHNING HOLATINI tushunsin. Xabarlarni qisqartirib qayta aytma - holatni yoz: nima o'zgardi, qanday muammo bor, nima kelishildi, kim nima qiladi, qachongacha, nima hal bo'lmagan.
-Umumiy sarlavha (Xulosa, Venera, davr) YOZMA - uni Venera o'zi qo'shadi; eng foydali bo'limdan boshla. Bo'limlar tartibi HAR DOIM shu: ⚡ 🔴 📌 ✅ 📋 📅 ❓. Faqat mazmuni borlarini yoz; bo'sh bo'limni umuman yozma ("yo'q", "mavjud emas" deb ham).
+Umumiy sarlavha (Xulosa, Barno, davr) YOZMA - uni Barno o'zi qo'shadi; eng foydali bo'limdan boshla. Bo'limlar tartibi HAR DOIM shu: ⚡ 🔴 📌 ✅ 📋 📅 ❓. Faqat mazmuni borlarini yoz; bo'sh bo'limni umuman yozma ("yo'q", "mavjud emas" deb ham).
 
 ⚡ **Asosiy o'zgarishlar**
 - davrdagi eng muhim 1-3 o'zgarish: tugagan yoki hal bo'lgan ish, muhim yutuq, holat o'zgarishi, mijoz yoki rahbariyat yangiligi. Muammo, qaror, vazifa va muddat bu yerda emas - o'z bo'limida.
@@ -373,7 +375,7 @@ def build_prompt(request: Request, period: Period, lines: list[str], omitted: in
     if omitted:
         head.append(f"Eng eski {omitted} ta xabar sig'madi - faqat oxirgi {len(lines)} tasi berildi.")
     if first_date is not None and first_date > period.since:
-        head.append(f"Eslatma: Venera bu guruh xabarlarini {_stamp(first_date)} dan beri saqlaydi - "
+        head.append(f"Eslatma: Barno bu guruh xabarlarini {_stamp(first_date)} dan beri saqlaydi - "
                     "undan oldingilari yo'q.")
     for handle, name in (people or {}).items():
         head.append(f"@{handle} - {name}")
@@ -672,11 +674,11 @@ def _header(request: Request, period: Period, count: int, omitted: int, first: i
             facts.append(f"{topics} ta mavzu")
         if first is not None and first > period.since:
             facts.append(f"{uz_date(first, with_time=True)} dan beri")
-        return f"📋 <b>Venera — {esc(period.label)}</b>\n<i>{esc(' · '.join(facts))}</i>"
+        return f"📋 <b>Barno — {esc(period.label)}</b>\n<i>{esc(' · '.join(facts))}</i>"
     scope = f"{period.label} · {count} ta xabar" + (" (eng yangilari)" if omitted else "")
     line = f"💬 <i>{esc(scope)} asosida</i>"
     if first is not None and first > period.since:
-        line += f"\n<i>Venera bu guruh xabarlarini {uz_date(first, with_time=True)} dan beri saqlaydi.</i>"
+        line += f"\n<i>Barno bu guruh xabarlarini {uz_date(first, with_time=True)} dan beri saqlaydi.</i>"
     return line
 
 
@@ -693,7 +695,7 @@ _PERSON = "👤"
 _HEADING = re.compile(r"^(?!\s*[-•+>]\s)\s*(?:([^\w\s*#]+)\s*)?\*\*\s*([^\w\s*]+)?\s*[^*\n]+?\s*\*\*\s*:?\s*$"
                       r"|^\s{0,3}#{1,6}\s+(\S+)")
 #: Model o'zi yozgan umumiy sarlavha - bizning sarlavha bilan takrorlanadi.
-_OWN_TITLE = re.compile(r"(?i)^\W*(?:xulosa|venera|summary|итог|сводка|резюме)\b")
+_OWN_TITLE = re.compile(r"(?i)^\W*(?:xulosa|barno|venera|summary|итог|сводка|резюме)\b")
 
 
 def _own_title(line: str) -> bool:
@@ -743,5 +745,5 @@ def polish_summary(markdown: str) -> tuple[str, int]:
 def _empty(period: Period, first: int) -> str:
     text = f"{period.label[:1].upper()}{period.label[1:]} davomida guruhda xabar yo'q."
     if first > period.since:
-        text += f" Venera bu guruh xabarlarini {uz_date(first, with_time=True)} dan beri saqlaydi."
+        text += f" Barno bu guruh xabarlarini {uz_date(first, with_time=True)} dan beri saqlaydi."
     return text

@@ -1,0 +1,24 @@
+// venera-entry: "tez yozish" kirish nuqtalari (Quick Settings plitkasi,
+// "Yozish" launcher belgisi). Expo autolinking `modules/` papkasidagi lokal
+// modulni o'zi topadi; manifest yozuvlari shu modulning AndroidManifest.xml
+// faylida - Gradle ularni ilova manifestiga birlashtiradi (config plugin
+// kerak emas).
+//
+// Agar birinchi PC build'da Kotlin kompilyatsiya bo'lmasa: package.json ga
+//   "expo": {"autolinking": {"exclude": ["venera-entry"]}}
+// qo'shing - ilova modulsiz ham ishlaydi (index.ts no-op qaytaradi).
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'uz.brbtech.venera'
+version = '1.0.0'
+
+android {
+  namespace "uz.brbtech.venera.entry"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
