@@ -17,6 +17,14 @@ ajratadi: boshqa odamning suhbat kalitini bilgan odam ham uni ocholmaydi,
 404 oladi. Brauzer `user_id` ni yubormaydi va yubora olmaydi.
 
 Mantiq `services/integrations/assistant.py` da, bu yerda faqat HTTP.
+
+GURUHDAGI CRM SUHBATLARI (2026-10-10, F0 maxfiylik). Telegram guruhida CRM
+so'ragan odamning agentdagi suhbati (`bot/group_actions.py`) ham shu odamning
+`user_id` si bilan turadi, lekin u SHAXSIY tarix emas: ichida guruhdagi BOSHQA
+odamlarning xabarlari bor va u guruh bilan birga o'chiriladi. Shuning uchun
+bunday suhbat (`AGENT_CHAT_PREFIX`) ro'yxatda ko'rinmaydi, ochilmaydi, nomi
+o'zgarmaydi va tiklanmaydi (404 - "Suhbat topilmadi"). Tanish prefiks bo'yicha:
+guruhlar ombori o'qilmasa ham ishlaydi.
 """
 
 from __future__ import annotations
@@ -29,6 +37,7 @@ from ...core.errors import error_status
 from ...schemas.auth import AuthUser
 from ...schemas.chats import ChatDeleted, ChatDetail, ChatList, ChatRename, ChatSummary
 from ...services.integrations.assistant import AssistantError
+from ...services.tg_groups import is_group_agent_chat
 from . import chat as _chat
 from ..deps import current_user
 
@@ -63,6 +72,13 @@ def _run(call, user: AuthUser, what: str, chat_id: str = ""):
         raise error_status(status, _MESSAGES[status]) from exc
 
 
+def _personal(chat_id: str) -> None:
+    """Guruhdagi CRM suhbati - shaxsiy tarix emas: boshqa odamniki kabi 404, xizmatga
+    borilmaydi."""
+    if is_group_agent_chat(chat_id):
+        raise error_status(404, _MESSAGES[404])
+
+
 @router.get("", response_model=ChatList)
 def list_chats(
     limit: int = Query(50, ge=1, le=200, description="Sahifa hajmi"),
@@ -81,8 +97,12 @@ def list_chats(
             user_id=_chat.assistant_user_id(user), limit=limit, offset=offset),
         user, "ro'yxati",
     )
+    # Guruhdagi CRM suhbatlari tashlanadi (yuqoridagi izoh). Sahifa shuncha qisqaroq
+    # bo'lishi mumkin - ular oz (faqat oxirgi soatlardagi, keyin agentda o'chiriladi).
+    items = [item for item in result.get("items") or []
+             if not (isinstance(item, dict) and is_group_agent_chat(item.get("chat_id")))]
     return ChatList(
-        items=result.get("items") or [],
+        items=items,
         limit=result.get("limit", limit),
         offset=result.get("offset", offset),
     )
@@ -96,6 +116,7 @@ def open_chat(
 ) -> ChatDetail:
     """Suhbatni ochish: nom va xabarlar (eskisi birinchi). Davom ettirish
     uchun o'sha `chatId` bilan `POST /chat/stream` - xotira xizmatda."""
+    _personal(chat_id)
     result = _run(
         lambda: _chat._assistant.get_chat(
             chat_id, user_id=_chat.assistant_user_id(user), limit=limit),
@@ -111,6 +132,7 @@ def rename_chat(
     user: AuthUser = Depends(current_user),
 ) -> ChatSummary:
     """Nomini o'zgartirish. Shundan keyin model nomni qayta yozmaydi."""
+    _personal(chat_id)
     result = _run(
         lambda: _chat._assistant.rename_chat(
             chat_id, user_id=_chat.assistant_user_id(user), title=body.title),
@@ -137,6 +159,7 @@ def delete_chat(chat_id: str = _CHAT_ID, user: AuthUser = Depends(current_user))
 def restore_chat(chat_id: str = _CHAT_ID, user: AuthUser = Depends(current_user)) -> ChatSummary:
     """O'chirishni bekor qilish - "Bekor qilish" tugmasi. 404: suhbat hech
     qachon bo'lmagan (yoki boshqa odamniki)."""
+    _personal(chat_id)
     result = _run(
         lambda: _chat._assistant.restore_chat(chat_id, user_id=_chat.assistant_user_id(user)),
         user, "tiklash", chat_id,

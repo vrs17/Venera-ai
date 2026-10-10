@@ -278,6 +278,17 @@ def _hamma_ovoz_tayyor(module, tmp_path):
     return voices
 
 
+@pytest.fixture(autouse=True)
+def _hold_llm_rejimi(monkeypatch):
+    """Bu fayl gemma tasnifchisi YO'LINI sinaydi. 2026-10-10 dan default `keyword`
+    (`HOLD_CLASSIFIER`, reja W0.5): ovozli savol tashqariga chiqmaydi. LLM yo'li esa
+    qaytarish kaliti (`HOLD_CLASSIFIER=llm`) sifatida ishlashda davom etishi shart -
+    shuning uchun bu yerda aniq yoqiladi. Default'ning o'zi `test_brain_seams.py` da."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "hold_classifier", "llm")
+
+
 @pytest.fixture
 def chat(monkeypatch, tmp_path):
     import app.api.v1.chat as module

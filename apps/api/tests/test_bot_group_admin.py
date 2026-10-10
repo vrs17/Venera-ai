@@ -264,7 +264,10 @@ def test_eski_v3_ombor_v4_ga(tmp_path):
     store = GroupStore(path)
     assert GroupRegistry(store, env=lambda: frozenset({-1})).allowed_ids() == frozenset({-1})
     check = sqlite3.connect(path)
-    assert check.execute("PRAGMA user_version").fetchone()[0] == 4
+    # 5: guruhdagi CRM holati (`GroupCrmState`) - eski ombor ham yangi jadvallarni oladi.
+    assert check.execute("PRAGMA user_version").fetchone()[0] == 5
+    tables = {r[0] for r in check.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert {"groups", "crm_chats", "crm_messages"} <= tables
     check.close()
 
 

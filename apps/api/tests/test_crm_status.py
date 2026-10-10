@@ -292,6 +292,15 @@ def test_agent_savoli_alohida_user_id_va_odam_tokenlari(monkeypatch):
     [(question, kwargs)] = calls
     assert kwargs["user_id"] == "venera-brief:7" and kwargs["tokens"]["crm"] == "own-token"
     assert kwargs["engine"] == "v2" and stream.closed
+    # 2026-10-10 (F0): faqat CRM tokeni - brif CRM tekshiruviga HRM kerak emas.
+    assert kwargs["tokens"] == {"crm": "own-token"}
+    # Qaytarish kaliti (`BRIEF_CRM_PLATFORMS=crm,hrm`, `.env` dan jonli) - HRM yana ketadi.
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "brief_crm_platforms", "crm,hrm")
+    stream.closed = False
+    crm_status.agent_ask("savol", USER, 30)
+    assert calls[-1][1]["tokens"] == {"crm": "own-token", "hrm": "h"}
 
 
 def test_crm_tokeni_yoq_bolsa_agentga_borilmaydi(monkeypatch):

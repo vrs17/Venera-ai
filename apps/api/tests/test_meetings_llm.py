@@ -412,10 +412,29 @@ def test_savol_v3_orqali_odam_tokenlari_bilan(client, auth, monkeypatch, chain, 
     assert set(body) == {"id", "question", "answer", "citations", "followUps", "createdAt"}
     assert body["answer"] == "[S2] hisobotni **ertaga** yuboradi." and [c["segmentId"] for c in body["citations"]] == [2]
     call = live.calls[0]
-    assert call["user_id"] == f"venera:{row['actor_id']}" and call["tokens"] == {"crm": "crm-jwt", "hrm": "hrm-jwt"}
+    # 2026-10-10 (F0): faqat CRM tokeni - yig'ilish savoliga HRM kerak emas.
+    assert call["user_id"] == f"venera:{row['actor_id']}" and call["tokens"] == {"crm": "crm-jwt"}
     assert call["engine"] == "v3" and call["chat_id"] is None and call["op"] == "meeting_ask"
     assert call["question"].startswith(llm.ASK_HEAD) and "Kim yuboradi?" in call["question"]
+    assert "HRM" not in llm.ASK_HEAD
     assert rt.llm.calls == []
+
+
+def test_savol_platformalari_sozlamadan_qaytariladi(client, auth, monkeypatch, chain, _isolated_meetings):
+    """`MEETINGS_ASK_PLATFORMS=crm,hrm` - deploysiz qaytarish: HRM tokeni yana ketadi."""
+    from app.core.config import settings
+
+    rt = _isolated_meetings
+    row = _ready(client, auth, monkeypatch, rt)
+    chain("v3,ollama")
+    live = FakeAssistant()
+    rt.live_assistant = live
+    monkeypatch.setattr(chat_api, "_live_tokens", lambda user: {"crm": "crm-jwt", "hrm": "hrm-jwt", "dwh": "d"})
+    monkeypatch.setattr(settings, "meetings_ask_platforms", " CRM , hrm ", raising=False)
+    live.reply = lambda op, q: v3_frames('{"answer": "[S2] ertaga.", "citations": [2], "followUps": []}')
+    response = client.post(f"/api/v1/meetings/{row['id']}/ask", headers=auth, json={"question": "Kim?"})
+    assert response.status_code == 200, response.text
+    assert live.calls[0]["tokens"] == {"crm": "crm-jwt", "hrm": "hrm-jwt"}
 
 
 def test_savol_v3_yiqilsa_ollama_v3_matni_ham_javob(client, auth, monkeypatch, chain, _isolated_meetings):

@@ -697,6 +697,16 @@ class Settings(BaseSettings):
     #: `CrmAuth` hisobi va HRM tokeni yuborilmaydi - vazifa so'ragan odam nomidan. `false` -
     #: o'z ulanishi bo'lmasa umumiy CRM hisobi (HRM baribir yuborilmaydi).
     meetings_crm_own_tokens: bool = True
+    #: Yig'ilish savol-javobida (Ask, v3) agentga SHU platformalar tokeni ketadi (vergul bilan).
+    #: 2026-10-10 (F0 maxfiylik): faqat `crm` - yig'ilish savoliga HR ma'lumoti (maosh,
+    #: ta'til) kerak emas, HRM tokeni ortiqcha ochiq eshik edi. `.env` dan JONLI
+    #: (`platforms_now`) - qaytarish restartsiz: `MEETINGS_ASK_PLATFORMS=crm,hrm`. CRM
+    #: tokeni avvalgidek (`chat._live_tokens`).
+    meetings_ask_platforms: str = "crm"
+    #: Brifdagi CRM tekshiruvida (`bot/crm_status.agent_ask`) agentga ketadigan platformalar.
+    #: Xuddi shu qoida (F0): vazifa holati - faqat CRM. Qaytarish restartsiz:
+    #: `BRIEF_CRM_PLATFORMS=crm,hrm` (masalan agent ismni HRM orqali topishi kerak bo'lsa).
+    brief_crm_platforms: str = "crm"
     #: To'liq hujjat eksporti (`GET /meetings/{id}/export`: DOCX/PDF/MD/TXT) - odamga soatiga
     #: shuncha fayl. Uzun transkriptli PDF bir necha soniya CPU oladi: tugmani qayta-qayta
     #: bosish serverni band qilmasin.
@@ -714,6 +724,69 @@ class Settings(BaseSettings):
     device_token_days: int = 30
     #: Qurilma tokenlari ombori (faqat xeshlar). `data/` gitignore'da, 600.
     devices_db: Path = BASE_DIR / "data" / "devices.db"
+
+    # --- Miya agentga ko'chishi (W0 relslari, `services/brain/`) ---
+    #
+    # NEGA. Egasining qarori (2026-10-10): serverimiz oxir-oqibat LLM CHAQIRMAYDI -
+    # xulosa, ajratish, tasnif va savol-javob agentda ("HR Assistant API", shartnoma
+    # `agent-contract.md`, "v4"). Ko'chish funksiyama-funksiya: `local -> shadow ->
+    # agent`, har biri o'z flag'i ortida va lokal zahira bilan. Default'lar BUGUNGI
+    # xulq: hammasi `local`, agent mijozi O'CHIQ - deploy xulqni o'zgartirmaydi.
+    #
+    #: AGENT MIJOZINING BOSH KALITI (v4 endpointlari: `complete`, `chat`, `jobs`,
+    #: `capabilities`). `false` - flag nima desa ham hamma joy `local`. `.env` dan
+    #: JONLI o'qiladi (`agent_v4_enabled_now`): agent yiqilsa restartsiz o'chiriladi.
+    agent_v4_enabled: bool = False
+    #: Agent manzili. Bo'sh - chat bilan bir xil (`hrm_assistant_base_url`): kalit
+    #: (`X-Client-Id/Secret`) ham o'sha. Shartnoma 3.1: prefiks agent jamoasiniki.
+    agent_v4_base_url: str = ""
+    agent_v4_prefix: str = "/api/v4"
+    #: `X-Barno-Contract` sarlavhasi - agent maxfiylik maydonini bajara olmasa 400 qaytaradi.
+    agent_v4_contract: str = "4.0"
+    #: Interaktiv agent chaqiruvi (`complete`, `chat`) chegarasi va bir vaqtdagi soni.
+    #: Chatning 4 ta o'rnidan (`hrm_assistant_max_concurrent`) ALOHIDA navbat.
+    agent_v4_timeout: float = 60.0
+    agent_v4_max_concurrent: int = 2
+    #: Fon ishlari (brif prewarm: `brief_extract*`) - O'Z navbati: interaktiv `/summary` ning
+    #: o'rnini egallamasin. Band bo'lsa kutilmaydi - lokal zahira.
+    agent_v4_batch_max_concurrent: int = 1
+    #: Uzgich (circuit breaker): agent ketma-ket shuncha marta ishlamasa (tarmoq, 5xx, 429) -
+    #: `agent_v4_breaker_cooldown` soniya (har safar ikki baravar, 5 daqiqagacha) unga
+    #: borilmaydi, hammasi darhol lokal. NEGA: aks holda har chaqiruv 60 s timeout kutardi.
+    agent_v4_breaker_failures: int = 3
+    agent_v4_breaker_cooldown: float = 30.0
+    #: `GET /capabilities` keshi (soniya). Flag `shadow`/`agent` ga faqat kerakli
+    #: imkoniyat `true` bo'lsa o'tadi (shartnoma 3.7); kesh bo'sh bo'lsa - `local`.
+    agent_capabilities_ttl: float = 300.0
+    #: SHADOW: foydalanuvchi lokal natijani oladi, agent esa fonda, O'Z navbatida
+    #: (`max_concurrent`, chatning slotlari emas) va namuna bo'yicha ishlaydi. Navbat
+    #: to'lsa vazifa TASHLANADI (hisoblanadi) - foydalanuvchi hech qachon kutmaydi.
+    agent_shadow_max_concurrent: int = 1
+    agent_shadow_queue: int = 8
+    #: Namuna: shadow holatidagi chaqiruvlarning qancha qismi agentga ham ketadi (0..1).
+    #: Admin flag qatorida funksiya bo'yicha alohida berilishi mumkin.
+    agent_shadow_sample_rate: float = 0.2
+    agent_shadow_timeout: float = 120.0
+    #: `shadow_results` jadvali shuncha kun saqlanadi (xom matn YO'Q - faqat sonlar).
+    shadow_results_days: int = 30
+    #: Funksiya bo'yicha boshlang'ich holat: `local | shadow | agent`. Admin panel
+    #: (`engine_control`, `brain_routing` jadvali) undan ustun. `.env` dan JONLI.
+    #: `meeting_ask` ning `local` i - bugungi zanjir (`MEETINGS_ASK_CHAIN`).
+    group_summary_engine: str = "local"
+    group_ask_engine: str = "local"
+    brief_extract_engine: str = "local"
+    brief_crm_engine: str = "local"
+    meeting_summary_engine: str = "local"
+    meeting_ask_engine: str = "local"
+    hold_classify_engine: str = "local"
+    #: Ovozli "hold" tasnifi: `keyword` - faqat kalit so'z jadvali: ovozli savol (shaxsiy
+    #: HR savoli ham) `ollama.com` ga CHIQMAYDI; `llm` - avvalgidek gemma. `.env` dan JONLI
+    #: (`hold_classifier_now`), restartsiz.
+    #: DEFAULT `keyword` (2026-10-10): reja W0.5 / D2 (egasining qarori 8.1 #2) - deploy
+    #: shu qadamni o'zi bajaradi, `.env` ga yozishni unutib qo'yish xavfi yo'q. Kutish
+    #: ovozi baribir aytiladi: `HOLD_FIRST_MS` da jadval bilan (model ulgurmagandagi
+    #: bugungi zahira yo'li). Qaytarish: `.env` da `HOLD_CLASSIFIER=llm`.
+    hold_classifier: str = "keyword"
 
     # --- CORS ---
     #: Bo'sh bo'lsa CORS o'chirilgan: frontend nginx orqali BIR XIL originda
@@ -850,6 +923,44 @@ def meetings_enabled_now() -> bool:
     tushirish ayni paytda yuklanayotgan yozuvlarni uzib qo'yardi.
     """
     return _env_flag("meetings_enabled", settings.meetings_enabled)
+
+
+def agent_v4_enabled_now() -> bool:
+    """Agent mijozining bosh kaliti (`AGENT_V4_ENABLED`) - `.env` dan JONLI: agent
+    noto'g'ri ishlasa hamma funksiya restartsiz lokal yo'lga qaytadi."""
+    return _env_flag("agent_v4_enabled", settings.agent_v4_enabled)
+
+
+#: `HOLD_CLASSIFIER` qiymatlari.
+HOLD_CLASSIFIERS = ("llm", "keyword")
+
+
+def hold_classifier_now() -> str:
+    """`llm` | `keyword` - `.env` dan JONLI.
+
+    Bo'sh - sozlama obyekti (default `llm`, bugungi xulq). Tanilmagan qiymat
+    `keyword`: egasi bu kalitni tashqi egress'ni TO'XTATISH uchun yozadi - imlo
+    xatosi ovozli savollarni jimgina `ollama.com` ga yuboraverishi xavfliroq."""
+    raw = (_env_token("hold_classifier", "") or "").strip().lower()
+    value = raw or str(settings.hold_classifier or "llm").strip().lower()
+    return value if value in HOLD_CLASSIFIERS else "keyword"
+
+
+def platforms_now(key: str) -> frozenset[str]:
+    """`meetings_ask_platforms` / `brief_crm_platforms` - `.env` dan JONLI, kichik harfda.
+    Kalit `.env` da yo'q - sozlama obyekti (default `crm`). NEGA JONLI: bu maxfiylik
+    tuzatishining qaytarish kaliti - agent biror savolga HRM kerak deb chiqsa, egasi
+    restartsiz (oqimdagi javoblarni uzmasdan) qaytara olsin."""
+    raw = (_env_token(key, "") or "").strip() or str(getattr(settings, key, "") or "")
+    return frozenset(p.strip().lower() for p in raw.split(",") if p.strip())
+
+
+def brain_engine_now(feature: str) -> str:
+    """Funksiyaning `.env` dagi holati (`<FEATURE>_ENGINE`) - JONLI, kichik harfda.
+    Bo'sh - sozlama obyekti; u ham bo'lmasa bo'sh satr (chaqiruvchi `local` qiladi)."""
+    key = f"{feature}_engine"
+    raw = (_env_token(key, "") or "").strip().lower()
+    return raw or str(getattr(settings, key, "") or "").strip().lower()
 
 
 def meetings_logins_now() -> frozenset[str]:

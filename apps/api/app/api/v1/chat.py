@@ -47,6 +47,7 @@ from ...core.errors import bad_request, error_status
 from ...schemas.auth import AuthUser
 from ...schemas.chat import AskRequest, FileLink, FileLinkRequest, PipelineResponse, StreamRequest
 from ...schemas.engines import EngineChoice
+from ...services import brain as _brain
 from ...services import engine_control as _engine_control
 from ...services.analytics import TurnRecorder, bind, carry, redact
 from ...services.integrations.assistant import (
@@ -57,8 +58,9 @@ from ...services.integrations.assistant import (
     artifact_ref_ok,
     doc_ref_ok,
 )
-from ...services.hold import HoldVoices, keyword_topic, pick
+from ...services.hold import MAVZULAR, OHANGLAR, HoldVoices, keyword_topic, pick
 from ...services.integrations.crm_auth import CrmAuth
+from ...services.tg_groups import is_group_agent_chat
 from ...services.integrations.ollama import HoldClassifier
 from ...services.pipeline import pipeline
 from . import connectors as _connectors
@@ -215,6 +217,17 @@ class _HoldPlan:
         #: Savol izi (admin panel): tasnif qancha vaqt olgani va nima
         #: tanlagani. Kutish kadrlarining o'zini oqim qobig'i (`wrap`) yozadi.
         self.recorder = recorder
+        #: Tasnif usuli (`start` da aniqlanadi): `llm` (gemma, bugungidek) |
+        #: `keyword` (`HOLD_CLASSIFIER=keyword`: savol tashqariga chiqmaydi) |
+        #: `agent` (yorliq chat oqimidagi `route` kadridan, `services/brain`).
+        self.mode = "llm"
+        #: `route` kadrini kuzatish (agent yoki shadow holatida) va taqqoslash holati.
+        self._watch_route = False
+        self._route_label: tuple[str, str] | None = None
+        self._route_ms: float | None = None
+        self._route_confidence: object = None
+        self._compared = False
+        self._compare_lock = threading.Lock()
 
     # --- tasnif ------------------------------------------------------------
 
@@ -232,6 +245,17 @@ class _HoldPlan:
         if self._started_model:
             return
         self._started_model = True
+        # Usul: `HOLD_CLASSIFIER` (`.env`, jonli) va `hold_classify` flag'i. Default -
+        # `llm`, ya'ni quyidagi bugungi yo'l o'zgarmaydi.
+        self.mode, self._watch_route = _brain.hold_mode()
+        if self.mode != "llm":
+            # Model CHAQIRILMAYDI - ovozli savol `ollama.com` ga chiqmaydi. `_model_done`
+            # ATAYLAB qo'yilmaydi: birinchi ovoz `hold_first_ms` da jadval bilan (model
+            # ulgurmagandagi bugungi zahira yo'li) - darhol emas: tez javobga ovoz
+            # aralashmasin. `agent` da `route` kadri undan oldin kelsa - o'sha yorliq.
+            if self.recorder is not None:
+                self.recorder.point("hold.classify", skipped=self.mode)
+            return
         if not _hold_classifier.configured:
             if self.recorder is not None:
                 self.recorder.point("hold.classify", skipped="not_configured")
@@ -251,6 +275,8 @@ class _HoldPlan:
                     "hold.classify", boshlandi, model=getattr(_hold_classifier, "model", None),
                     ok=natija is not None, topic=mavzu, tone=ohang)
             self._model_done.set()
+            if self._watch_route:
+                self._compare_route()
             wake = self._wake
             if wake is not None:
                 wake(_TASNIF_TAYYOR)
@@ -274,6 +300,53 @@ class _HoldPlan:
         kadr uchun chaqiriladi, `token` kadrlari esa yuzlab bo'ladi."""
         if b'"type":"token"' in raw:
             self.stopped = True
+        elif self._watch_route and self._route_label is None and b'"route"' in raw:
+            self._route_frame(raw)
+
+    def _route_frame(self, raw: bytes) -> None:
+        """Agentning `route` kadri (shartnoma 6.3: mavzu va ohang, ~1 s ichida).
+
+        `agent` - yorliq shu kadrdan, birinchi ovoz darhol; `shadow` - faqat
+        lokal yorliq bilan taqqoslanadi (qo'shimcha chaqiruv yo'q). `done` kadrida
+        ham `"route"` kaliti bor - shuning uchun `type` tekshiriladi."""
+        try:
+            frame = json.loads(raw)
+        except ValueError:
+            return
+        if not isinstance(frame, dict) or frame.get("type") != "route":
+            return
+        topic, tone = frame.get("topic"), frame.get("tone")
+        if topic not in MAVZULAR:
+            return
+        self._route_label = (topic, tone if tone in OHANGLAR else "oddiy")
+        self._route_ms = (time.monotonic() - self.started) * 1000.0
+        self._route_confidence = frame.get("confidence")
+        if self.recorder is not None:
+            self.recorder.point("hold.route", topic=topic, tone=self._route_label[1],
+                                ms=int(self._route_ms), mode=self.mode)
+        if self.mode == "agent":
+            self.label, self.source = self._route_label, "agent"
+            self._model_done.set()
+            wake = self._wake
+            if wake is not None:
+                wake(_TASNIF_TAYYOR)
+            return
+        self._compare_route()
+
+    def _compare_route(self) -> None:
+        """Shadow: lokal yorliq (gemma yoki jadval) va `route` kadri - ikkalasi ham
+        tayyor bo'lgach BIR MARTA yoziladi (qaysi biri kech kelsa, o'sha chaqiradi)."""
+        if self.mode == "agent" or self._route_label is None:
+            return
+        if self.mode == "llm" and not self._model_done.is_set():
+            return
+        with self._compare_lock:
+            if self._compared:
+                return
+            self._compared = True
+        local = self.label if self.source == "ollama" else (keyword_topic(self.question), "oddiy")
+        _brain.hold_shadow(local, self._route_label, local_source=self.source or self.mode,
+                           route_ms=self._route_ms, confidence=self._route_confidence)
 
     # --- vaqt ------------------------------------------------------------------
 
@@ -627,6 +700,12 @@ def stream(body: StreamRequest, request: Request,
     ochilmasa ham (501/503) savol "xato" bo'lib, statusi bilan ko'rinsin.
     Iz yozish faqat navbatga qo'yadi - disk kutilmaydi, kadrlar kechikmaydi.
     """
+    if is_group_agent_chat(body.chatId):
+        # Guruhdagi CRM suhbati (`tgcrm-`, `bot/group_actions.py`) shaxsiy chatda davom
+        # ettirilmaydi: ichida guruhdagi BOSHQA odamlarning xabarlari bor, yangi savol esa
+        # agentda o'chirilgan suhbatni tiklab, odamning HRM tokeni bilan davom ettirardi.
+        # Ro'yxatda u ko'rinmaydi (`chats.py`) - kalitni bilgan odamga ham 404.
+        raise error_status(404, "Suhbat topilmadi")
     channel = channel_of(request)
     rec = TurnRecorder(user, channel, "chat", body.question,
                        chat_id=body.chatId, locale=body.locale,

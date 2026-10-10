@@ -547,6 +547,13 @@ def _diagnostics() -> dict:
                 "tushishi mumkin; @BotFather'da tokenni yangilab, faqat jonli .env ga qo'ying"
             )
 
+    # Guruhdagi CRM suhbatlari agentda o'chmayapti (`group_actions.sweep`): ichida guruhdagi
+    # boshqa odamlarning xabarlari bor - odam ko'rishi kerak.
+    crm = telegram.get("groupCrm") or {}
+    if crm.get("stuck"):
+        warnings.append(f"Telegram guruh CRM: {crm['stuck']} ta suhbat agentda o'chirilmayapti "
+                        "(5+ urinish) - jurnalda 'Telegram guruh CRM' ni qarang")
+
     # Yig'ilish yozuvchisi: navbat, bugungi daqiqalar, ishchi tirikligi. GAPI
     # kaliti rad etilgan bo'lsa (401/403) - yozuvlar jimgina `failed` bo'lmasin.
     meetings = meetings_state()

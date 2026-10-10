@@ -817,6 +817,229 @@ kifoya (boshqa yo'llarga ta'sir qilmaydi). Web shu holatda kodsiz 404 ni
 TARTIB: avval API, keyin web. Web oldin chiqsa, Xotira va Manbalar "Barno
 hozir javob bermayapti" ko'rsatadi (zarar yo'q, lekin chalg'itadi).
 
+### Miya agentga ko'chishi: flag'lar, shadow, hold (2026-10-10)
+
+Egasining qarori: oxir-oqibat Barno serveri mulohaza uchun LLM CHAQIRMAYDI -
+xulosa, ajratish, tasnif va savol-javob agentda ("HR Assistant API", shartnoma
+"v4"). Ko'chish funksiyama-funksiya, har biri o'z flag'i ortida
+(`app/services/brain/`). Hamma funksiya `local`, agent mijozi o'chiq - flag'lar
+deploy bilan xulqni o'zgartirmaydi. **Istisno - W0 tuzatishlari** (pastda,
+"Guruh CRM maxfiyligi" va hold): ular deploy bilan darhol ishlaydi.
+
+**Holatlar** (har funksiya uchun):
+
+| Holat | Foydalanuvchi ko'radi | Agent |
+|---|---|---|
+| `local` | bugungi natija (bugungi kod) | chaqirilmaydi |
+| `shadow` | bugungi natija | fonda, o'z navbatida, namuna bo'yicha; natija faqat `shadow_results` ga |
+| `agent` | agent natijasi | asosiy yo'l; xato, timeout yoki JSON kutilganda yaroqsiz javob - bugungi kod (zahira, `brain / fallback.<op>`) |
+
+`agent_only` (lokal kod o'chirilgan) hali YO'Q: u funksiyaning lokal kodi
+o'chiriladigan release'da paydo bo'ladi (reja W6).
+
+**Funksiyalar** (`.env` kaliti - boshlang'ich qiymat; admin paneldagi qaror undan ustun):
+
+| Funksiya | `.env` | Op'lar (`api_calls`) | Agentda nima (hozircha) | Kerakli imkoniyat (`capabilities.features`) |
+|---|---|---|---|---|
+| `group_summary` | `GROUP_SUMMARY_ENGINE` | `group_summary` | `POST /complete`, bizning prompt `instructions` sifatida | `complete`, `instructions_mode` (+`shadow`) |
+| `group_ask` | `GROUP_ASK_ENGINE` | `group_ask` | xuddi shunday | xuddi shunday |
+| `brief_extract` | `BRIEF_EXTRACT_ENGINE` | `brief_extract`, `brief_extract_support`, `brief_headline`, `brief_project` | xuddi shunday; `brief_extract*` - `batch` mijozi va ustuvorligi | xuddi shunday |
+| `brief_crm` | `BRIEF_CRM_ENGINE` | `brief_crm` | bitta chat vazifasi: `purpose=brief_crm`, `store:false`, faqat CRM tokeni, `response_format` | `purpose`, `store`, `tools_allowlist`, `response_format` |
+| `meeting_summary` | `MEETING_SUMMARY_ENGINE` | `meeting_classify/extract/map/write/verify` | zanjir boshida `agent` bo'g'ini: butun xulosa agentda, bizning `Validator` bilan; yiqilsa bugungi zanjir boshidan | `complete`, `instructions_mode` **va `job_kinds` ichida `meeting_summary`** (W5 sig'imi) |
+| `meeting_ask` | `MEETING_ASK_ENGINE` | `meeting_ask` | xuddi shunday; `local` - bugungi `MEETINGS_ASK_CHAIN` | `complete`, `instructions_mode` |
+| `hold_classify` | `HOLD_CLASSIFY_ENGINE` | `classify` | chat oqimidagi `route` kadri (qo'shimcha chaqiruv yo'q) | `frames` ichida `route` |
+
+**Telefon qo'ng'iroqlari (`source = call`) agentga HECH QAYSI holatda bormaydi**:
+`meeting_summary` / `meeting_ask` `shadow` yoki `agent` bo'lsa ham ular uchun
+yangi agent bo'g'ini va shadow yo'q (kodda, flag'siz). Sabab: ikkinchi tomon
+ovozi va mijoz raqami - avval serverda rozilik yozuvi va huquqiy qaror (D8),
+keyin alohida `call_summary` flag'i (W5). (Bugungi `MEETINGS_ASK_CHAIN=v3,...`
+Ask zanjiri qo'ng'iroqlar uchun ham o'zgarmagan.)
+
+**Xavfsizlik to'ri (capability guard).** Flag `shadow`/`agent` bo'lsa ham ish
+`local` da QOLADI, agar (admin sahifasidagi `reason`):
+
+| `reason` | Nima |
+|---|---|
+| `agent_disabled` | `AGENT_V4_ENABLED` o'chiq |
+| `agent_not_configured` | kalit (`HRM_ASSISTANT_CLIENT_ID/SECRET`) yoki manzil yo'q |
+| `agent_url_not_internal` | manzil tashqi `http`: kalit faqat `https` ga yoki ichki tarmoqqa (xususiy IP, `localhost`, nuqtasiz nom, `.local`/`.internal`) yuboriladi. Prod `http://10.10.50.4:8080` - ichki |
+| `circuit_open` | uzgich: agent ketma-ket `AGENT_V4_BREAKER_FAILURES` (3) marta ishlamadi (tarmoq, 5xx, 429) - `AGENT_V4_BREAKER_COOLDOWN` (30 s, har safar ikki baravar, 5 daqiqagacha) unga borilmaydi, shadow ham navbatga tushmaydi |
+| `capabilities_unknown` | `GET /api/v4/capabilities` hali o'qilmagan (restartdan keyin birinchi fon o'qishigacha) |
+| `not_in_network` | agent `in_network_models_only: true` demagan |
+| `capability_missing:<nom>` | funksiyaga kerakli imkoniyat `false` |
+
+Ya'ni flag'ni agent jamoasi yetkazmasdan oldin yoqib qo'yish xavfsiz.
+
+**Sozlamalar** (`.env`; `*_ENGINE`, `AGENT_V4_ENABLED`, `HOLD_CLASSIFIER`,
+`MEETINGS_ASK_PLATFORMS`, `BRIEF_CRM_PLATFORMS` - JONLI, restart kerak emas;
+qolganlari - restart bilan):
+
+| Kalit | Default | Nima |
+|---|---|---|
+| `AGENT_V4_ENABLED` | `false` | Agent mijozining bosh kaliti. `false` - hamma joy `local` (rollback ≤ 5 s) |
+| `AGENT_V4_BASE_URL` | bo'sh = `HRM_ASSISTANT_BASE_URL` | Agent manzili; kalit (`X-Client-Id/Secret`) chat bilan bir xil. `https` yoki ichki manzil |
+| `AGENT_V4_PREFIX` | `/api/v4` | Agent jamoasi `/api/v3` ni kengaytirsa - shu yerda |
+| `AGENT_V4_CONTRACT` | `4.0` | `X-Barno-Contract` sarlavhasi |
+| `AGENT_V4_TIMEOUT`, `AGENT_V4_MAX_CONCURRENT` | `60`, `2` | Interaktiv agent chaqiruvlari; chatning 4 ta o'rnidan ALOHIDA |
+| `AGENT_V4_BATCH_MAX_CONCURRENT` | `1` | Fon ishlari (brif prewarm) - o'z o'rni; band bo'lsa kutmaydi, lokal |
+| `AGENT_V4_BREAKER_FAILURES`, `AGENT_V4_BREAKER_COOLDOWN` | `3`, `30` | Uzgich (yuqorida) |
+| `AGENT_CAPABILITIES_TTL` | `300` | `capabilities` keshi (s); fonda yangilanadi, so'rov kutmaydi |
+| `AGENT_SHADOW_MAX_CONCURRENT`, `AGENT_SHADOW_QUEUE` | `1`, `8` | Shadow ishchilari va navbat; to'lsa vazifa tashlanadi (foydalanuvchi kutmaydi) |
+| `AGENT_SHADOW_SAMPLE_RATE` | `0.2` | Shadow namunasi (0..1); admin funksiya bo'yicha alohida bera oladi |
+| `AGENT_SHADOW_TIMEOUT` | `120` | Bitta shadow chaqiruvi (va fon `batch` chaqiruvi) |
+| `SHADOW_RESULTS_DAYS` | `30` | `shadow_results` saqlanishi (xom matn yo'q - faqat sonlar va xato KODI) |
+| `GROUP_SUMMARY_ENGINE` ... `HOLD_CLASSIFY_ENGINE` | `local` | Yuqoridagi jadval |
+| `HOLD_CLASSIFIER` | **`keyword`** | Ovozli kutish tasnifi: `keyword` - faqat kalit so'z jadvali; `llm` - gemma (`ollama.com`) |
+| `MEETINGS_ASK_PLATFORMS` | `crm` | Yig'ilish Ask'ida agentga ketadigan tokenlar (pastda) |
+| `BRIEF_CRM_PLATFORMS` | `crm` | Brif CRM tekshiruvida agentga ketadigan tokenlar (pastda) |
+
+**Hold: default `keyword` - ovozli savollar `ollama.com` ga chiqmaydi** (reja
+W0.5, D2; egasining qarori 8.1 #2). Bu W0 deploy'ining O'ZI qiladigan xulq
+o'zgarishi: `.env` ga hech narsa yozish shart emas. Kutish ovozi baribir
+aytiladi: `HOLD_FIRST_MS` (1.2 s) da kalit so'z jadvali bilan - model
+ulgurmagandagi bugungi zahira yo'li. Tanilmagan qiymat ham `keyword` (imlo
+xatosi savollarni jimgina tashqariga yuboraverishi xavfliroq). Izda:
+`hold.classify` `skipped=keyword`; `api_calls` da `ollama / classify` yo'qoladi.
+
+```bash
+cd ~/Venera/apps/api
+grep -n '^HOLD_CLASSIFIER' .env       # bo'lmasa - default keyword (kerakli holat)
+# Qaytarish (restartsiz): gemma tasnifi
+echo 'HOLD_CLASSIFIER=llm' >> .env
+```
+
+**Admin API** (faqat ADMIN; web sahifa keyinroq):
+
+```bash
+curl -s http://127.0.0.1:8000/api/v1/admin/engines/brain -H "Authorization: Bearer $TOKEN"
+curl -s http://127.0.0.1:8000/api/v1/admin/engines/brain?refresh=true -H "Authorization: Bearer $TOKEN"
+# funksiyani shadow ga, 50% namuna bilan; `state: null` - admin qarori olib tashlanadi (.env)
+curl -s -X PUT http://127.0.0.1:8000/api/v1/admin/engines/brain/group_ask \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"state":"shadow","sampleRate":0.5,"note":"W2 sinov"}'
+```
+
+Javobda: har funksiya `state` (sozlangan), `source` (`admin` | `env` | `default`),
+`effective` (hozir ishlayotgani) va `reason`; `agent.circuit` (uzgich holati),
+`agent.capabilities`, `shadow` (navbat sonlari), `holdClassifier`.
+
+Har o'zgarish auditda (`feature.state`, `target_type=feature`). Qaror
+`brain_routing` jadvalida (analytics, sxema v4), 5 s kesh.
+
+**Ustunlik: admin → `.env` → `local`.** Admin qarori bor funksiyada `.env`
+dagi `*_ENGINE` HECH NARSA qilmaydi. Shuning uchun funksiya bo'yicha
+qaytarish - admin API orqali (`{"state":"local"}` yoki `{"state":null}` -
+qaror olib tashlanib `.env` ga qaytadi); hammasini birdan - `AGENT_V4_ENABLED=false`.
+
+**Shadow qoidalari.** Foydalanuvchi faqat lokal natijani oladi va KUTMAYDI:
+vazifa navbatga `put_nowait` bilan tushadi, to'lsa tashlanadi va hisoblanadi
+(`shadow.dropped`). Agent so'rovida `shadow: true` (agent saqlamaydi, taklif
+yaratmaydi, o'z navbatida ishlaydi). `shadow_results` da: funksiya, op, holat,
+`trace_id`, ikkala vaqt, belgi soni, so'zlar to'plamining Jaccard'i, sonli
+ko'rsatkichlar va xato KODI (`AgentError:invalid_input:422` - matnsiz).
+**Prompt, javob va agentning xato matni saqlanmaydi.** `api_calls.error` da ham
+agent xatosi faqat kod.
+
+**Yuk hisoboti agent jamoasi uchun** (ombor FAQAT O'QILADI, matn o'qilmaydi):
+
+```bash
+cd ~/Venera/apps/api
+python3 scripts/agent_load_report.py data/analytics/venera.db --days 14
+python3 scripts/agent_load_report.py data/analytics/venera.db --days 30 --json > /tmp/agent-load.json
+```
+
+Har op bo'yicha: kunlik chaqiruvlar, xatolar, kirish hajmi (belgi), p50/p95
+kechikish; `shadow_results` bo'lsa - taqqoslash xulosasi.
+
+**Sxema v4.** Ilk ishga tushishda analytics omboriga ikki YANGI jadval
+qo'shiladi (`brain_routing`, `shadow_results`); eski jadvallarga tegilmaydi.
+Deploy orqaga qaytarilsa eski kod (v3) faylni ochib ishlayveradi.
+
+**Rollback (miya):** `AGENT_V4_ENABLED=false` (hammasi bir zumda `local`) yoki
+funksiya bo'yicha `PUT .../brain/{feature}` `{"state":"local"}`; hold uchun
+`HOLD_CLASSIFIER=llm`. Restart kerak emas.
+
+### Guruh CRM maxfiyligi va tokenlar (2026-10-10, W0 / F0)
+
+Bular TUZATISH - flag'siz, deploy bilan darhol ishlaydi (qaytarish kalitlari
+pastda).
+
+1. **Javob qilingan xabar niqoblanadi** (guruhdagi CRM so'rovida) - guruhdagi
+   boshqa xabarlar kabi (`message_text` + `mask_text`). So'rovchining O'Z
+   matnida faqat SIRLAR (token, `parol: ...`) niqoblanadi; telefon va email
+   qoladi (CRM vazifasiga kerak bo'lishi mumkin - egasining qarori).
+2. **Niqob kengaydi** (`tg_groups.mask_text`, saqlanadigan xabarlar va brif):
+   xalqaro raqam (`+7 916 ...`), nuqtali telefon (`90.123.45.67`), JSHSHIR
+   (14 raqam), pasport (`AA1234567`). Faqat QO'SHILDI.
+3. **Agentdagi guruh CRM suhbatlari**: yangi `chat_id` - `tgcrm-<uuid>`.
+   Web/mobil "Suhbatlar" ro'yxatida ko'rinmaydi; GET/PATCH/restore - 404;
+   `POST /chat/stream` shu id bilan - 404; shikoyat suratiga olinmaydi.
+   Har suhbat `groups.db` da guruhga bog'lab yoziladi va agentda o'chiriladi
+   (`DELETE /api/chats` - hozircha YUMSHOQ, haqiqiy o'chirish agent ishi A4):
+   6 soat jimlikdan keyin (yangi suhbat ochilsa - eskisi oxirgi savoldan 15
+   daqiqa keyin), guruh ro'yxatdan olinganda (15 daqiqalik oqim zahirasidan
+   keyin), 90 kunlik saqlash muddatida. Tozalovchi - bot jarayonida fon ipi (har 10
+   daqiqada, 50 tadan). Bitta suhbat doim yiqilsa (4xx) - faqat u tanaffus
+   bilan (10 daq, 20, 40, ... 1 kungacha) qayta urinadi, qolganlari o'chaveradi;
+   agentning o'zi ishlamasa (tarmoq, 5xx, 401, 429) - keyingi aylanishda.
+4. **Tugma va davomi qayta ishga tushishdan omon**: suhbat, xabar egalari va
+   tasdiq tokenlari `groups.db` da (7 kun). Noma'lum tugma - avvalgidek "eskirgan".
+5. **Tokenlar faqat kerakligicha**: yig'ilish Ask'i va brif CRM tekshiruvi
+   agentga faqat CRM tokenini yuboradi (avval HRM ham).
+
+**Sxema `groups.db` v5** (ilk ishga tushishda, `CREATE TABLE IF NOT EXISTS`):
+`crm_chats` (suhbat, guruh, odam, vaqtlar, `attempts`, `next_at`) va
+`crm_messages` (Venera xabari egasi, tugma tokeni). Matn YO'Q - faqat id va vaqt.
+Eski kod v5 faylni ochib ishlayveradi (yangi jadvallarga tegmaydi).
+
+**Kuzatish:** `/api/health/detail` → `telegram.groupCrm` = `{open, closing,
+deleted, stuck}`. `stuck > 0` (5+ urinishda o'chmagan) - ogohlantirish
+("Telegram guruh CRM: N ta suhbat agentda o'chirilmayapti"); jurnalda
+`Telegram guruh CRM` qatorlari (faqat kod va son).
+
+**DEPLOY QADAMI - eski suhbatlarni tozalash (bir martalik).** 2026-10-09 dan
+deploy'gacha ochilgan guruh CRM suhbatlari prefiksisiz: ro'yxatda ko'rinadi va
+tozalovchi ularni bilmaydi. Skript ularni (har foydalanuvchi xabari
+`[Telegram ish guruhi «` bilan boshlangan suhbatlar) topib o'chiradi. Avval
+sanash, keyin o'chirish; chiqishda faqat sonlar:
+
+```bash
+cd ~/Venera/apps/api
+venv/bin/python scripts/purge_legacy_group_crm.py            # DRY-RUN: nechta topildi
+venv/bin/python scripts/purge_legacy_group_crm.py --apply    # o'chirish (agentda yumshoq)
+```
+
+Kod: `0` - xatosiz, `1` - ba'zi chaqiruvlar yiqildi (qayta ishga tushirsa
+bo'ladi, takror o'chirish zararsiz), `2` - agent sozlanmagan.
+
+**Qaytarish kalitlari (restartsiz, `.env`):**
+
+| Nima | Kalit |
+|---|---|
+| Yig'ilish Ask'iga HRM tokeni ham | `MEETINGS_ASK_PLATFORMS=crm,hrm` |
+| Brif CRM tekshiruviga HRM tokeni ham | `BRIEF_CRM_PLATFORMS=crm,hrm` |
+| Hold - gemma | `HOLD_CLASSIFIER=llm` |
+
+Niqoblash, `tgcrm-` yashirish va tozalovchi - kalitsiz: qaytarish faqat
+release revert bilan (deploy checklist). `groups.db` v5 jadvallari revert'dan
+keyin ham qoladi - zararsiz.
+
+**Ma'lum qoldiq (agent ishi):** guruh CRM turnlari hali `venera:{actorId}`
+kimligi va agentning default saqlashi bilan ishlaydi - agent ulardan odamning
+SHAXSIY xotirasiga (`/api/memory`, "odatlar") nimadir o'rganishi mumkin. Bizning
+tomonda yopib bo'lmaydi: agent `purpose`/`store`/`chat_visibility` ni yetkazgach
+(A1, W1) `purpose=group_crm`, `chat_visibility=surface` ga o'tiladi.
+
+Tekshirish (soxta agent bilan, tarmoqsiz):
+
+```bash
+cd ~/Venera/apps/api
+venv/bin/python -m pytest -q tests/test_brain_routing.py tests/test_brain_shadow.py \
+  tests/test_brain_seams.py tests/test_agent_v4.py tests/test_agent_load_report.py \
+  tests/test_bot_group_actions.py tests/test_purge_legacy_group_crm.py tests/test_chats.py
+```
+
 ## Avtomatik qayta ishga tushish
 
 | Holat | Xulq |

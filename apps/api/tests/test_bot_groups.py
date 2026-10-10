@@ -211,6 +211,34 @@ def test_niqoblash_oddiy_raqamlarga_tegmaydi(text):
     assert mask_text(text) == text
 
 
+def test_niqoblash_qoshimcha_shakllar():
+    """2026-10-10 (sharh): xalqaro va nuqtali telefon, JSHSHIR, pasport - faqat QO'SHILDI."""
+    text = ("Moskva: +7 916 123-45-67, London +44 20 7946 0958, Berlin +49 30 1234567\n"
+            "nuqtali 90.123.45.67 va +998.90.123.45.67\n"
+            "JSHSHIR 31234567890123, pasport AA1234567, ID AD 1234567")
+    masked = mask_text(text)
+    for raw in ("916 123", "7946 0958", "1234567", "90.123.45.67", "31234567890123", "AA1234567", "AD 1234567"):
+        assert raw not in masked, raw
+    assert masked.count("<telefon>") == 5 and "<jshshir>" in masked and masked.count("<pasport>") == 2
+    assert masked.count("\n") == 2
+
+
+@pytest.mark.parametrize("text", [
+    "+15 % o'sish", "sana 10.10.2026", "chat -1004305663138", "BRB-1234 vazifa", "v2.3.10.12 versiya",
+    "1.250.000 so'm",
+])
+def test_qoshimcha_niqob_oddiy_matnga_tegmaydi(text):
+    assert mask_text(text) == text
+
+
+def test_faqat_sirlar_niqobi():
+    from app.services.tg_groups import mask_secrets
+
+    masked = mask_secrets("mijoz +998 90 123 45 67, ali@client.uz, parol: Qwerty123, Bearer abc.def")
+    assert "+998 90 123 45 67" in masked and "ali@client.uz" in masked
+    assert "Qwerty123" not in masked and "abc.def" not in masked
+
+
 def test_xabar_matni_turlari():
     assert message_text({"photo": [{}], "caption": "dizayn"}) == "[rasm] dizayn"
     assert message_text({"document": {"file_name": "plan.pdf"}}) == "[fayl: plan.pdf]"

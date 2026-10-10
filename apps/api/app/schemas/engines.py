@@ -160,3 +160,50 @@ class UserEngine(BaseModel):
 
     effective: EffectiveEngines
     access: UserEngineAccess | None = None
+
+
+# --- miya flag'lari (LLM ishlarining agentga ko'chishi, `services/brain`) ---------------------
+#
+# Frontend sahifasi hali yo'q (W0: API va audit); `types.ts` ga qo'shilganda
+# `tests/test_contract.py` ga ham qo'shiladi.
+
+
+class BrainFeatureRow(BaseModel):
+    """Bitta funksiya: sozlangan holat (`state`, manbasi), hozir ishlayotgani
+    (`effective`) va nega pastroq (`reason`, masalan `agent_disabled`)."""
+
+    feature: str
+    label: str
+    ops: list[str] = Field(default_factory=list)
+    state: str
+    source: str
+    sampleRate: float
+    envState: str
+    effective: str
+    reason: str | None = None
+    note: str | None = None
+    updatedAt: str | None = None
+    updatedBy: str | None = None
+
+
+class AdminBrain(BaseModel):
+    """`GET /api/v1/admin/engines/brain` (va `PUT .../brain/{feature}` javobi).
+    `agent`, `shadow` - holat sonlari va imkoniyatlar ro'yxati (sir yo'q)."""
+
+    states: list[str] = Field(default_factory=list)
+    features: list[BrainFeatureRow] = Field(default_factory=list)
+    agent: dict = Field(default_factory=dict)
+    shadow: dict = Field(default_factory=dict)
+    holdClassifier: str
+
+
+class BrainFeatureUpdate(BaseModel):
+    """`PUT /api/v1/admin/engines/brain/{feature}` - QO'SHILADIGAN o'zgarish.
+
+    `state`: `local | shadow | agent`, `null` - admin qarori olib tashlanadi
+    (`.env` ga qaytadi). `sampleRate`: 0..1, `null` - `.env` dagisi. Yuborilmagan
+    maydon o'zgarmaydi."""
+
+    state: str | None = None
+    sampleRate: float | None = None
+    note: str | None = Field(default=None, max_length=500)

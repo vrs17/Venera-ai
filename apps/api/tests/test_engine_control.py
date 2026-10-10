@@ -804,8 +804,9 @@ def test_health_detail_haqiqiy_holatni_korsatadi(api, auth, db, monkeypatch):
 
 def test_v2_ombor_v3_ga_otadi_malumot_joyida(tmp_path):
     """Prod fayli (sxema v2, ma'lumot bilan) yangi kod bilan ochilsa: ikki yangi
-    jadval qo'shiladi, eski ma'lumot joyida, qarorlar bo'sh - ya'ni `.env`."""
-    assert SCHEMA_VERSION == 3
+    jadval qo'shiladi, eski ma'lumot joyida, qarorlar bo'sh - ya'ni `.env`.
+    (Oxirgi qadamgacha o'tadi - v4 ning o'zi `test_brain_routing.py` da.)"""
+    assert SCHEMA_VERSION >= 3
     path = tmp_path / "prod" / "venera.db"
     path.parent.mkdir()
     old = sqlite3.connect(str(path), isolation_level=None)
@@ -820,7 +821,7 @@ def test_v2_ombor_v3_ga_otadi_malumot_joyida(tmp_path):
 
     database = Database(path)
     try:
-        assert database.version() == 3
+        assert database.version() == SCHEMA_VERSION
         assert [r["name"] for r in database.rows("PRAGMA table_info(engine_policy)")] == [
             "key", "value", "updated_at", "updated_by"]
         assert [r["name"] for r in database.rows("PRAGMA table_info(engine_access)")] == [
@@ -944,7 +945,7 @@ def test_eski_kod_v3_omborni_ochsa_ishlaydi(tmp_path, monkeypatch):
     monkeypatch.setattr(db_module, "SCHEMA_VERSION", 2)
     old = Database(path)
     try:
-        assert old.version() == 3
+        assert old.version() == SCHEMA_VERSION
         old.execute("INSERT INTO turns (id, started_at, channel, question, status, engine) "
                     "VALUES ('t1', 1.0, 'web', 'savol', 'ok', 'v1')")
         assert old.scalar("SELECT COUNT(*) FROM turns") == 1
@@ -954,7 +955,7 @@ def test_eski_kod_v3_omborni_ochsa_ishlaydi(tmp_path, monkeypatch):
     monkeypatch.undo()
     again = Database(path)
     try:
-        assert again.version() == SCHEMA_VERSION == 3
+        assert again.version() == SCHEMA_VERSION
         assert dict(control.load(again).policy) == {"default": "v1"}
     finally:
         again.close_all()

@@ -366,8 +366,10 @@ def test_ovozli_savolda_tasnif_va_kutish_kadri_izda(client, auth, monkeypatch, t
     from app.services.hold import HoldVoices, all_clips
     from app.services.integrations.crm_auth import CrmAuth
 
-    # `.env` ga bog'liq bo'lmasin: kutish ovozi shu test uchun YOQIQ.
+    # `.env` ga bog'liq bo'lmasin: kutish ovozi shu test uchun YOQIQ. Tasnif - gemma yo'li
+    # (`HOLD_CLASSIFIER=llm`; default 2026-10-10 dan `keyword`) - izdagi span shu yo'lniki.
     monkeypatch.setattr(settings, "hold_enabled", True)
+    monkeypatch.setattr(settings, "hold_classifier", "llm")
     monkeypatch.setattr(settings, "hold_first_ms", 1200)
     monkeypatch.setattr(settings, "hold_repeat_ms", 9000)
     monkeypatch.setattr(settings, "hold_max", 4)

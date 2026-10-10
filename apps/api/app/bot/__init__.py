@@ -104,11 +104,16 @@ def _admin(store, registry):
 
 
 def _writer():
+    """Guruh va brif matnini yozadigan model. `BrainChat` o'rami: har op o'z
+    flag'i bo'yicha (`services/brain`) - default `local`, ya'ni aynan shu
+    `OllamaChat` (bugungi xulq). Agentga ko'chish shu yerdan, chaqiruv
+    joylari (`groups.py`, `briefs.py`) o'zgarmasdan."""
     from ..core.config import ollama_key_now
+    from ..services.brain import BrainChat
     from ..services.integrations.ollama import OllamaChat
 
-    return OllamaChat(settings.ollama_base_url, ollama_key_now,
-                      settings.telegram_group_model or settings.ollama_model)
+    return BrainChat(OllamaChat(settings.ollama_base_url, ollama_key_now,
+                                settings.telegram_group_model or settings.ollama_model))
 
 
 def _groups(store, registry):
@@ -124,11 +129,14 @@ def _briefs(store, registry):
     """Rahbariyat brifi (`briefs.py`). O'z `OllamaChat` i - o'z navbati bilan:
     fondagi tahlil guruhdagi `/summary` ni kuttirmasin. Vazifalarning CRM
     holati - Venera AI agentidan (`crm_status.py`), agent sozlangan bo'lsa."""
+    from ..services.brain import brief_crm_ask
     from .briefs import BriefEngine, BriefService
     from .crm_status import CrmChecker, agent_ask
 
     writer = _writer()
-    crm = CrmChecker(agent_ask, writer=writer) if settings.hrm_assistant_base_url else None
+    # `brief_crm_ask` - `brief_crm` flag'i: `local` da aynan `agent_ask` (+ gemma
+    # normalizer), `agent` da bitta chat vazifasi (`response_format`, faqat CRM).
+    crm = CrmChecker(brief_crm_ask(agent_ask), writer=writer) if settings.hrm_assistant_base_url else None
     # Guruh turi (🛠 support / 📁 loyiha) - brif kartasi va CRM shunga qarab.
     engine = BriefEngine(store, writer, groups=registry.allowed_ids, kind_of=registry.kind_of)
     return BriefService(api, engine, crm=crm, groups=registry.allowed_ids, manage=True)

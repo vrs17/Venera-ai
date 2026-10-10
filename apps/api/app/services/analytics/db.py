@@ -226,10 +226,47 @@ _V3: tuple[str, ...] = (
   note TEXT, updated_at REAL, updated_by TEXT)""",
 )
 
+#: 4-qadam (2026-10-10): LLM ishlarining agentga ko'chishi (`services/brain/`).
+#:
+#: `brain_routing` - funksiya bo'yicha flag (`local | shadow | agent`), admin
+#: paneldan, audit bilan (`engine_control.put_brain`). `engine_policy` ga
+#: qo'shilmadi: u jadvalning har qatori dvigatel nomi (v1/v2/v3) deb o'qiladi va
+#: siyosat yozuvi BARCHA qatorlarning vaqtini yangilaydi - flag'lar aralashsa
+#: "kim, qachon o'zgartirdi" yolg'on ko'rinardi.
+#:
+#: `shadow_results` - shadow taqqoslash qatorlari. XOM MATN YO'Q: faqat vaqt,
+#: hajm (belgi soni), arzon o'xshashlik va sonli ko'rsatkichlar - jadval
+#: `shadow_results_days` (30) kundan keyin tozalanadi.
+#:
+#: Faqat YANGI jadvallar: eski kod (`user_version` 3) faylni ochsa ularni
+#: ko'rmaydi va hamma joy `local` ishlayveradi (deploy orqaga qaytarilsa ham).
+_V4: tuple[str, ...] = (
+    """CREATE TABLE brain_routing (
+  feature TEXT PRIMARY KEY,       -- group_summary | group_ask | brief_extract | brief_crm | meeting_summary | meeting_ask | hold_classify
+  state TEXT NOT NULL,            -- local | shadow | agent
+  sample_rate REAL,               -- shadow sample 0..1; NULL = AGENT_SHADOW_SAMPLE_RATE
+  note TEXT, updated_at REAL, updated_by TEXT)""",
+    """CREATE TABLE shadow_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,
+  feature TEXT NOT NULL,          -- brain_routing.feature
+  op TEXT NOT NULL,               -- analytics op name (group_summary, brief_extract, meeting_extract, classify, ...)
+  status TEXT NOT NULL,           -- ok | error | timeout
+  trace_id TEXT,                  -- agent trace_id (contract 14.1)
+  request_id TEXT,                -- our X-Request-Id
+  local_ms INTEGER, agent_ms INTEGER,
+  input_chars INTEGER, local_chars INTEGER, agent_chars INTEGER,
+  similarity REAL,                -- 0..1 word-set Jaccard; NULL = not comparable
+  metrics TEXT,                   -- JSON, numbers only (counts, citations, flags)
+  error TEXT,                     -- redacted, capped 300 chars
+  actor_id INTEGER, channel TEXT)""",
+    "CREATE INDEX shadow_results_ts ON shadow_results(ts)",
+    "CREATE INDEX shadow_results_feature ON shadow_results(feature, ts)",
+)
+
 #: `MIGRATIONS[i]` fayl `user_version = i` dan `i + 1` ga o'tkazadi.
 #: FAQAT OXIRIGA QO'SHILADI - mavjud qadamni o'zgartirish uni allaqachon
 #: bajargan fayllarni sxemadan ajratib qo'yardi.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4)
 
 SCHEMA_VERSION = len(MIGRATIONS)
 

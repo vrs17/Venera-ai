@@ -320,13 +320,20 @@ class CrmChecker:
 
 
 def agent_ask(question: str, user: AuthUser, timeout: float) -> dict[str, Any]:
-    """Venera AI agentiga savol - veb chatdagi AYNI mijoz va tokenlar bilan.
+    """Venera AI agentiga savol - veb chatdagi AYNI mijoz va CRM tokeni bilan.
 
-    CRM tokeni bo'lmasa agentga borilmaydi (`auth_missing`). Kadrlar
-    `timeout` gacha o'qiladi; oqim har holda yopiladi - slot qaytadi."""
+    FAQAT CRM tokeni (2026-10-10, F0 maxfiylik): bu vazifalar holatini CRM dan
+    tekshirish, HR ma'lumoti kerak emas - HRM tokeni agentga ortiqcha ochiq
+    eshik edi. CRM tokeni avvalgidek tanlanadi (`chat._live_tokens`: o'z ulanishi,
+    bo'lmasa umumiy hisob). CRM tokeni bo'lmasa agentga borilmaydi
+    (`auth_missing`). Kadrlar `timeout` gacha o'qiladi; oqim har holda yopiladi -
+    slot qaytadi."""
     from ..api.v1 import chat as _chat
+    from ..core.config import platforms_now
 
-    tokens = _chat._live_tokens(user)
+    # Qaytarish kaliti: `BRIEF_CRM_PLATFORMS=crm,hrm` (`.env`, jonli). CRM tokenisiz - baribir yo'q.
+    allowed = platforms_now("brief_crm_platforms") | {"crm"}
+    tokens = {k: v for k, v in _chat._live_tokens(user).items() if k in allowed}
     if not tokens.get("crm"):
         return {"answer": "", "sources": [], "error": {"code": "auth_missing"}}
     stream = _chat._assistant.stream(question, user_id=f"venera-brief:{user.actorId}", tokens=tokens,

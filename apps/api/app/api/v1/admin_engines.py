@@ -5,6 +5,9 @@
     PUT    /admin/engines/policy              "hamma uchun" versiya (umumiy va kanal bo'yicha)
     PUT    /admin/engines/access/{actorId}    odamga versiyalar (sinovchilar)
     DELETE /admin/engines/access/{actorId}    odamni umumiy siyosatga qaytarish
+    GET    /admin/engines/brain               miya flag'lari: LLM ishi lokalda, shadow'da
+                                              yoki agentda; agent imkoniyatlari, shadow navbati
+    PUT    /admin/engines/brain/{feature}     funksiyaning holati (`local|shadow|agent`)
 
 NEGA ADMIN PANELDA. Ilgari versiya faqat `.env` da edi: uni almashtirish
 serverga kirish va restart talab qilardi (restart esa oqib turgan
@@ -25,13 +28,16 @@ from fastapi import APIRouter, Depends, Path
 from ...core.errors import error_status
 from ...schemas.auth import AuthUser
 from ...schemas.engines import (
+    AdminBrain,
     AdminEngines,
+    BrainFeatureUpdate,
     EngineAccessRemoved,
     EngineAccessRow,
     EngineAccessUpdate,
     EnginePolicyUpdate,
 )
 from ...services import admin_users as _admin
+from ...services import brain as _brain
 from ...services import engine_control as _control
 from ...services.identities import IdentityStore
 from ...services.users import UserStore
@@ -127,3 +133,43 @@ def delete_access(
     except _admin.AdminError as exc:
         raise _fail(exc) from exc
     return EngineAccessRemoved(removed=removed)
+
+
+@router.get("/brain", response_model=AdminBrain)
+def get_brain(refresh: bool = False) -> AdminBrain:
+    """Miya flag'lari (agentga ko'chish): har funksiya - sozlangan holat va
+    hozir HAQIQATAN nima ishlayotgani (bosh kalit, agent imkoniyatlari tekshirilgan),
+    shadow navbati, ovozli tasnif usuli. `refresh=true` - agent imkoniyatlari
+    darhol qayta o'qiladi (bosh kalit yoqiq bo'lsa)."""
+    try:
+        return AdminBrain(**_brain.admin_view(refresh=refresh))
+    except (sqlite3.Error, OSError) as exc:
+        raise _unavailable(exc) from exc
+
+
+@router.put("/brain/{feature}", response_model=AdminBrain)
+def put_brain(
+    body: BrainFeatureUpdate,
+    feature: str = Path(min_length=1, max_length=40, description="Funksiya: group_summary, ..."),
+    admin: AuthUser = Depends(admin_only),
+) -> AdminBrain:
+    """Funksiyaning holati: `local` (bugungi kod) | `shadow` (lokal + fonda agent,
+    taqqoslash) | `agent` (agent asosiy, xatoda lokal). QO'SHILADIGAN: yuborilmagan
+    maydon o'zgarmaydi; `state: null` - admin qarori olib tashlanadi (`.env`).
+    Agent imkoniyati yo'q bo'lsa flag saqlanadi, lekin ish `local` da qoladi
+    (`effective`, `reason`). Har o'zgarish - audit (`feature.state`)."""
+    sent = body.model_fields_set
+    changes: dict = {}
+    if "state" in sent:
+        changes["state"] = body.state
+    if "sampleRate" in sent:
+        changes["sample_rate"] = body.sampleRate
+    if "note" in sent:
+        changes["note"] = body.note
+    try:
+        _control.put_brain(admin, feature, **changes)
+        return AdminBrain(**_brain.admin_view())
+    except _admin.AdminError as exc:
+        raise _fail(exc) from exc
+    except (sqlite3.Error, OSError) as exc:
+        raise _unavailable(exc) from exc

@@ -54,6 +54,14 @@ AUDIT. Har admin o'zgarishi `audit_log` ga O'SHA tranzaksiyada:
 `engine.policy`, `engine.access.set`, `engine.access.remove`. Odamga oid
 yozuvlar `target_type = user` bilan - foydalanuvchi varag'idagi auditda
 ham ko'rinadi.
+
+MIYA FLAG'LARI (2026-10-10, LLM ishlarining agentga ko'chishi). Shu yerda,
+dvigatel siyosati YONIDA: funksiya bo'yicha `local | shadow | agent`
+(`brain_choice`, `put_brain`, audit `feature.state`). Tartib: admin
+(`brain_routing` jadvali) -> `.env` (`<FEATURE>_ENGINE`, jonli) -> `local`.
+Bu - SOZLANGAN holat; agent haqiqatan tayyormi (bosh kalit, `capabilities`)
+degan tekshiruv `services/brain/routing.py` da - flag'ni oldindan yoqib
+qo'yish xavfsiz bo'lsin. Kesh va `invalidate` dvigatel qarorlari bilan bitta.
 """
 
 from __future__ import annotations
@@ -64,9 +72,10 @@ import sqlite3
 import threading
 import time
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
+from ..core import config as _config
 from ..core import engines as _engines
 from ..core.channels import CHANNELS
 from ..core.channels import normalize as normalize_channel
@@ -116,6 +125,18 @@ class Grant:
 
 
 @dataclass(frozen=True)
+class BrainRow:
+    """`brain_routing` qatori: admin bergan holat va shadow namunasi."""
+
+    feature: str
+    state: str
+    sample_rate: float | None = None
+    note: str | None = None
+    updated_at: float | None = None
+    updated_by: str | None = None
+
+
+@dataclass(frozen=True)
 class Rules:
     """Ombordagi hamma qarorlar: siyosat (`kalit -> dvigatel`) va odamlar."""
 
@@ -125,6 +146,8 @@ class Rules:
     updated_by: str | None = None
     #: `False` - ombor o'qilmadi, bu bo'sh o'rinbosar (`.env` ishlaydi).
     loaded: bool = True
+    #: Miya flag'lari (`feature -> BrainRow`) - admin aytmagan funksiya yo'q.
+    brain: Mapping[str, BrainRow] = field(default_factory=dict)
 
 
 #: Ombor o'qilmaganda - hech qanday admin qarori yo'q, ya'ni `.env`.
@@ -213,7 +236,8 @@ def load(db: Database) -> Rules:
         grant = _grant_of(row)
         if grant is not None:
             access[grant.actor_id] = grant
-    return Rules(policy=policy, access=access, updated_at=updated_at, updated_by=updated_by)
+    return Rules(policy=policy, access=access, updated_at=updated_at, updated_by=updated_by,
+                 brain=_brain_rows(db))
 
 
 # --- kesh ----------------------------------------------------------------------------
@@ -679,3 +703,220 @@ def remove_access(admin: AuthUser, actor_id: int, *, db: Database | None = None,
     if removed:
         log.info("Admin (%s): %s ning dvigatel ruxsati olib tashlandi", admin.actorId, actor_id)
     return removed
+
+
+# --- miya: LLM ishini kim bajaradi (agentga ko'chish flag'lari) ------------------------------
+#
+# NEGA SHU YERDA. Flag - control plane: dvigatel siyosati kabi admin
+# paneldan, restartsiz, audit bilan almashadi va 5 soniyalik kesh bilan
+# o'qiladi. Yangi umumiy flag tizimi qurilmadi (`migration-plan.md` 1.2).
+
+#: Holatlar: `local` - bugungi kod; `shadow` - foydalanuvchi lokal natijani
+#: oladi, agent fonda taqqoslash uchun ishlaydi; `agent` - agent asosiy,
+#: xatoda lokal zahira.
+BRAIN_STATES: tuple[str, ...] = ("local", "shadow", "agent")
+
+
+@dataclass(frozen=True)
+class BrainFeature:
+    """Ko'chadigan funksiya: flag nomi, unga tegishli analytics op'lari, izoh."""
+
+    name: str
+    ops: tuple[str, ...]
+    label: str
+
+
+#: Ko'chadigan funksiyalar (`agent-contract.md` 2.1 dagi 14 op shularga
+#: bo'lingan). Tartib - admin sahifasidagi tartib.
+BRAIN_FEATURES: dict[str, BrainFeature] = {f.name: f for f in (
+    BrainFeature("group_summary", ("group_summary",), "Guruhda /summary"),
+    BrainFeature("group_ask", ("group_ask",), "Guruhda /askbarno va murojaat"),
+    BrainFeature("brief_extract", ("brief_extract", "brief_extract_support", "brief_headline",
+                                   "brief_project"), "Rahbar brifi: hodisalar, sarlavha, loyiha matni"),
+    BrainFeature("brief_crm", ("brief_crm",), "Brifdagi CRM holati"),
+    BrainFeature("meeting_summary", ("meeting_classify", "meeting_extract", "meeting_map",
+                                     "meeting_write", "meeting_verify"), "Yig'ilish xulosasi"),
+    BrainFeature("meeting_ask", ("meeting_ask",), "Yig'ilish bo'yicha savol-javob"),
+    BrainFeature("hold_classify", ("classify",), "Ovozli kutish tasnifi"),
+)}
+
+#: Op -> funksiya (bitta op faqat bitta funksiyada).
+BRAIN_OP_FEATURE: dict[str, str] = {op: f.name for f in BRAIN_FEATURES.values() for op in f.ops}
+
+
+@dataclass(frozen=True)
+class BrainChoice:
+    """Sozlangan holat. `source`: admin | env | default. `sample_rate` - shadow
+    namunasi (0..1). Agent tayyorligi bu yerda TEKSHIRILMAYDI (`brain.routing`)."""
+
+    feature: str
+    state: str
+    source: str
+    sample_rate: float
+
+
+def _rate(value: object) -> float | None:
+    """Namuna qiymati: 0..1 dagi son, aks holda `None`."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    rate = float(value)
+    return rate if 0.0 <= rate <= 1.0 else None
+
+
+def default_sample_rate() -> float:
+    """`.env` dagi namuna (`AGENT_SHADOW_SAMPLE_RATE`), 0..1 ga qisilgan."""
+    try:
+        return min(1.0, max(0.0, float(_config.settings.agent_shadow_sample_rate)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _brain_rows(db: Database) -> dict[str, BrainRow]:
+    """`brain_routing` qatorlari. Jadval yo'q (eski sxema) yoki buzuq qator -
+    o'tkazib yuboriladi: dvigatel qarorlari bunga bog'liq bo'lib qolmasin."""
+    try:
+        raw = db.rows("SELECT * FROM brain_routing")
+    except sqlite3.Error:
+        log_limited("engine_control.brain", "brain_routing o'qilmadi - miya flag'lari .env dan",
+                    exc_info=True)
+        return {}
+    out = _brain_rows_of(raw)
+    if len(out) != len(raw):
+        log_limited("engine_control.brain_row", "brain_routing: %d qator tanilmadi - e'tiborsiz",
+                    len(raw) - len(out))
+    return out
+
+
+def brain_choice(feature: str, *, data: Rules | None = None) -> BrainChoice:
+    """Funksiyaning SOZLANGAN holati. HECH QACHON xato bermaydi - noma'lum
+    funksiya yoki o'qish xatosi `local` (bugungi xulq)."""
+    try:
+        if feature not in BRAIN_FEATURES:
+            return BrainChoice(feature, "local", "default", 0.0)
+        data = rules() if data is None else data
+        rate = default_sample_rate()
+        row = data.brain.get(feature)
+        if row is not None:
+            return BrainChoice(feature, row.state, "admin",
+                               row.sample_rate if row.sample_rate is not None else rate)
+        env = _config.brain_engine_now(feature)
+        if env in BRAIN_STATES:
+            return BrainChoice(feature, env, "env", rate)
+        if env:
+            log_limited(f"engine_control.brain_env.{feature}",
+                        "%s_ENGINE=%r tanilmadi - local", feature.upper(), env[:16])
+        return BrainChoice(feature, "local", "default", rate)
+    except Exception:                                       # noqa: BLE001
+        log_limited("engine_control.brain_choice", "Miya flag'i o'qilmadi - local", exc_info=True)
+        return BrainChoice(feature, "local", "default", 0.0)
+
+
+def _brain_shape(row: BrainRow | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {"state": row.state, "sampleRate": row.sample_rate}
+
+
+def brain_view(*, db: Database | None = None, data: Rules | None = None) -> list[dict[str, Any]]:
+    """Admin: har funksiya - sozlangan holat, manbasi, `.env` qiymati, kim
+    o'zgartirgan. KESHSIZ (`data` berilmasa omborni o'qiydi)."""
+    if data is None:
+        data = load(db or get_db())
+    out: list[dict[str, Any]] = []
+    for name, spec in BRAIN_FEATURES.items():
+        choice = brain_choice(name, data=data)
+        row = data.brain.get(name)
+        out.append({
+            "feature": name,
+            "label": spec.label,
+            "ops": list(spec.ops),
+            "state": choice.state,
+            "source": choice.source,
+            "sampleRate": choice.sample_rate,
+            "envState": _config.brain_engine_now(name) or "local",
+            "note": row.note if row is not None else None,
+            "updatedAt": iso(row.updated_at) if row is not None else None,
+            "updatedBy": row.updated_by if row is not None else None,
+        })
+    return out
+
+
+def put_brain(admin: AuthUser, feature: str, *, state: Any = _UNSET, sample_rate: Any = _UNSET,
+              note: Any = _UNSET, db: Database | None = None, now: float | None = None) -> list[dict[str, Any]]:
+    """`PUT /api/v1/admin/engines/brain/{feature}` - QO'SHILADIGAN o'zgarish.
+
+    `state`: `local | shadow | agent`, `None` - admin qarori olib tashlanadi
+    (`.env` ga qaytadi). `sample_rate`: 0..1, `None` - `.env` dagisi. Admin
+    qarori yo'q funksiyada faqat namuna berilsa - 422 (holat ham kerak).
+    Avval tekshiriladi, keyin bitta tranzaksiyada yoziladi; haqiqiy o'zgarish
+    bo'lsagina `feature.state` auditi. Javob - `brain_view`."""
+    name = str(feature or "").strip().lower()
+    if name not in BRAIN_FEATURES:
+        raise AdminError(f"noma'lum funksiya ({str(feature)[:40]!r}) - {' | '.join(BRAIN_FEATURES)}",
+                         status=422, code="UNKNOWN_FEATURE")
+    if state is not _UNSET and state is not None and state not in BRAIN_STATES:
+        raise AdminError(f"state: noma'lum holat ({str(state)[:16]!r}) - {' | '.join(BRAIN_STATES)}",
+                         status=422, code="UNKNOWN_STATE")
+    if sample_rate is not _UNSET and sample_rate is not None and _rate(sample_rate) is None:
+        raise AdminError("sampleRate: 0 dan 1 gacha son bo'lishi kerak", status=422,
+                         code="BAD_SAMPLE_RATE")
+    db = db or get_db()
+    now = time.time() if now is None else now
+    by = _admin._by(admin)
+    after: BrainRow | None = None
+    try:
+        with db.transaction() as conn:
+            found = conn.execute("SELECT * FROM brain_routing WHERE feature = ?", (name,)).fetchone()
+            before = _brain_rows_of([dict(found)]).get(name) if found is not None else None
+            if state is None:
+                after = None
+            else:
+                new_state = state if state is not _UNSET else (before.state if before else None)
+                if new_state is None:
+                    raise AdminError("state: bu funksiyada admin qarori yo'q - holatni ham bering",
+                                     status=422, code="STATE_REQUIRED")
+                new_rate = (before.sample_rate if before else None) if sample_rate is _UNSET \
+                    else _rate(sample_rate)
+                if note is _UNSET:
+                    new_note = before.note if before else None
+                else:
+                    new_note = (str(note).strip()[:_admin.NOTE_LIMIT] or None) if note is not None \
+                        else None
+                after = BrainRow(feature=name, state=new_state, sample_rate=new_rate, note=new_note,
+                                 updated_at=now, updated_by=by)
+            same = (before is None and after is None) or (
+                before is not None and after is not None
+                and (before.state, before.sample_rate, before.note)
+                == (after.state, after.sample_rate, after.note))
+            if not same:
+                if after is None:
+                    conn.execute("DELETE FROM brain_routing WHERE feature = ?", (name,))
+                else:
+                    conn.execute(
+                        "INSERT INTO brain_routing (feature, state, sample_rate, note, updated_at, "
+                        "updated_by) VALUES (?,?,?,?,?,?) ON CONFLICT(feature) DO UPDATE SET "
+                        "state=excluded.state, sample_rate=excluded.sample_rate, note=excluded.note, "
+                        "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
+                        (name, after.state, after.sample_rate, after.note, now, by))
+                _admin.write_audit(conn, admin, "feature.state", "feature", name, {
+                    "from": _brain_shape(before), "to": _brain_shape(after)}, ts=now)
+    except AdminError:
+        raise
+    except (sqlite3.Error, OSError) as exc:
+        raise _admin._write_failed(exc) from exc
+    invalidate()
+    log.info("Admin (%s): miya flag'i %s -> %s", admin.actorId, name,
+             after.state if after is not None else ".env")
+    return brain_view(db=db)
+
+
+def _brain_rows_of(raw: list[dict[str, Any]]) -> dict[str, BrainRow]:
+    """Tranzaksiya ichida o'qilgan qatorlar -> `BrainRow` (`_brain_rows` qoidasi)."""
+    out: dict[str, BrainRow] = {}
+    for row in raw:
+        feature, state = str(row.get("feature") or ""), str(row.get("state") or "")
+        if feature in BRAIN_FEATURES and state in BRAIN_STATES:
+            out[feature] = BrainRow(feature=feature, state=state, sample_rate=_rate(row.get("sample_rate")),
+                                    note=_text(row.get("note")), updated_at=_ts(row.get("updated_at")),
+                                    updated_by=_text(row.get("updated_by")))
+    return out
