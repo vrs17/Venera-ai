@@ -10,7 +10,7 @@
  * Kanal `mobile`: server dvigatelni shunga qarab tanlaydi (prod: v3).
  */
 import { router } from 'expo-router';
-import { ArrowDown, History, SquarePen } from 'lucide-react-native';
+import { ArrowDown, AudioLines, History, SquarePen } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -30,6 +30,7 @@ import { useAuth } from '@/features/auth/authStore';
 import { useChat } from '@/features/chat/chatStore';
 import { useChats } from '@/features/chat/chatsStore';
 import { useKeyboardPadding } from '@/features/chat/keyboard';
+import { useRecorderStore } from '@/features/recorder/RecorderProvider';
 import { proActiveNow, usePro } from '@/features/chat/proStore';
 import { Composer } from '@/features/chat/ui/Composer';
 import { ExchangeView } from '@/features/chat/ui/ExchangeView';
@@ -59,6 +60,10 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const kb = useKeyboardPadding(insets.bottom);
   const user = useAuth((x) => x.user);
+  // Yig'ilishlar bo'limi serverda yoqilgan (konfig keldi) - "Yozuvlar" tepada, bir bosishda.
+  const meetingsOn = useAuth((x) => x.config !== null);
+  const recStatus = useRecorderStore((x) => x.machine.status);
+  const recording = recStatus === 'recording' || recStatus === 'paused';
 
   const chatId = useChat((x) => x.chatId);
   const exchanges = useChat((x) => x.exchanges);
@@ -147,6 +152,11 @@ export default function ChatScreen() {
         <Text style={s.title} numberOfLines={1} accessibilityRole="header">
           {title || t('app.name')}
         </Text>
+        {meetingsOn ? (
+          <IconButton label={t('settings.meetings')} onPress={() => router.push('/meetings')} testID="chat-meetings">
+            <AudioLines size={21} color={recording ? th.record : th.textSoft} strokeWidth={1.9} />
+          </IconButton>
+        ) : null}
         <IconButton label={t('chat.newChat')} onPress={() => useChat.getState().newChat()} testID="chat-new">
           <SquarePen size={20} color={th.textSoft} strokeWidth={1.9} />
         </IconButton>
@@ -160,6 +170,18 @@ export default function ChatScreen() {
           <Text style={s.avatarText}>{initials(user?.fullName)}</Text>
         </Pressable>
       </View>
+
+      {recording ? (
+        <Pressable
+          testID="chat-recording"
+          onPress={() => router.push('/record?src=app')}
+          accessibilityRole="button"
+          style={({ pressed }) => [s.recBar, pressed ? { opacity: 0.8 } : null]}>
+          <View style={[s.recDot, { backgroundColor: th.record }]} />
+          <Text style={[s.recText, { color: th.record }]}>{t(recStatus === 'paused' ? 'record.paused' : 'record.recording')}</Text>
+          <Text style={[s.recText, { color: th.textSoft }]}>{t('record.title')} ›</Text>
+        </Pressable>
+      ) : null}
 
       <View style={{ flex: 1 }}>
         {empty ? (
@@ -308,6 +330,16 @@ function makeStyles(th: Theme) {
       borderColor: th.border,
     },
     avatarText: { color: th.text, fontSize: 13, fontWeight: '700' },
+    recBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      backgroundColor: th.tones.bad.bg,
+    },
+    recDot: { width: 10, height: 10, borderRadius: 5 },
+    recText: { fontSize: 14, fontWeight: '700' },
     composerWrap: { paddingHorizontal: 12, paddingTop: 6, paddingBottom: 6, backgroundColor: th.bg },
     disclaimer: { color: th.textFaint, fontSize: 11, textAlign: 'center', marginTop: 6 },
     jump: {

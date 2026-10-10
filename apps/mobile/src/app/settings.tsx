@@ -174,7 +174,8 @@ export default function SettingsScreen() {
         </Card>
       ) : null}
 
-      {meetingsOn ? (
+      {/* Tez yozish (yon tugma, plitka, ovoz tugmasi) - DOIM ko'rinadi: yozish internetsiz va
+          server yig'ilishlar bo'limini yoqmagan paytda ham ishlaydi (navbatda kutadi). */}
       <Card>
         <Text style={[s.h, { color: th.text }]}>{t('settings.quick')}</Text>
         <Muted style={{ marginBottom: 10 }}>{t('settings.quickIntro')}</Muted>
@@ -231,7 +232,6 @@ export default function SettingsScreen() {
         <Banner tone="info" text={t('settings.powerNote')} />
         <Muted>{t('settings.lockNote')}</Muted>
       </Card>
-      ) : null}
 
       {meetingsOn ? (
       <>
