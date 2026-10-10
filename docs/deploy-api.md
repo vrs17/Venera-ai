@@ -740,6 +740,83 @@ curl -s -N -X POST http://127.0.0.1:8000/api/v1/chat/stream \
 Kadrlar BIR-BIR kelishi kerak. Hammasi birdan kelsa - buferlash yoqilib
 qolgan (nginx `location` ini tekshiring).
 
+### Xotira va platforma kalitlari (2026-10-10)
+
+Yordamchi 3.3 odam haqida uzoq muddatli XOTIRA saqlaydi ("eslab qol ...",
+so'rashidan o'rganilgan odatlar, tasdiqlangan CRM vazifalaridan o'rganilgan
+tartib) va har odamga 7 ta platforma (HRM, CRM, DWH, Biznes 24/7, Superapp,
+Biznes 24/7 qo'llanmalari, Biznes Help) uchun "foydalanilsinmi" kalitini
+beradi. Ikkalasi ham yordamchida turadi; Barno faqat proksi
+(`app/api/v1/assistant_extras.py`):
+
+| Barno | Yordamchi | Nima |
+|---|---|---|
+| `GET /api/v1/assistant/memory` | `GET /api/memory` | odamning xotirasi |
+| `DELETE /api/v1/assistant/memory/{item_id}` | `DELETE /api/memory/{item_id}` | bitta bandni unutish |
+| `DELETE /api/v1/assistant/memory?confirm=forget-all` | `DELETE /api/memory` | HAMMASINI unutish |
+| `GET /api/v1/assistant/platforms` | `GET /api/connectors` | platformalar va odamning kalitlari |
+| `PUT /api/v1/assistant/platforms/{id}` `{"enabled": bool}` | `PUT /api/connectors/{id}` | yoqish / o'chirish |
+
+* **Kimlik faqat sessiyadan** - `venera:{actorId}`, chat bilan bir xil.
+  So'rovdagi `user_id` e'tiborsiz (PUT tanasida esa 422): boshqa odamning
+  xotirasini o'qish yoki o'chirish bitta parametr bo'lmasin.
+* **"Platforms", "connectors" emas**: `/api/v1/connectors` bizda odamning
+  HRM/CRM LOGIN tokenlari ("+" menyusi). Yordamchining `connectors` i - boshqa
+  narsa: "Barno shu manbadan foydalansinmi".
+* **Hammasini unutish** aniq `?confirm=forget-all` siz 400 `confirm_required`
+  va yordamchiga bormaydi; odamga soatiga 5 marta. Yordamchi nosozligi
+  (502/503/504) urinishni chegaradan QAYTARADI - agent qayta ishga
+  tushayotganda odam bir soatga maxfiylik amalidan mahrum bo'lmasin (amal
+  idempotent). Bitta band va kalit ham shunday.
+* **Band kaliti** faqat ASCII `[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}` (`m12`,
+  hex): `.`/`..` kabi kalit 400 `invalid_id` - biror hop (nginx `proxy_pass`
+  URI bilan) `/api/memory/.` ni `/api/memory/` ga normallashtirib, tasdiqsiz
+  tozalashga yetib bormasin.
+* **Chegaralar** (odam bo'yicha): o'qish 60/daqiqa, bitta band yoki kalit
+  30/daqiqa. Oshsa 429 `rate_limited` + `Retry-After`, yordamchiga borilmaydi.
+  Hisoblagich JARAYON ichida: uvicorn bir nechta worker bilan ishlasa,
+  chegara workerlar soniga ko'payadi (bugun bitta worker).
+* **Vaqt chegarasi** `HRM_ASSISTANT_SETTINGS_TIMEOUT` (15 s, oqimning
+  120 s i emas) - har bir ulanish/o'qish uchun (umumiy muddat emas): bitta
+  o'qishda 15 s jim qolsa 504; baytlarni sekin tomizayotgan yordamchi
+  so'rovni uzoqroq ushlab turishi mumkin.
+* **Yo'naltirish (30x) ga ergashilmaydi** (barcha JSON yo'llari): `urllib`
+  ergashganda `X-Client-Secret` ni ham yangi manzilga ko'chirardi. 30x -
+  502 `upstream_error`. `HRM_ASSISTANT_URL` oxirgi manzilni ko'rsatishi
+  shart (`http` -> `https` yo'naltirishi bo'lsa - URL ni to'g'rilang).
+* **Xatolar** yagona shaklda + `code`: yordamchi xatosi (401/403 ham - bu
+  bizning ilova siri, sessiya emas) 502 `upstream_error`; ulanib bo'lmadi
+  yoki yordamchi 503 - 503 `upstream_unavailable`; vaqt tugadi - 504
+  `upstream_timeout`; kredensial yo'q - 503 `not_configured`; yo'q band /
+  platforma - 404 `memory_not_found` / `platform_not_found`.
+* **Xotira matni jurnalga yozilmaydi** - faqat kalit va soni; xato matnida
+  ham yordamchi javobining tanasi yo'q (beshala yo'lda - platformalarda ham). Hisob (`api_calls`): `memory.list`,
+  `memory.delete`, `memory.clear`, `platforms.list`, `platforms.set`.
+
+Tekshirish (soxta yordamchi bilan, tarmoqsiz):
+
+```bash
+cd ~/Venera/apps/api
+venv/bin/python -m pytest -q tests/test_assistant_extras.py
+```
+
+Jonli (kirgandan keyin, `$TOKEN` yuqoridagidek):
+
+```bash
+curl -s http://127.0.0.1:8000/api/v1/assistant/platforms -H "Authorization: Bearer $TOKEN"
+curl -s http://127.0.0.1:8000/api/v1/assistant/memory -H "Authorization: Bearer $TOKEN" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["count"])'
+```
+
+Xotira shaxsiy: jonli tekshiruvda matnni ekranga chiqarmang - soni yetarli.
+Rollback: `api/v1/__init__.py` dagi `assistant_extras` qatorini olib tashlash
+kifoya (boshqa yo'llarga ta'sir qilmaydi). Web shu holatda kodsiz 404 ni
+"xizmat ishlamayapti" deb ko'rsatadi ("unutildi" EMAS) - faqat
+`memory_not_found` kodli 404 "allaqachon unutilgan" deb o'qiladi.
+
+TARTIB: avval API, keyin web. Web oldin chiqsa, Xotira va Manbalar "Barno
+hozir javob bermayapti" ko'rsatadi (zarar yo'q, lekin chalg'itadi).
+
 ## Avtomatik qayta ishga tushish
 
 | Holat | Xulq |

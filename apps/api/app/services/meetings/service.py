@@ -222,7 +222,7 @@ def card_view(m: dict[str, Any], now: float | None = None) -> dict[str, Any]:
         "language": m.get("language") or "uz", "template": m.get("template") or "auto",
         "summaryStatus": m.get("summary_status") or "none",
         "openActionItems": runtime().store.open_items(m["id"]), "overview": overview,
-        "error": error_view(m, now),
+        "error": error_view(m, now), "source": m.get("source") or "app",
     }
 
 
@@ -917,16 +917,23 @@ def _export_render(m: dict[str, Any], s: dict[str, Any] | None, wanted: list[str
     speakers = {sp["id"]: sp for sp in store.speakers(m["id"])}
     content: dict[str, Any] | None = None
     actions: list[dict[str, Any]] | None = None
+    brief_actions: list[dict[str, Any]] | None = None
     if s and summary_ready and any(p in export.SUMMARY_PARTS for p in wanted):
         content = _map_merged(jload(s["content_json"], {}) or {}, _merged_map(list(speakers.values())))
-        if "actions" in wanted or "mindmap" in wanted:
+        if "actions" in wanted or "mindmap" in wanted or "brief" in wanted:
+            # "Qisqa xulosa" - XULOSA tilida (yorliqlar ham, "2-ishtirokchi" ham), jadval - ilova tilida.
+            brief_lang = content.get("language") or lang
             if s["id"] == m.get("primary_summary_id"):
                 # Asosiy xulosa - JONLI vazifalar: odam tahrirlagani/qo'shgani, holati va CRM kaliti.
                 rows = sorted(store.action_items(m["id"]), key=_action_order)
                 rows = [{**a, "crm_result": jload(a.get("crm_result"))} for a in rows]
                 actions = export.actions_from_rows(rows, speakers, lang)
+                if "brief" in wanted:
+                    brief_actions = export.actions_from_rows(rows, speakers, brief_lang)
             else:
                 actions = export.actions_from_content(content, speakers, lang)
+                if "brief" in wanted:
+                    brief_actions = export.actions_from_content(content, speakers, brief_lang)
     segments = store.segments(m["id"]) if "transcript" in wanted else None
     recorded_at = float(m.get("recorded_at") or m.get("created_at") or 0)
     title = m.get("title") or (content or {}).get("title") or default_title(recorded_at, lang)
@@ -935,7 +942,8 @@ def _export_render(m: dict[str, Any], s: dict[str, Any] | None, wanted: list[str
     doc = export.build_document(title=title, recorded_at=recorded_at, duration_sec=duration, speakers=speakers,
                                 lang=lang, now=now, parts=wanted, template=s["template"] if s else None,
                                 content=content, actions=actions, segments=segments, stale=stale,
-                                text_lang=(s or {}).get("language") or m.get("language"))
+                                text_lang=(s or {}).get("language") or m.get("language"),
+                                brief_actions=brief_actions, user_title=m.get("title_source") == "user")
     try:
         data = export.render(doc, fmt, font_dir=settings.meetings_export_font_dir)
     except export.RenderUnavailable as exc:
@@ -1238,7 +1246,7 @@ def ask(user: AuthUser, meeting_id: str, question: str, language: str | None) ->
     day = dates.tashkent(float(m.get("recorded_at") or 0))
     meta = prompts.meta_line(day.date(), dates.WEEKDAYS["en"][day.weekday()], float(m.get("duration_sec") or 0),
                              [{"id": sp["id"], "name": sp.get("name")} for sp in speakers],
-                             bool(m.get("speakers_available")))
+                             bool(m.get("speakers_available")), call=m.get("source") == "call")
     from ..analytics import bind
 
     try:

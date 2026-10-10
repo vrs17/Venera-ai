@@ -11,11 +11,13 @@ from __future__ import annotations
 import io
 import http.client
 import json
+import logging
 import re
 import threading
 import time
 import urllib.error
 import urllib.request
+import wave
 
 import pytest
 
@@ -736,3 +738,358 @@ def test_notogri_ovoz_422(client, auth, monkeypatch, server, voice):
 def test_uz_yagona_til():
     """Bu bosqichda ro'yxat aynan bitta til bo'lishi kerak."""
     assert set(LOCALE_TO_TTS) == {"uz"}
+
+
+# --- /tts/clip: mobil ilova uchun to'liq WAV --------------------------------
+#
+# expo-audio xom PCM oqimini o'ynata olmaydi - faqat tayyor faylni. Klient
+# javobni gap chegarasida bo'laklaydi va har bo'lakni shu yo'ldan to'liq WAV
+# qilib oladi.
+
+
+@pytest.fixture
+def clip_tts(monkeypatch, server):
+    """Endpoint ishlatadigan klient - soxta transport ustida. `queue_wait`
+    qisqa: "band" holati testni bir soniya to'xtatmasin."""
+    import app.api.v1.tts as module
+
+    client = TtsClient("http://tts", "frontend", "s3cret", queue_wait=0.05)
+    monkeypatch.setattr(module, "_client", client)
+    return client
+
+
+def _clip(client, auth, **body):
+    return client.post("/api/v1/tts/clip", json={"text": "Salom, men Barno.", **body},
+                       headers=auth)
+
+
+def _stream_calls(server) -> list[dict]:
+    return [c[1] for c in server.calls if c[0] == "/api/v1/tts/stream"]
+
+
+def test_clip_haqiqiy_wav_qaytaradi(client, auth, server, clip_tts):
+    """Sarlavhadagi hajm HAQIQIY bo'lishi shart: serverning `format=wav` i
+    `0xFFFFFFFF` yozadi va pleyer davomiylikni 74 soat deb ko'radi."""
+    response = _clip(client, auth)
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-venera-truncated"] == "0"
+    assert response.headers["x-venera-sample-rate"] == "8000"
+    with wave.open(io.BytesIO(response.content)) as w:
+        assert w.getframerate() == 8000
+        assert w.getnchannels() == 1
+        assert w.getsampwidth() == 2
+        frames = w.getnframes()
+        assert frames == len(PCM) * 3 // 2
+        assert w.readframes(frames) == PCM * 3, "audio o'zgarib ketdi"
+    assert response.headers["x-venera-duration-ms"] == str(round(frames * 1000 / 8000))
+    # RIFF hajmlari baytlarning o'zi bilan mos (`wave` ham shuni tekshiradi,
+    # lekin mobil `parseWav` bo'laklarni o'zi yuradi).
+    data = response.content
+    assert int.from_bytes(data[4:8], "little") == len(data) - 8
+    assert int.from_bytes(data[40:44], "little") == len(PCM) * 3
+    assert clip_tts.busy() == 0, "slot qaytmadi"
+
+
+def test_clip_tokensiz_401(client, server, clip_tts):
+    response = client.post("/api/v1/tts/clip", json={"text": "salom"})
+    assert response.status_code == 401
+    assert not server.calls, "autentifikatsiyasiz TTS serveriga so'rov ketdi"
+
+
+def test_clip_600_belgigacha_otadi(client, auth, server, clip_tts):
+    """600 - chegara o'zi: klient <=350 yuboradi, zaxira bilan."""
+    response = _clip(client, auth, text="a" * 600)
+    assert response.status_code == 200, response.text
+
+
+def test_clip_601_belgi_422(client, auth, server, clip_tts):
+    """Bitta so'rov uzun bo'lsa umumiy ikki slotdan birini o'nlab soniya
+    ushlaydi. Qisqartirish emas, rad etish: klient bo'laklashi kerak."""
+    response = _clip(client, auth, text="a" * 601)
+    assert response.status_code == 422
+    assert response.json()["message"]
+    assert not server.calls
+
+
+@pytest.mark.parametrize("voice", ["bosqa_ovoz", "uz_female_calm\nSOXTA LOG QATORI"])
+def test_clip_notogri_ovoz_422(client, auth, server, clip_tts, voice):
+    response = _clip(client, auth, voice=voice)
+    assert response.status_code == 422
+    assert not server.calls
+
+
+@pytest.mark.parametrize("speed", [2.0, 0.5, 0.69, 1.31])
+def test_clip_tezlik_chegarada_422(client, auth, server, clip_tts, speed):
+    response = _clip(client, auth, speed=speed)
+    assert response.status_code == 422
+    assert not server.calls
+
+
+def test_clip_tezlik_nan_422(client, auth, server, clip_tts):
+    """`NaN` har qanday taqqoslashda "yolg'on" - chegarani jimgina
+    aylanib o'tmasligi kerak (Python `json` uni qabul qiladi)."""
+    response = client.post("/api/v1/tts/clip", content='{"text": "salom", "speed": NaN}',
+                           headers={**auth, "Content-Type": "application/json"})
+    assert response.status_code == 422
+    assert not server.calls
+
+
+@pytest.mark.parametrize("language", ["ru", "en", "uz-Cyrl"])
+def test_clip_faqat_uz(client, auth, server, clip_tts, language):
+    response = _clip(client, auth, language=language)
+    assert response.status_code == 400
+    assert not server.calls, "qo'llab-quvvatlanmaydigan til serverga yuborildi"
+
+
+def test_clip_bosh_matn_400(client, auth, server, clip_tts):
+    response = _clip(client, auth, text="   ")
+    assert response.status_code == 400
+    assert not server.calls
+
+
+def test_clip_sirsiz_501(client, auth, server, monkeypatch):
+    """501 - "hali yoqilmagan": klient buni ilova davomida eslab qoladi va
+    qayta urinmaydi. 503 bo'lsa cheksiz urinardi."""
+    import app.api.v1.tts as module
+
+    monkeypatch.setattr(module, "_client", TtsClient("http://tts", "frontend", ""))
+    response = _clip(client, auth)
+    assert response.status_code == 501
+    assert response.json()["message"] == "Ovoz javobi hali yoqilmagan"
+    assert not server.calls
+
+
+def test_clip_band_503_retry_after(client, auth, server, clip_tts):
+    """Ikki slot ham band (boshqa foydalanuvchilarning oqimi) - darhol 503
+    va `Retry-After`: navbat cheksiz o'smasin."""
+    held = [clip_tts.stream("birinchi"), clip_tts.stream("ikkinchi")]
+    try:
+        server.calls.clear()
+        response = _clip(client, auth)
+        assert response.status_code == 503
+        assert response.headers["retry-after"] == "1"
+        assert response.json()["message"].startswith("Ovoz xizmati band")
+        assert not _stream_calls(server), "band paytida TTS ga so'rov ketdi"
+    finally:
+        for speech in held:
+            speech.close()
+    assert clip_tts.busy() == 0
+
+
+def test_clip_bir_odam_umumiy_slotlarni_egallay_olmaydi_503(client, auth, server, clip_tts,
+                                                           monkeypatch):
+    """Uzilgan so'rov serverda oxirigacha sintez qilinadi (sync route). Bitta odam
+    ketma-ket bo'lib gapirsa ikkala umumiy TTS slotini egallab, BOSHQALARNI 503 ga
+    tushirardi - shuning uchun odamga o'z chegarasi (503 + Retry-After, klient qayta urinadi)."""
+    import app.api.v1.tts as module
+
+    monkeypatch.setattr(module, "_CLIP_PER_USER", 0)
+    server.calls.clear()
+    response = _clip(client, auth)
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "1"
+    assert response.json()["message"].startswith("Ovoz xizmati band")
+    assert not _stream_calls(server), "chegaradan oshgan so'rov TTS ga ketdi"
+
+
+def test_clip_odam_sloti_muvaffaqiyat_va_xatoda_qaytadi(client, auth, server, clip_tts, monkeypatch):
+    import app.api.v1.tts as module
+
+    seen: list[int] = []
+    real = clip_tts.synthesize_clip
+
+    def spy(*args, **kwargs):
+        seen.append(sum(module._clip_inflight.values()))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(clip_tts, "synthesize_clip", spy)
+    assert _clip(client, auth).status_code == 200
+    server.cut_after = 1
+    assert _clip(client, auth).status_code == 502
+    server.cut_after = None
+    assert seen == [1, 1], "sintez paytida odam sloti hisoblanmadi"
+    assert module._clip_inflight == {}, "odam sloti qaytmadi"
+
+
+def test_clip_oqim_ortasida_uzilsa_502_va_slot_qaytadi(client, auth, server, clip_tts):
+    """HAMMASI YOKI HECH NARSA: yarim WAV klientda gapning yarmini o'ynatardi.
+    200 hali yuborilmagan - shuning uchun bu yerda HAQIQIY xato statusi."""
+    server.cut_after = 1
+    response = _clip(client, auth)
+    assert response.status_code == 502
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json()["message"] == "Ovoz xizmati javob bermadi"
+    assert clip_tts.busy() == 0, "uzilgan oqim slotni qaytarmadi"
+    server.cut_after = None
+    assert _clip(client, auth).status_code == 200
+
+
+def test_clip_timeout_504(client, auth, server, clip_tts, monkeypatch):
+    """Oqim o'rtasida jim qolish (timeout) - 504, yarim audio emas."""
+    real = server.open
+
+    def stalls(request, timeout=None):
+        response = real(request, timeout)
+        if request.full_url.endswith("/tts/stream"):
+            served = {"n": 0}
+            original = response.read
+
+            def read(size=-1):
+                served["n"] += 1
+                if served["n"] > 1:
+                    raise TimeoutError("timed out")
+                return original(size)
+
+            response.read = read
+        return response
+
+    server.open = stalls                         # type: ignore[method-assign]
+    response = _clip(client, auth)
+    assert response.status_code == 504
+    assert clip_tts.busy() == 0
+
+
+def test_clip_bosh_audio_502(client, auth, server, clip_tts):
+    """Uzunligi nol fayl ba'zi pleyerlarda "tugadi" hodisasini bermaydi va
+    klient navbati qotadi - bo'sh audio aniq xato bo'lishi kerak."""
+    server.chunks = []
+    response = _clip(client, auth)
+    assert response.status_code == 502
+    assert clip_tts.busy() == 0
+
+
+def test_clip_ovoz_va_tezlik_yuqoriga_ketadi(client, auth, server, clip_tts):
+    response = _clip(client, auth, voice="uz_male_news", speed=1.1)
+    assert response.status_code == 200
+    call = _stream_calls(server)[-1]
+    assert call["voice_profile"] == "uz_male_news"
+    assert call["speed"] == 1.1
+    # Oqim tafsilotlari `/speak` bilan bir xil: xom PCM so'raladi (biz o'zimiz
+    # WAV ga o'raymiz) va bo'lak davomiyligi server diapazonida.
+    assert call["format"] == "l16"
+    assert 0.5 <= call["chunk_sec"] <= 10
+
+
+def test_clip_bosh_ovoz_va_tezlik_sozlamadan(client, auth, server, clip_tts, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "tts_voice", "uz_male_news")
+    monkeypatch.setattr(settings, "tts_speed", 0.9)
+    assert _clip(client, auth).status_code == 200
+    call = _stream_calls(server)[-1]
+    assert (call["voice_profile"], call["speed"]) == ("uz_male_news", 0.9)
+
+
+def test_clip_sanalar_sozga_aylanadi(client, auth, server, clip_tts):
+    """`/speak` dagi `for_speech` va normalizator to'rlari shu yo'lda HAM
+    ishlaydi - alohida yo'l yozilmagan."""
+    server.glued_date_bug = True
+    response = _clip(client, auth, text="Shartnoma 09.09.2025dan tuzilgan.")
+    assert response.status_code == 200
+    calls = _stream_calls(server)
+    assert len(calls) == 1
+    assert "09.09.2025" not in calls[0]["text"]
+
+
+def test_clip_xato_ichki_hostni_ochmaydi(client, auth, server, monkeypatch):
+    server.stream_status = 500
+    import app.api.v1.tts as module
+    monkeypatch.setattr(module, "_client",
+                        TtsClient("http://10.10.50.4:8200", "frontend", "s3cret", queue_wait=0.05))
+    response = _clip(client, auth)
+    assert response.status_code == 502
+    text = response.text
+    assert "10.10.50.4" not in text and "s3cret" not in text
+    assert "list index out of range" not in text
+
+
+def test_clip_yuqoridagi_401_502(client, auth, server, clip_tts):
+    """Yuqoridagi 401 - BIZNING sir noto'g'ri. Foydalanuvchiga 401 qaytarsa
+    ilova "sessiya tugadi" deb uni tizimdan chiqarib yuborardi."""
+    server.dead_tokens.update({"tok1", "tok2", "tok3"})
+    response = _clip(client, auth)
+    assert response.status_code == 502
+
+
+def test_clip_matni_logga_tushmaydi(client, auth, server, clip_tts, caplog):
+    """Matn - foydalanuvchining HRM javobi. Muvaffaqiyatli so'rovda ham,
+    yuqoridagi server matnni xato ichida qaytarganda ham log'ga tushmasin."""
+    marker = "Maxfiy maosh 7777777 som"
+    real = server.open
+
+    def echoes_text(request, timeout=None):
+        if request.full_url.endswith("/tts/stream") and server.stream_status:
+            payload = json.loads(request.data)
+            server.calls.append(("/api/v1/tts/stream", payload, {}))
+            raise _http_error("/api/v1/tts/stream", 500, f"xato: {payload['text']}")
+        return real(request, timeout)
+
+    server.open = echoes_text                    # type: ignore[method-assign]
+    caplog.set_level(logging.DEBUG)
+    assert _clip(client, auth, text=marker).status_code == 200
+    server.stream_status = 500
+    assert _clip(client, auth, text=marker).status_code == 502
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "7777777" not in logged and "maosh" not in logged
+
+
+def test_clip_hisobi_clip_yorligi_va_savol_kaliti_bilan(client, auth, server, clip_tts,
+                                                        _isolated_analytics):
+    """Admin tahlilida javob bo'laklari (`clip`) oqimdan (`speak`) ajralib
+    ko'rinsin, ovoz esa o'sha savolga bog'lansin."""
+    from app.services import analytics
+
+    turn_id = "cd" * 16
+    response = client.post("/api/v1/tts/clip",
+                           headers={**auth, "X-Venera-Turn": turn_id, "X-Venera-Client": "mobile"},
+                           json={"text": "salom", "language": "uz"})
+    assert response.status_code == 200
+    # Yaroqsiz kalit - e'tiborsiz, xato emas.
+    response = client.post("/api/v1/tts/clip", headers={**auth, "X-Venera-Turn": "../x"},
+                           json={"text": "salom", "language": "uz"})
+    assert response.status_code == 200
+
+    assert analytics.flush(5.0)
+    calls = _isolated_analytics.rows(
+        "SELECT * FROM api_calls WHERE service='tts' AND op != 'token' ORDER BY id")
+    assert [c["op"] for c in calls] == ["clip", "clip"]
+    first, second = calls
+    assert (first["turn_id"], first["channel"], first["status"]) == (turn_id, "mobile", "ok")
+    assert json.loads(first["units"])["audioSec"] == round(len(PCM) * 3 / 16000, 2)
+    assert second["turn_id"] is None
+
+
+# --- synthesize_clip -----------------------------------------------------------
+
+
+def test_synthesize_clip_davomiylik_va_qisqartirish(tts, server):
+    server.chunks = [b"\0\0" * 8000]             # 1 s, 8 kHz
+    audio = tts.synthesize_clip("salom " * 200, max_chars=60)
+    assert audio.sample_rate == 8000
+    assert audio.duration_ms == 1000
+    assert audio.truncated is True
+    assert len(_stream_calls(server)[-1]["text"]) <= 60 + 40   # `for_speech` uzaytirishi mumkin
+
+
+def test_synthesize_clip_toq_baytni_tashlaydi(tts, server):
+    """16-bit da toq bayt - yarim namuna; u `data` bo'lagini toq qilib RIFF
+    ni buzardi (toq bo'lak to'ldirilishi shart)."""
+    server.chunks = [b"\x01\x02\x03"]
+    audio = tts.synthesize_clip("salom")
+    with wave.open(io.BytesIO(audio.wav)) as w:
+        assert w.getnframes() == 1
+        assert w.readframes(1) == b"\x01\x02"
+    assert len(audio.wav) % 2 == 0
+
+
+def test_synthesize_wav_yorligi_ozgarmagan(server, _isolated_analytics):
+    """Ishga tushishdagi qizdirish avvalgidek `speak` bo'lib ko'rinadi."""
+    from app.services import analytics
+
+    TtsClient("http://tts", "frontend", "s3cret").synthesize_wav("salom")
+    assert analytics.flush(5.0)
+    ops = [r["op"] for r in _isolated_analytics.rows(
+        "SELECT op FROM api_calls WHERE service='tts' ORDER BY id")]
+    assert ops == ["token", "speak"]

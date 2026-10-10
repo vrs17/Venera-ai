@@ -3,13 +3,18 @@
  * chiqadigan varaq; orqaga tugmasi yopadi.
  *
  * Suhbatlar tarixi endi bu yerda emas - chap panelda (`features/nav/AppDrawer`, `ChatList`).
+ *
+ * 2026-10-10 (yordamchi 3.3): jonli so'rov "CRM · Vazifa ma'lumoti" deb nomlanadi (xom asbob
+ * nomi va "T1" emas), belgisi - platformaniki (HRM, CRM, DWH, Biznes 24/7, Superapp,
+ * qo'llanmalar); qo'llanma maqolasi `https://` havolasi bilan ochiladi (`features/chat/sources.ts`).
  */
-import { BookOpen, Database, Landmark, X } from 'lucide-react-native';
+import { X } from 'lucide-react-native';
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { AnswerSource, ChatApi } from '@/api/chat';
+import { safeHttps, sourceKind, sourceMark, sourceMeta, sourceTitle } from '@/features/chat/sources';
 import { useT } from '@/features/settings/settingsStore';
 import { errorText, showToast } from '@/ui/errors';
 import { useTheme, type Theme } from '@/ui/theme';
@@ -42,12 +47,6 @@ function Sheet({ visible, onClose, title, children }: { visible: boolean; onClos
 
 // --- Manbalar ---------------------------------------------------------------------
 
-function kindOf(src: AnswerSource): 'doc' | 'law' | 'data' {
-  if (src.kind === 'law') return 'law';
-  if (src.kind === 'hrm' || src.kind === 'crm' || src.tool || src.marker) return 'data';
-  return 'doc';
-}
-
 export function SourcesSheet({ visible, onClose, sources, focus, api }: { visible: boolean; onClose: () => void; sources: AnswerSource[]; focus?: string; api: ChatApi }) {
   const th = useTheme();
   const t = useT();
@@ -55,10 +54,11 @@ export function SourcesSheet({ visible, onClose, sources, focus, api }: { visibl
   const [opening, setOpening] = useState<number | null>(null);
 
   const open = async (src: AnswerSource, i: number) => {
-    const kind = kindOf(src);
+    const kind = sourceKind(src);
     try {
-      if (kind === 'law' && src.url && /^https:\/\//i.test(src.url)) {
-        await Linking.openURL(src.url);
+      const url = kind === 'law' || kind === 'guide' ? safeHttps(src.url) : null;
+      if (url) {
+        await Linking.openURL(url);
         return;
       }
       if (kind === 'doc' && src.doc_id) {
@@ -77,21 +77,18 @@ export function SourcesSheet({ visible, onClose, sources, focus, api }: { visibl
     <Sheet visible={visible} onClose={onClose} title={t('chat.sourcesTitle')}>
       <ScrollView style={{ maxHeight: 520 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 8, gap: 8 }}>
         {sources.map((src, i) => {
-          const kind = kindOf(src);
+          const kind = sourceKind(src);
           const marker = src.marker || (src.citation_index != null ? String(src.citation_index) : '');
           const focused = !!focus && marker === focus.replace(/^T/, src.marker ? 'T' : '');
-          const Icon = kind === 'law' ? Landmark : kind === 'data' ? Database : BookOpen;
-          const meta = [
-            kind === 'data' ? t('chat.sourceData') : kind === 'law' ? t('chat.sourceLaw') : null,
-            src.section,
-            src.page ? t('chat.sourcePage', { n: src.page }) : null,
-          ]
-            .filter(Boolean)
-            .join(' · ');
-          const tappable = (kind === 'doc' && !!src.doc_id) || (kind === 'law' && !!src.url);
+          const { Icon } = sourceMark(src);
+          const meta = sourceMeta(src, t);
+          const tappable = (kind === 'doc' && !!src.doc_id) || ((kind === 'law' || kind === 'guide') && !!safeHttps(src.url));
+          // Jonli so'rovning "T1" belgisi odamga hech narsa demaydi - faqat iqtibos raqami `[1]`.
+          const badge = kind === 'lookup' ? '' : marker;
           return (
             <Pressable
               key={`${marker}-${i}`}
+              testID={`source-${i}`}
               disabled={!tappable}
               onPress={() => void open(src, i)}
               accessibilityRole={tappable ? 'button' : undefined}
@@ -101,8 +98,8 @@ export function SourcesSheet({ visible, onClose, sources, focus, api }: { visibl
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={s.srcTitle} numberOfLines={3}>
-                  {marker ? <Text style={s.srcMarker}>{`[${marker}] `}</Text> : null}
-                  {src.title || src.tool || '—'}
+                  {badge ? <Text style={s.srcMarker}>{`[${badge}] `}</Text> : null}
+                  {sourceTitle(src, t)}
                 </Text>
                 {meta ? <Text style={s.srcMeta}>{meta}</Text> : null}
                 {src.digest ? (

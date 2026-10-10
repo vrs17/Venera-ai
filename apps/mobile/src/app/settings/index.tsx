@@ -6,37 +6,46 @@
  * NIMA UCHUN: egasi "hamma joyda matn, hammasi bir joyda, belgi yo'q" dedi - endi har
  * bo'lim alohida sahifa (`/settings/*`), hub esa faqat holatni bir qarashda ko'rsatadi.
  * Yozuvlar va "Vazifalarim" bu yerdan ketdi - ular drawer'da (Sozlamalarda faqat sozlama).
+ * "Xotira" (2026-10-10) - Barno nimani eslab qolgani, qiymati "3 ta" (`settings/memory`).
  *
  * Chiqish mantig'i (navbat, fayllar, recordings papkasi tozalanadi; yozuv ketayotganda
  * bloklanadi) eski bir sahifali Sozlamalardan o'zgarishsiz ko'chirilgan.
  */
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-import { Directory } from 'expo-file-system';
+import { Directory, Paths } from 'expo-file-system';
 import { router, useFocusEffect } from 'expo-router';
-import { ChevronRight, Info, Languages, LogOut, Mic, Plug, SunMoon, Zap } from 'lucide-react-native';
+import { AudioLines, Brain, ChevronRight, Info, Languages, LogOut, Mic, PhoneCall, Plug, SunMoon, Zap } from 'lucide-react-native';
 import { useCallback } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import type { MemoryList } from '@/api/assistant';
 import type { ConnectorStatus } from '@/api/chat';
 import type { AuthUser } from '@/api/types';
 import { useAuth } from '@/features/auth/authStore';
+import { resetCallsState } from '@/features/calls/callsStore';
+import { useCallsHubRow } from '@/features/calls/hub';
 import type { Tone } from '@/features/meeting/summaryModel';
 import { useMeetingsVisible } from '@/features/nav/visibility';
 import { useRecorderStore } from '@/features/recorder/RecorderProvider';
 import { isActive } from '@/features/recorder/recorderMachine';
+import { useMemoryQuery } from '@/features/settings/assistant';
 import { LANG_ENDONYM } from '@/features/settings/langNames';
 import { quickMethodCount, useQuickState } from '@/features/settings/quickMethods';
 import { useSettings, useT, type ThemePref } from '@/features/settings/settingsStore';
 import { isPending } from '@/features/upload/uploader';
 import { useQueueRows } from '@/features/upload/useQueue';
+import { SPEED_KEY } from '@/features/voice/ui/voiceText';
+import { useVoiceSettings } from '@/features/voice/voiceSettings';
 import type { TFn, TKey } from '@/i18n';
-import { recordingsDir } from '@/lib/paths';
+import { clearExports, recordingsDir } from '@/lib/paths';
 import { useServices } from '@/services';
 import { Avatar } from '@/ui/Avatar';
 import { useSafeInsets } from '@/ui/insets';
 import { ListGroup, ListRow } from '@/ui/list';
 import { useTheme } from '@/ui/theme';
 import { iconSize, radius, stroke, type as typeScale } from '@/ui/tokens';
+
+import { IMPORTS_DIR } from '../../../modules/venera-entry/importNames';
 
 const THEME_KEYS: Record<ThemePref, TKey> = {
   system: 'settings.themeSystem',
@@ -53,11 +62,16 @@ export default function SettingsScreen() {
   const uiLang = useSettings((s) => s.uiLang);
   const themePref = useSettings((s) => s.themePref);
   const keepDays = useSettings((s) => s.keepDays);
+  const voice = useVoiceSettings((s) => s.voice);
+  const voiceSpeed = useVoiceSettings((s) => s.speed);
   const rows = useQueueRows();
   const meetingsVisible = useMeetingsVisible();
+  const callsRow = useCallsHubRow(t);
   // Yozuv ketayotganda chiqish yozilayotgan faylni o'chirib yuborardi (yozuv jim yo'qoladi).
   const recording = useRecorderStore((s) => isActive(s.machine));
   const connectors = useQuery({ queryKey: ['connectors'], queryFn: () => services.chat.connectors(), staleTime: 30_000 });
+  // "Xotira" qiymati ("3 ta"): "Xotira" sahifasi bilan bitta kesh - band unutilsa son ham kamayadi.
+  const memory = useMemoryQuery(60_000);
 
   // "Tez yozish" sahifasida belgi yoqilgan yoki Android sozlamasidan qaytilgan bo'lishi
   // mumkin - hub'ga qaytganda son yangilansin.
@@ -73,12 +87,22 @@ export default function SettingsScreen() {
   const doLogout = async () => {
     if (isActive(useRecorderStore.getState().machine)) return;
     await services.session.logout(async () => {
-      // Spec 4.3: chiqishda yozuvlar, navbat va tokenlar tozalanadi.
+      // Spec 4.3: chiqishda yozuvlar, navbat va tokenlar tozalanadi - ulashilgan fayllar
+      // (eksport keshi: audio, PDF) ham.
       for (const r of await services.queue.list()) await services.files.remove(r.fileUri);
       await services.queue.clear();
       try {
         const dir: Directory = recordingsDir();
         if (dir.exists) dir.delete();
+      } catch {
+        /* papka yo'q */
+      }
+      clearExports();
+      // Qo'ng'iroq importi: yuborilganlar ro'yxati, tanlovlar va tasdiqlanmagan ulashilgan fayllar keyingi odamga qolmasin.
+      resetCallsState();
+      try {
+        const imp = new Directory(Paths.document, IMPORTS_DIR);
+        if (imp.exists) imp.delete();
       } catch {
         /* papka yo'q */
       }
@@ -117,11 +141,25 @@ export default function SettingsScreen() {
           onPress={() => router.push('/settings/connections')}
         />
         <ListRow
+          testID="settings-memory"
+          icon={Brain}
+          title={t('set.memory.title')}
+          subtitle={memorySubtitle(t, memory)}
+          onPress={() => router.push('/settings/memory')}
+        />
+        <ListRow
           testID="settings-quick"
           icon={Zap}
           title={t('settings.quick')}
           subtitle={quickValue(t, quickMethodCount(quick))}
           onPress={() => router.push('/settings/quick')}
+        />
+        <ListRow
+          testID="settings-voice"
+          icon={AudioLines}
+          title={t('nav.voice.settingsTitle')}
+          subtitle={`${t(voice === 'uz_male_news' ? 'nav.voice.male' : 'nav.voice.female')} · ${t(SPEED_KEY[voiceSpeed])}`}
+          onPress={() => router.push('/settings/voice')}
         />
         {meetingsVisible ? (
           <ListRow
@@ -130,6 +168,16 @@ export default function SettingsScreen() {
             title={t('set.recording')}
             subtitle={recordingValue}
             onPress={() => router.push('/settings/recording')}
+          />
+        ) : null}
+        {meetingsVisible && callsRow.visible ? (
+          <ListRow
+            testID="settings-calls"
+            icon={PhoneCall}
+            title={t('calls.settingsTitle')}
+            subtitle={callsRow.value}
+            subtitleTone={callsRow.tone}
+            onPress={() => router.push('/settings/calls')}
           />
         ) : null}
       </ListGroup>
@@ -186,8 +234,20 @@ function quickValue(t: TFn, n: number): string {
 }
 
 /**
+ * "Xotira" qiymati: son ma'lum bo'lsa "3 ta" / "Hali bo'sh". Yuklanayotganda "..." - qator
+ * balandligi sakramasin; xato bo'lsa qiymat yo'q (sahifaning o'zi sababini aytadi).
+ */
+function memorySubtitle(t: TFn, q: UseQueryResult<MemoryList>): string | null {
+  if (q.data) return q.data.items.length ? t('set.memory.countN', { n: q.data.items.length }) : t('set.memory.countNone');
+  return q.isError ? null : '...';
+}
+
+/**
  * "Ulanishlar" qiymati. Muammo bo'lsa (muddati tugagan, uzilgan) o'sha tizim nomi
  * sariq rangda - foydalanuvchi ichkariga kirmasdan nima qilish kerakligini ko'radi.
+ * Ulangan, lekin "Chatda ishlatish" o'chiq - ham muammo (Barno bu hisobdan foydalanmaydi):
+ * ichkarida sariq "Chatda ishlatish o'chiq", hub'da esa oddiy "ulangan" bo'lsa - ikki sahifa
+ * bir-biriga zid. Qayta kirish kerak bo'lsa - u birinchi (busiz "Yoqish" ham yordam bermaydi).
  */
 function connectionsSubtitle(
   t: TFn,
@@ -199,6 +259,8 @@ function connectionsSubtitle(
   const configured = q.data.connectors.filter((c) => c.configured);
   const bad = configured.filter((c) => c.state !== 'connected');
   if (bad.length) return { text: t('set.connIssue', { names: bad.map(label).join(', ') }), tone: 'warn' };
+  const off = configured.filter((c) => !c.enabled);
+  if (off.length) return { text: t('set.connOffForChat', { names: off.map(label).join(', ') }), tone: 'warn' };
   if (configured.length) return { text: t('set.connOk', { names: configured.map(label).join(', ') }) };
   return { text: t('set.connNone') };
 }

@@ -29,8 +29,22 @@ export type TurnKind = 'chat' | 'ask' | 'bot'
 export type InputMode = 'text' | 'voice'
 
 /** Qaysi tomon javob berdi (yuqoridagi yordamchining `done.route`). `none` - faqat filtrda.
- *  `contacts` - yordamchi EMAS, xodimlar ma'lumotnomasi javob bergan (`services/contacts_chat.py`). */
-export const ROUTES = ['rules', 'hrm', 'crm', 'live', 'both', 'clarify', 'contacts'] as const
+ *  `contacts` - yordamchi EMAS, xodimlar ma'lumotnomasi javob bergan (`services/contacts_chat.py`).
+ *  2026-10-10 (yordamchi 3.3): `biznes247_kpi` (Biznes 24/7 ko'rsatkichlari), `biznes247_kb`
+ *  (qo'llanmalar), `biznes247_help` (Biznes Help), `memory` (Barno xotirasidan javob). */
+export const ROUTES = [
+  'rules',
+  'hrm',
+  'crm',
+  'live',
+  'both',
+  'clarify',
+  'contacts',
+  'biznes247_kpi',
+  'biznes247_kb',
+  'biznes247_help',
+  'memory',
+] as const
 export type Route = (typeof ROUTES)[number]
 
 /** Yordamchi dvigateli (2026-10-02): `v1` - barqaror, `v2` - yangi (qonun, "Pro").

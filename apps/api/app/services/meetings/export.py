@@ -10,10 +10,17 @@ vazifalar JADVALI (CRM kaliti bilan), aqliy xarita (ierarxiya ko'rinishida) va
 to'liq transkript. Avval `build_document` bitta neytral `Document` yasaydi, keyin
 uni to'rt format chizadi (MD/TXT - shu yerda, DOCX/PDF - `export_render.py`): to'rt
 fayl MAZMUNI bir xil bo'lsin, biri ikkinchisidan "orqada qolmasin".
+
+"QISQA XULOSA" (2026-10-10, `brief` qismi): foydalanuvchi sevgan ixcham ko'rinish - sarlavha,
+sana/davomiylik/ishtirokchilar qatori, Maqsad, Qisqacha (1-2 gap), Asosiy fikrlar, Qarorlar,
+Vazifalar (mas'ul va muddat bilan), Ochiq savollar. Har eksport shu blok bilan BOSHLANADI;
+`parts=brief` yolg'iz so'ralsa fayl aynan shu blokning o'zi (ulashish uchun). Blok - XULOSA
+tilida (mobil ilovadagi "Ulashish" bilan so'zma-so'z bir xil); hujjat sarlavhalari - ilova tilida.
 """
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 
@@ -256,10 +263,11 @@ def transcript_srt(segments: list[dict[str, Any]], speakers: dict[str, dict[str,
 # ilova tilida (`Accept-Language`): odam o'z tilidagi ilovadan bosgan faylda sarlavhalar
 # ham o'z tilida bo'lsin.
 
-#: Hujjat qismlari - `?parts=` qiymatlari, hujjatdagi tartibda.
-PARTS = ("summary", "actions", "mindmap", "transcript")
+#: Hujjat qismlari - `?parts=` qiymatlari, hujjatdagi tartibda. `brief` ("Qisqa xulosa") - BIRINCHI:
+#: faylni ochgan rahbar avval ixcham xulosani ko'rsin, tafsilotlar keyin.
+PARTS = ("brief", "summary", "actions", "mindmap", "transcript")
 #: Tayyor xulosa kerak bo'lgan qismlar (transkript xulosasiz ham eksport qilinadi).
-SUMMARY_PARTS = ("summary", "actions", "mindmap")
+SUMMARY_PARTS = ("brief", "summary", "actions", "mindmap")
 
 #: Format -> (Content-Type, kengaytma).
 FORMATS: dict[str, tuple[str, str]] = {
@@ -319,6 +327,7 @@ _LABELS: dict[str, dict[str, str]] = {
                 "Расшифровка изменена после этого резюме - резюме по старому тексту.",
                 "The transcript was edited after this summary was written."),
     "no_speakers": _t("Spikerlar ajratilmagan", "Спикеры не разделены", "Speakers not separated"),
+    "brief": _t("Qisqa xulosa", "Краткий итог", "Short summary"),
 }
 
 #: Faqat eksportdagi bo'lim nomlari (`SECTION_TITLES` ilova bilan umumiy - unga tegmaymiz).
@@ -328,6 +337,40 @@ _EXPORT_TITLES: dict[str, dict[str, str]] = {
     "highlights": _t("Iqtiboslar", "Цитаты", "Quotes"),
     "participants": _t("Ishtirokchilar faolligi", "Активность участников", "Participation"),
 }
+
+#: "Qisqa xulosa" yorliqlari: (birlik, ko'plik) - bitta vazifa "Vazifa:", bir nechtasi "Vazifalar:".
+#: Matnlar mobil ilovadagi `recs.brief.*` bilan BIR XIL: ilovadan "Ulashish" va eksport fayli
+#: so'zma-so'z bir xil blok bersin (umumiy namuna: `packages/fixtures/meeting-brief.json`, uni
+#: pytest ham, jest ham tekshiradi).
+_BRIEF_LABELS: dict[str, dict[str, tuple[str, str]]] = {
+    "uz": {"purpose": ("Maqsad", "Maqsad"), "overview": ("Qisqacha", "Qisqacha"),
+           "keyPoints": ("Asosiy fikr", "Asosiy fikrlar"), "decisions": ("Qaror", "Qarorlar"),
+           "actions": ("Vazifa", "Vazifalar"), "questions": ("Ochiq savol", "Ochiq savollar")},
+    "ru": {"purpose": ("Цель", "Цель"), "overview": ("Кратко", "Кратко"),
+           "keyPoints": ("Ключевой момент", "Ключевые моменты"), "decisions": ("Решение", "Решения"),
+           "actions": ("Задача", "Задачи"), "questions": ("Открытый вопрос", "Открытые вопросы")},
+    "en": {"purpose": ("Purpose", "Purpose"), "overview": ("In short", "In short"),
+           "keyPoints": ("Key point", "Key points"), "decisions": ("Decision", "Decisions"),
+           "actions": ("Action item", "Action items"), "questions": ("Open question", "Open questions")},
+}
+#: Vazifa qatori: "Skriptni yuborish. Mas'ul: 2-ishtirokchi. Muddat belgilanmagan."
+_BRIEF_OWNER = {"uz": ("Mas'ul: {x}.", "Mas'ul belgilanmagan."),
+                "ru": ("Ответственный: {x}.", "Ответственный не назначен."),
+                "en": ("Owner: {x}.", "No owner set.")}
+_BRIEF_DUE = {"uz": ("Muddat: {x}.", "Muddat belgilanmagan."),
+              "ru": ("Срок: {x}.", "Срок не указан."),
+              "en": ("Due: {x}.", "No due date.")}
+#: Egasi "biz" (`kind: team`) - ism yo'q, lekin "belgilanmagan" ham emas.
+_BRIEF_TEAM = {"uz": "Jamoa", "ru": "Команда", "en": "Team"}
+#: Tasdiqlanmagan band belgisi. NEGA buyruq ("tekshiring") emas, holat: blok rahbarga yuboriladi -
+#: "tekshiring" unga berilgan ko'rsatmadek o'qilardi (jadvaldagi `_LABELS["check"]` bilan bir xil so'z).
+_BRIEF_CHECK = {"uz": "aniqlashtirish kerak", "ru": "требует уточнения", "en": "needs confirmation"}
+#: Qisqa davomiylik ("1 daq 53 s"): bir qatorli sarlavha ostida "1 daqiqa 53 soniya" cho'zilib ketadi.
+_BRIEF_DURATION = {"uz": ("soat", "daq", "s"), "ru": ("ч", "мин", "с"), "en": ("h", "min", "s")}
+#: "Qisqacha" - ko'pi bilan shuncha gap (eski xulosalarda umumiy xulosa 3-5 gap edi).
+BRIEF_SENTENCES = 2
+#: "Asosiy fikrlar" - ko'pi bilan shuncha band (uzun yig'ilishda bo'lak fikrlari 30 tagacha).
+BRIEF_POINTS = 6
 
 _OUTCOME = {
     "uz": {"decided": "qaror qabul qilindi", "open": "ochiq", "info": "ma'lumot"},
@@ -385,7 +428,12 @@ class Document:
     * `tree` {root: {text, children}} - aqliy xarita;
     * `transcript` {lines: [(vaqt, kim, matn)]}.
 
+    * `brief` {title, meta, items: [{label, text} | {label, list}]} - "Qisqa xulosa": `title`/`meta`
+      faqat hujjat sarlavhasiz bo'lsa (`head=False`), aks holda ular hujjat boshida bor.
+
     `lang` - ilova tili (sarlavhalar), `text_lang` - mazmun tili (imlo tekshiruvi, PDF `/Lang`).
+    `head=False` - faqat "Qisqa xulosa" (`parts=brief`): hujjat sarlavhasi, meta qatorlari va
+    MD/TXT pastki yozuvi chizilmaydi - fayl/matn aynan xulosa ko'rinishida ulashiladi.
     """
 
     lang: str
@@ -395,6 +443,7 @@ class Document:
     blocks: list[dict[str, Any]] = field(default_factory=list)
     footer: str = ""
     text_lang: str = ""
+    head: bool = True
 
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f￾￿]")
@@ -441,7 +490,7 @@ def parse_parts(raw: str | None) -> list[str] | None:
 
 
 def format_moment(epoch: float, lang: str) -> str:
-    """Yil bilan: `2026-yil 10-oktyabr, 16:00` / `10 октября 2026, 16:00` / `October 10, 2026, 16:00`
+    """Yil bilan: `2026-yil 10-oktabr, 16:00` / `10 октября 2026, 16:00` / `October 10, 2026, 16:00`
     (fayl yillar o'tib ham ochiladi - ilovadagi yilsiz sana yetmaydi)."""
     moment = dates.tashkent(epoch)
     hhmm = moment.strftime("%H:%M")
@@ -453,22 +502,27 @@ def format_moment(epoch: float, lang: str) -> str:
     return f"{moment.year}-yil {moment.day}-{month}, {hhmm}"
 
 
+#: Shundan qisqa yozuvda davomiylik soniyasi bilan: 113 s "1 daqiqa" emas, "1 daqiqa 53 soniya" -
+#: aks holda hujjat boshidagi qator "Qisqa xulosa"dagi "1 daq 53 s" bilan zid ko'rinardi.
+SHORT_DURATION_SEC = 600
+
+
 def format_duration(seconds: Any, lang: str) -> str:
     h_word, m_word, s_word = _DURATION.get(lang, _DURATION["uz"])
-    total = max(0, int(round(float(seconds or 0))))
+    total = max(0, int(math.floor(float(seconds or 0) + 0.5)))
     hours, rest = divmod(total, 3600)
     minutes, secs = divmod(rest, 60)
     if hours:
         return f"{hours} {h_word} {minutes} {m_word}" if minutes else f"{hours} {h_word}"
     if minutes:
-        return f"{minutes} {m_word}"
+        return f"{minutes} {m_word} {secs} {s_word}" if secs and total < SHORT_DURATION_SEC else f"{minutes} {m_word}"
     return f"{secs} {s_word}"
 
 
 def _when(day: Any, hhmm: Any, raw: Any, lang: str) -> str:
     text = dates.format_date(day, lang) if day else (raw or "")
     if hhmm:
-        # Vergul bilan: "17-oktyabr, 10:00" - "17-oktyabr 10:00" da sana va vaqt qo'shilib o'qiladi.
+        # Vergul bilan: "17-oktabr, 10:00" - "17-oktabr 10:00" da sana va vaqt qo'shilib o'qiladi.
         text = f"{text}, {hhmm}" if str(text).strip() else str(hhmm)
     return one_line(text)
 
@@ -496,10 +550,12 @@ def actions_from_rows(rows: Sequence[dict[str, Any]], speakers: dict[str, dict[s
             continue
         owner = row.get("owner_name") or (speaker_name(row["owner_speaker"], speakers, lang)
                                           if row.get("owner_speaker") else "")
-        out.append({"task": one_line(row.get("task")), "owner": one_line(owner),
+        # NEGA `render_tokens`: vazifa xulosadan ko'chirilganda matnida `[S2]` qolishi mumkin - jadvalda
+        # va "Qisqa xulosa"da u ism bo'lib chiqsin (mobil ilova ham shunday chizadi).
+        out.append({"task": one_line(render_tokens(row.get("task"), speakers, lang)), "owner": one_line(owner),
                     "due": _when(row.get("due_date"), row.get("due_time"), row.get("due_raw"), lang),
                     "done": row.get("status") == "done", "check": bool(row.get("needs_confirmation")),
-                    "crm": _crm_key(row, lang)})
+                    "crm": _crm_key(row, lang), "team": row.get("owner_kind") == "team"})
     return out
 
 
@@ -517,8 +573,10 @@ def actions_from_content(content: dict[str, Any], speakers: dict[str, dict[str, 
             task = f"{task} ({_CONDITION.get(lang, 'shart')}: {render_tokens(item['condition'], speakers, lang)})"
         out.append({"task": one_line(task), "owner": one_line(person),
                     "due": _when(due.get("date"), due.get("time"), due.get("raw"), lang),
-                    "done": item.get("status") == "done_in_meeting", "check": bool(item.get("needsConfirmation")),
-                    "crm": ""})
+                    "done": item.get("status") == "done_in_meeting",
+                    # Tekshiruvchi tasdiqlamagan (`verified: false`) vazifa ham ishonchsiz - mobil ilova kabi.
+                    "check": bool(item.get("needsConfirmation")) or item.get("verified") is False,
+                    "crm": "", "team": owner.get("kind") == "team"})
     return out
 
 
@@ -754,6 +812,176 @@ def mindmap_tree(title: str, content: dict[str, Any], speakers: dict[str, dict[s
     return node(one_line(title, NODE_CHARS), branches)
 
 
+#: Gap chegarasi: nuqta/so'roq/undov (yoki "…") va bo'shliqdan keyin BOSH harf, raqam, `[S1]` yoki
+#: qo'shtirnoq. NEGA bosh harf sharti: "15 mln. so'm" yoki "1.2 versiya" gapni bo'lmasin.
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[\[«\"„“'(0-9A-ZА-ЯЁЎҚҒҲ])")
+
+
+def first_sentences(text: Any, limit: int = BRIEF_SENTENCES) -> str:
+    """Matnning birinchi `limit` gapi (eski xulosalarda umumiy xulosa 3-5 gap - "Qisqacha" 1-2 gap)."""
+    value = one_line(text)
+    if not value:
+        return ""
+    return " ".join(_SENTENCE_END.split(value)[:limit])
+
+
+def brief_duration(seconds: Any, lang: str) -> str:
+    """`1 daq 53 s` / `1 мин 53 с` / `1 min 53 s`; soatdan uzunida soniyasiz (`1 soat 5 daq`).
+    Yaxlitlash mobil `Math.round` bilan bir xil (yarim - yuqoriga; Python `round` 112.5 -> 112 berardi)."""
+    h_word, m_word, s_word = _BRIEF_DURATION.get(lang, _BRIEF_DURATION["uz"])
+    total = max(1, int(math.floor(float(seconds or 0) + 0.5)))
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours} {h_word} {minutes} {m_word}" if minutes else f"{hours} {h_word}"
+    if minutes:
+        return f"{minutes} {m_word} {secs} {s_word}" if secs else f"{minutes} {m_word}"
+    return f"{secs} {s_word}"
+
+
+def brief_moment(epoch: float, lang: str) -> str:
+    """Hafta kuni bilan: `10-oktabr 2026 (shanba), 12:37` / `10 октября 2026 (суббота), 12:37` /
+    `October 10, 2026 (Saturday), 12:37`."""
+    moment = dates.tashkent(epoch)
+    hhmm = moment.strftime("%H:%M")
+    month = dates.MONTHS.get(lang, dates.MONTHS["uz"])[moment.month - 1]
+    weekday = dates.WEEKDAYS.get(lang, dates.WEEKDAYS["uz"])[moment.weekday()]
+    if lang == "ru":
+        return f"{moment.day} {month} {moment.year} ({weekday}), {hhmm}"
+    if lang == "en":
+        return f"{month} {moment.day}, {moment.year} ({weekday}), {hhmm}"
+    return f"{moment.day}-{month} {moment.year} ({weekday}), {hhmm}"
+
+
+def people_count(count: int, lang: str) -> str:
+    """`2 ishtirokchi` / `2 участника` / `2 participants` (ruscha ko'plik shakllari bilan)."""
+    if lang == "ru":
+        tail = count % 100
+        if count % 10 == 1 and tail != 11:
+            word = "участник"
+        elif 2 <= count % 10 <= 4 and not 12 <= tail <= 14:
+            word = "участника"
+        else:
+            word = "участников"
+        return f"{count} {word}"
+    if lang == "en":
+        return f"{count} participant{'' if count == 1 else 's'}"
+    return f"{count} ishtirokchi"
+
+
+#: Gap oxiridagi bo'shliq va `;:,` (`_sentence`), qarorga holat qo'shishda - tinish belgisi ham (`_TRAIL`).
+_TAIL = re.compile(r"[\s;:,]+$")
+_TRAIL = re.compile(r"[\s.;:,!?…]+$")
+
+
+def _sentence(text: str, end: str = ".") -> str:
+    """Band gap bo'lib tugasin: "Skriptni yuborish" -> "Skriptni yuborish." (savol - "?");
+    oxiridagi `;:,` olib tashlanadi, tayyor tinish belgisiga tegilmaydi."""
+    text = _TAIL.sub("", text)
+    return text if not text or text[-1] in ".!?…" else f"{text}{end}"
+
+
+def brief_block(content: dict[str, Any], speakers: dict[str, dict[str, Any]], lang: str,
+                actions: list[dict[str, Any]] | None, *, title: str = "", meta: str = "") -> dict[str, Any]:
+    """"Qisqa xulosa" bloki. `lang` - XULOSA tili (yorliqlar ham, "Mas'ul/Muddat" ham, "2-ishtirokchi"
+    ham): blok bitta tilda o'qilsin va ulashilsin ("Maqsad: Обсудить..." aralashmasi chiqmasin).
+    Bo'sh band tushib qoladi. `actions` - jadval bilan BIR XIL vazifalar (asosiy xulosada jonli: odam
+    tahrirlagani, bajarilgani "✓"), shu tilda yig'ilgan. Tasdiqlanmagan qaror va vazifa
+    "(aniqlashtirish kerak)" belgisisiz ketmaydi - qisqa blok ham ishonchsiz bandni aniq deb ko'rsatmasin.
+
+    Mobil `brief.ts` (`buildBrief` + `briefToText`) aynan shu matnni beradi - umumiy namuna
+    `packages/fixtures/meeting-brief.json` ikkala tomonda tekshiriladi."""
+    labels = _BRIEF_LABELS.get(lang, _BRIEF_LABELS["uz"])
+    check_word = _BRIEF_CHECK.get(lang, _BRIEF_CHECK["uz"])
+    check = f" ({check_word})"
+
+    def t(value: Any) -> str:
+        return one_line(render_tokens(value, speakers, lang))
+
+    def name(key: str, count: int) -> str:
+        return labels[key][0 if count == 1 else 1]
+
+    items: list[dict[str, Any]] = []
+    purpose = _sentence(t(content.get("purpose")))
+    if purpose:
+        items.append({"label": name("purpose", 1), "text": purpose})
+    overview = _sentence(first_sentences(render_tokens(content.get("overview"), speakers, lang)))
+    if overview:
+        items.append({"label": name("overview", 1), "text": overview})
+    points = [t(k.get("text")) for k in content.get("keyPoints") or [] if k.get("text")]
+    if not points:
+        # Eski qisqa qo'ng'iroq (fikrlarsiz) yoki uzun yig'ilish - mavzular ichidagi fikrlar,
+        # ular ham bo'lmasa mavzularning o'zi (xulosasi yoki nomi).
+        points = [t(k.get("text")) for topic in content.get("topics") or [] for k in topic.get("keyPoints") or []
+                  if k.get("text")]
+    if not points:
+        points = [t(topic.get("summary")) or t(topic.get("title")) for topic in content.get("topics") or []]
+    points = [_sentence(p) for p in points if p][:BRIEF_POINTS]
+    if points:
+        items.append({"label": name("keyPoints", len(points)), "list": points})
+    statuses = _STATUS.get(lang, _STATUS["uz"])
+    decisions = []
+    for d in content.get("decisions") or []:
+        status = d.get("status") or "final"
+        text = t(d.get("text"))
+        if not text or status == "reversed":
+            continue
+        # Taxminiy/shartli yoki tasdiqlanmagan qaror yakuniydek o'qilmasin: belgilar BITTA qavsda,
+        # gap ICHIDA, nuqtadan oldin - "Narx 15 mln so'm (taxminiy, aniqlashtirish kerak)."
+        tags = [statuses.get(status, status) if status != "final" else "",
+                check_word if d.get("needsConfirmation") or d.get("verified") is False else ""]
+        tags = [x for x in tags if x]
+        decisions.append(f"{_TRAIL.sub('', text)} ({', '.join(tags)})." if tags else _sentence(text))
+    if decisions:
+        items.append({"label": name("decisions", len(decisions)), "list": decisions})
+    owner_set, owner_none = _BRIEF_OWNER.get(lang, _BRIEF_OWNER["uz"])
+    due_set, due_none = _BRIEF_DUE.get(lang, _BRIEF_DUE["uz"])
+    tasks = []
+    for a in actions or []:
+        task = one_line(a.get("task"))
+        if not task:
+            continue
+        owner = one_line(a.get("owner")) or (_BRIEF_TEAM.get(lang, _BRIEF_TEAM["uz"]) if a.get("team") else "")
+        due = one_line(a.get("due"))
+        line = " ".join((_sentence(task), owner_set.format(x=owner) if owner else owner_none,
+                         due_set.format(x=due) if due else due_none))
+        line += check if a.get("check") else ""
+        tasks.append(f"✓ {line}" if a.get("done") else line)
+    if tasks:
+        items.append({"label": name("actions", len(tasks)), "list": tasks})
+    questions = [_sentence(t(q.get("text")), "?") for q in content.get("openQuestions") or [] if q.get("text")]
+    questions = [q for q in questions if q]
+    if questions:
+        items.append({"label": name("questions", len(questions)), "list": questions})
+    return {"kind": "brief", "title": one_line(title, TITLE_CHARS), "meta": meta, "items": items}
+
+
+def brief_covers(content: dict[str, Any], speakers: dict[str, dict[str, Any]], lang: str) -> set[str]:
+    """To'liq hujjatdagi qaysi xulosa bo'limlarini "Qisqa xulosa" TO'LIQ takrorlaydi: umumiy xulosa
+    (qisqartirilmagan bo'lsa), asosiy fikrlar (hammasi sig'gan bo'lsa) va ochiq savollar (blokda
+    hammasi bor, bo'lim faqat vaqt qo'shardi - asosiy fikrlardagidek). NEGA: qisqa qo'ng'iroqda hujjat
+    boshidagi blok va undagi "Qisqacha"/"Asosiy fikrlar"/"Ochiq savollar" bo'limlari so'zma-so'z bir
+    xil edi. Qisqartirilgan (eski 3-5 gaplik) xulosa va 6 tadan ko'p fikr - bo'limda to'liq qoladi;
+    qarorlar bo'limi holat, shart va sababni ham ko'rsatadi - u doim qoladi. Mobil `SummaryView`
+    "Batafsil" ham aynan shu qoidani ishlatadi (`briefCovers`)."""
+    covered: set[str] = {"openQuestions"}
+    overview = one_line(render_tokens(content.get("overview"), speakers, lang))
+    if not overview or first_sentences(overview) == overview:
+        covered.add("overview")
+    points = [k for k in content.get("keyPoints") or [] if k.get("text")]
+    if points and len(points) <= BRIEF_POINTS:
+        covered.add("keyPoints")
+    return covered
+
+
+def brief_meta(recorded_at: float, duration_sec: float, people: int, lang: str) -> str:
+    """`10-oktabr 2026 (shanba), 12:37 · 1 daq 53 s · 2 ishtirokchi` (bo'sh qism tushib qoladi)."""
+    parts = [brief_moment(recorded_at, lang) if recorded_at else "",
+             brief_duration(duration_sec, lang) if duration_sec else "",
+             people_count(people, lang) if people else ""]
+    return " · ".join(p for p in parts if p)
+
+
 def transcript_lines(segments: Sequence[dict[str, Any]], speakers: dict[str, dict[str, Any]], lang: str,
                      stamp: Any = hms) -> list[tuple[str, str, str]]:
     """Transkript qatorlari (vaqt, kim, matn): bitta spikerning ketma-ket, oralig'i
@@ -780,10 +1008,14 @@ def build_document(*, title: str, recorded_at: float, duration_sec: float, speak
                    lang: str, now: float, parts: Sequence[str], template: str | None = None,
                    content: dict[str, Any] | None = None, actions: list[dict[str, Any]] | None = None,
                    segments: list[dict[str, Any]] | None = None, stale: bool = False,
-                   text_lang: str | None = None) -> Document:
+                   text_lang: str | None = None, brief_actions: list[dict[str, Any]] | None = None,
+                   user_title: bool = False) -> Document:
     """To'liq hujjat. `content` - `_map_merged` qilingan xulosa (yoki `None`), `actions` -
     `actions_from_rows`/`actions_from_content` natijasi, `segments` - transkript qatorlari,
-    `text_lang` - yig'ilish tili (xulosa bo'lmasa mazmun tili shundan)."""
+    `text_lang` - yig'ilish tili (xulosa bo'lmasa mazmun tili shundan). `brief_actions` - o'sha
+    vazifalar XULOSA tilida ("Qisqa xulosa" uchun); berilmasa - xulosaning o'zidan. `user_title` -
+    `title` ni odam qo'ygan: "Qisqa xulosa" sarlavhasi ham shu, aks holda - SHU xulosaning sarlavhasi
+    (mobil `summaryTitle` bilan bir xil: boshqa shablon xulosasi asosiy xulosa nomini olmasin)."""
     lang = lang if lang in _FALLBACK else "uz"
     content = content or {}
     doc = Document(lang=lang, title=one_line(title, TITLE_CHARS) or BRAND)
@@ -807,12 +1039,38 @@ def build_document(*, title: str, recorded_at: float, duration_sec: float, speak
     if has_summary and stale:
         doc.notes.append(label("stale", lang))
 
+    if "brief" in parts and content:
+        brief_lang = content.get("language") if content.get("language") in _FALLBACK else lang
+        if brief_actions is None:
+            brief_actions = actions if actions is not None and brief_lang == lang else \
+                actions_from_content(content, speakers, brief_lang)
+        if list(parts) == ["brief"]:
+            # Faqat "Qisqa xulosa": fayl/matn aynan shu ko'rinishda (sarlavha + bir qatorli meta),
+            # hujjat sarlavhasi va "Sana: ..." qatorlari takrorlanmaydi. Spikerlar ajratilmagan
+            # bo'lsa (`speakersAvailable: false`) ishtirokchilar soni yolg'on bo'lardi - yozilmaydi.
+            count = len(people) or int((content.get("meeting") or {}).get("speakerCount") or 0)
+            if (content.get("quality") or {}).get("speakersAvailable") is False:
+                count = 0
+            doc.head = False
+            own = doc.title if user_title else ""
+            brief_title = own or one_line(render_tokens(content.get("title"), speakers, brief_lang), TITLE_CHARS) \
+                or doc.title
+            doc.blocks.append(brief_block(content, speakers, brief_lang, brief_actions, title=brief_title,
+                                          meta=brief_meta(recorded_at, duration_sec, count, brief_lang)))
+        else:
+            # To'liq hujjatda sarlavha va sana/davomiylik/ishtirokchilar - hujjat boshida bor.
+            doc.blocks.append({"kind": "h2", "text": label("brief", lang)})
+            doc.blocks.append(brief_block(content, speakers, brief_lang, brief_actions))
+
     table_done = False
     if "summary" in parts and content:
         keys = [entry["key"] for entry in template_layout(template or "general", lang)]
         sections = _without_repeated_questions(content) if "followUps" in keys else content
+        repeated = brief_covers(content, speakers, lang) if "brief" in parts else set()
         for key in keys:
             if key == "actionItems" and "actions" not in parts:
+                continue
+            if key in repeated:
                 continue
             blocks = _section(key, sections, speakers, lang, actions, stamp)
             if blocks:
@@ -844,17 +1102,46 @@ def _md_cell(value: str) -> str:
     return flat(value).replace("\\", "\\\\").replace("|", "\\|") or " "
 
 
-def render_markdown(doc: Document) -> str:
-    out = [f"# {doc.title}", ""]
-    for name, value in doc.meta:
-        out.append(f"**{name}:** {value}  ")
-    if doc.meta:
+def _brief_lines(block: dict[str, Any], *, markdown: bool) -> list[str]:
+    """"Qisqa xulosa" - MD va TXT uchun BIR XIL qatorlar (MD da yorliqlar qalin)."""
+    # NEGA model matni qochirilmaydi (`\_`): bu matn Telegram'ga ham ko'chiriladi, u yerda teskari
+    # chiziqlar ko'rinib qolardi; hujjatning qolgan MD bo'limlari ham qochirmaydi.
+    def bold(text: str) -> str:
+        return f"**{text}**" if markdown else text
+
+    out: list[str] = []
+    if block.get("title"):
+        # MD: sarlavha va meta - bitta paragrafda, majburiy qator uzilishi bilan (`  `).
+        out.append(bold(block["title"]) + ("  " if markdown and block.get("meta") else ""))
+    if block.get("meta"):
+        out.append(block["meta"])
+    if out:
         out.append("")
-    for note in doc.notes:
-        out += [f"> {note}", ""]
+    for item in block["items"]:
+        if "list" in item:
+            out.append(bold(f"{item['label']}:"))
+            out += [f"- {x}" for x in item["list"]]
+        else:
+            out.append(f"{bold(item['label'] + ':')} {item['text']}")
+        out.append("")
+    return out
+
+
+def render_markdown(doc: Document) -> str:
+    out: list[str] = []
+    if doc.head:
+        out += [f"# {doc.title}", ""]
+        for name, value in doc.meta:
+            out.append(f"**{name}:** {value}  ")
+        if doc.meta:
+            out.append("")
+        for note in doc.notes:
+            out += [f"> {note}", ""]
     for block in doc.blocks:
         kind = block["kind"]
-        if kind == "h2":
+        if kind == "brief":
+            out += _brief_lines(block, markdown=True)
+        elif kind == "h2":
             out += [f"## {block['text']}", ""]
         elif kind == "h3":
             out.append(f"### {block['text']}")
@@ -886,18 +1173,23 @@ def render_markdown(doc: Document) -> str:
             for stamp, who, text in block["lines"]:
                 head = f"**[{stamp}] {who}:**" if who else f"**[{stamp}]**"
                 out += [f"{head} {text}", ""]
-    out += ["---", f"_{doc.footer}_"]
+    if doc.head:
+        out += ["---", f"_{doc.footer}_"]
     return "\n".join(out).rstrip() + "\n"
 
 
 def render_text(doc: Document) -> str:
-    out = [doc.title, "=" * max(3, len(doc.title))]
-    out += [f"{name}: {value}" for name, value in doc.meta]
-    out += [f"! {note}" for note in doc.notes]
-    out.append("")
+    out: list[str] = []
+    if doc.head:
+        out = [doc.title, "=" * max(3, len(doc.title))]
+        out += [f"{name}: {value}" for name, value in doc.meta]
+        out += [f"! {note}" for note in doc.notes]
+        out.append("")
     for block in doc.blocks:
         kind = block["kind"]
-        if kind == "h2":
+        if kind == "brief":
+            out += _brief_lines(block, markdown=False)
+        elif kind == "h2":
             out += ["", block["text"], "-" * max(3, len(block["text"]))]
         elif kind == "h3":
             out += ["", block["text"] + (f" [{block['sub']}]" if block.get("sub") else "")]
@@ -925,7 +1217,8 @@ def render_text(doc: Document) -> str:
         elif kind == "transcript":
             out += [f"[{stamp}] {who + ': ' if who else ''}{text}" for stamp, who, text in block["lines"]]
             out.append("")
-    out += ["", "---", doc.footer]
+    if doc.head:
+        out += ["", "---", doc.footer]
     return "\n".join(out).strip() + "\n"
 
 

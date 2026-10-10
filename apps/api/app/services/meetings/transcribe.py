@@ -14,7 +14,8 @@ o'sha vazifa davom etadi va PUL QAYTA YECHILMAYDI.
 
 RUS / INGLIZ - ichki STT Router (spikersiz, vaqtlar taxminiy). GAPI faqat
 o'zbekcha biladi; Router esa 600 s dan keyin kesadi - ADTS kadr chegarasida
-540 s lik bo'laklarga bo'linadi.
+540 s lik bo'laklarga bo'linadi. Uzun m4a (telefon qo'ng'irog'i yozuvi) avval
+ADTS ga o'tkaziladi (`audio.mp4_to_adts`), keyin xuddi shunday bo'linadi.
 
 O'ZBEKCHA HECH QACHON Router'ga TUSHMAYDI: u 300 s da kesadi va spiker
 ajratmaydi - yig'ilish uchun bunday natija yolg'on xotirjamlik bo'lardi.
@@ -456,18 +457,26 @@ class Transcriber:
         content_type = m.get("content_type") or "audio/aac"
         path = Path(m["audio_path"])
         duration = float(m.get("duration_sec") or 0)
-        if content_type == "audio/mp4" and duration > ROUTER_M4A_MAX_SEC:
-            self.fail(m, now, "router_too_long")
-            return
-        self._update(m, now, status="transcribing", stt_engine="router", progress=5.0, error_code=None,
-                     error_stage=None)
         tmp = Path(tempfile.mkdtemp(prefix="vmeet-", dir=str(path.parent)))
         try:
-            if content_type == "audio/mp4":
+            source, piece_type = path, content_type
+            if content_type == "audio/mp4" and duration > ROUTER_M4A_MAX_SEC:
+                # Uzun m4a (telefon qo'ng'irog'i yozuvi, "Ulashish") Router'ga bir so'rovda sig'maydi:
+                # AAC kadrlari ADTS ga o'tkazilib, oddiy yozuvdek bo'laklanadi. AAC bo'lmasa - avvalgidek xato.
+                source, piece_type = tmp / "whole.aac", "audio/aac"
+                try:
+                    audio.mp4_to_adts(path, source)
+                except (audio.RemuxError, OSError) as exc:
+                    log.info("Yig'ilish %s: m4a ni bo'lib bo'lmadi (%s)", m["id"], exc)
+                    self.fail(m, now, "router_too_long")
+                    return
+            self._update(m, now, status="transcribing", stt_engine="router", progress=5.0, error_code=None,
+                         error_stage=None)
+            if piece_type == "audio/mp4":
                 pieces = [(path, 0.0, duration)]
             else:
                 pieces, offset = [], 0.0
-                for piece in audio.split_adts(path, ROUTER_PIECE_SEC, tmp):
+                for piece in audio.split_adts(source, ROUTER_PIECE_SEC, tmp):
                     info = audio.adts_info(piece)
                     length = info.durationSec if info else 0.0
                     pieces.append((piece, offset, length))
@@ -477,7 +486,7 @@ class Transcriber:
                 data = piece.read_bytes()
                 started = time.time()
                 try:
-                    result = self.rt.router.transcribe(data, language=m["language"], content_type=content_type)
+                    result = self.rt.router.transcribe(data, language=m["language"], content_type=piece_type)
                 except SttError as exc:
                     if _local(exc):
                         # Chat diktovkasi bilan umumiy emas, lekin boshqa ip Router'da - kutamiz, urinish emas.

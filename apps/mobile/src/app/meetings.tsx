@@ -1,7 +1,7 @@
 /**
  * Yozuvlar ro'yxati (spec 3.1, Plaud uslubi): bitta vaqt chizig'i - serverdagi
  * yig'ilishlar va telefonda turgan (hali yuklanmagan) yozuvlar birga, kunlar
- * bo'yicha ("Bugun", "Kecha", "8-oktyabr"). Har karta: belgi, nom, davomiylik,
+ * bo'yicha ("Bugun", "Kecha", "8-oktabr"). Har karta: belgi, nom, davomiylik,
  * soat va holat (yuklash sababi bilan: "Internet yo'q", "Yuklanmoqda 42%").
  *
  * Yozish - bosh amal: pastda katta qizil tugma; bo'sh holat esa yozishni o'rgatadi.
@@ -10,10 +10,16 @@
  * Saqlangan xatti-harakat: sessiya tugadi banneri, 403/404 -> "bo'lim yoqilmagan",
  * pastga tortib yangilash, sahifalab yuklash, ishlov yoki lokal yozuv bo'lsa 15 s da
  * avtomatik yangilash.
+ *
+ * "Qo'ng'iroqlar" bo'limi (2026-10-10): tepada "Yozuvlar | Qo'ng'iroqlar" almashtirgich -
+ * faqat qo'ng'iroq importi bor Android ilovada (eski APK, iOS va Jest'da ekran avvalgidek).
+ * Bo'limning o'zi `features/calls/CallsPanel` da; yuborilgan qo'ng'iroq oddiy navbat qatori,
+ * shuning uchun "Yozuvlar" vaqt chizig'ida ham ko'rinadi. Qo'ng'iroqlar bo'limida sarlavha
+ * o'ngida sozlama tugmasi (ro'yxat tepasida ikkinchi qator bo'lmasin).
  */
 import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query';
 import { router, Stack, useFocusEffect } from 'expo-router';
-import { ChevronRight, CircleAlert, CircleDot, CloudOff, ListChecks, Mic, RotateCcw, Search, X } from 'lucide-react-native';
+import { ChevronRight, CircleAlert, CircleDot, CloudOff, ListChecks, Mic, Phone, RotateCcw, Search, Settings2, X } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -29,6 +35,8 @@ import {
 
 import { ApiError } from '@/api/client';
 import { useAuth } from '@/features/auth/authStore';
+import { CallsPanel } from '@/features/calls/CallsPanel';
+import { callsSupported } from '@/features/calls/permission';
 import { isProcessing } from '@/features/meeting/queries';
 import { localTitle, RecordingCard } from '@/features/meeting/RecordingCard';
 import { dayLabel, groupByDay, matchesQuery, mergeTimeline, type TimelineItem, type TimelineSection } from '@/features/meeting/timeline';
@@ -38,7 +46,7 @@ import { useSettings, useT } from '@/features/settings/settingsStore';
 import { useOnline } from '@/features/upload/uploadStatus';
 import { pendingRows, useQueueRows } from '@/features/upload/useQueue';
 import { useServices } from '@/services';
-import { Banner } from '@/ui/components';
+import { Banner, Segmented } from '@/ui/components';
 import { EmptyState } from '@/ui/EmptyState';
 import { errorText } from '@/ui/errors';
 import { IconButton } from '@/ui/IconButton';
@@ -81,6 +89,10 @@ export default function MeetingsScreen() {
   const [now, setNow] = useState(() => Date.now());
   const rows = useQueueRows();
   const pending = pendingRows(rows);
+  // Native funksiyalar mavjudligi ishga tushgandan keyin o'zgarmaydi - bir marta o'qiladi.
+  const [callsOn] = useState(callsSupported);
+  const [tab, setTab] = useState<'recordings' | 'calls'>('recordings');
+  const callsTab = callsOn && tab === 'calls';
 
   useFocusEffect(
     useCallback(() => {
@@ -123,7 +135,7 @@ export default function MeetingsScreen() {
   const empty = !list.isLoading && !listFailed && nothing;
   const failedEmpty = listFailed && nothing;
   const showSearch = q !== '' || items.length > 0 || list.isLoading;
-  const fabHidden = live || empty || featureOff;
+  const fabHidden = live || empty || featureOff || callsTab;
 
   const onRefresh = async () => {
     setPulling(true);
@@ -239,26 +251,57 @@ export default function MeetingsScreen() {
     <View style={s.root}>
       <Stack.Screen
         options={{
-          headerRight: () => <IconButton testID="meetings-tasks" icon={ListChecks} label={t('list.myTasks')} onPress={() => router.push('/action-items')} />,
+          headerRight: () => (
+            <View style={s.headerRight}>
+              {callsTab ? (
+                <IconButton testID="calls-settings" icon={Settings2} label={t('calls.settingsTitle')} onPress={() => router.push('/settings/calls')} />
+              ) : null}
+              <IconButton testID="meetings-tasks" icon={ListChecks} label={t('list.myTasks')} onPress={() => router.push('/action-items')} />
+            </View>
+          ),
         }}
       />
-      <SectionList<TimelineItem, TimelineSection>
-        testID="meetings-list"
-        sections={sections}
-        keyExtractor={(it) => it.key}
-        stickySectionHeadersEnabled={false}
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={[s.content, { paddingBottom: (fabHidden ? 32 : 120) + insets.bottom }]}
-        refreshControl={<RefreshControl refreshing={pulling} onRefresh={() => void onRefresh()} />}
-        onEndReached={() => {
-          if (list.hasNextPage && !list.isFetchingNextPage) void list.fetchNextPage();
-        }}
-        ListHeaderComponent={header}
-        ListEmptyComponent={renderEmpty()}
-        ListFooterComponent={list.isFetchingNextPage ? <ActivityIndicator style={s.more} color={th.textMuted} /> : null}
-        renderSectionHeader={renderSectionHeader}
-        renderItem={renderItem}
-      />
+      {callsOn ? (
+        <View style={s.tabs}>
+          <Segmented
+            testIDPrefix="meetings-tab"
+            value={tab}
+            onChange={setTab}
+            options={[
+              { value: 'recordings', label: t('calls.tab.recordings'), icon: Mic },
+              { value: 'calls', label: t('calls.tab.calls'), icon: Phone },
+            ]}
+          />
+        </View>
+      ) : null}
+      {callsTab ? (
+        <CallsPanel
+          bottomInset={insets.bottom}
+          onFind={(text) => {
+            // Yuborilgan qo'ng'iroqning server id'si noma'lum: Yozuvlarda suhbatdosh bo'yicha qidiramiz.
+            setQ(text);
+            setTab('recordings');
+          }}
+        />
+      ) : (
+        <SectionList<TimelineItem, TimelineSection>
+          testID="meetings-list"
+          sections={sections}
+          keyExtractor={(it) => it.key}
+          stickySectionHeadersEnabled={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={[s.content, { paddingBottom: (fabHidden ? 32 : 120) + insets.bottom }]}
+          refreshControl={<RefreshControl refreshing={pulling} onRefresh={() => void onRefresh()} />}
+          onEndReached={() => {
+            if (list.hasNextPage && !list.isFetchingNextPage) void list.fetchNextPage();
+          }}
+          ListHeaderComponent={header}
+          ListEmptyComponent={renderEmpty()}
+          ListFooterComponent={list.isFetchingNextPage ? <ActivityIndicator style={s.more} color={th.textMuted} /> : null}
+          renderSectionHeader={renderSectionHeader}
+          renderItem={renderItem}
+        />
+      )}
       {fabHidden ? null : (
         <Pressable
           testID="record-fab"
@@ -299,6 +342,8 @@ function LiveCard() {
 
 const s = StyleSheet.create({
   root: { flex: 1 },
+  tabs: { paddingHorizontal: 16, paddingTop: 8 },
+  headerRight: { flexDirection: 'row', alignItems: 'center' },
   content: { paddingHorizontal: 16, paddingTop: 8, flexGrow: 1 },
   header: { gap: 12, paddingBottom: 4 },
   search: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: radius.md, paddingHorizontal: 12, minHeight: hit.min },

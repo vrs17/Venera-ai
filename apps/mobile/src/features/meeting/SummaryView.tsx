@@ -1,13 +1,15 @@
 /**
- * Xulosa tabi (spec 7.4): `layout` tartibidagi bo'limlar, har biri uchun
- * mos karta; dalil chiplari audio/transkriptga o'tkazadi. Shablon
+ * Xulosa tabi (spec 7.4): tepada "Qisqa xulosa" kartasi (egasi tasdiqlagan
+ * format, bir bosishda nusxa/ulashish), keyin `layout` tartibidagi bo'limlar,
+ * har biri uchun mos karta; dalil chiplari audio/transkriptga o'tkazadi. Shablon
  * almashtirgich (+ Yangi xulosa), Markdown ulashish, matn nusxalash,
  * xato bo'lsa qayta urinish.
  *
- * Ko'rsatish mantig'i `summaryModel.ts` da - bu fayl faqat chizadi.
+ * Ko'rsatish mantig'i `summaryModel.ts` va `brief.ts` da - bu fayl faqat chizadi.
  */
 import * as Clipboard from 'expo-clipboard';
-import { useMemo, useState } from 'react';
+import { Copy, Share2, Sparkles } from 'lucide-react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 
 import type { Meeting, Speaker, Summary, SummaryCard, TemplateId } from '@/api/types';
@@ -18,10 +20,12 @@ import { Banner, Body, Button, Card, Chip, EvidenceChip, Loading, Muted, styles 
 import { errorText, shareableText, showToast } from '@/ui/errors';
 import { PickerModal, type PickerOption } from '@/ui/modals';
 import { useTheme } from '@/ui/theme';
+import { radius, type as typeScale } from '@/ui/tokens';
 
-import { formatDateTime, formatDuration } from './formatDate';
+import { buildBrief, briefCovers, briefToText, type Brief } from './brief';
+import { formatClock, formatDateTime, formatDuration } from './formatDate';
 import { engineLabel } from './provenance';
-import { useMeetingMutations, useSummaries, useSummary } from './queries';
+import { useActionItems, useMeetingMutations, useSummaries, useSummary } from './queries';
 import { buildSummaryView, summaryToText, type ItemView, type SectionView } from './summaryModel';
 
 export const TEMPLATE_IDS: TemplateId[] = [
@@ -50,15 +54,26 @@ export interface SummaryViewProps {
   speakers?: Speaker[];
   onSeek?: (t: number) => void;
   onAcceptName?: (speaker: string, name: string) => void;
+  /**
+   * Tanlangan xulosa (ixtiyoriy, boshqariladigan): sahifa uni "Xarita" ko'rinishi va eksport
+   * bilan bo'lishadi - xarita ham, ulashilgan fayl ham aynan ko'rib turilgan xulosadan.
+   */
+  selectedId?: string | null;
+  onSelect?: (summaryId: string) => void;
 }
 
-export function SummaryView({ meeting, speakers, onSeek, onAcceptName }: SummaryViewProps) {
+export function SummaryView({ meeting, speakers, onSeek, onAcceptName, selectedId, onSelect }: SummaryViewProps) {
   const t = useT();
   const templateTitle = useTemplateTitle();
   const transcriptReady = meeting.transcript.available;
   const summaries = useSummaries(meeting.id, transcriptReady, meeting.status === 'summarizing');
   const items = useMemo(() => summaries.data?.items ?? [], [summaries.data]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [own, setOwn] = useState<string | null>(null);
+  const selected = selectedId !== undefined ? selectedId : own;
+  const setSelected = (id: string) => {
+    setOwn(id);
+    onSelect?.(id);
+  };
   const [picker, setPicker] = useState(false);
   const muts = useMeetingMutations(meeting.id);
 
@@ -134,9 +149,28 @@ function SummaryBody(props: {
 }) {
   const { meeting, card } = props;
   const t = useT();
+  const th = useTheme();
   const q = useSummary(meeting.id, card.id);
   const summary: Summary | undefined = q.data;
   const view = useMemo(() => (summary ? buildSummaryView(summary, t, { speakers: props.speakers }) : null), [summary, t, props.speakers]);
+  // Asosiy xulosada vazifalar JONLI ro'yxatdan (odam tahrirlagani, qo'shgani, bajargani) -
+  // server eksportidagi "Qisqa xulosa" ham shunday; boshqa xulosada - xulosaning o'zidan.
+  // Blok XULOSA tilida (ilova tilida emas) - eksport fayli bilan so'zma-so'z bir xil.
+  const live = useActionItems(meeting.id, card.primary);
+  const actions = card.primary ? (live.data?.items ?? null) : null;
+  const briefSpeakers = props.speakers ?? summary?.speakers;
+  const brief = useMemo(
+    () => (summary ? buildBrief(summary.content, meeting, briefSpeakers ?? [], { actions }) : null),
+    [summary, meeting, briefSpeakers, actions],
+  );
+  // Blok to'liq takrorlaydigan bo'limlar "Batafsil" ostida qayta chiqmaydi (server eksporti
+  // `brief_covers` bilan bir xil); ularning vaqtga o'tishi blok bandlarida saqlanadi.
+  const sections = useMemo(() => {
+    if (!view) return [];
+    if (!brief || !summary) return view.sections;
+    const covered = briefCovers(summary.content, briefSpeakers ?? []);
+    return view.sections.filter((sec) => !covered.has(sec.key as never));
+  }, [view, brief, summary, briefSpeakers]);
 
   if (card.status === 'queued' || card.status === 'running') return <Banner tone="info" text={t('detail.processing')} />;
   if (card.status === 'skipped') return <Banner tone="neutral" text={t('detail.summarySkipped')} />;
@@ -157,11 +191,14 @@ function SummaryBody(props: {
       {card.stale ? (
         <Banner tone="warn" text={t('detail.stale')} action={{ title: t('detail.regenerate'), onPress: props.onRegenerate }} />
       ) : null}
-      <ShareRow meeting={meeting} summary={summary} text={() => summaryToText(view, t, { header: [headerLine(meeting, summary)] })} />
-      {view.sections.map((sec) => (
+      {brief ? <BriefCard brief={brief} onSeek={props.onSeek} /> : null}
+      {brief && sections.length ? <Text style={[typeScale.label, s.details, { color: th.textMuted }]}>{t('recs.brief.details')}</Text> : null}
+      {sections.map((sec) => (
         <SectionCard key={sec.key} section={sec} onSeek={props.onSeek} onAcceptName={props.onAcceptName} />
       ))}
       {view.warnings.length ? <Muted>{view.warnings.join('\n')}</Muted> : null}
+      {/* To'liq xulosa nusxasi pastda: tepadagi "Qisqa xulosa" tugmalari bilan adashmasin. */}
+      <ShareRow meeting={meeting} summary={summary} text={() => summaryToText(view, t, { header: [headerLine(meeting, summary)] })} />
       <Provenance summary={summary} />
     </View>
   );
@@ -183,6 +220,109 @@ function headerLine(meeting: Meeting, summary: Summary): string {
   const lang = summary.content?.language ?? summary.language;
   const dur = formatDuration(meeting.durationSec);
   return `${formatDateTime(meeting.recordedAt, lang)}${dur ? ` · ${dur}` : ''}`;
+}
+
+/**
+ * "Qisqa xulosa": egasi tasdiqlagan tartib (sarlavha, meta, Maqsad, Qisqacha, Asosiy
+ * fikrlar, Qarorlar, Vazifalar, Ochiq savollar). Nusxa va ulashish - ODDIY matn
+ * (`briefToText`): messenjerda `**` ko'rinib qolmasin; kartadagi bilan so'zma-so'z bir xil.
+ * Dalili bor band bosilsa - yozuv o'sha joydan (takrorlanmaydigan bo'limlar yashirilgani uchun
+ * vaqtga o'tish shu yerda); vaqt bandning o'ng tomonida kichik, ulashiladigan matnga kirmaydi.
+ */
+export function BriefCard({ brief, onSeek }: { brief: Brief; onSeek?: (t: number) => void }) {
+  const t = useT();
+  const th = useTheme();
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+  const text = () => shareableText(briefToText(brief), t).text;
+  return (
+    <View testID="brief-card" style={[s.brief, { backgroundColor: th.surface, borderColor: th.border }]}>
+      <View style={s.briefHead}>
+        <Sparkles size={14} color={th.textMuted} strokeWidth={2} />
+        <Text style={[typeScale.micro, { color: th.textMuted }]}>{t('recs.brief.heading')}</Text>
+      </View>
+      {brief.title ? (
+        <Text selectable testID="brief-title" style={[s.briefTitle, { color: th.text }]}>
+          {brief.title}
+        </Text>
+      ) : null}
+      {brief.meta ? (
+        <Text selectable testID="brief-meta" style={[typeScale.caption, { color: th.textMuted }]}>
+          {brief.meta}
+        </Text>
+      ) : null}
+      {[brief.purpose, brief.overview].map((line, i) =>
+        line ? (
+          <Text key={i} selectable testID={i === 0 ? 'brief-purpose' : 'brief-overview'} style={[s.briefText, s.briefGap, { color: th.text }]}>
+            <Text style={s.bold}>{`${line.label}:`}</Text> {line.text}
+          </Text>
+        ) : null,
+      )}
+      {brief.lists.map((l) => (
+        <View key={l.key} testID={`brief-${l.key}`} style={s.briefGap}>
+          <Text style={[s.briefText, s.bold, { color: th.text }]}>{`${l.label}:`}</Text>
+          {l.items.map((it, i) => {
+            const seekable = it.start != null && !!onSeek;
+            return (
+              <Pressable
+                key={i}
+                testID={`brief-${l.key}-${i}`}
+                disabled={!seekable}
+                accessibilityRole={seekable ? 'button' : undefined}
+                accessibilityLabel={seekable ? t('recs.map.playAt', { name: it.text, time: formatClock(it.start) }) : undefined}
+                onPress={() => it.start != null && onSeek?.(it.start)}
+                style={s.bullet}>
+                <Text style={[s.briefText, { color: th.textMuted }]}>•</Text>
+                <Text selectable={!seekable} style={[s.briefText, s.flex, { color: th.text }]}>
+                  {it.text}
+                </Text>
+                {seekable ? <Text style={[typeScale.micro, s.briefTime, { color: th.textMuted }]}>{formatClock(it.start)}</Text> : null}
+              </Pressable>
+            );
+          })}
+        </View>
+      ))}
+      <View style={s.briefActions}>
+        <Button
+          small
+          variant="secondary"
+          icon={Copy}
+          title={copied ? t('common.copied') : t('recs.brief.copy')}
+          testID="brief-copy"
+          onPress={async () => {
+            try {
+              await Clipboard.setStringAsync(text());
+              setCopied(true);
+              if (timer.current) clearTimeout(timer.current);
+              timer.current = setTimeout(() => setCopied(false), 1500);
+            } catch (e) {
+              showToast(errorText(t, e));
+            }
+          }}
+        />
+        <Button
+          small
+          variant="secondary"
+          icon={Share2}
+          title={t('recs.brief.share')}
+          testID="brief-share"
+          onPress={async () => {
+            try {
+              await Share.share({ message: text(), ...(brief.title ? { title: brief.title } : {}) });
+            } catch (e) {
+              showToast(errorText(t, e));
+            }
+          }}
+        />
+      </View>
+    </View>
+  );
 }
 
 function ShareRow({ meeting, summary, text }: { meeting: Meeting; summary: Summary; text: () => string }) {
@@ -313,4 +453,15 @@ const s = StyleSheet.create({
   sub: { fontSize: 13, lineHeight: 18, marginTop: 2 },
   quote: { fontSize: 13, fontStyle: 'italic', marginTop: 4, paddingLeft: 8, borderLeftWidth: 2 },
   provenance: { fontSize: 12, marginTop: 2, marginBottom: 6 },
+  flex: { flex: 1 },
+  bold: { fontWeight: '700' },
+  brief: { borderRadius: radius.lg, borderWidth: 1, padding: 16, marginBottom: 14, gap: 4 },
+  briefHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  briefTitle: { fontSize: 17, lineHeight: 23, fontWeight: '700' },
+  briefText: { fontSize: 15, lineHeight: 22 },
+  briefGap: { marginTop: 10 },
+  bullet: { flexDirection: 'row', gap: 8, paddingLeft: 2 },
+  briefTime: { paddingTop: 4, fontVariant: ['tabular-nums'] },
+  briefActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 },
+  details: { marginTop: 4, marginBottom: 8, marginLeft: 4 },
 });

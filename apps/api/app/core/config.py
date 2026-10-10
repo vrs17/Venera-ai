@@ -297,6 +297,11 @@ class Settings(BaseSettings):
     #: eskiroq band joy aniq "oqib ketgan" - tirik oqim bunchalik yashamaydi
     #: (`assistant._SlotPool`).
     hrm_assistant_max_stream_seconds: int = 600
+    #: Xotira va platforma kalitlari (`/api/v1/assistant/...`) uchun bitta
+    #: o'qish chegarasi (soniya). Bu sozlamalar ekrani - LLM ishlamaydi, javob
+    #: millisekundlarda keladi; oqimning 120 s i bu yerda odamni behuda
+    #: kuttirardi. Oshsa 504.
+    hrm_assistant_settings_timeout: float = 15.0
     #: Yordamchi DVIGATELI (`core/engines.py`): `v1` (barqaror), `v2` (yangi:
     #: LEX.UZ havolalari, "Pro") yoki bo'sh - versiyasiz `/api/chat/stream`
     #: (xizmat default'i, bugun = v1; prod hozir shu yo'lda). Bu shox YANGI

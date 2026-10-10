@@ -96,6 +96,7 @@ def summary_input(rt: Any, m: dict[str, Any], s: dict[str, Any]) -> SummaryInput
         speakers_available=bool(m.get("speakers_available")),
         language_warning=language_warning(detected) if m.get("stt_engine") == "gapi" else None,
         expected_speakers=m.get("expected_speakers"),
+        source=m.get("source") or "app",
     )
 
 

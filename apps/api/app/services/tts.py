@@ -212,6 +212,21 @@ class SpeechStream:
             self.slot.release()
 
 
+@dataclass(frozen=True)
+class ClipAudio:
+    """To'liq yig'ilgan bitta bo'lak: haqiqiy sarlavhali WAV.
+
+    `/tts/clip` va kutish ovozlari shuni oladi. Oqimdan farqi - hajm va
+    davomiylik OLDINDAN ma'lum, ya'ni pleyer faylni diskdan darhol
+    o'ynatadi va davomiylikni to'g'ri ko'rsatadi.
+    """
+
+    wav: bytes = field(repr=False)
+    sample_rate: int
+    duration_ms: int
+    truncated: bool
+
+
 def risky_for_normalizer(text: str) -> bool:
     """Normalizator shu matnda yiqiladimi?
 
@@ -325,12 +340,17 @@ class TtsClient:
         normalize_numbers: bool = True,
         chunk_sec: float = DEFAULT_CHUNK_SEC,
         max_chars: int = 600,
+        op: str = "speak",
     ) -> SpeechStream:
         """Matn -> boshlanib bo'lgan PCM oqimi.
 
         Chaqiruvchi `chunks` ni OXIRIGACHA o'qishi yoki `close()` qilishi
         SHART: slot va yuqoridagi ulanish shu generator tugaguncha band
         turadi. FastAPI `StreamingResponse` ikkalasini ham o'zi bajaradi.
+
+        `op` - faqat hisob yorlig'i (`api_calls.op`): admin tahlilida javob
+        bo'laklari (`clip`) oqimdan (`speak`) ajralib ko'rinsin. Sintezga
+        ta'siri yo'q.
         """
         if not self.configured:
             # 503 EMAS: 503 "band, keyinroq urinib ko'ring" degani va klientni
@@ -367,7 +387,7 @@ class TtsClient:
         slot = _Slot(self._slots)
         # Hisob: ochilishdan oqim oxirigacha. Birliklar - belgi (so'ralgan
         # matn), bayt va audio soniyasi (oqim tugaganda ma'lum bo'ladi).
-        call = begin("tts", "speak", units={"chars": len(clean)})
+        call = begin("tts", op, units={"chars": len(clean)})
         try:
             try:
                 response = self._open_stream(clean, voice, speed, normalize_numbers, chunk_sec)
@@ -469,28 +489,72 @@ class TtsClient:
         except Exception:
             return -1
 
-    def synthesize_wav(self, text: str, **kwargs) -> bytes:
-        """Oqimni to'liq yig'ib, HAQIQIY WAV qaytaradi.
+    def synthesize_clip(
+        self,
+        text: str,
+        *,
+        voice: str = "uz_female_calm",
+        speed: float | None = None,
+        normalize_numbers: bool = True,
+        chunk_sec: float = DEFAULT_CHUNK_SEC,
+        max_chars: int = 600,
+        op: str = "clip",
+    ) -> ClipAudio:
+        """Oqimni to'liq yig'ib, HAQIQIY sarlavhali WAV qaytaradi.
 
-        Faqat oflayn ishlar uchun (masalan salomlashish faylini tayyorlash):
-        bu yerda kutish muhim emas, to'g'ri uzunlikli sarlavha esa muhim.
-        Serverning `format=wav` i buni BERMAYDI - u oqim boshida uzunlikni
-        bilmagani uchun `0xFFFFFFFF` yozadi.
+        `stream()` ning ustida turadi, ya'ni token keshi, normalizator
+        to'rlari, `for_speech`, semafora sloti va slot qaytarish to'rlari -
+        hammasi AYNAN o'sha kod. Alohida yo'l yozilsa ular vaqt o'tib
+        ajralib ketardi.
+
+        HAMMASI YOKI HECH NARSA: oqim o'rtasida uzilsa `TtsError` ko'tariladi
+        va yarim audio HECH QACHON qaytmaydi - klient gapning yarmini
+        o'ynatib qo'ymasin.
         """
-        speech = self.stream(text, **kwargs)
+        speech = self.stream(
+            text, voice=voice, speed=speed, normalize_numbers=normalize_numbers,
+            chunk_sec=chunk_sec, max_chars=max_chars, op=op,
+        )
         try:
             pcm = b"".join(speech.chunks)
         finally:
             # Generator to'liq o'qilsa joy o'zi qaytadi, lekin o'rtada xato
             # bo'lsa ham qaytishi SHART.
             speech.close()
+        if speech.sample_rate <= 0:
+            # `wave` 0 chastotada `wave.Error` tashlardi (500); sarlavha
+            # yaroqsiz - bu yuqoridagi xizmat xatosi.
+            raise TtsError(f"TTS chastotasi yaroqsiz: {speech.sample_rate}", status=502)
+        # 16-bit: toq bayt - yarim namuna. U eshitilmaydi, lekin `data`
+        # bo'lagini toq qilib RIFF ni buzadi (toq bo'lak to'ldirilishi kerak).
+        pcm = pcm[: len(pcm) - len(pcm) % 2]
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as out:
             out.setnchannels(1)
             out.setsampwidth(2)
             out.setframerate(speech.sample_rate)
             out.writeframes(pcm)
-        return buffer.getvalue()
+        frames = len(pcm) // 2
+        return ClipAudio(
+            wav=buffer.getvalue(),
+            sample_rate=speech.sample_rate,
+            duration_ms=round(frames * 1000 / speech.sample_rate),
+            truncated=speech.truncated,
+        )
+
+    def synthesize_wav(self, text: str, **kwargs) -> bytes:
+        """Faqat WAV baytlari (`synthesize_clip(...).wav`).
+
+        Oflayn ishlar uchun (kutish ovozlarini tayyorlash): bu yerda kutish
+        muhim emas, to'g'ri uzunlikli sarlavha esa muhim. Serverning
+        `format=wav` i buni BERMAYDI - u oqim boshida uzunlikni bilmagani
+        uchun `0xFFFFFFFF` yozadi.
+
+        Hisob yorlig'i ATAYLAB `speak` qoladi (o'zgarishsiz): ishga tushishdagi
+        qizdirish admin tahlilida avvalgidek ko'rinsin.
+        """
+        kwargs.setdefault("op", "speak")
+        return self.synthesize_clip(text, **kwargs).wav
 
     # --- transport ------------------------------------------------------
 

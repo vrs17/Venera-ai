@@ -4,7 +4,8 @@
  * `label` majburiy: TalkBack belgini o'qiy olmaydi, nomni aytadi.
  */
 import type { LucideIcon } from 'lucide-react-native';
-import { Pressable, StyleSheet } from 'react-native';
+import type { Ref } from 'react';
+import { Pressable, StyleSheet, type View } from 'react-native';
 
 import { useTheme } from './theme';
 import { hit, iconSize, stroke } from './tokens';
@@ -17,6 +18,7 @@ export function IconButton({
   size = iconSize.row,
   disabled,
   testID,
+  ref,
 }: {
   icon: LucideIcon;
   label: string;
@@ -25,10 +27,13 @@ export function IconButton({
   size?: number;
   disabled?: boolean;
   testID?: string;
+  /** TalkBack fokusini shu tugmaga qaytarish uchun (masalan tasdiq yopilgach) - React 19: oddiy prop. */
+  ref?: Ref<View>;
 }) {
   const th = useTheme();
   return (
     <Pressable
+      ref={ref}
       testID={testID}
       accessibilityRole="button"
       accessibilityLabel={label}

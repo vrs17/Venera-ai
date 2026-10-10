@@ -83,7 +83,7 @@ describe('groupByDay / dayLabel', () => {
     const now = Date.parse('2026-10-10T08:00:00Z');
     expect(dayLabel('2026-10-10', now, 'uz')).toEqual({ kind: 'today' });
     expect(dayLabel('2026-10-09', now, 'uz')).toEqual({ kind: 'yesterday' });
-    expect(dayLabel('2026-10-01', now, 'uz')).toEqual({ kind: 'date', text: '1-oktyabr' });
+    expect(dayLabel('2026-10-01', now, 'uz')).toEqual({ kind: 'date', text: '1-oktabr' });
     expect(dayLabel('2025-12-31', now, 'en')).toEqual({ kind: 'date', text: 'December 31, 2025' });
     // Toshkentda yarim tundan keyin "bugun" ham almashadi (UTC hali kechagi kun).
     expect(dayLabel('2026-10-11', Date.parse('2026-10-10T19:30:00Z'), 'uz')).toEqual({ kind: 'today' });

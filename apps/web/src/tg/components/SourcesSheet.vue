@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Activity, ArrowUpRight, FileText, Landmark } from 'lucide-vue-next'
+import type { Component } from 'vue'
+import { Activity, ArrowUpRight, BookOpenText, FileText, Landmark } from 'lucide-vue-next'
+import { platformIcon } from '../../components/chat/platforms'
 import { localizeApiError } from '../../api/errors'
 import VSheet from '../../ui/VSheet.vue'
 import { toast } from '../../ui/useToast'
@@ -18,6 +20,7 @@ import { haptic, openLink } from '../telegram'
  * tinchroq va bosish maydoni katta.
  *   hujjat - imzolangan havola tashqi brauzerda (chat/files.ts);
  *   qonun  - LEX.UZ, Telegram'ning `openLink` i bilan (Mini App yopilmaydi);
+ *   qo'llanma (Biznes 24/7, Biznes Help) - o'z sahifasi, xuddi qonun kabi;
  *   jonli so'rov - ochiladigan narsa yo'q, faqat nima tekshirilgani (karta - matn).
  *
  * Matndagi [2] yoki qatordagi chip bosilib ochilsa - o'sha manba belgilanadi: fon
@@ -35,11 +38,16 @@ const busy = ref<string | null>(null)
 const list = ref<HTMLElement | null>(null)
 const flash = ref<string | null>(null)
 
-const ICON = { doc: FileText, law: Landmark, lookup: Activity }
+const ICON = { doc: FileText, law: Landmark, guide: BookOpenText, lookup: Activity }
+
+/** So'rov va qo'llanma - platforma belgisi (DWH, Biznes 24/7...), qolgani - tur belgisi. */
+function iconOf(item: SourceItem): Component {
+  return (item.kind === 'lookup' || item.kind === 'guide') && item.platform ? platformIcon(item.platform) : ICON[item.kind]
+}
 
 async function openItem(item: SourceItem) {
   if (busy.value) return
-  if (item.kind === 'law') {
+  if (item.kind === 'law' || item.kind === 'guide') {
     if (item.url) openLink(item.url)
     return
   }
@@ -57,7 +65,7 @@ async function openItem(item: SourceItem) {
 }
 
 function canOpen(item: SourceItem): boolean {
-  return (item.kind === 'law' && !!item.url) || (item.kind === 'doc' && !!item.source.doc_id)
+  return ((item.kind === 'law' || item.kind === 'guide') && !!item.url) || (item.kind === 'doc' && !!item.source.doc_id)
 }
 
 let flashTimer = 0
@@ -96,15 +104,18 @@ watch(open, (on) => {
           @click="canOpen(item) && openItem(item)"
         >
           <span class="src__n" aria-hidden="true">
-            <Activity v-if="item.kind === 'lookup'" :size="12" :stroke-width="2" />
+            <component :is="iconOf(item)" v-if="item.kind === 'lookup'" :size="12" :stroke-width="2" />
             <template v-else>{{ item.badge }}</template>
           </span>
           <span class="src__body">
             <span class="src__title">{{ item.title }}</span>
-            <span class="src__meta">
-              <component :is="ICON[item.kind]" class="src__kind" :size="14" :stroke-width="1.75" aria-hidden="true" />
-              <span>{{ item.kind === 'lookup' ? t('tg.sources.lookups') : item.meta }}</span>
+            <!-- So'rovda izoh qatori YO'Q: "Tizimdan olindi" sarlavhadagi platforma nomini va
+                 doiradagi belgini takrorlardi (UX ko'rigi). Faqat so'rov muvaffaqiyatsiz bo'lsa. -->
+            <span v-if="item.kind !== 'lookup'" class="src__meta">
+              <component :is="iconOf(item)" class="src__kind" :size="14" :stroke-width="1.75" aria-hidden="true" />
+              <span>{{ item.meta }}</span>
             </span>
+            <span v-else-if="item.failed" class="src__meta is-bad">{{ t('chat.lookupFailed') }}</span>
             <span v-if="item.kind === 'lookup' && item.meta" class="src__digest">{{ item.meta }}</span>
             <span v-if="item.snippet" class="src__snippet">{{ item.snippet }}</span>
           </span>
@@ -210,6 +221,13 @@ watch(open, (on) => {
 }
 .src--lookup .src__kind {
   color: var(--text-3);
+}
+.src__meta.is-bad {
+  color: var(--crit-text);
+}
+/* So'rov: sarlavhadan keyin darhol natija (izoh qatori yo'q). */
+.src--lookup .src__digest {
+  margin-top: 2px;
 }
 .src__digest {
   margin-top: var(--s-1);

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!--
+    Ingliz tilidagi telefonlar uchun (aks holda standart - o'zbekcha matn chiqardi).
+    "Yozish" nomi O'ZGARMAYDI: ilova ichidagi yo'riqnoma va Samsung yon tugma sozlamasida
+    aynan shu nom tanlanadi (values-ru dagi kabi).
+  -->
+  <string name="venera_entry_launcher_label">Yozish</string>
+  <string name="venera_entry_tile_label">Yozish</string>
+  <string name="venera_entry_tile_idle">Tap to record</string>
+  <string name="venera_entry_tile_recording">Recording - tap to stop</string>
+  <string name="venera_entry_key_service_label">Barno: record with the volume key</string>
+  <string name="venera_entry_key_service_desc">Press the volume down key twice in a row to start recording a meeting, twice again to stop. Barno only watches this key: it does not read the screen and saves nothing.</string>
+  <string name="venera_entry_import_label">Barno AI</string>
+  <string name="venera_entry_import_preparing">Barno: preparing the recording…</string>
+  <string name="venera_entry_import_unsupported">Barno couldn\'t accept this file - only .m4a or .aac audio.</string>
+</resources>

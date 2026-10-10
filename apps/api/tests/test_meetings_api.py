@@ -18,7 +18,7 @@ MEETING_FIELDS = {"id", "clientId", "title", "titleSource", "status", "progress"
                   "durationSec", "createdAt", "updatedAt", "upload", "transcript", "speakers", "summaryStatus",
                   "primarySummaryId", "openActionItems", "audioAvailable", "error"}
 CARD_FIELDS = {"id", "clientId", "title", "status", "progress", "recordedAt", "durationSec", "language",
-               "template", "summaryStatus", "openActionItems", "overview", "error"}
+               "template", "summaryStatus", "openActionItems", "overview", "error", "source"}
 SPEAKER_FIELDS = {"id", "name", "suggestedName", "talkSec", "mergedInto"}
 SEGMENT_FIELDS = {"id", "speaker", "start", "end", "text", "edited"}
 SUMMARY_CARD_FIELDS = {"id", "template", "language", "status", "primary", "stale", "transcriptRev", "createdAt",
@@ -138,7 +138,7 @@ def test_javob_shakllari(client, auth, ready):
     summary = client.get(f"/api/v1/meetings/{mid}/summaries/{cards[0]['id']}", headers=auth).json()
     assert set(summary) == SUMMARY_FIELDS and set(summary["content"]) == CONTENT_FIELDS
     assert summary["layout"][0] == {"key": "overview", "title": "Qisqacha"}
-    assert summary["promptVersion"] == "meeting-2" and summary["model"] == "gemma4:31b"
+    assert summary["promptVersion"] == "meeting-3" and summary["model"] == "gemma4:31b"
     items = client.get(f"/api/v1/meetings/{mid}/action-items", headers=auth).json()["items"]
     assert set(items[0]) == ACTION_FIELDS and items[0]["summaryItemId"] == "A1"
     assert set(items[0]["owner"]) == {"speaker", "name", "kind"} and set(items[0]["due"]) == {"date", "time", "raw"}
@@ -231,7 +231,7 @@ def test_eksportlar(client, auth, ready):
     md = client.get(f"/api/v1/meetings/{mid}/summaries/{sid}/export?format=md", headers=auth)
     assert md.status_code == 200 and md.headers["content-type"].startswith("text/markdown")
     assert 'attachment; filename="' in md.headers["content-disposition"]
-    assert md.text.startswith("# Hisobot yig'ilishi\n9-oktyabr, 11:00")
+    assert md.text.startswith("# Hisobot yig'ilishi\n9-oktabr, 11:00")
     assert "## Vazifalar" in md.text and "Aziz va 2-ishtirokchi" in md.text
     txt = client.get(f"/api/v1/meetings/{mid}/summaries/{sid}/export?format=txt", headers=auth)
     assert txt.headers["content-type"].startswith("text/plain") and "##" not in txt.text

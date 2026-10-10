@@ -290,8 +290,9 @@ def export_meeting(meeting_id: str, request: Request,
                    summary_id: str | None = Query(None, alias="summaryId", max_length=64),
                    parts: str | None = Query(None, max_length=100),
                    user: AuthUser = Depends(meetings_access)) -> Response:
-    """Plaud'dagidek bitta fayl: xulosa, vazifalar jadvali, aqliy xarita, transkript.
-    `parts=summary,actions,mindmap,transcript` (bo'sh - tayyor bo'lgan hammasi), bo'lim
+    """Plaud'dagidek bitta fayl: "Qisqa xulosa", xulosa, vazifalar jadvali, aqliy xarita, transkript.
+    `parts=brief,summary,actions,mindmap,transcript` (bo'sh - tayyor bo'lgan hammasi; `brief` yolg'iz -
+    faqat ulashiladigan qisqa xulosa), bo'lim
     sarlavhalari `Accept-Language` tilida. `async` EMAS: PDF chizish CPU ishi - threadpool'da
     (shuning uchun bir odam - bir vaqtda bitta eksport: ikkinchisi 429 `export_busy`)."""
     data, media, disposition = service.export_meeting(

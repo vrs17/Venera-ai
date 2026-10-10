@@ -1,9 +1,12 @@
 import {
+  buildImportPath,
   buildRecordPath,
   decideEntry,
+  ENTRY_SOURCES,
   entrySignature,
   keysEqual,
   parseEntryParams,
+  parseImportParams,
   sanitizeIncomingPath,
 } from '@/features/entry/deepLink';
 import { hrefFromAction, RECORD_ACTION_ID, recordShortcutHref, withEntryNonce } from '@/features/entry/quickActions';
@@ -124,5 +127,44 @@ describe('install key and app shortcut', () => {
     const pressed = withEntryNonce(href, 1760000000123);
     expect(pressed).toBe(`/record?src=shortcut&k=${KEY}&n=1760000000123`);
     expect(sanitizeIncomingPath(pressed)).toBe(pressed);
+  });
+});
+
+describe('import deep link ("Ulashish -> Barno AI")', () => {
+  const A = 'share_1728560000000_0_Call_recording_Alisher_241010_143012.m4a';
+  const B = 'share_1728560000000_1_voice.aac';
+
+  it('keeps only validated file names, skipped and nonce (the install key is dropped)', () => {
+    // `k` (o'rnatish kaliti) import havolasida kerak emas - tashlanadi.
+    expect(sanitizeIncomingPath(`venera-rec://import?files=${A},${B}&skipped=2&n=17285&k=${KEY}&evil=1`)).toBe(
+      `/import?files=${A},${B}&skipped=2&n=17285`,
+    );
+    // URL-kodlangan vergul ham (boshqa ilova `%2C` bilan yuborsa) bir xil natija.
+    expect(sanitizeIncomingPath(`venera-rec://import?files=${A}%2C${B}&n=1`)).toBe(`/import?files=${A},${B}&n=1`);
+    expect(redirectSystemPath({ path: `venera-rec://import?files=${B}&n=5`, initial: true })).toBe(`/import?files=${B}&n=5`);
+  });
+
+  it('drops path traversal, foreign extensions, junk params; nothing left -> recordings list', () => {
+    expect(sanitizeIncomingPath(`venera-rec://import?files=../../databases/venera-queue.db,${B}`)).toBe(`/import?files=${B}`);
+    expect(sanitizeIncomingPath('venera-rec://import?files=a.mp3,b.json,..%2Fx.m4a')).toBe('/meetings');
+    expect(sanitizeIncomingPath('venera-rec://import')).toBe('/meetings');
+    expect(sanitizeIncomingPath(`venera-rec://import?files=${B}&skipped=9999&n=x1&k=short`)).toBe(`/import?files=${B}`);
+    expect(sanitizeIncomingPath(`https://evil.example/import?files=${B}`)).toBe('/');
+  });
+
+  it('caps the number of files and removes duplicates', () => {
+    const many = Array.from({ length: 30 }, (_, i) => `f${i}.m4a`);
+    const out = parseImportParams({ files: [...many, 'f0.m4a'].join(',') });
+    expect(out.files).toHaveLength(20);
+    expect(new Set(out.files).size).toBe(20);
+    expect(buildImportPath({ files: [], skipped: 3, n: '1' })).toBe('/meetings');
+    expect(parseImportParams({ files: [A, B], skipped: ['4'], n: '77', k: 'a'.repeat(64) })).toEqual({ files: [A, B], skipped: 4, n: '77' });
+  });
+
+  it('call/share are not recording entry sources', () => {
+    expect(ENTRY_SOURCES).not.toContain('call');
+    expect(ENTRY_SOURCES).not.toContain('share');
+    expect(parseEntryParams({ src: 'call' }).src).toBe('link');
+    expect(sanitizeIncomingPath('venera-rec://record?src=share')).toBe('/record?src=link');
   });
 });

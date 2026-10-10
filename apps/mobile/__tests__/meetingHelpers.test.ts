@@ -73,11 +73,11 @@ describe('groupBubbles', () => {
 describe('formatDate', () => {
   it('formats in Asia/Tashkent regardless of device zone', () => {
     // 11:00 UTC = 16:00 Toshkent.
-    expect(formatDateTime('2026-10-10T11:00:00Z', 'uz')).toBe('10-oktyabr, 16:00');
+    expect(formatDateTime('2026-10-10T11:00:00Z', 'uz')).toBe('10-oktabr, 16:00');
     expect(formatDateTime('2026-10-10T11:00:00Z', 'ru')).toBe('10 октября, 16:00');
     expect(formatDateTime('2026-10-10T11:00:00Z', 'en')).toBe('October 10, 16:00');
     // Yarim tundan keyin kun almashadi.
-    expect(formatDateTime('2026-10-09T20:30:00Z', 'uz')).toBe('10-oktyabr, 01:30');
+    expect(formatDateTime('2026-10-09T20:30:00Z', 'uz')).toBe('10-oktabr, 01:30');
     expect(formatDateTime('2026-01-05T04:00:00Z', 'ru', { withYear: true })).toBe('5 января 2026, 09:00');
     expect(tashkentParts('garbage')).toBeNull();
     expect(formatDateTime('garbage', 'uz')).toBe('');
@@ -87,7 +87,7 @@ describe('formatDate', () => {
     expect(formatDay('2026-12-31', 'uz')).toBe('31-dekabr');
     expect(formatDay('2026-12-31', 'en')).toBe('December 31');
     expect(formatDay('bad', 'uz')).toBe('bad');
-    expect(formatDue('2026-10-10', '15:00', 'ertaga', 'uz')).toBe('10-oktyabr, 15:00');
+    expect(formatDue('2026-10-10', '15:00', 'ertaga', 'uz')).toBe('10-oktabr, 15:00');
     expect(formatDue(null, null, 'tez orada', 'uz')).toBe('tez orada');
     expect(formatDue(null, null, null, 'uz')).toBeNull();
     expect(formatClock(754.2)).toBe('12:34');

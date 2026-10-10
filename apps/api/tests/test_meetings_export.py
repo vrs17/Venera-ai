@@ -311,24 +311,25 @@ def test_docx_tarkibi_tartib_jadval_crm_xarita(client, auth, ready, _isolated_me
     paragraphs, tables = docx_text(response.content)
     assert paragraphs[0] == ("Title", "Mobil ilova relizi bo'yicha haftalik yig'ilish")
     meta = [text for _, text in paragraphs[1:5]]
-    assert meta[0] == "Sana: 2026-yil 9-oktyabr, 11:00"
-    assert meta[1] == "Davomiyligi: 1 daqiqa"
+    assert meta[0] == "Sana: 2026-yil 9-oktabr, 11:00"
+    assert meta[1] == "Davomiyligi: 1 daqiqa 4 soniya"   # 10 daqiqadan qisqa - soniyasi bilan
     assert meta[2] == "Ishtirokchilar: Aziz, Dilnoza, 3-ishtirokchi"
     assert meta[3] == "Xulosa turi: Umumiy yig'ilish"
     headings = [text for style, text in paragraphs if style == "Heading 1"]
-    # Shablon tartibi (`CORE_LAYOUT`), bo'sh bo'limlar tushib qoladi. "Ochiq savollar" yo'q: yagona
-    # savol "Hal qilinmagan masalalar" da sababi bilan bor (takrorlanmaydi); iqtiboslar va
-    # ishtirokchilar faolligi - eksportning o'z nomlari.
-    assert headings == ["Qisqacha", "Vazifalar", "Qarorlar", "Hal qilinmagan masalalar", "Mavzular",
-                        "Asosiy fikrlar", "Xavflar", "Raqamlar", "Sanalar va muddatlar",
+    # "Qisqa xulosa" BIRINCHI; keyin shablon tartibi (`CORE_LAYOUT`), bo'sh bo'limlar tushib qoladi.
+    # "Qisqacha" va "Asosiy fikrlar" yo'q: "Qisqa xulosa" ularni to'liq takrorlaydi (2 gap, 1 fikr).
+    # "Ochiq savollar" yo'q: yagona savol "Hal qilinmagan masalalar" da sababi bilan bor (takrorlanmaydi);
+    # iqtiboslar va ishtirokchilar faolligi - eksportning o'z nomlari.
+    assert headings == ["Qisqa xulosa", "Vazifalar", "Qarorlar", "Hal qilinmagan masalalar", "Mavzular",
+                        "Xavflar", "Raqamlar", "Sanalar va muddatlar",
                         "Keyingi qadamlar", "Keyingi yig'ilish", "Iqtiboslar", "Ishtirokchilar faolligi",
                         "Kalit so'zlar", "Kayfiyat", "Aqliy xarita", "Transkript"]
     table = tables[0]
     assert table[0] == ["№", "Vazifa", "Mas'ul", "Muddat", "Holat", "CRM"]
     body = {row[1]: row for row in table[1:]}
-    assert body["Test hisobotini tayyorlash"][2:] == ["Dilnoza", "14-oktyabr", "ochiq", "DVSIB-231"]
+    assert body["Test hisobotini tayyorlash"][2:] == ["Dilnoza", "14-oktabr", "ochiq", "DVSIB-231"]
     # Ogohlantirish vazifa matnida emas - holat ustunida, alohida qatorda.
-    assert body["Play Market sahifasini yangilash"][2:] == ["Aziz", "16-oktyabr, 18:00",
+    assert body["Play Market sahifasini yangilash"][2:] == ["Aziz", "16-oktabr, 18:00",
                                                             "ochiq\n⚠ aniqlashtirish kerak", ""]
     assert body["Buxgalteriyadan byudjetni so'rash"][2:] == ["Javlon", "keyingi hafta", "✓ bajarildi", ""]
     texts = [text for _, text in paragraphs]
@@ -349,7 +350,7 @@ def test_docx_tarkibi_tartib_jadval_crm_xarita(client, auth, ready, _isolated_me
     assert [t for s, t in tree if s == "List Bullet"] == ["Reliz sanasi (qaror qabul qilindi)", "Byudjet (ochiq)",
                                                           "Qarorlar", "Vazifalar", "Ochiq savollar"]
     # Xaritada holat yo'qolmaydi: vazifa - mas'ul va muddat, bajarilgani "✓", qaror - holati.
-    assert ("List Bullet 2", "Test hisobotini tayyorlash — Dilnoza · 14-oktyabr") in tree
+    assert ("List Bullet 2", "Test hisobotini tayyorlash — Dilnoza · 14-oktabr") in tree
     assert ("List Bullet 2", "✓ Buxgalteriyadan byudjetni so'rash — Javlon · keyingi hafta (bajarildi)") in tree
     assert ("List Bullet 2", "Push-bildirishnomalar keyingi versiyaga (taxminiy)") in tree
     assert ("List Bullet 2", "Reliz 17-oktyabr kuni chiqariladi") in tree
@@ -397,7 +398,7 @@ def test_md_va_txt_shakli(client, auth, ready, _isolated_meetings):
     make_rich(_isolated_meetings, ready)
     name_speakers(client, auth, mid, S1="Aziz", S2="Dilnoza")
     md = get_export(client, auth, mid, "md").text
-    assert md.startswith("# Mobil ilova relizi bo'yicha haftalik yig'ilish\n\n**Sana:** 2026-yil 9-oktyabr, 11:00  \n")
+    assert md.startswith("# Mobil ilova relizi bo'yicha haftalik yig'ilish\n\n**Sana:** 2026-yil 9-oktabr, 11:00  \n")
     assert "| № | Vazifa | Mas'ul | Muddat | Holat | CRM |\n|---|---|---|---|---|---|\n" in md
     assert "- **Mobil ilova relizi bo'yicha haftalik yig'ilish**\n  - **Reliz sanasi (qaror qabul qilindi)**\n" \
            "    - Reliz 17-oktyabr kuni\n" in md
@@ -407,11 +408,11 @@ def test_md_va_txt_shakli(client, auth, ready, _isolated_meetings):
     txt = get_export(client, auth, mid, "txt").text
     assert txt.startswith("Mobil ilova relizi bo'yicha haftalik yig'ilish\n=====")
     assert "**" not in txt and "|---" not in txt
-    assert "1. Test hisobotini tayyorlash\n   Mas'ul: Dilnoza · Muddat: 14-oktyabr · Holat: ochiq\n" in txt
+    assert "1. Test hisobotini tayyorlash\n   Mas'ul: Dilnoza · Muddat: 14-oktabr · Holat: ochiq\n" in txt
     assert "\nAqliy xarita\n------------\nMobil ilova relizi bo'yicha haftalik yig'ilish\n  - Reliz sanasi" in txt
     assert "[00:06] 2-ishtirokchi: Men ertaga" not in txt and "[00:06] Dilnoza: Men ertaga" in txt
     # Holat ustunidagi ikkinchi qator (ogohlantirish) MD/TXT da " · " bilan bir qatorda.
-    assert "| 2 | Play Market sahifasini yangilash | Aziz | 16-oktyabr, 18:00 | ochiq · ⚠ aniqlashtirish kerak |" in md
+    assert "| 2 | Play Market sahifasini yangilash | Aziz | 16-oktabr, 18:00 | ochiq · ⚠ aniqlashtirish kerak |" in md
     assert "Holat: ochiq · ⚠ aniqlashtirish kerak" in txt
 
 
@@ -454,7 +455,7 @@ def test_xulosasiz_409_va_faqat_transkript(client, auth, ready, _isolated_meetin
     assert default.status_code == 200
     assert "## Transkript" in default.text and "## Vazifalar" not in default.text
     for parts, missing in (("summary", ["summary"]), ("actions", ["actions"]), ("mindmap", ["mindmap"]),
-                           ("summary,transcript", ["summary"])):
+                           ("summary,transcript", ["summary"]), ("brief", ["brief"])):
         refused = get_export(client, auth, mid, "pdf", parts=parts)
         assert refused.status_code == 409, parts
         body = refused.json()
@@ -604,13 +605,16 @@ def test_boshqaruv_belgilari_va_surrogat(client, auth, ready, _isolated_meetings
 def test_birlik_yordamchilar():
     assert export.parse_parts(None) is None and export.parse_parts(" , ") is None
     assert export.parse_parts("transcript, SUMMARY,summary") == ["summary", "transcript"]
+    assert export.parse_parts("transcript,brief") == ["brief", "transcript"] and export.PARTS[0] == "brief"
     with pytest.raises(ValueError):
         export.parse_parts("summary,video")
     assert export.format_duration(3725, "uz") == "1 soat 2 daqiqa"
     assert export.format_duration(3600, "ru") == "1 ч"
     assert export.format_duration(42, "en") == "42 s"
+    assert export.format_duration(113, "uz") == "1 daqiqa 53 soniya" and export.format_duration(120, "uz") == "2 daqiqa"
+    assert export.format_duration(1513, "uz") == "25 daqiqa"            # uzun yozuvda soniya - shovqin
     moment = 1760000000.0                                    # 2025-10-09 08:53 UTC -> 13:53 Toshkent
-    assert export.format_moment(moment, "uz") == "2025-yil 9-oktyabr, 13:53"
+    assert export.format_moment(moment, "uz") == "2025-yil 9-oktabr, 13:53"
     assert export.format_moment(moment, "ru") == "9 октября 2025, 13:53"
     assert export.format_moment(moment, "en") == "October 9, 2025, 13:53"
     assert export.file_names("Отчёт", moment, "pdf") == ("otchyot-2025-10-09.pdf", "Отчёт 2025-10-09.pdf")
@@ -815,7 +819,7 @@ def test_pdf_xatchop_va_sahifa_raqami(client, auth, ready, _isolated_meetings):
     facts = pdf_facts(data)
     # Har bo'lim - xatcho'p (telefonda uzun transkriptdan "Vazifalar" ga bir bosishda).
     assert b"/Outlines" in data
-    for title in (b"Qisqacha", b"Vazifalar", b"Aqliy xarita", b"Transkript"):
+    for title in (b"Qisqa xulosa", b"Vazifalar", b"Aqliy xarita", b"Transkript"):
         assert b"/Title (" + title + b")" in data, title
     pages = facts["pages"]
     assert f"1 / {pages}" in facts["text"] and f"{pages} / {pages}" in facts["text"]
@@ -884,3 +888,186 @@ def test_birlik_juda_uzun_sarlavha_docx():
     assert Document(io.BytesIO(export.render(doc, "docx"))).core_properties.title == doc.title
     long_doc = export.Document(lang="uz", title="x" * 5000)
     assert len(Document(io.BytesIO(export_render.docx_bytes(long_doc))).core_properties.title) == 255
+
+
+# --- "Qisqa xulosa" (brief, 2026-10-10) ------------------------------------------------------------------------
+
+BRIEF_UZ = """**Mobil ilova relizi bo'yicha haftalik yig'ilish**  
+9-oktabr 2026 (juma), 11:00 · 1 daq 4 s · 3 ishtirokchi
+
+**Maqsad:** Reliz sanasi va mas'ullarni kelishib olish.
+
+**Qisqacha:** Aziz va Dilnoza mobil ilovaning 1.2 versiyasi relizini muhokama qildi. Reliz 17-oktyabrga belgilandi, testlar seshanbagacha yakunlanadi.
+
+**Asosiy fikr:**
+- Reliz boshqa surilmaydi.
+
+**Qarorlar:**
+- Reliz 17-oktyabr kuni chiqariladi.
+- Push-bildirishnomalar keyingi versiyaga (taxminiy, aniqlashtirish kerak).
+
+**Vazifalar:**
+- Test hisobotini tayyorlash. Mas'ul: Dilnoza. Muddat: 14-oktabr.
+- Play Market sahifasini yangilash. Mas'ul: Aziz. Muddat: 16-oktabr, 18:00. (aniqlashtirish kerak)
+- ✓ Buxgalteriyadan byudjetni so'rash. Mas'ul: Javlon. Muddat: keyingi hafta.
+
+**Ochiq savol:**
+- Reklama byudjeti qancha bo'ladi?
+"""
+
+
+def test_qisqa_xulosa_yolgiz_md_va_txt(client, auth, ready, _isolated_meetings):
+    """`parts=brief` - fayl aynan foydalanuvchi sevgan ko'rinish: hujjat sarlavhasi, "Sana:" qatorlari
+    va pastki yozuvsiz (ulashish uchun). Vazifalar - JONLI jadvaldan (bajarilgani "✓")."""
+    rt = _isolated_meetings
+    mid = ready["id"]
+    make_rich(rt, ready)
+    name_speakers(client, auth, mid, S1="Aziz", S2="Dilnoza")
+    done = {r["summary_item_id"]: r for r in rt.store.action_items(mid)}["A3"]
+    rt.store.update_action_item(done["id"], status="done")
+    md = get_export(client, auth, mid, "md", parts="brief")
+    assert md.status_code == 200, md.text
+    assert md.text == BRIEF_UZ
+    txt = get_export(client, auth, mid, "txt", parts="brief").text
+    assert txt == BRIEF_UZ.replace("**", "").replace("  \n", "\n")
+    assert unquote(md.headers["content-disposition"].split("''", 1)[1]) == \
+        "Mobil ilova relizi bo'yicha haftalik yig'ilish 2026-10-09.md"
+
+
+def test_qisqa_xulosa_yolgiz_docx_va_pdf(client, auth, ready, _isolated_meetings):
+    mid = ready["id"]
+    make_rich(_isolated_meetings, ready)
+    docx = get_export(client, auth, mid, "docx", parts="brief")
+    assert docx.status_code == 200, docx.text
+    paragraphs, tables = docx_text(docx.content)
+    assert tables == [] and not any(text.startswith("Sana:") for _, text in paragraphs)
+    assert paragraphs[:4] == [("Title", "Mobil ilova relizi bo'yicha haftalik yig'ilish"),
+                              ("Normal", "9-oktabr 2026 (juma), 11:00 · 1 daq 4 s · 3 ishtirokchi"),
+                              ("Normal", "Maqsad: Reliz sanasi va mas'ullarni kelishib olish."),
+                              ("Normal", "Qisqacha: 1-ishtirokchi va 2-ishtirokchi mobil ilovaning 1.2 versiyasi "
+                                         "relizini muhokama qildi. Reliz 17-oktyabrga belgilandi, testlar "
+                                         "seshanbagacha yakunlanadi.")]
+    at = paragraphs.index(("Normal", "Vazifalar:"))
+    # Ismsiz spiker - "2-ishtirokchi" (foydalanuvchi namunasi: "Mas'ul: 2-ishtirokchi").
+    assert paragraphs[at + 1] == ("List Bullet", "Test hisobotini tayyorlash. Mas'ul: 2-ishtirokchi. "
+                                                 "Muddat: 14-oktabr.")
+    assert ("List Bullet", "Reklama byudjeti qancha bo'ladi?") in paragraphs
+    if not FONTS:
+        return
+    pdf = get_export(client, auth, mid, "pdf", parts="brief")
+    assert pdf.status_code == 200, pdf.text
+    facts = pdf_facts(pdf.content)
+    assert facts["pages"] == 1 and facts["dejavu"] and not facts["helvetica"]
+    for needle in ("9-oktabr 2026 (juma), 11:00 · 1 daq 4 s · 3 ishtirokchi", "Maqsad:", "Asosiy fikr:",
+                   "Mas'ul: 2-ishtirokchi. Muddat: 14-oktabr.", "Ochiq savol:", "1 / 1"):
+        assert needle in facts["text"], needle
+    assert "Sana:" not in facts["text"] and "Transkript" not in facts["text"]
+
+
+@pytest.mark.parametrize("fmt", ["md", "txt", "docx", pytest.param("pdf", marks=needs_fonts)])
+def test_har_eksport_qisqa_xulosa_bilan_boshlanadi(client, auth, ready, _isolated_meetings, fmt):
+    mid = ready["id"]
+    make_rich(_isolated_meetings, ready)
+    response = get_export(client, auth, mid, fmt)
+    assert response.status_code == 200, response.text
+    if fmt == "docx":
+        paragraphs, _ = docx_text(response.content)
+        headings = [text for style, text in paragraphs if style == "Heading 1"]
+        assert headings[:2] == ["Qisqa xulosa", "Vazifalar"]
+        at = paragraphs.index(("Heading 1", "Qisqa xulosa"))
+        # Hujjat boshida sarlavha va sana bor - blok ularni takrorlamaydi.
+        assert paragraphs[at + 1] == ("Normal", "Maqsad: Reliz sanasi va mas'ullarni kelishib olish.")
+        return
+    text = response.text if fmt in ("md", "txt") else pdf_facts(response.content)["text"]
+    first = text.index("Qisqa xulosa")
+    assert first < text.index("Maqsad:") < text.index("Vazifalar") < text.index("Aqliy xarita")
+    assert text.count("9-oktabr 2026 (juma)") == 0 and "Sana:" in text
+    if fmt == "md":
+        assert "## Qisqa xulosa\n\n**Maqsad:** Reliz sanasi" in text and "## Qisqacha" not in text
+        assert "**Vazifalar:**\n- Test hisobotini tayyorlash. Mas'ul: 2-ishtirokchi. Muddat: 14-oktabr.\n" in text
+
+
+def test_qisqa_xulosa_uzun_xulosani_qisqartiradi_va_bolimni_saqlaydi():
+    """Eski xulosa (umumiy xulosa 3-5 gap, 8 ta fikr): blokda 2 gap va 6 fikr, to'liq matn esa
+    "Qisqacha"/"Asosiy fikrlar" bo'limlarida qoladi (takrorlanmaydigan qismi yo'qolmasin)."""
+    content = rich_content("uz")
+    content["overview"] = ("Birinchi gap 15 mln. so'm haqida. [S1] ikkinchi gapni aytdi! Uchinchi gap "
+                           "ham bor. To'rtinchisi.")
+    content["keyPoints"] = [{"id": f"K{i}", "text": f"Fikr {i}.", "sourceSegmentIds": [1], "start": 0.0}
+                            for i in range(1, 9)]
+    doc = export.build_document(title="T", recorded_at=0, duration_sec=60, speakers={}, lang="uz", now=0,
+                                parts=["brief", "summary"], template="general", content=content)
+    text = export.render_text(doc)
+    assert "Qisqacha: Birinchi gap 15 mln. so'm haqida. 1-ishtirokchi ikkinchi gapni aytdi!\n" in text
+    assert "\nQisqacha\n--------\nBirinchi gap 15 mln. so'm haqida. 1-ishtirokchi ikkinchi gapni aytdi! " \
+           "Uchinchi gap ham bor. To'rtinchisi.\n" in text
+    brief = text.split("Qisqa xulosa")[1].split("\nQisqacha\n")[0]
+    assert "- Fikr 6." in brief and "Fikr 7." not in brief
+    assert "\nAsosiy fikrlar\n" in text and "- Fikr 8." in text
+    # Faqat `summary` - avvalgidek, blok va qisqartirish yo'q.
+    only = export.render_text(export.build_document(
+        title="T", recorded_at=0, duration_sec=60, speakers={}, lang="uz", now=0, parts=["summary"],
+        template="general", content=rich_content("uz")))
+    assert "Qisqa xulosa" not in only and "\nQisqacha\n" in only and "\nAsosiy fikrlar\n" in only
+
+
+def test_birlik_qisqa_xulosa_tillar_va_shakllar():
+    content = rich_content("ru")
+    actions = export.actions_from_content(content, {}, "ru")
+    block = export.brief_block(content, {}, "ru", actions, title="Релиз", meta="m")
+    labels = [item["label"] for item in block["items"]]
+    # Bitta asosiy fikr - birlikda ("Vazifa:", "Ochiq savol:" kabi; mobil ilova bilan bir xil).
+    assert labels == ["Цель", "Кратко", "Ключевой момент", "Решения", "Задачи", "Открытый вопрос"]
+    assert block["items"][3]["list"] == ["Релиз 17 октября.",
+                                         "Push-уведомления позже (предварительно, требует уточнения)."]
+    tasks = block["items"][4]["list"]
+    assert tasks[0] == "Подготовить отчёт о тестах. Ответственный: Участник 2. Срок: 14 октября."
+    assert tasks[2] == "Запросить бюджет у бухгалтерии. Ответственный: Javlon. Срок: keyingi hafta."
+    en = export.brief_block(rich_content("uz"), {}, "en", [{"task": "Send the script", "owner": "", "due": ""}])
+    assert [i["label"] for i in en["items"]] == ["Purpose", "In short", "Key point", "Decisions", "Action item",
+                                                 "Open question"]
+    assert en["items"][4]["list"] == ["Send the script. No owner set. No due date."]
+    assert en["items"][3]["list"][1] == "Push-bildirishnomalar keyingi versiyaga (tentative, needs confirmation)."
+    team = export.brief_block({}, {}, "uz", [{"task": "Narxni kelishish;", "owner": "", "due": "", "team": True,
+                                              "check": True}])
+    assert team["items"][0]["list"] == ["Narxni kelishish. Mas'ul: Jamoa. Muddat belgilanmagan. (aniqlashtirish kerak)"]
+    # Bekor qilingan qaror blokka kirmaydi; bo'sh bandlar tushib qoladi.
+    bare = export.brief_block({"decisions": [{"text": "Eski", "status": "reversed"}], "keyPoints": []}, {}, "uz", [])
+    assert bare["items"] == []
+    # Mavzusiz eski xulosa - mavzular ichidagi fikrlar.
+    legacy = {**rich_content("uz"), "keyPoints": []}
+    points = [i for i in export.brief_block(legacy, {}, "uz", None)["items"] if i["label"].startswith("Asosiy")]
+    assert points[0]["list"] == ["Reliz 17-oktyabr kuni.", "Testlar seshanbagacha."]
+    titles = {**legacy, "topics": [{"title": "Byudjet", "summary": "", "keyPoints": []}]}
+    assert export.brief_block(titles, {}, "uz", None)["items"][2]["list"] == ["Byudjet."]
+    assert [export.people_count(n, "ru") for n in (1, 2, 5, 11, 21, 22, 112)] == [
+        "1 участник", "2 участника", "5 участников", "11 участников", "21 участник", "22 участника",
+        "112 участников"]
+    assert export.people_count(1, "en") == "1 participant" and export.people_count(3, "uz") == "3 ishtirokchi"
+    assert [export.brief_duration(s, "uz") for s in (113, 120, 42, 3725, 3600, 112.5, 0.3)] == [
+        "1 daq 53 s", "2 daq", "42 s", "1 soat 2 daq", "1 soat", "1 daq 53 s", "1 s"]
+    assert export.brief_duration(113, "ru") == "1 мин 53 с"
+    moment = 1760000000.0                                    # 2025-10-09 13:53 Toshkent (payshanba)
+    assert export.brief_moment(moment, "uz") == "9-oktabr 2025 (payshanba), 13:53"
+    assert export.brief_moment(moment, "ru") == "9 октября 2025 (четверг), 13:53"
+    assert export.brief_moment(moment, "en") == "October 9, 2025 (Thursday), 13:53"
+    assert export.brief_meta(0, 0, 0, "uz") == "" and export.brief_meta(0, 65, 2, "en") == "1 min 5 s · 2 participants"
+    assert export.first_sentences("Bir. Ikki? Uch.") == "Bir. Ikki?"
+    assert export.first_sentences("Narx 15 mln. so'm, versiya 1.2 bo'ladi. Keyin.", 1) == \
+        "Narx 15 mln. so'm, versiya 1.2 bo'ladi."
+
+
+def test_qisqa_xulosa_ochiq_savollarni_takrorlatmaydi():
+    """Blokda hamma ochiq savol bor - to'liq hujjatdagi "Ochiq savollar" bo'limi faqat vaqt qo'shardi
+    (qisqa qo'ng'iroqda ikki marta so'zma-so'z). Qarorlar bo'limi esa (holat, shart, sabab) qoladi."""
+    content = {**rich_content("uz"), "followUps": []}
+
+    def headings(parts: list[str]) -> list[str]:
+        doc = export.build_document(title="T", recorded_at=0, duration_sec=60, speakers={}, lang="uz", now=0,
+                                    parts=parts, template="general", content=content)
+        return [b["text"] for b in doc.blocks if b["kind"] == "h2"]
+
+    assert "Ochiq savollar" in headings(["summary"])
+    with_brief = headings(["brief", "summary"])
+    assert "Ochiq savollar" not in with_brief and "Qarorlar" in with_brief
+    assert export.brief_covers(content, {}, "uz") >= {"openQuestions", "keyPoints"}

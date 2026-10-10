@@ -187,8 +187,10 @@ export default function ChatScreen() {
               setJump({ epoch, show: false });
               scroller.current?.scrollToEnd({ animated: true });
             }}
+            testID="chat-jump"
             accessibilityRole="button"
             accessibilityLabel={t('chat.jumpLatest')}
+            hitSlop={4}
             style={s.jump}>
             <ArrowDown size={20} color={th.textSoft} strokeWidth={2} />
           </Pressable>
@@ -250,10 +252,12 @@ function makeStyles(th: Theme) {
     root: { flex: 1, backgroundColor: th.bg },
     composerWrap: { paddingHorizontal: 12, paddingTop: 6, paddingBottom: 6, backgroundColor: th.bg },
     disclaimer: { color: th.textFaint, fontSize: 11, textAlign: 'center', marginTop: 6 },
+    // O'ng chetda, yozish maydoni ustida (2026-10-10): o'rtada turganda javob matnining
+    // o'rtasini yopib qo'yardi (egasining skrinshoti). `right` - kompozer cheti bilan bir chiziqda.
     jump: {
       position: 'absolute',
-      alignSelf: 'center',
-      bottom: 10,
+      right: 12,
+      bottom: 8,
       width: 40,
       height: 40,
       borderRadius: 20,

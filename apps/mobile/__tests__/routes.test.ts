@@ -36,6 +36,10 @@ describe('root stack routes', () => {
       'settings/language',
       'settings/theme',
       'settings/about',
+      'settings/voice',
+      'settings/calls',
+      'import',
+      'voice',
     ]) {
       expect([name, signedIn.includes(`<Stack.Screen name="${name}"`)]).toEqual([name, true]);
     }

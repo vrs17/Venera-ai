@@ -16,6 +16,8 @@ import { fmtTime } from '../ui/format'
 import { toast } from '../ui/useToast'
 import { useId } from '../ui/composables/useId'
 import ConnectorList from './ConnectorList.vue'
+import PlatformList from './PlatformList.vue'
+import { usePlatforms } from '../composables/usePlatforms'
 
 /**
  * Ulanishlar oynasi (spec §4.3): HRM / CRM ro'yxati, kirish shakli va hisob - bitta
@@ -31,12 +33,25 @@ import ConnectorList from './ConnectorList.vue'
  *
  * `connectorId` berilsa - ro'yxatsiz, to'g'ridan-to'g'ri o'sha tizim uchun ochiladi
  * (masalan, chat "HRM ulanmagan" desa) va ish bitgach o'zi yopiladi.
+ *
+ * MANBALAR (2026-10-10): ro'yxat ko'rinishida hisoblar ostida - Barno foydalanadigan
+ * platformalar va ularning kalitlari (PlatformList, yordamchining o'z kalitlari, bizning
+ * proksi orqali). Ular yuklangach HRM/CRM qatoridagi eski kalit (`hideSwitch`) VA hisob
+ * ko'rinishidagi "Chatda ishlatish" kaliti yashiriladi - HRM uchun BITTA kalit qolsin
+ * (UX ko'rigi, 2026-10-10). Platforma kalitini yoqish token kalitini ham yoqadi, token
+ * o'chiq qolgan bo'lsa - "Manbalar" da ogohlantirish va "Yoqish" (PlatformList).
+ * Platformalar yuklanmasa (yoki to'g'ridan-to'g'ri kirish shakli) - avvalgidek.
  */
 const props = defineProps<{ connectorId?: ConnectorId | null }>()
 const open = defineModel<boolean>('open', { default: false })
 
 const { t } = useI18n({ useScope: 'global' })
 const { connectors, load, connect, disconnect, toggle } = useConnectors()
+const platformStore = usePlatforms()
+/** Platforma kalitlari ko'rinib turibdimi (HRM/CRM ham) - unda hisob qatorida kalit yo'q. */
+const platformsShown = computed(
+  () => platformStore.status.value === 'ready' && platformStore.platforms.value.some((p) => p.id === 'hrm' || p.id === 'crm'),
+)
 
 type View = 'list' | 'connect' | 'account'
 const view = ref<View>('list')
@@ -145,6 +160,9 @@ watch(
     }
     // Har ochilishda holat serverdan: HRM sessiyasi 10 soatda tugaydi.
     void load()
+    // Platforma kalitlari - faqat ro'yxat ko'rinishi uchun (to'g'ridan-to'g'ri kirish
+    // shaklida kerak emas). Ko'rinishlar almashganda qayta yuklanmaydi.
+    if (!props.connectorId) void platformStore.load()
     direct.value = !!props.connectorId
     if (props.connectorId) {
       const c = connectors.find((x) => x.id === props.connectorId)
@@ -232,7 +250,18 @@ function cancel() {
       </div>
     </template>
 
-    <ConnectorList v-if="view === 'list'" ref="listRef" @connect="go('connect', $event)" @manage="go('account', $event)" />
+    <div v-if="view === 'list'" class="cdlg__lists">
+      <section class="cdlg__section" :aria-label="t('assistant.platforms.accounts')">
+        <h3 class="cdlg__section-title">{{ t('assistant.platforms.accounts') }}</h3>
+        <ConnectorList
+          ref="listRef"
+          :hide-switch="platformsShown"
+          @connect="go('connect', $event)"
+          @manage="go('account', $event)"
+        />
+      </section>
+      <PlatformList :store="platformStore" />
+    </div>
 
     <form v-else-if="view === 'connect'" :id="formId" class="cdlg__form" novalidate @submit.prevent="onSubmit">
       <p v-if="formError" class="cdlg__error" role="alert">
@@ -285,7 +314,7 @@ function cancel() {
         </span>
       </div>
       <VSwitch
-        v-if="connected && !confirming"
+        v-if="connected && !confirming && !platformsShown"
         class="cdlg__use"
         label-first
         :label="t('composer.useInChat')"
@@ -350,6 +379,18 @@ function cancel() {
   line-height: var(--lh-body-sm);
   overflow-wrap: anywhere;
   text-wrap: pretty;
+}
+
+.cdlg__lists {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+.cdlg__section-title {
+  color: var(--text);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+  font-weight: 600;
 }
 
 .cdlg__form {

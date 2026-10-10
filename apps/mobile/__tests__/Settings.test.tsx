@@ -27,6 +27,7 @@ import { LANG_ENDONYM } from '@/features/settings/langNames';
 import { quickMethodCount } from '@/features/settings/quickMethods';
 import { useSettings } from '@/features/settings/settingsStore';
 import { newQueueRow, type QueueRow } from '@/features/upload/queueStore';
+import { useVoiceSettings } from '@/features/voice/voiceSettings';
 import type { Services } from '@/services';
 
 import { fakeChatApi, fakeServices, Providers } from './fixtures/fakeServices';
@@ -193,6 +194,7 @@ describe('Settings hub', () => {
       ['settings-profile', '/settings/account'],
       ['settings-connections', '/settings/connections'],
       ['settings-quick', '/settings/quick'],
+      ['settings-voice', '/settings/voice'],
       ['settings-recording', '/settings/recording'],
       ['settings-language', '/settings/language'],
       ['settings-theme', '/settings/theme'],
@@ -202,6 +204,16 @@ describe('Settings hub', () => {
       await fireEvent.press(screen.getByTestId(id));
       expect(push).toHaveBeenLastCalledWith(path);
     }
+  });
+
+  it('voice mode row: value = chosen voice · speed', async () => {
+    useVoiceSettings.setState({ voice: 'uz_female_calm', speed: 'normal' });
+    await renderScreen(SettingsScreen);
+    expect(await screen.findByText('Ayol - sokin · Odatiy')).toBeTruthy();
+    await act(async () => {
+      useVoiceSettings.setState({ voice: 'uz_male_news', speed: 'fast' });
+    });
+    expect(screen.getByText('Erkak - diktor · Tez')).toBeTruthy();
   });
 
   it('"Yozish va xotira" appears only when recordings are visible; value = keep policy + queue', async () => {
@@ -287,7 +299,8 @@ describe('Connections', () => {
     expect(screen.getByTestId('conn-crm-status').props.children).toBe('Muddati tugagan');
     expect(screen.getByTestId('conn-x-status').props.children).toBe('Sozlanmagan');
     expect(screen.getByText('X')).toBeTruthy();
-    expect(within(screen.getByTestId('conn-hrm')).getByTestId('icon-UsersRound')).toBeTruthy();
+    // Belgi "Manbalar"dagi HRM bilan bir xil (`platformIcon`).
+    expect(within(screen.getByTestId('conn-hrm')).getByTestId('icon-Users')).toBeTruthy();
   });
 
   it('load error -> retry', async () => {

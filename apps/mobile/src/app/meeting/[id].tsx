@@ -1,6 +1,10 @@
 /**
  * Yozuv sahifasi (spec 3.2): sarlavha + meta (sana, davomiylik, holat), belgili
- * tablar (Xulosa | Matn | Vazifalar | Savol), pastda doim turgan pleer.
+ * tablar (Xulosa | Matn | Vazifalar | Savol), pastda doim turgan pleer. Xulosa tabining
+ * tepasida "Xulosa | Xarita" almashtirgichi (Plaud kabi): xarita 5-tab bo'lganda 360 dp
+ * telefonda "Vazifalar 2" va "Transcript" kesilib qolardi.
+ * Sarlavhadagi ulashish belgisi - eksport varag'i (PDF, Word, Markdown, matn, audio) -
+ * ko'rib turilgan xulosa bilan.
  *
  * Pleer manbasi: telefondagi fayl, u yo'q bo'lsa - serverdagi audio
  * (`PlayerBar.useAudioChoice`). Shuning uchun yuklanayotgan yozuvni ham darhol
@@ -15,7 +19,19 @@
  * yozuv to'xtab, 0:00 ga qaytardi.
  */
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { AudioLines, CloudOff, EllipsisVertical, ListChecks, MessageCircleQuestionMark, Pencil, ScrollText, Sparkles, Trash } from 'lucide-react-native';
+import {
+  AudioLines,
+  CloudOff,
+  EllipsisVertical,
+  ListChecks,
+  MessageCircleQuestionMark,
+  Network,
+  Pencil,
+  ScrollText,
+  Share2,
+  Sparkles,
+  Trash,
+} from 'lucide-react-native';
 import { useCallback, useState, type ReactNode } from 'react';
 import { Alert, ScrollView, StyleSheet, View } from 'react-native';
 
@@ -24,12 +40,14 @@ import type { Lang, Meeting } from '@/api/types';
 import { ActionItemsView } from '@/features/meeting/ActionItemsView';
 import { ActionMenu } from '@/features/meeting/ActionMenu';
 import { AskView } from '@/features/meeting/AskView';
+import { ExportSheet } from '@/features/meeting/ExportSheet';
 import { formatDateTime } from '@/features/meeting/formatDate';
 import { LocalRecording } from '@/features/meeting/LocalRecording';
 import { MeetingHeader } from '@/features/meeting/MeetingHeader';
+import { MindMapTab } from '@/features/meeting/MindMapView';
 import { leaveRecording } from '@/features/meeting/nav';
 import { AudioDock, useAudioChoice, type AudioChoice, type SeekRequest } from '@/features/meeting/PlayerBar';
-import { useMeeting, useMeetingMutations } from '@/features/meeting/queries';
+import { useMeeting, useMeetingMutations, useSummaries } from '@/features/meeting/queries';
 import { MeetingStatusPill } from '@/features/meeting/RecordingCard';
 import { SummaryView } from '@/features/meeting/SummaryView';
 import { TranscriptView } from '@/features/meeting/TranscriptView';
@@ -46,6 +64,8 @@ import { PromptModal } from '@/ui/modals';
 import { useTheme } from '@/ui/theme';
 
 type Tab = 'summary' | 'transcript' | 'actions' | 'ask';
+/** Xulosa tabining ko'rinishi: matn (Qisqa xulosa + bo'limlar) yoki aqliy xarita. */
+type SummaryMode = 'text' | 'map';
 
 export default function MeetingRoute() {
   const { id, local } = useLocalSearchParams<{ id: string; local?: string }>();
@@ -168,8 +188,18 @@ function MeetingBody({
   const services = useServices();
   const muts = useMeetingMutations(m.id);
   const [tab, setTab] = useState<Tab>('summary');
+  const [summaryMode, setSummaryMode] = useState<SummaryMode>('text');
   const [editTitle, setEditTitle] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  // Xulosa tabida tanlangan xulosa - xarita va eksport ham shundan (null - asosiysi).
+  const [summaryId, setSummaryId] = useState<string | null>(null);
+  // Xulosalar ro'yxati xulosa ko'rinishi bilan UMUMIY keshda - qo'shimcha so'rov yo'q.
+  const summaries = useSummaries(m.id, m.transcript.available, m.status === 'summarizing');
+  const summaryCards = summaries.data?.items ?? [];
+  const viewed = summaryCards.find((c) => c.id === summaryId) ?? summaryCards.find((c) => c.primary) ?? null;
+  // Eksport faqat TAYYOR xulosadan; ro'yxat hali kelmagan bo'lsa - yozuvdagi asosiy xulosa holati.
+  const exportReady = viewed ? viewed.status === 'ready' : m.primarySummaryId != null && m.summaryStatus === 'ready';
 
   const uploading = !m.upload.complete && !!localRow && localRow.state !== 'done';
 
@@ -246,6 +276,20 @@ function MeetingBody({
     </View>
   );
 
+  const modeSwitch = (
+    <View style={s.modeSwitch}>
+      <Segmented
+        testIDPrefix="summary-view"
+        value={summaryMode}
+        onChange={setSummaryMode}
+        options={[
+          { value: 'text', label: t('recs.view.text'), icon: Sparkles },
+          { value: 'map', label: t('recs.tab.map'), icon: Network },
+        ]}
+      />
+    </View>
+  );
+
   // Yuklash kartasi ko'rinib turganda "Yuklanmoqda" pill'i takror - sababni karta aytadi.
   const showPill = m.status !== 'ready' && !(uploading && m.status === 'uploading');
 
@@ -254,7 +298,12 @@ function MeetingBody({
       <Stack.Screen
         options={{
           title: '',
-          headerRight: () => <IconButton testID="meeting-menu" icon={EllipsisVertical} label={t('recs.menu')} onPress={() => setMenu(true)} />,
+          headerRight: () => (
+            <View style={s.headerActions}>
+              <IconButton testID="meeting-export" icon={Share2} label={t('recs.export')} onPress={() => setExporting(true)} />
+              <IconButton testID="meeting-menu" icon={EllipsisVertical} label={t('recs.menu')} onPress={() => setMenu(true)} />
+            </View>
+          ),
         }}
       />
       <View style={[s.top, { borderColor: th.border }]}>
@@ -275,8 +324,16 @@ function MeetingBody({
           {uploadCard ? <View style={s.cardGap}>{uploadCard}</View> : null}
           <TranscriptView meeting={m} focus={seek} onSeek={onSeek} />
         </View>
+      ) : tab === 'summary' && summaryMode === 'map' ? (
+        // Xarita o'zi ikki tomonga aylanadi - tashqi ScrollView ichiga qo'yilmaydi.
+        <View style={s.root}>
+          <View style={s.mapHead}>{modeSwitch}</View>
+          {uploadCard ? <View style={[s.cardGap, s.mapCard]}>{uploadCard}</View> : null}
+          <MindMapTab meeting={m} summaryId={summaryId} onSeek={onSeek} />
+        </View>
       ) : (
         <ScrollView style={s.root} contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
+          {tab === 'summary' ? modeSwitch : null}
           {uploadCard ? <View style={s.cardGap}>{uploadCard}</View> : null}
           {banners}
           {tab === 'summary' ? (
@@ -285,6 +342,8 @@ function MeetingBody({
               speakers={m.speakers}
               onSeek={onSeek}
               onAcceptName={(speakerId, name) => muts.renameSpeaker.mutate({ speakerId, name })}
+              selectedId={summaryId}
+              onSelect={setSummaryId}
             />
           ) : null}
           {tab === 'actions' ? <ActionItemsView meeting={m} speakers={m.speakers} onSeek={onSeek} /> : null}
@@ -308,9 +367,19 @@ function MeetingBody({
         title={t('recs.menu')}
         onClose={() => setMenu(false)}
         items={[
+          { key: 'export', title: t('recs.export'), icon: Share2, onPress: () => setExporting(true) },
           { key: 'rename', title: t('tr.rename'), icon: Pencil, onPress: () => setEditTitle(true) },
           { key: 'delete', title: t('common.delete'), icon: Trash, destructive: true, onPress: confirmDelete },
         ]}
+      />
+      <ExportSheet
+        visible={exporting}
+        onClose={() => setExporting(false)}
+        meetingId={m.id}
+        title={m.title}
+        // Ko'rib turilgan xulosa: boshqa shablonni o'qib turgan odam aynan o'shani ulashadi.
+        hasSummary={exportReady}
+        summaryId={viewed && !viewed.primary ? viewed.id : null}
       />
     </View>
   );
@@ -323,4 +392,8 @@ const s = StyleSheet.create({
   transcript: { flex: 1, paddingHorizontal: 12, paddingTop: 10 },
   scroll: { padding: 12, paddingBottom: 32 },
   cardGap: { marginBottom: 12 },
+  mapCard: { marginHorizontal: 12, marginTop: 10, marginBottom: 0 },
+  modeSwitch: { marginBottom: 10 },
+  mapHead: { paddingHorizontal: 12, paddingTop: 12 },
+  headerActions: { flexDirection: 'row', alignItems: 'center' },
 });

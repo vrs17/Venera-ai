@@ -36,7 +36,7 @@ const sourcesOf = (m: ReportMessage): AnswerSource[] => fromSnapshotSources(m.so
 const traceTo = (turnId: string) => withFilters(`/admin/turns/${encodeURIComponent(turnId)}`)
 
 function sourceText(s: AnswerSource, i: number): string {
-  if (isToolSource(s.kind)) return lookupLabel(s, `T${i + 1}`)
+  if (isToolSource(s.kind)) return lookupLabel(s, `T${i + 1}`, t)
   // Qonun moddasi (v2): nomi va "LEX.UZ · qonunchilik" - hujjat emasligi ko'rinsin.
   if (isLawSource(s.kind)) return `${lawTitle(s, t('sourceDocument'))} · ${t('chat.lawCaption', { site: lawSite(lawUrl(s)) })}`
   const name = s.title?.trim() || s.doc_id || t('sourceDocument')

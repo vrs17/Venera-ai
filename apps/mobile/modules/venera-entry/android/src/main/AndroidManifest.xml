@@ -13,9 +13,49 @@
 
   RecordKeyService - "Maxsus imkoniyatlar" xizmati: ovozni pasaytirish tugmasini ikki
     marta bosish = boshlash/to'xtatish. Foydalanuvchi Android sozlamasida o'zi yoqadi.
+
+  Qo'ng'iroq yozuvlari (2026-10-10, CallImport.kt):
+  READ_MEDIA_AUDIO (Android 13+) / READ_EXTERNAL_STORAGE (12 va pastda, maxSdk 32) -
+    Samsung Telefon yozgan Recordings/Call/ fayllarini MediaStore'dan o'qish uchun.
+    Ruxsatni JS "Qo'ng'iroqlar" bo'limini ochganda so'raydi (PermissionsAndroid).
+    DIQQAT: READ_EXTERNAL_STORAGE app.config.ts blockedPermissions ro'yxatiga qaytarilmasin -
+    u yerdagi tools:node="remove" shu e'lonni ham o'chirib, Android 8-12 da ro'yxatni bo'sh qoldiradi.
+
+  ImportActivity - "Ulashish -> Barno AI": audio/* (bitta yoki bir nechta fayl).
+    Shaffof, tarixda qolmaydi: fayllarni filesDir/imports/ ga nusxalab, asosiy ilovani
+    venera-rec://import?files=... bilan ochadi. NIMA UCHUN faqat audio/*:
+    application/ogg (Telegram ovozli xabari) va video/mp4 ni server qabul qilmaydi,
+    video/mp4 esa Barno'ni har bir video ulashish ro'yxatiga chiqarib qo'yardi.
+    configChanges - burilishda activity qayta yaratilib import ikki marta ketmasin.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+  <uses-permission
+    android:name="android.permission.READ_EXTERNAL_STORAGE"
+    android:maxSdkVersion="32" />
+
   <application>
+    <activity
+      android:name="uz.brbtech.venera.entry.ImportActivity"
+      android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density|locale|layoutDirection|fontScale"
+      android:excludeFromRecents="true"
+      android:exported="true"
+      android:label="@string/venera_entry_import_label"
+      android:noHistory="true"
+      android:taskAffinity=""
+      android:theme="@android:style/Theme.Translucent.NoTitleBar">
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="audio/*" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.SEND_MULTIPLE" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="audio/*" />
+      </intent-filter>
+    </activity>
+
     <activity
       android:name="uz.brbtech.venera.entry.RecordLauncherActivity"
       android:enabled="false"

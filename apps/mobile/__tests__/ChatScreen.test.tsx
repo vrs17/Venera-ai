@@ -106,8 +106,8 @@ describe('ChatScreen', () => {
         }),
     );
     await renderChat(fakeChatApi({ stream }));
-    const send = await screen.findByTestId('composer-send');
-    expect(send.props.accessibilityState).toMatchObject({ disabled: true });
+    expect(await screen.findByTestId('composer-live')).toBeTruthy();
+    expect(screen.queryByTestId('composer-send')).toBeNull();
     await fireEvent.changeText(screen.getByTestId('composer-input'), 'Ish jadvalim');
     await act(async () => {
       await fireEvent.press(screen.getByTestId('composer-send'));

@@ -22,7 +22,10 @@ TemplateId = Literal["auto", "general", "minutes", "standup", "one_on_one", "pro
 MeetingStatus = Literal["uploading", "uploaded", "transcribing", "summarizing", "ready", "failed",
                         "waiting_quota"]
 SummaryStatus = Literal["none", "queued", "running", "ready", "failed", "skipped"]
-EntrySource = Literal["app", "tile", "launcher", "volume", "shortcut", "notification", "link"]
+#: Yozuv qayerdan keldi. `call` - telefonning o'z qo'ng'iroq yozuvi (Samsung "Qo'ng'iroqlarni yozish",
+#: ilova MediaStore'dan topadi), `share` - boshqa ilovadan "Ulashish -> Barno AI". Ikkalasi ham tayyor
+#: fayl (odatda `audio/mp4`); `call` da `auto` shablon telefon qo'ng'irog'i shablonlariga moyil.
+EntrySource = Literal["app", "tile", "launcher", "volume", "shortcut", "notification", "link", "call", "share"]
 
 
 # --- so'rovlar ---------------------------------------------------------------------
@@ -229,6 +232,8 @@ class MeetingCard(BaseModel):
     openActionItems: int
     overview: str | None = None
     error: MeetingError | None = None
+    #: 2026-10-10: ro'yxatda qo'ng'iroq / ulashilgan fayl belgisini ko'rsatish uchun (eski ilova e'tiborsiz qoldiradi).
+    source: EntrySource = "app"
 
 
 class MeetingList(BaseModel):

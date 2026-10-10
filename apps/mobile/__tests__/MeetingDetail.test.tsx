@@ -44,9 +44,13 @@ describe('Meeting detail', () => {
     const { api } = await open();
     expect(screen.getByText(/Yig'ilish 9-oktyabr, 11:00/)).toBeTruthy();
     await waitFor(() => expect(screen.getByTestId('summary-body')).toBeTruthy());
-    for (const key of ['overview', 'actionItems', 'decisions', 'topics', 'openQuestions', 'risks', 'numbers', 'dates', 'nextSteps', 'nextMeeting', 'highlights', 'participants', 'keyPoints', 'keywords', 'sentiment', 'objections']) {
+    for (const key of ['overview', 'actionItems', 'decisions', 'topics', 'risks', 'numbers', 'dates', 'nextSteps', 'nextMeeting', 'highlights', 'participants', 'keywords', 'sentiment', 'objections']) {
       expect(screen.getByTestId(`section-${key}`)).toBeTruthy();
     }
+    // "Qisqa xulosa" to'liq takrorlaydigan bo'limlar (hammasi sig'gan asosiy fikrlar, ochiq
+    // savollar) "Batafsil" ostida qayta chiqmaydi - server eksporti (`brief_covers`) kabi.
+    for (const key of ['keyPoints', 'openQuestions']) expect(screen.queryByTestId(`section-${key}`)).toBeNull();
+    expect(screen.getByTestId('brief-openQuestions')).toBeTruthy();
     expect(screen.getByText("Aziz narxlarni ko'rib chiqdi. 2-ishtirokchi hisobot yuboradi. Aziz rozi bo'ldi.")).toBeTruthy();
     expect(screen.getAllByText('tekshiring').length).toBeGreaterThan(0);
     // Xulosa ostida - qaysi model yozgani (server `generatedBy`).
@@ -200,7 +204,7 @@ describe('Meeting detail', () => {
     for (const icon of ['Sparkles', 'ScrollText', 'ListChecks', 'MessageCircleQuestionMark', 'Calendar', 'Clock']) {
       expect(screen.getAllByTestId(`icon-${icon}`).length).toBeGreaterThan(0);
     }
-    expect(screen.getByText('9-oktyabr, 11:00')).toBeTruthy();
+    expect(screen.getByText('9-oktabr, 11:00')).toBeTruthy();
     expect(screen.getByText('1:00:00')).toBeTruthy();
     expect(screen.getByText('Vazifalar 2')).toBeTruthy();
     expect(screen.queryByText('Tayyor')).toBeNull();

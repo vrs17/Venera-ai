@@ -153,7 +153,8 @@ export function buildSummaryView(summary: Summary, t: TFn, opts: BuildOptions = 
 
   const warnings: string[] = [];
   if (c.quality?.droppedItems > 0) warnings.push(t('sum.qualityWarn', { n: c.quality.droppedItems }));
-  for (const w of c.quality?.warnings ?? []) warnings.push(w);
+  // Odam o'qiydigan ogohlantirish bo'lsa - tarjimasi; qolgan ichki kodlar avvalgidek.
+  for (const w of c.quality?.warnings ?? []) warnings.push(w === 'key_points_missing' ? t('sum.warn.key_points_missing') : w);
 
   return { title: R(c.title) || '', language: lang, sections, warnings };
 }

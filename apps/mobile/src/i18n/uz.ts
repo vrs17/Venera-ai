@@ -4,9 +4,11 @@
  * `__tests__/i18n.test.ts` ikkalasi tekshiradi.
  * `{name}` - o'rniga qiymat qo'yiladi.
  */
+import { callsPart } from './parts/calls';
 import { nav } from './parts/nav';
 import { recordingsPart } from './parts/recordings';
 import { settingsPart } from './parts/settings';
+import { sharePart } from './parts/share';
 
 export const uz = {
   'app.name': 'Barno AI',
@@ -149,8 +151,8 @@ export const uz = {
   'detail.summaryNone': "Xulosa hali yo'q",
   'detail.newSummary': '+ Yangi xulosa',
   'detail.chooseTemplate': 'Shablonni tanlang',
-  'detail.shareMd': 'Markdown ulashish',
-  'detail.copyText': 'Matn sifatida nusxalash',
+  'detail.shareMd': "To'liq xulosani ulashish",
+  'detail.copyText': "To'liq xulosani nusxalash",
   'detail.audioExpired': "Audio saqlash muddati tugagan - faqat matn qoldi",
   'detail.deleteConfirm': "Yig'ilish butunlay o'chiriladi (audio, matn, xulosa). Davom etasizmi?",
   'detail.renameTitle': 'Sarlavha',
@@ -232,6 +234,7 @@ export const uz = {
   'sum.fromMark': 'Sizning belgingiz',
   'sum.markUncovered': "Belgi xulosada aks etmagan",
   'sum.qualityWarn': "Ba'zi bandlar dalilsiz bo'lgani uchun olib tashlandi ({n})",
+  'sum.warn.key_points_missing': "Asosiy fikrlarni ajratib bo'lmadi - xulosani qayta yaratib ko'ring.",
   'sum.meetingType': 'Turi: {type}',
   'sum.subject': 'Mavzu: {subject}',
   'sum.generatedBy': 'Tayyorladi: {engine}',
@@ -442,6 +445,7 @@ export const uz = {
   'chat.sourcePage': "{n}-bet",
   'chat.sourceData': "Tizim ma'lumoti",
   'chat.sourceLaw': "Qonunchilik",
+  'chat.citeN': "{n}-manba",
   'chat.openFailed': "Faylni ochib bo'lmadi",
   'chat.artifactReady': "Hujjat tayyor",
   'chat.artifactWord': "Word",
@@ -515,6 +519,8 @@ export const uz = {
   ...nav.uz,
   ...settingsPart.uz,
   ...recordingsPart.uz,
+  ...sharePart.uz,
+  ...callsPart.uz,
 } as const;
 
 export type TKey = keyof typeof uz;

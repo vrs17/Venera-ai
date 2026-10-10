@@ -10,7 +10,8 @@ from datetime import date
 import pytest
 
 from app.services.meetings import dates, export, prompts, templates
-from app.services.meetings.summarize import Merger, Pipeline, Validator, jaccard, similar
+from app.services.meetings.summarize import (KEY_POINTS_MISSING, REAL_CONTENT_WORDS, Merger, Pipeline, Validator,
+                                             jaccard, similar)
 from meetings_fakes import FakeLLM, auto_reply
 from test_meetings_summary import DAY, LINES, make_input
 
@@ -305,7 +306,7 @@ def test_yozuvchi_takror_qarorlarni_birlashtiradi():
 
 
 def test_prompt_meeting_2_qoidalari():
-    assert prompts.PROMPT_VERSION == "meeting-2"
+    assert prompts.PROMPT_VERSION == "meeting-3"
     system = prompts.extract_system("general")
     for needle in ("6b. COMMITMENT FORMS", "-sin", "-aylik", "6c. NOT ACTION ITEMS", "volunteered", "assignedBy",
                    "PARTICIPANT NAMES", "ANSWERS in the next 1-2 lines", "concluding statement",
@@ -362,3 +363,131 @@ def test_coverage_boshi_mos_kelmasa_map_yoliga():
     llm.script["meeting_extract"] = [json.dumps(data, ensure_ascii=False)]
     result = Pipeline(llm, verify=False).run(make_input())
     assert "single_pass_fallback" in result.content["quality"]["warnings"] and "meeting_map" in llm.ops()
+
+
+# --- "Qisqa xulosa": asosiy fikrlar har shablonda (2026-10-10) ------------------------------------
+
+
+def _extract(lines=LINES, **changes) -> str:
+    data = json.loads(auto_reply("meeting_extract", "", "\n".join(
+        f"#{i} [00:00] {s}: {t}" for i, (s, t) in enumerate(lines, start=1))))
+    data.update(changes)
+    return json.dumps(data, ensure_ascii=False)
+
+
+def test_prompt_meeting_3_qisqa_xulosa_qoidalari():
+    system = prompts.extract_system("general")
+    for needle in ("3-6 takeaways", "(required, a short call too)", "16. SHORT SUMMARY", "G'oya:",
+                   '"overview": never more than 2 sentences', '"purpose": why the meeting was held',
+                   "sharp human note-taker", "no bureaucratic or translated-sounding phrases"):
+        assert needle in system, needle
+    assert "3-5 sentences (5-8" not in system and "3-7 takeaways" not in system
+    # "Qisqa xulosa" qoidalari map bo'lagi promptida YO'Q (v3 da har belgi transkript joyini yeydi).
+    assert prompts.BRIEF_RULES not in prompts.map_system() and "1-2 short sentences" in prompts.map_system()
+    assert "3-6" in prompts.WRITER_SYSTEM and "never more than 2" in prompts.WRITER_SYSTEM
+    assert "\"keyPoints\" are REQUIRED" in prompts.WRITER_SYSTEM
+    # Eslatma: bir o'tishda "Qisqa xulosa" kalitlari bilan; map bo'lagida (keyPoints/overview yo'q) - yo'q.
+    assert prompts.BRIEF_REMINDER in prompts.reminder("uz", final=True)
+    assert prompts.BRIEF_REMINDER not in prompts.reminder("uz")
+    short = prompts.template_block("short_call")
+    assert "Write the purpose, a 1-2 sentence overview and 3-6 short keyPoints" in short
+    assert "keep topics, risks, nextSteps and templateSections empty" in short
+    assert [e["key"] for e in templates.layout("short_call", "uz")][:3] == ["overview", "keyPoints", "actionItems"]
+    assert templates.get("short_call").version == "short_call-3"
+
+
+def test_eslatma_faqat_bir_otishda():
+    llm = FakeLLM()
+    Pipeline(llm, single_pass_chars=3000, map_chars=2500, verify=False).run(make_input(repeat=20))
+    maps = [c["user"] for c in llm.calls if c["op"] == "meeting_map"]
+    assert maps and all(prompts.BRIEF_REMINDER not in u for u in maps)
+    single = FakeLLM()
+    Pipeline(single, verify=False).run(make_input())
+    assert prompts.BRIEF_REMINDER in single.calls[0]["user"]
+
+
+def test_bosh_asosiy_fikrlar_bir_marta_tuzatiladi():
+    llm = FakeLLM()
+    llm.script["meeting_extract"] = [_extract(keyPoints=[])]
+    content = Pipeline(llm, verify=False).run(make_input(template="short_call")).content
+    assert llm.ops() == ["meeting_extract", "meeting_extract"]
+    repair = llm.calls[1]["user"]
+    assert f"Your previous reply was invalid: {KEY_POINTS_MISSING}" in repair and llm.calls[1]["temperature"] == 0.0
+    assert content["keyPoints"] == [{"id": "K1", "text": "Fikr 1", "sourceSegmentIds": [1], "start": 0.0}]
+    assert "key_points_missing" not in content["quality"]["warnings"]
+
+
+@pytest.mark.parametrize("second", ["empty", "broken", "truncated"])
+def test_tuzatish_yomon_bolsa_birinchi_javob_qoladi(second):
+    llm = FakeLLM()
+    reply = {"empty": _extract(keyPoints=[], actionItems=[]), "broken": "buzuq javob",
+             "truncated": (_extract(actionItems=[]), {"doneReason": "length", "tokensIn": None})}[second]
+    llm.script["meeting_extract"] = [_extract(keyPoints=[]), reply]
+    content = Pipeline(llm, verify=False).run(make_input()).content
+    # Ikkinchi tuzatish so'ralmaydi, map yo'liga ham o'tilmaydi; birinchi (yaroqli) javobning
+    # vazifalari yo'qolmaydi.
+    assert llm.ops() == ["meeting_extract", "meeting_extract"]
+    assert content["actionItems"][0]["task"] == "Vazifa 1ni bajarish" and content["keyPoints"] == []
+    warnings = content["quality"]["warnings"]
+    assert "key_points_missing" in warnings and "single_pass_fallback" not in warnings
+    assert "validation_errors" not in warnings
+
+
+def test_zanjirda_fikrsiz_javob_keyingi_modelga_otkazilmaydi():
+    llm = FakeLLM()
+    llm.script["meeting_extract"] = [_extract(keyPoints=[]), _extract(keyPoints=[])]
+    out = Pipeline(llm, verify=False, strict=True).run(make_input())
+    assert out.status == "ready" and out.content["actionItems"] and llm.ops() == ["meeting_extract"] * 2
+
+
+def test_qisqa_matnda_fikrsiz_javob_tuzatilmaydi():
+    lines = [("S1", "Salom, eshityapsizmi? Mikrofon ishlayaptimi, tekshirib ko'ramiz."),
+             ("S2", "Ha, eshityapman, hammasi joyida, ovoz yaxshi chiqyapti, davom etamiz."),
+             ("S1", "Yaxshi, unda ertaga yana uchrashamiz, xayr."),
+             ("S2", "Mayli, ertaga soat o'nda shu xonada uchrashamiz, men ham vaqtida kelaman.")]
+    assert 30 <= sum(len(t.split()) for _, t in lines) < REAL_CONTENT_WORDS
+    llm = FakeLLM()
+    llm.script["meeting_extract"] = [_extract(lines, keyPoints=[])]
+    content = Pipeline(llm, verify=False).run(make_input(lines=lines)).content
+    assert llm.ops() == ["meeting_extract"] and content["keyPoints"] == []
+    assert "key_points_missing" not in content["quality"]["warnings"]
+
+
+def test_yozuvchi_fikrsiz_bolsa_bir_marta_soraladi():
+    llm = FakeLLM()
+
+    def reply(op, system, user):
+        data = json.loads(auto_reply(op, system, user))
+        if op == "meeting_write" and not any(c["op"] == "meeting_write" for c in llm.calls[:-1]):
+            data["keyPoints"] = []
+        return json.dumps(data, ensure_ascii=False)
+
+    llm.reply = reply
+    content = Pipeline(llm, single_pass_chars=3000, map_chars=2500, verify=False).run(make_input(repeat=20)).content
+    writes = [c for c in llm.calls if c["op"] == "meeting_write"]
+    assert len(writes) == 2 and KEY_POINTS_MISSING in writes[1]["user"]
+    assert [k["text"] for k in content["keyPoints"]] == ["Umumiy fikr"]
+    assert "key_points_missing" not in content["quality"]["warnings"]
+
+
+def test_tuzatishdan_faqat_asosiy_fikrlar_olinadi():
+    # Birinchi javob yaroqli, faqat asosiy fikrlari (va maqsadi) yo'q; tuzatish - yangi chiqarish:
+    # fikrlari bor, lekin bitta vazifani tashlab ketgan va qarorni boshqacha yozgan. Vazifa va
+    # qarorlar BIRINCHI javobdan qolishi shart (6-qoida), tuzatishdan faqat fikrlar va maqsad.
+    first = json.loads(_extract(keyPoints=[], purpose=None))
+    second_task = dict(first["actionItems"][0], task="Hisobotni tayyorlab yuborish", sourceSegmentIds=[2],
+                       owner={"speaker": "S2", "name": None, "kind": "person", "basis": "self_commitment"},
+                       quote=" ".join(LINES[1][1].split()[:6]))
+    first["actionItems"].append(second_task)
+    repair = json.loads(_extract(purpose="Hisobotni muhokama qilish",
+                                 keyPoints=[{"text": "Narx 15 mln so'm", "sourceSegmentIds": [3]}]))
+    repair["decisions"][0]["text"] = "Boshqacha qaror"
+    llm = FakeLLM()
+    llm.script["meeting_extract"] = [json.dumps(first, ensure_ascii=False), json.dumps(repair, ensure_ascii=False)]
+    content = Pipeline(llm, verify=False).run(make_input()).content
+    assert llm.ops() == ["meeting_extract", "meeting_extract"]
+    assert [a["task"] for a in content["actionItems"]] == ["Vazifa 1ni bajarish", "Hisobotni tayyorlab yuborish"]
+    assert [d["text"] for d in content["decisions"]] == [first["decisions"][0]["text"]]
+    assert [k["text"] for k in content["keyPoints"]] == ["Narx 15 mln so'm"]
+    assert content["purpose"] == "Hisobotni muhokama qilish" and content["overview"] == first["overview"]
+    assert "key_points_missing" not in content["quality"]["warnings"]

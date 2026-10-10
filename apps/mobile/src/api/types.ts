@@ -30,7 +30,12 @@ export type MeetingStatus =
   | 'failed'
   | 'waiting_quota';
 export type SummaryStatus = 'none' | 'queued' | 'running' | 'ready' | 'failed' | 'skipped';
-export type EntrySource = 'app' | 'tile' | 'launcher' | 'volume' | 'shortcut' | 'notification' | 'link';
+/**
+ * Yozuv qayerdan kelgan. `call` - Samsung Telefon yozgan qo'ng'iroq (MediaStore), `share` -
+ * "Ulashish -> Barno AI". Bular yozish kirish nuqtasi EMAS (deep link `src=` ularni qabul qilmaydi),
+ * server esa `call` uchun qo'ng'iroq shablonlarini afzal ko'radi.
+ */
+export type EntrySource = 'app' | 'tile' | 'launcher' | 'volume' | 'shortcut' | 'notification' | 'link' | 'call' | 'share';
 
 export interface Speaker {
   id: string; // 'S1'..'S4' (order of first appearance)
@@ -370,6 +375,8 @@ export type SummaryActionItem = {
   id: string; // A1
   task: string;
   deliverable: string | null;
+  /** Shartli majburiyat ("agar mijoz rozi bo'lsa"); eski xulosalarda yo'q. */
+  condition?: string | null;
   owner: { speaker: string | null; name: string | null; kind: OwnerKind; basis: OwnerBasis };
   assignedBy: string | null;
   due: { raw: string | null; date: string | null; time: string | null; basis: DueBasis };

@@ -33,20 +33,22 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: 'Barno AI',
   slug: 'venera-yozuv',
-  version: '1.2.0',
+  version: '1.3.0',
   scheme: 'venera-rec',
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
   android: {
     package: 'uz.brbtech.venera.meetings',
-    versionCode: 4,
+    versionCode: 5,
     // Yozuvlar va tokenlar Google zaxirasiga tushmasligi kerak (spec 2.3, 4.4).
     allowBackup: false,
     // Mikrofon/bildirishnoma ruxsatlarini expo-audio plagini qo'shadi.
     // Bu ruxsatlar bizga KERAK EMAS - kutubxonalar o'zi qo'shib yuborsa olib tashlanadi.
+    // READ_EXTERNAL_STORAGE bu ro'yxatda YO'Q (2026-10-10): Android 8-12 da Samsung qo'ng'iroq
+    // yozuvlarini MediaStore'dan o'qish uchun kerak (venera-entry manifesti, maxSdkVersion 32).
+    // Bloklansa tools:node="remove" uni ham o'chiradi - ruxsat so'ralmay, ro'yxat doim bo'sh qoladi.
     blockedPermissions: [
       'android.permission.SYSTEM_ALERT_WINDOW',
-      'android.permission.READ_EXTERNAL_STORAGE',
       'android.permission.WRITE_EXTERNAL_STORAGE',
       'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
     ],

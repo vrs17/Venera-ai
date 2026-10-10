@@ -11,4 +11,7 @@
   <string name="venera_entry_tile_recording">Идёт запись - остановить</string>
   <string name="venera_entry_key_service_label">Barno: запись кнопкой громкости</string>
   <string name="venera_entry_key_service_desc">Дважды подряд нажмите кнопку уменьшения громкости - начнётся запись встречи, ещё дважды - остановится. Barno следит только за этой кнопкой: не читает текст на экране и ничего не сохраняет.</string>
+  <string name="venera_entry_import_label">Barno AI</string>
+  <string name="venera_entry_import_preparing">Barno: подготовка записи…</string>
+  <string name="venera_entry_import_unsupported">Barno не смог принять файл - только аудио .m4a или .aac.</string>
 </resources>

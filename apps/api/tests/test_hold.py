@@ -14,6 +14,7 @@ import re
 import time
 import urllib.error
 import urllib.request
+import wave
 
 import pytest
 
@@ -558,3 +559,212 @@ def test_tasnif_ulanishdan_oldin_boshlanadi(client, auth, monkeypatch, tmp_path)
     # Tasnif ulanish paytida tayyor bo'lgan - ovoz oqimning BIRINCHI kadri.
     birinchi = json.loads(response.text.splitlines()[0])
     assert birinchi["type"] == "hold", birinchi
+
+
+# ================================================== tanlangan ovozdagi kutish ovozi
+#
+# Mobil ilovada odam ovozni tanlaydi (ayol/erkak). Ishga tushishda faqat
+# asosiy ovoz qizdiriladi; boshqasi birinchi so'rovda yasalib keshlanadi.
+
+
+@pytest.fixture
+def ovozlar(monkeypatch, tmp_path):
+    """Kutish ovozlari papkasi vaqtinchalik, TTS - soxta transport ustida."""
+    import app.api.v1.tts as module
+    from app.core.config import settings
+    from app.services.tts import TtsClient
+    from test_tts import FakeServer
+
+    fake = FakeServer()
+
+    class Opener:
+        def open(self, request, timeout=None):
+            return fake.open(request, timeout)
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *a, **kw: Opener())
+    monkeypatch.setattr(settings, "hold_voice_dir", tmp_path / "hold")
+    monkeypatch.setattr(settings, "tts_voice", "uz_female_calm")
+    monkeypatch.setattr(module, "_client",
+                        TtsClient("http://tts", "frontend", "s3cret", queue_wait=0.05))
+    return fake
+
+
+def _sintezlar(fake) -> list[dict]:
+    return [c[1] for c in fake.calls if c[0] == "/api/v1/tts/stream"]
+
+
+def _boshqa_ovoz(client, auth, kalit, ovoz="uz_male_news"):
+    return client.get(f"/api/v1/tts/hold/{kalit}.wav", params={"voice": ovoz}, headers=auth)
+
+
+def test_hold_boshqa_ovoz_birinchi_sorovda_sintez_qilinadi_keyin_keshdan(
+        client, auth, ovozlar, tmp_path):
+    import app.api.v1.tts as module
+    from test_tts import PCM
+
+    kalit, matn = all_clips()[0]
+    birinchi = _boshqa_ovoz(client, auth, kalit)
+    assert birinchi.status_code == 200, birinchi.text
+    assert birinchi.headers["content-type"] == "audio/wav"
+    assert "immutable" in birinchi.headers["cache-control"]
+    with wave.open(io.BytesIO(birinchi.content)) as w:
+        assert w.readframes(w.getnframes()) == PCM * 3
+    sintez = _sintezlar(ovozlar)
+    assert len(sintez) == 1
+    assert sintez[0]["voice_profile"] == "uz_male_news"
+    # Matn kalitdan olinadi (URL dan emas) - va `for_speech` dan o'tadi.
+    assert sintez[0]["text"].rstrip(".") in matn
+    assert (tmp_path / "hold" / "uz_male_news" / f"{kalit}.wav").read_bytes() == birinchi.content
+
+    ikkinchi = _boshqa_ovoz(client, auth, kalit)
+    assert ikkinchi.status_code == 200 and ikkinchi.content == birinchi.content
+    assert len(_sintezlar(ovozlar)) == 1, "keshdagi ovoz qayta sintez qilindi"
+
+    # Xizmat qayta ishga tushdi (xotira bo'sh) - ovoz DISKDAN, sintezsiz.
+    module._voice_caches.clear()
+    uchinchi = _boshqa_ovoz(client, auth, kalit)
+    assert uchinchi.status_code == 200 and uchinchi.content == birinchi.content
+    assert len(_sintezlar(ovozlar)) == 1
+
+
+def test_hold_default_ovoz_ozgarmagan(client, auth, ovozlar, tmp_path, monkeypatch):
+    """`?voice=<asosiy>` - AYNAN avvalgi yo'l: tayyor bo'lmasa 404, sintez YO'Q
+    (asosiy ovozni ishga tushishdagi qizdirish yasaydi)."""
+    import app.api.v1.chat as chat_module
+
+    kalit = all_clips()[0][0]
+    monkeypatch.setattr(chat_module, "_hold_voices", HoldVoices(tmp_path / "asosiy-bosh"))
+    for params in ({}, {"voice": "uz_female_calm"}):
+        r = client.get(f"/api/v1/tts/hold/{kalit}.wav", params=params, headers=auth)
+        assert r.status_code == 404, params
+    assert not ovozlar.calls, "asosiy ovoz so'rov ichida sintez qilindi"
+
+    tayyor = _hamma_ovoz_tayyor(chat_module, tmp_path)
+    javoblar = [client.get(f"/api/v1/tts/hold/{kalit}.wav", params=params, headers=auth)
+                for params in ({}, {"voice": "uz_female_calm"})]
+    assert [r.status_code for r in javoblar] == [200, 200]
+    assert javoblar[0].content == javoblar[1].content == tayyor.get(kalit)
+    assert javoblar[0].headers["cache-control"] == javoblar[1].headers["cache-control"]
+    assert not ovozlar.calls
+
+
+def test_hold_nomalum_kalit_404(client, auth, ovozlar):
+    """Noma'lum kalit sintezga BORMAYDI: aks holda URL orqali TTS ga
+    ixtiyoriy so'rov yuborib bo'lardi."""
+    r = _boshqa_ovoz(client, auth, "umumiy-oddiy-ilk-0-00000000")
+    assert r.status_code == 404
+    assert not ovozlar.calls
+
+
+def test_hold_tts_yiqilsa_404(client, auth, ovozlar, tmp_path):
+    """Kutish ovozi - xushmuomalalik: TTS yiqilsa klient uni jimgina o'tkazib
+    yuboradi. 502 emas, 404 - xuddi "hali tayyor emas" kabi."""
+    ovozlar.stream_status = 500
+    kalit = all_clips()[0][0]
+    r = _boshqa_ovoz(client, auth, kalit)
+    assert r.status_code == 404
+    assert r.json()["message"] == "Bu ovoz hali tayyor emas"
+    assert not (tmp_path / "hold" / "uz_male_news" / f"{kalit}.wav").exists()
+    # Keyingi so'rov qayta urinadi (xato keshlanmaydi).
+    ovozlar.stream_status = None
+    assert _boshqa_ovoz(client, auth, kalit).status_code == 200
+
+
+def test_hold_sirsiz_404_sintezsiz(client, auth, ovozlar, monkeypatch):
+    import app.api.v1.tts as module
+    from app.services.tts import TtsClient
+
+    monkeypatch.setattr(module, "_client", TtsClient("http://tts", "frontend", ""))
+    r = _boshqa_ovoz(client, auth, all_clips()[0][0])
+    assert r.status_code == 404
+    assert not ovozlar.calls
+
+
+@pytest.mark.parametrize("ovoz", ["bosqa", "uz_male_news/../x", "UZ_MALE_NEWS"])
+def test_hold_notogri_ovoz_422(client, auth, ovozlar, ovoz):
+    """Ovoz nomi papka yo'liga tushadi - faqat ikki ma'lum qiymat."""
+    r = _boshqa_ovoz(client, auth, all_clips()[0][0], ovoz=ovoz)
+    assert r.status_code == 422
+    assert not ovozlar.calls
+
+
+def test_hold_boshqa_ovoz_tokensiz_401(client, ovozlar):
+    r = client.get(f"/api/v1/tts/hold/{all_clips()[0][0]}.wav", params={"voice": "uz_male_news"})
+    assert r.status_code == 401
+    assert not ovozlar.calls
+
+
+def test_hold_boshqa_ovoz_eskisini_tozalaydi(client, auth, ovozlar, tmp_path):
+    """Gap matni o'zgarsa kaliti o'zgaradi - eski fayl hech qachon
+    ishlatilmaydi va qolib ketmasligi kerak (`warm` dagi kabi)."""
+    papka = tmp_path / "hold" / "uz_male_news"
+    papka.mkdir(parents=True)
+    (papka / "eski-gap-0-deadbeef.wav").write_bytes(b"RIFF")
+    assert _boshqa_ovoz(client, auth, all_clips()[0][0]).status_code == 200
+    assert not (papka / "eski-gap-0-deadbeef.wav").exists()
+
+
+def test_hold_bir_vaqtdagi_sorovlar_bitta_sintez(ovozlar):
+    """Ikki odam bir vaqtda so'rasa ham bitta sintez: umumiy ikki TTS sloti
+    bir xil ish bilan band bo'lmasin."""
+    import threading
+
+    import app.api.v1.tts as module
+
+    real = ovozlar.open
+
+    def sekin(request, timeout=None):
+        if request.full_url.endswith("/tts/stream"):
+            time.sleep(0.2)
+        return real(request, timeout)
+
+    ovozlar.open = sekin                         # type: ignore[method-assign]
+    kalit = all_clips()[0][0]
+    natijalar: list[bytes | None] = []
+    iplar = [threading.Thread(target=lambda: natijalar.append(
+        module._hold_in_voice(kalit, "uz_male_news"))) for _ in range(3)]
+    for ip in iplar:
+        ip.start()
+    for ip in iplar:
+        ip.join(5)
+    assert len(natijalar) == 3 and all(natijalar)
+    assert len(set(natijalar)) == 1
+    assert len(_sintezlar(ovozlar)) == 1
+
+
+def test_hold_boshqa_ovoz_hisobda_hold(client, auth, ovozlar, _isolated_analytics):
+    """Admin tahlilida talab bo'yicha yasalgan kutish ovozi javob
+    bo'laklaridan ajralib ko'rinsin."""
+    from app.services import analytics
+
+    assert _boshqa_ovoz(client, auth, all_clips()[0][0]).status_code == 200
+    assert analytics.flush(5.0)
+    ops = [r["op"] for r in _isolated_analytics.rows(
+        "SELECT op FROM api_calls WHERE service='tts' AND op != 'token'")]
+    assert ops == ["hold"]
+
+
+def test_put_atomar_va_xotirada(tmp_path):
+    voices = HoldVoices(tmp_path / "yangi" / "papka")
+    assert voices.put("a-b-c-0-12345678", b"RIFFdata") is True
+    assert (voices.cache_dir / "a-b-c-0-12345678.wav").read_bytes() == b"RIFFdata"
+    assert not list(voices.cache_dir.glob("*.part")), ".part qolib ketdi"
+    assert voices.get("a-b-c-0-12345678") == b"RIFFdata"
+
+
+def test_put_disk_xatosida_false_va_xotiraga_yozmaydi(tmp_path):
+    """`warm` dagi avvalgi tartib: diskka tushmagan ovoz `ready` emas."""
+    fayl = tmp_path / "papka-emas"
+    fayl.write_bytes(b"x")
+    voices = HoldVoices(fayl)
+    assert voices.put("a-b-c-0-12345678", b"RIFF") is False
+    assert not voices.ready("a-b-c-0-12345678")
+
+
+def test_hold_boshqa_ovoz_eskirgan_fayl_berilmaydi(client, auth, ovozlar, tmp_path):
+    """Diskda qolgan, lekin endi ro'yxatda yo'q kalit - eskirgan gapning ovozi."""
+    papka = tmp_path / "hold" / "uz_male_news"
+    papka.mkdir(parents=True)
+    (papka / "umumiy-oddiy-ilk-0-00000000.wav").write_bytes(b"RIFF")
+    assert _boshqa_ovoz(client, auth, "umumiy-oddiy-ilk-0-00000000").status_code == 404
+    assert not ovozlar.calls

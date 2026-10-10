@@ -6,13 +6,26 @@
  * Qo'llanadi: sarlavha, paragraf, qalin/kursiv/chizilgan, ichki kod, kod bloki
  * (gorizontal aylanadi), ro'yxatlar (ichma-ich), iqtibos, chiziq, JADVAL (gorizontal
  * aylanadi - HR javoblarida jadval ko'p) va havola (tashqi brauzerda).
- * `[1]`, `[T2]` - manba belgilari: kichik "tabletka", bosilsa manba ochiladi.
+ *
+ * Texnik belgilar (2026-10-10, egasining skrinshoti - CRM vazifalari javobi; Mini App
+ * `answerMarks.ts` bilan bir xil qoida):
+ *  - `[T2]` (jonli HRM/CRM so'rovi) matnda YASHIRILADI: har band oxiridagi kulrang "T2"
+ *    qutisi javobni o'qishni qiyinlashtirardi; qaysi so'rov ekani "Manbalar" tugmasida qoladi;
+ *  - `[1]` (hujjat) - kichik yuqori indeks ("qoldi¹"), bosilsa manbalar ochiladi;
+ *  - vazifa kaliti (`DVSIB-245`) - kichik va xira: vazifa nomi asosiy bo'lib qolsin.
+ * Kod ichiga (`code`, kod bloki) tegilmaydi.
+ *
+ * Izohlar (2026-10-10, yordamchi 3.3; web `components/chat/answerNotes.ts` bilan bir qoida):
+ *  - "Eslatma: ..." xatboshisi - jim izoh bloki (kichik, xira, chapda chiziq), FAQAT oldida
+ *    boshqa mazmun bo'lsa: javob "Eslatma:" bilan BOSHLANSA, u javobning o'zi - oddiy matn;
+ *  - oxirgi "Manba: DWH, Biznes 24/7" qatori - kichik xira izoh ("N manba" tugmasini takrorlaydi).
  */
 import MarkdownIt from 'markdown-it';
 import type Token from 'markdown-it/lib/token.mjs';
 import { memo, useMemo, type ReactNode } from 'react';
 import { Linking, ScrollView, StyleSheet, Text, View, type TextStyle } from 'react-native';
 
+import { useT } from '@/features/settings/settingsStore';
 import { useTheme, type Theme } from '@/ui/theme';
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false, typographer: false });
@@ -41,7 +54,166 @@ function treeOf(tokens: Token[]): Node[] {
   return root;
 }
 
-const CITE = /\[(T?\d{1,3})\]/g;
+/** Platforma so'rovi belgilari: `[T1]`, `[T1, T2]`, `[T1][T2]` - oldidagi bo'shliq bilan
+ *  ("kech qoldi [T2]." -> "kech qoldi."). */
+const TOOL_MARKS = /[ \u00a0]*\[T\d{1,3}(?:\s*[,;]\s*T?\d{1,3})*\]/g;
+/** Hujjat iqtibosi `[1]` - oldidagi bo'shliq ham olinadi: indeks so'zga yopishsin va
+ *  qator ko'chganda yolg'iz qolib ketmasin. */
+const CITE = /[ \u00a0]*\[(\d{1,3})\]/g;
+/**
+ * Vazifa kaliti: KATTA harfli loyiha kodi (2-10 belgi) + chiziqcha + raqam (`DVSIB-245`,
+ * `HR2-17`). So'z ichida (`xDVSIB-1`, `DVSIB-245a`, `A-B-12`, `oʻDVSIB-3`) - kalit emas. Lotin,
+ * o'zbekcha `ʻ`/`ʼ` va kirill aniq oraliq bilan: `\p{L}` va lookbehind'ga tayanmaymiz (Hermes
+ * versiyasiga bog'liq).
+ */
+const TASK_KEY = /(^|[^A-Za-z0-9_\u00C0-\u024F\u02B0-\u02FF\u0400-\u04FF-])([A-Z][A-Z0-9]{1,9}-\d{1,6})(?![A-Za-z0-9_\u00C0-\u024F\u02B0-\u02FF\u0400-\u04FF]|-\d)/g;
+/**
+ * Kalitga o'xshagan, lekin vazifa kaliti BO'LMAGAN keng tarqalgan yozuvlar (`COVID-19`, `UTF-8`,
+ * `ISO-9001`, `SHA-256`, `Q3-2026`, `H1-2026`): ular xira bo'lsa javobdagi oddiy ma'lumot
+ * "texnik izoh"dek ko'rinardi. Web `answerMarks.ts` bilan bir xil ro'yxat.
+ */
+const NOT_TASK_PREFIX = /^(?:COVID|SARS|UTF|ISO|IEC|SHA|MD|RFC|TLS|SSL|HTTP|MRZ|GMT|UTC|CVE|EN|GOST|[QH][1-4])$/;
+
+export function isTaskKey(key: string): boolean {
+  const m = /^([A-Z][A-Z0-9]{1,9})-\d{1,6}$/.exec(key);
+  return !!m && !NOT_TASK_PREFIX.test(m[1]);
+}
+const SUPERSCRIPT = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+
+/** `12` -> `¹²` (Unicode yuqori indeks: Android'da ichma-ich <Text> ni yuqoriga ko'tarib bo'lmaydi). */
+export function superscript(n: string): string {
+  return n.replace(/\d/g, (d) => SUPERSCRIPT[Number(d)]);
+}
+
+/*
+ * IZOH VA MANBA QATORLARI. Javob tili interfeys tilidan farq qilishi mumkin - HAMMA tildagi
+ * so'z taniladi. `u` bayrog'i va lookbehind yo'q: Hermes versiyasiga tayanmaymiz (kirill
+ * harflari `i` bilan `u` siz ham katta-kichik farqisiz taniladi).
+ */
+/** Qator boshidagi eslatma: ixtiyoriy qalin/kursiv (`**Eslatma:**`), ixtiyoriy ℹ️, so'z va ikki nuqta. */
+const NOTE_LINE = /^[ \t]{0,3}(?:[*_]{1,2})?(?:\u2139\uFE0F?[ \t]*)?(?:eslatma|эслатма|примечание|note)[ \t]*(?:[*_]{1,2})?[ \t]*:/i;
+/** Manba qatori ("Manba:", "Manbalar:", "Манба:", "Источник(и):", "Source(s):") - chekinishsiz. */
+const SOURCE_LINE = /^(?:[*_]{1,2})?(?:manba(?:lar)?|манба(?:лар)?|источники?|sources?)[ \t]*(?:[*_]{1,2})?[ \t]*:/i;
+/** Chizilgan xatboshining matni (belgilarsiz). */
+const NOTE_TEXT = /^\s*(?:\u2139\uFE0F?\s*)?(?:eslatma|эслатма|примечание|note)\s*:/i;
+const SOURCE_TEXT = /^\s*(?:manba(?:lar)?|манба(?:лар)?|источники?|sources?)\s*:/i;
+const FENCE = /^[ \t]{0,3}(`{3,}|~{3,})/;
+const NOTE_WORDS = /(eslatma|эслатма|примечание|note|manba|манба|источник|source)/i;
+
+/**
+ * Eslatma yoki manba qatori oldingi qatorga yopishgan bo'lsa (bo'sh qatorsiz) - orasiga bo'sh
+ * qator: aks holda Markdown uni oldingi xatboshining davomi qilib yuborardi. Kod bloki ichida emas.
+ */
+export function separateNotes(markdown: string): string {
+  if (!markdown || !NOTE_WORDS.test(markdown)) return markdown;
+  const out: string[] = [];
+  let fence: string | null = null;
+  for (const line of markdown.split('\n')) {
+    const f = FENCE.exec(line);
+    if (f) {
+      if (!fence) fence = f[1][0];
+      else if (f[1][0] === fence) fence = null;
+    } else if (!fence && (NOTE_LINE.test(line) || SOURCE_LINE.test(line)) && out.length && out[out.length - 1].trim()) {
+      out.push('');
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+/** Blok matni (Markdown belgilarisiz) - DOM `textContent` o'rnida. Rasm - "mazmun bor" belgisi. */
+function textOf(node: Node): string {
+  const { token } = node;
+  if (token.type === 'fence' || token.type === 'code_block') return token.content;
+  if (token.type === 'inline') {
+    return (token.children ?? [])
+      .map((c) => (c.type === 'text' || c.type === 'code_inline' ? c.content : c.type === 'image' ? '\uFFFC' : c.type.endsWith('break') ? ' ' : ''))
+      .join('');
+  }
+  return node.children.map(textOf).join('');
+}
+
+function hasContent(node: Node): boolean {
+  if (node.token.type === 'hr') return false;
+  if (node.token.type === 'table_open') return true;
+  return !!textOf(node).trim();
+}
+
+const isNoteBlock = (node: Node) => node.token.type === 'paragraph_open' && NOTE_TEXT.test(textOf(node));
+
+export type NoteRole = 'note' | 'source' | null;
+
+/**
+ * Yuqori darajadagi bloklar roli (web `markNotes` bilan bir xil): faqat yuqori darajadagi
+ * xatboshi (ro'yxat, jadval, iqtibos ichidagisi emas - u boshqa narsaning bir qismi).
+ *  - eslatma - oldida mazmun bo'lsa `note`; javob u bilan BOSHLANSA - oddiy (va u mazmun);
+ *  - manba - oldida mazmun bo'lsa va undan keyin faqat bo'sh blok yoki eslatma kelsa `source`.
+ */
+function rolesOf(tree: Node[]): NoteRole[] {
+  const roles: NoteRole[] = tree.map(() => null);
+  let content = false;
+  tree.forEach((node, i) => {
+    const isP = node.token.type === 'paragraph_open';
+    const text = isP ? textOf(node) : '';
+    if (isP && NOTE_TEXT.test(text)) {
+      if (content) roles[i] = 'note';
+      else content = true;
+      return;
+    }
+    if (isP && content && SOURCE_TEXT.test(text) && tree.slice(i + 1).every((b) => !hasContent(b) || isNoteBlock(b))) {
+      roles[i] = 'source';
+      return;
+    }
+    if (hasContent(node)) content = true;
+  });
+  return roles;
+}
+
+/** Testlar uchun: Markdown -> yuqori darajadagi bloklar matni va roli. */
+export function noteRoles(markdown: string): { text: string; role: NoteRole }[] {
+  const tree = treeOf(md.parse(separateNotes(markdown), {}));
+  const roles = rolesOf(tree);
+  return tree.map((node, i) => ({ text: textOf(node).trim(), role: roles[i] }));
+}
+
+export function stripToolMarks(text: string): string {
+  return text.replace(TOOL_MARKS, '');
+}
+
+export type AnswerPiece = { kind: 'text'; text: string } | { kind: 'cite'; n: string } | { kind: 'key'; text: string };
+
+/**
+ * Matn bo'lagi -> oddiy matn, hujjat iqtiboslari va vazifa kalitlari; `[Tn]` tashlab yuboriladi.
+ * `cites: false` - `[1]` oddiy matn bo'lib qoladi (havola matni ichida).
+ */
+export function answerPieces(text: string, { cites = true }: { cites?: boolean } = {}): AnswerPiece[] {
+  const out: AnswerPiece[] = [];
+  const pushText = (chunk: string) => {
+    let last = 0;
+    for (const m of chunk.matchAll(TASK_KEY)) {
+      if (!isTaskKey(m[2])) continue;
+      const start = (m.index ?? 0) + m[1].length;
+      if (start > last) out.push({ kind: 'text', text: chunk.slice(last, start) });
+      out.push({ kind: 'key', text: m[2] });
+      last = start + m[2].length;
+    }
+    if (last < chunk.length) out.push({ kind: 'text', text: chunk.slice(last) });
+  };
+  const clean = stripToolMarks(text);
+  if (!cites) {
+    pushText(clean);
+    return out;
+  }
+  let last = 0;
+  for (const m of clean.matchAll(CITE)) {
+    const at = m.index ?? 0;
+    if (at > last) pushText(clean.slice(last, at));
+    out.push({ kind: 'cite', n: m[1] });
+    last = at + m[0].length;
+  }
+  if (last < clean.length) pushText(clean.slice(last));
+  return out;
+}
 
 export interface AnswerMarkdownProps {
   text: string;
@@ -53,8 +225,10 @@ export interface AnswerMarkdownProps {
 
 function AnswerMarkdownImpl({ text, onCite, streaming }: AnswerMarkdownProps) {
   const th = useTheme();
+  const t = useT();
   const s = useMemo(() => makeStyles(th), [th]);
-  const tree = useMemo(() => treeOf(md.parse(text, {})), [text]);
+  const tree = useMemo(() => treeOf(md.parse(separateNotes(text), {})), [text]);
+  const roles = useMemo(() => rolesOf(tree), [tree]);
 
   /** Inline tokenlar -> ichma-ich <Text>. */
   function inline(tokens: Token[], key: string): ReactNode[] {
@@ -87,8 +261,10 @@ function AnswerMarkdownImpl({ text, onCite, streaming }: AnswerMarkdownProps) {
           style.pop();
           break;
         case 'code_inline':
+          // `DVSIB-245` ni yordamchi ko'pincha kod sifatida yozadi - kod qutisi kalitni
+          // yanada bo'rttirardi; yolg'iz kalit oddiy xira kalit bo'lib chiqadi.
           out.push(
-            <Text key={k} style={[...style, s.codeInline]}>
+            <Text key={k} style={[...style, isTaskKey(tk.content.trim()) ? s.taskKey : s.codeInline]}>
               {tk.content}
             </Text>,
           );
@@ -104,28 +280,41 @@ function AnswerMarkdownImpl({ text, onCite, streaming }: AnswerMarkdownProps) {
           break;
         case 'text': {
           const url = href;
-          const parts = url ? [tk.content] : tk.content.split(CITE);
-          parts.forEach((part, j) => {
-            if (!part) return;
-            // split() bilan ajratilgan guruhlar toq indekslarda - manba belgilari.
-            if (!url && j % 2 === 1) {
+          const open = url ? () => void Linking.openURL(url).catch(() => {}) : undefined;
+          // Havola ichida `[1]` iqtibos emas (havola matnining o'zi), lekin kalit baribir xira.
+          const pieces = answerPieces(tk.content, { cites: !url });
+          let prevCite = false;
+          pieces.forEach((piece, j) => {
+            const pk = `${k}-${j}`;
+            if (piece.kind === 'cite') {
               out.push(
                 <Text
-                  key={`${k}-${j}`}
-                  style={s.cite}
-                  onPress={onCite ? () => onCite(part) : undefined}
-                  accessibilityRole={onCite ? 'button' : undefined}>
-                  {` ${part} `}
+                  key={pk}
+                  style={[s.cite, onCite ? s.citeLink : null]}
+                  onPress={onCite ? () => onCite(piece.n) : undefined}
+                  accessibilityRole={onCite ? 'button' : undefined}
+                  accessibilityLabel={t('chat.citeN', { n: piece.n })}>
+                  {/* Ketma-ket iqtiboslar "¹²" (o'n ikki) bo'lib qolmasin - vergul bilan, web
+                      chat va Mini App'dagi kabi ("¹,²"). */}
+                  {`${prevCite ? ',' : ''}${superscript(piece.n)}`}
+                </Text>,
+              );
+              prevCite = true;
+              return;
+            }
+            prevCite = false;
+            if (!piece.text) return;
+            if (piece.kind === 'key') {
+              out.push(
+                <Text key={pk} style={[...style, s.taskKey]} onPress={open}>
+                  {piece.text}
                 </Text>,
               );
               return;
             }
             out.push(
-              <Text
-                key={`${k}-${j}`}
-                style={style.length ? [...style] : undefined}
-                onPress={url ? () => void Linking.openURL(url).catch(() => {}) : undefined}>
-                {part}
+              <Text key={pk} style={style.length ? [...style] : undefined} onPress={open}>
+                {piece.text}
               </Text>,
             );
           });
@@ -138,13 +327,29 @@ function AnswerMarkdownImpl({ text, onCite, streaming }: AnswerMarkdownProps) {
     return out;
   }
 
-  function block(nodes: Node[], key: string, tight = false, depth = 0): ReactNode[] {
+  /** `top` - yuqori daraja: faqat u yerda eslatma/manba roli bor (`rolesOf`). */
+  function block(nodes: Node[], key: string, tight = false, depth = 0, top = false): ReactNode[] {
     return nodes.map((node, i) => {
       const { token } = node;
       const k = `${key}.${i}`;
       switch (token.type) {
         case 'paragraph_open': {
           const content = node.children.flatMap((c) => (c.token.type === 'inline' ? inline(c.token.children ?? [], k) : []));
+          const role = top ? roles[i] : null;
+          if (role === 'note') {
+            return (
+              <View key={k} testID="answer-note" style={s.note}>
+                <Text style={s.noteText}>{content}</Text>
+              </View>
+            );
+          }
+          if (role === 'source') {
+            return (
+              <Text key={k} testID="answer-source" style={s.sourceLine}>
+                {content}
+              </Text>
+            );
+          }
           return (
             <Text key={k} style={[s.p, tight || token.hidden ? s.pTight : null]}>
               {content}
@@ -238,7 +443,7 @@ function AnswerMarkdownImpl({ text, onCite, streaming }: AnswerMarkdownProps) {
 
   return (
     <View>
-      {block(tree, 'm')}
+      {block(tree, 'm', false, 0, true)}
       {streaming ? <View style={s.caret} /> : null}
     </View>
   );
@@ -260,13 +465,11 @@ function makeStyles(th: Theme) {
       backgroundColor: th.surfaceAlt,
       color: th.text,
     },
-    cite: {
-      fontSize: 11,
-      lineHeight: 16,
-      fontWeight: '700',
-      color: th.textSoft,
-      backgroundColor: th.surfaceAlt,
-    },
+    // Hujjat iqtibosi: qutisiz yuqori indeks - matn asosiy, raqam faqat "manba bor" ishorasi.
+    cite: { fontWeight: '700', color: th.textMuted },
+    citeLink: { color: th.brand },
+    // Vazifa kaliti: kichik va xira, qalin matn ichida ham oddiy - vazifa NOMI ko'zga tashlansin.
+    taskKey: { fontSize: 13, fontWeight: '400', fontStyle: 'normal', color: th.textMuted },
     h: { color: th.text, fontWeight: '700', marginTop: 6, marginBottom: 8 },
     h1: { fontSize: 22, lineHeight: 29 },
     h2: { fontSize: 19, lineHeight: 26 },
@@ -292,5 +495,20 @@ function makeStyles(th: Theme) {
     thText: { fontWeight: '700' },
     right: { textAlign: 'right' },
     caret: { width: 8, height: 16, borderRadius: 2, backgroundColor: th.textMuted, marginTop: -4, opacity: 0.6 },
+    // "Eslatma:" - jim izoh: kichik, xira, chapda ingichka chiziq; javob bilan "bahslashmaydi".
+    note: {
+      marginTop: 6,
+      marginBottom: 10,
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderLeftWidth: 3,
+      borderLeftColor: th.borderStrong,
+      borderTopRightRadius: 8,
+      borderBottomRightRadius: 8,
+      backgroundColor: th.surfaceAlt,
+    },
+    noteText: { color: th.textSoft, fontSize: 14, lineHeight: 20 },
+    // "Manba: ..." - "N manba" tugmasini takrorlaydi: qutisiz kichik izoh.
+    sourceLine: { color: th.textMuted, fontSize: 13, lineHeight: 18, marginTop: 2, marginBottom: 6 },
   });
 }

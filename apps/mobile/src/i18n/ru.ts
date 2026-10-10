@@ -1,6 +1,8 @@
+import { callsPart } from './parts/calls';
 import { nav } from './parts/nav';
 import { recordingsPart } from './parts/recordings';
 import { settingsPart } from './parts/settings';
+import { sharePart } from './parts/share';
 import type { TKey } from './uz';
 
 export const ru: Record<TKey, string> = {
@@ -144,8 +146,8 @@ export const ru: Record<TKey, string> = {
   'detail.summaryNone': 'Итога пока нет',
   'detail.newSummary': '+ Новый итог',
   'detail.chooseTemplate': 'Выберите шаблон',
-  'detail.shareMd': 'Поделиться Markdown',
-  'detail.copyText': 'Скопировать как текст',
+  'detail.shareMd': 'Поделиться полным итогом',
+  'detail.copyText': 'Скопировать полный итог',
   'detail.audioExpired': 'Срок хранения аудио истёк - остался только текст',
   'detail.deleteConfirm': 'Встреча будет удалена полностью (аудио, текст, итоги). Продолжить?',
   'detail.renameTitle': 'Название',
@@ -227,6 +229,7 @@ export const ru: Record<TKey, string> = {
   'sum.fromMark': 'Ваша отметка',
   'sum.markUncovered': 'Отметка не отражена в итоге',
   'sum.qualityWarn': 'Некоторые пункты без подтверждения удалены ({n})',
+  'sum.warn.key_points_missing': 'Не удалось выделить ключевые моменты - попробуйте пересоздать итог.',
   'sum.meetingType': 'Тип: {type}',
   'sum.subject': 'Тема: {subject}',
   'sum.generatedBy': 'Подготовлено: {engine}',
@@ -436,6 +439,7 @@ export const ru: Record<TKey, string> = {
   'chat.sourcePage': "стр. {n}",
   'chat.sourceData': "Данные системы",
   'chat.sourceLaw': "Законодательство",
+  'chat.citeN': 'Источник {n}',
   'chat.openFailed': "Не удалось открыть файл",
   'chat.artifactReady': "Документ готов",
   'chat.artifactWord': "Word",
@@ -508,4 +512,6 @@ export const ru: Record<TKey, string> = {
   ...nav.ru,
   ...settingsPart.ru,
   ...recordingsPart.ru,
+  ...sharePart.ru,
+  ...callsPart.ru,
 };

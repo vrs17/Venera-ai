@@ -18,6 +18,10 @@ import { chat } from './i18n/chat'
 import { composer } from './i18n/composer'
 import { shell } from './i18n/shell'
 import { pro } from './i18n/pro'
+// `assistant.*` - Barno xotirasi, platforma kalitlari va nomlari (web + Mini App umumiy).
+import { assistant } from './i18n/assistant'
+// `tools.*` - jonli so'rov asboblarining nomlari (web + Mini App umumiy, `lookupTitle`).
+import { tools } from './i18n/tools'
 
 export type Locale = 'uz' | 'uz-Cyrl' | 'ru' | 'en'
 
@@ -1062,10 +1066,10 @@ export const i18n = createI18n({
   fallbackLocale: 'en',
   // Named interpolation uses {name} / {n} — identical to the original dicts.
   messages: {
-    uz: { ...uz, ui: ui.uz, report: report.uz, chat: chat.uz, composer: composer.uz, shell: shell.uz, pro: pro.uz },
-    'uz-Cyrl': { ...uzCyrl, ui: ui['uz-Cyrl'], report: report['uz-Cyrl'], chat: chat['uz-Cyrl'], composer: composer['uz-Cyrl'], shell: shell['uz-Cyrl'], pro: pro['uz-Cyrl'] },
-    ru: { ...ru, ui: ui.ru, report: report.ru, chat: chat.ru, composer: composer.ru, shell: shell.ru, pro: pro.ru },
-    en: { ...en, ui: ui.en, report: report.en, chat: chat.en, composer: composer.en, shell: shell.en, pro: pro.en },
+    uz: { ...uz, ui: ui.uz, report: report.uz, chat: chat.uz, composer: composer.uz, shell: shell.uz, pro: pro.uz, assistant: assistant.uz, tools: tools.uz },
+    'uz-Cyrl': { ...uzCyrl, ui: ui['uz-Cyrl'], report: report['uz-Cyrl'], chat: chat['uz-Cyrl'], composer: composer['uz-Cyrl'], shell: shell['uz-Cyrl'], pro: pro['uz-Cyrl'], assistant: assistant['uz-Cyrl'], tools: tools['uz-Cyrl'] },
+    ru: { ...ru, ui: ui.ru, report: report.ru, chat: chat.ru, composer: composer.ru, shell: shell.ru, pro: pro.ru, assistant: assistant.ru, tools: tools.ru },
+    en: { ...en, ui: ui.en, report: report.en, chat: chat.en, composer: composer.en, shell: shell.en, pro: pro.en, assistant: assistant.en, tools: tools.en },
   },
 })
 

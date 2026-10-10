@@ -54,6 +54,7 @@ const emit = defineEmits<{
   setTheme: [theme: ThemePreference]
   toggleWake: []
   openDesktop: []
+  openMemory: []
   logout: []
 }>()
 
@@ -207,6 +208,7 @@ async function expandToSearch() {
           @set-theme="emit('setTheme', $event)"
           @toggle-wake="emit('toggleWake')"
           @open-desktop="emit('openDesktop')"
+          @open-memory="emit('openMemory')"
           @logout="emit('logout')"
         />
       </div>

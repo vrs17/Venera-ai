@@ -2085,3 +2085,133 @@ summary content (no extra LLM call); the backend provides the files.
     apart from the better ASCII filename slug; sentiment and talk share are still exported by default
     (open product question: hide them, or make them an opt-in `analytics` part, if the CEO forwards
     files to clients).
+
+## Build notes (backend + web, "Qisqa xulosa" and chat readability, 2026-10-10)
+
+User decisions 2026-10-10: a short stakeholder summary ("Qisqa xulosa") written by gemma, first in
+every export and shareable on its own; chat answers without platform markers.
+
+1. **Prompt `meeting-3`** (`prompts.PROMPT_VERSION`; old cached map parts and "same summary" checks
+   no longer match). Shared `SYSTEM_RULES` (also in every map-part prompt, so kept short - on v3 every
+   character there is taken from the chunk's transcript room; `test_v3_bolak_hajmi_va_belgilar` guards
+   it): rule 11 - `keyPoints` are 3-6 takeaways, required even for a short call, one short sentence
+   each; rule 13 - short, plain, natural sentences, no bureaucratic or translated-sounding phrases;
+   rule 15 - `overview` is 1-2 short sentences. Extract-only `prompts.BRIEF_RULES` (rule 16, appended
+   by `extract_system`): written like a sharp human note-taker in natural word order, key points <= 20
+   words each and distinct, an unagreed proposal starts with `G'oya:` / `Идея:` / `Idea:`, overview
+   never more than 2 sentences, `purpose` one short phrase (Uzbek "... muhokama qilish"), null only
+   if it cannot be told. The single-pass TASK REMINDER (after the transcript) adds
+   `prompts.BRIEF_REMINDER` (keyPoints 3-6, purpose, 1-2 sentence overview, plain wording); map parts
+   get neither. `WRITER_SYSTEM` got the same overview, purpose and keyPoints rules. JSON shapes and
+   `shapes.py` are unchanged.
+2. **`short_call` template (`short_call-3`):** emphasis now asks for the purpose, a 1-2 sentence
+   overview and 3-6 keyPoints (topics, risks, nextSteps, templateSections stay empty);
+   `SHORT_CALL_KEEP` = `overview, keyPoints, actionItems, ...` and `_finalise` no longer empties
+   `keyPoints` for short calls (it still empties topics, risks, nextSteps, keywords, templateSections,
+   sentiment).
+3. **One repair for missing key points:** `Validator.key_points_missing` (separate from
+   `needs_repair`). Single pass: set when the validated `keyPoints` list is empty and the transcript
+   has >= `REAL_CONTENT_WORDS = 40` words (the summary gate is 30; a 30-40-word mic check may honestly
+   have none). Writer (long path): set when the writer returned no valid key point. `_ask_json` then
+   asks ONCE with `KEY_POINTS_MISSING` first in the error list. The repair is a fresh full extraction
+   (temperature 0), so only its `keyPoints` (and `purpose`/`overview` when the first reply left them
+   empty) are MERGED into the first reply, which is re-validated; action items and decisions always
+   come from the first reply. If the repair (or the merge) is broken, truncated, worse
+   (`needs_repair`) or still has no key points, the FIRST (valid) reply is kept with warning
+   `key_points_missing` - action items and decisions are never traded for key points, there is no map
+   fallback and, in a provider chain (`strict`), the summary does NOT move to the next provider for
+   this reason. A first reply that was invalid anyway follows the old path (warning added if the
+   repaired one still lacks key points).
+4. **Export part `brief`** (`export.PARTS = brief, summary, actions, mindmap, transcript`; `brief` is
+   a summary part -> 409 `not_ready` without a ready summary; the default "everything available"
+   now starts with it). Block layout (`export.brief_block`, kind `brief` in the neutral `Document`,
+   rendered by MD/TXT/DOCX/PDF):
+   `**Title**` / `9-oktabr 2026 (juma), 11:00 · 1 daq 4 s · 3 ishtirokchi` / `**Maqsad:** …` /
+   `**Qisqacha:** …` / `**Asosiy fikrlar:**` bullets / `**Qarorlar:**` (only when present) /
+   `**Vazifa(lar):**` `Task. Mas'ul: X. Muddat: Y.` (or `Mas'ul belgilanmagan.`, `Muddat
+   belgilanmagan.`, `Mas'ul: Jamoa.` for a team owner) / `**Ochiq savol(lar):**`. Singular label for
+   one item (Asosiy fikr/Vazifa/Qaror/Ochiq savol) - the same strings as the mobile app's
+   `recs.brief.*`, so the app's Copy/Share text and the exported file match word for word. This is
+   enforced by ONE shared golden fixture, `packages/fixtures/meeting-brief.json` (owner's example, a
+   Russian summary with every decision/task form, an English one with live tasks and a user title),
+   asserted by both `apps/api/tests/test_meetings_brief_golden.py` and
+   `apps/mobile/__tests__/briefGolden.test.ts`. Details:
+   - **Language:** the block (labels, owner/due phrases, `2-ishtirokchi` fallback, date, weekday,
+     duration, participant count with Russian plural forms) is in the SUMMARY's language, so a
+     shared block never mixes "Maqsad: Обсудить…"; document headings stay in the UI language. The
+     mobile card uses the same rule (only its chrome - "Qisqa xulosa", Copy, Share - is in the UI
+     language). Title: the user's title, otherwise THIS summary's title (`user_title`).
+   - **Content:** purpose and overview get a final period; overview is cut to its first 2 sentences
+     (`first_sentences`: splits only before a capital/digit/`[S1]`, so "15 mln. so'm" and "1.2" do not
+     split - old summaries had 3-5 sentences); key points capped at 6, falling back to topic key
+     points, then topic summaries/titles (old short calls had none); reversed decisions left out,
+     tentative/conditional and unconfirmed ones tagged in ONE parenthesis inside the sentence
+     (`Narx 15 mln so'm (taxminiy, aniqlashtirish kerak).`); unconfirmed (or verifier-rejected)
+     tasks end with ` (aniqlashtirish kerak)` - a status, not the imperative "tekshiring" aimed at the
+     reader; conditional tasks keep `(shart: …)`; tasks are the LIVE action items for the primary
+     summary (user edits, done ones prefixed `✓ `, dismissed hidden, `[S2]` tokens rendered), the
+     summary's own items otherwise.
+   - **`parts=brief` alone** (`Document.head = False`): the file IS the block - title (Title style in
+     DOCX/PDF, `**bold**` in MD) and the one-line meta instead of the document header ("Sana:",
+     "Davomiyligi:", ...), no MD/TXT footer (DOCX/PDF keep the page footer); people count omitted when
+     `speakersAvailable` is false. MD uses a hard break (`  `) between title and meta; TXT is the same
+     text without `**`.
+   - **With other parts:** heading `Qisqa xulosa` / `Краткий итог` / `Short summary` (UI language, a
+     PDF bookmark) right after the document header, without its own title/meta line (the header has
+     them). Summary sections the block repeats in full are skipped (`brief_covers`): "Qisqacha" when
+     the overview was not cut, "Asosiy fikrlar" when all key points (<= 6) fit, "Ochiq savollar"
+     always (the block lists them all); decisions stay (status, condition, rationale). The mobile
+     Summary tab hides the same sections under "Batafsil" and makes the brief items tappable instead.
+     `parts=summary` alone is unchanged. The document header's duration shows seconds under 10
+     minutes ("1 daqiqa 53 soniya", matching the block's "1 daq 53 s").
+5. **Web + Mini App answers** (`components/MarkdownMessage.vue`, shared by the web chat, the Mini App
+   `Exchange.vue` and admin snapshots; helpers in `components/chat/answerMarks.ts`): after
+   DOMPurify, outside `code`/`pre`: `[T1]`, `[T1, T2]`, `[T1][T2]` are REMOVED with the space before
+   them (the Sources button/row still lists the lookups); `[n]` with a known source becomes a small
+   superscript `<sup class="vmd-cite">` (no grey box, no space before it, consecutive ones as `¹,²`,
+   still clickable/hoverable; law links stay `<a>`); task keys (`[A-Z][A-Z0-9]{1,9}-\d{1,6}` not inside
+   a word, e.g. `DVSIB-245`) are wrapped in `.vmd-key` (0.82em, `--text-3`, weight 500), also inside
+   links and bold text. No lookbehind in the regexes (old iOS WebViews in Telegram reject them at
+   parse time). Mini App: `polish.ts` no longer relabels `T1` chips (gone) and only records
+   `data-marker`; the plain-text fallback shown before the markdown chunk loads also drops `[Tn]`;
+   tap targets for the superscripts via `::after`; `lookupBadges` removed (unused).
+6. **Tests:** `test_meetings_summary_quality.py` (+9: meeting-3 rules, reminder only in single pass,
+   one key-point repair, repair empty/broken/truncated keeps the first reply, strict chain not
+   failed, no repair under 40 words, writer repair), `test_meetings_summary.py` (short call keeps key
+   points), `test_meetings_export.py` (+8 and updated heading order/bookmarks: exact uz MD/TXT block
+   with live tasks, DOCX/PDF `parts=brief`, every format starts with the block, cut overview + 8 key
+   points keep their sections, ru/en labels, plural forms, team owner, legacy fallbacks, duration,
+   weekday, sentence split; 409 for `parts=brief` without a summary), `test_meetings_api.py`
+   (`promptVersion` `meeting-3`). The web has no unit-test runner; the DOM pass was checked with
+   jsdom from scratch and by `vue-tsc` + `vite build`.
+7. **Month spelling:** Uzbek months are now the official Latin `sentabr`/`oktabr` in
+   `dates.MONTHS` and the mobile `formatDate` (as `speech_text.MONTHS`, the web app and the owner's
+   sample); parsing (`_MONTH_FORMS`) accepts both spellings. New auto titles read "Yig'ilish
+   9-oktabr, 11:00"; stored titles are not rewritten.
+8. **Review fixes (2026-10-10):**
+   - Mobile mind map no longer draws ONE `<Svg>` (react-native-svg allocates a bitmap of the whole
+     view; a 10-topic map was ~120 MB at 100% and crashed Android). It is cut into 1024 px tiles
+     (<= 4 MB each, `canvasTiles`) and only tiles around the viewport are mounted (`visibleTiles`:
+     half a screen above/below, a quarter left/right) - memory depends on the screen, not the map.
+     The map opens collapsed (root + branches with counts), at the largest zoom <= 100% that fits the
+     screen width, with the root scrolled into view; a tapped branch stays in place when it opens;
+     zoom keeps the screen centre. Branches (topic/group) fold on tap, items seek (`pressAction`,
+     same in the outline); topic colours no longer reuse the decision/task/question colours; the
+     node meta line reads `2-ishtirokchi · Muddat: 10-oktabr · ▶ 00:09`.
+   - The map is a "Xulosa | Xarita" switch inside the Summary tab (4 main tabs again - a 5th tab
+     truncated "Vazifalar 2" on 360 dp phones).
+   - Export sheet: default parts are brief + full summary + tasks (mind map and transcript are
+     opt-in; the last choice is remembered while the app runs); it exports the summary being viewed
+     (`summaryId`); downloads use `createDownloadResumable` with a stall watchdog (90 s to the first
+     byte, 30 s between bytes -> "stopped, retry"), are cancelled when the sheet closes and show a
+     percentage for audio; 410/404/403 offer no retry. `cache/exports/` is wiped on logout and on
+     app start.
+   - Chat: consecutive citations are detected in JS (`vmd-cite--next`, comma via CSS) - the old CSS
+     `+` rule ignored the text between two citations; the Mini App glues "[1] [2]" into one span.
+     Mobile uses the same comma and gives each citation a screen-reader label. Common codes
+     (COVID-19, UTF-8, ISO-9001, SHA-256, Q3-2026, H1-2026) are not muted as task keys. The Mini App
+     jump-to-latest button moved to the right edge too.
+   - Open (product owner): the overview is now 1-2 sentences for EVERY meeting, also long ones (was
+     5-8 sentences over 30 minutes) - kept, as decided ("Qisqacha = overview, max 2 sentences");
+     long meetings keep their detail in topics and key points. The old
+     `.../summaries/{id}/export` endpoint has no brief.

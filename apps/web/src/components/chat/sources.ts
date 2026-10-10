@@ -1,14 +1,17 @@
 // Javob manbalari bo'yicha umumiy yordamchilar (matndagi chiplar va manbalar qatori).
 
 import type { AnswerSource } from '../../types'
+import { KNOWN_TOOLS } from '../../i18n/tools'
+import { isLookupSource, platformName, platformOfSource, KNOWLEDGE_PLATFORMS, LIVE_PLATFORMS } from './platforms'
 
 /** HUJJAT emas, JONLI SO'ROV bo'lgan turlar. `crm` 2026-09-14 da qo'shildi - undan
  *  oldin CRM manbasi hujjatlar ro'yxatiga tushib, mavjud bo'lmagan fayl sifatida
- *  "ochiladigan" bo'lib chiqardi. Yangi platforma - shu yerga bitta yozuv. */
-export const LOOKUP_KINDS = new Set(['hrm', 'crm'])
+ *  "ochiladigan" bo'lib chiqardi. 2026-10-10: DWH, Biznes 24/7, Superapp (jonli) va
+ *  qo'llanmalar (raqamsiz kelsa) - ro'yxat `platforms.ts` da, bu yerda faqat qayta eksport. */
+export const LOOKUP_KINDS: ReadonlySet<string> = LIVE_PLATFORMS
 
 export function isLookup(source: AnswerSource): boolean {
-  return LOOKUP_KINDS.has(String(source.kind))
+  return isLookupSource(source)
 }
 
 /** Matndagi marker (`T1`), qavslarsiz. Xizmat uni ba'zan `[T1]` deb yuboradi. */
@@ -17,17 +20,39 @@ export function lookupMarker(source: AnswerSource, index: number): string {
 }
 
 /**
- * So'rovning odamga tushunarli nomi: `hrm_today_late` -> "HRM · Today late".
- * Xom asbob nomi - dasturchi tili; to'liq nom admin izida ko'rinadi.
+ * FOYDALANUVCHIGA ko'rinadigan so'rov nomi - web chat va Mini App uchun BITTA qoida
+ * (2026-10-10, UX ko'rigi):
+ *   * asbob nomining tarjimasi bor (`tools.*`) - "CRM · Vazifa maʼlumoti";
+ *   * yo'q - faqat platforma nomi ("DWH", "Biznes 24/7"); nima topilgani ostida (`digest`).
+ * Xom asbob nomi ("Branch kpi", "Users") HECH QACHON - u dasturchi tili, admin izida qoladi
+ * (`lookupLabel`). Platforma ham noma'lum bo'lsa - `kind` katta harfda (avvalgidek).
  */
-export function lookupLabel(source: AnswerSource, fallback = ''): string {
-  const tool = source.tool?.trim()
-  if (!tool) return String(source.kind ?? fallback).toUpperCase() || fallback
-  const [prefix, ...rest] = tool.split('_')
-  const platform = LOOKUP_KINDS.has(prefix.toLowerCase()) ? prefix.toUpperCase() : ''
-  const words = (platform ? rest : [prefix, ...rest]).join(' ').trim()
+export function lookupTitle(source: AnswerSource, t: (key: string) => string): string {
+  const platform = platformOfSource(source)
+  const name = platform ? platformName(platform, t) : String(source.kind ?? '').trim().toUpperCase() || 'HRM'
+  const tool = source.tool?.trim().toLowerCase() ?? ''
+  if (KNOWN_TOOLS.has(tool)) return `${name} · ${t(`tools.${tool}`)}`
+  // Qo'llanmadan raqamsiz so'rov: maqola nomi odam tilida - u ko'rsatiladi (xom nom emas).
+  const title = platform && KNOWLEDGE_PLATFORMS.has(platform) ? source.title?.trim() : ''
+  return title ? `${name} · ${title}` : name
+}
+
+/**
+ * ADMIN izi uchun so'rov nomi (asbob nomi ko'rinadi): `hrm_today_late` -> "HRM · Today late",
+ * `biznes247_kb_search` -> "Biznes 24/7 qo'llanmalari · Search". Platforma `kind` dan
+ * (bo'lmasa asbob prefiksidan); `t` berilsa - tarjima qilingan nom (`assistant.platform.*`),
+ * berilmasa - id katta harfda. Xom asbob nomi - dasturchi tili; to'liq nom admin izida.
+ */
+export function lookupLabel(source: AnswerSource, fallback = '', t?: (key: string) => string): string {
+  const tool = source.tool?.trim() ?? ''
+  const platform = platformOfSource(source)
+  const name = platform ? (t ? platformName(platform, t) : platform.toUpperCase()) : ''
+  if (!tool) return name || String(source.kind ?? fallback).toUpperCase() || fallback
+  const lower = tool.toLowerCase()
+  const rest = platform && lower === platform ? '' : platform && lower.startsWith(`${platform}_`) ? tool.slice(platform.length + 1) : tool
+  const words = rest.split('_').join(' ').trim()
   const text = words ? words.charAt(0).toLocaleUpperCase() + words.slice(1) : ''
-  return [platform, text].filter(Boolean).join(' · ') || tool
+  return [name, text].filter(Boolean).join(' · ') || tool
 }
 
 /* ── Qonunchilik (`kind: "law"`, v2 dvigatel, 2026-10-02) ──────────────────

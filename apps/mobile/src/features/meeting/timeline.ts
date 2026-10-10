@@ -1,7 +1,7 @@
 /**
  * Yozuvlar ro'yxati = bitta vaqt chizig'i (spec 3.1): serverdagi kartalar va
  * telefonda turgan (hali yuklanmagan) yozuvlar BIRGA, eng yangisi tepada,
- * Toshkent kuni bo'yicha guruhlangan ("Bugun", "Kecha", "8-oktyabr").
+ * Toshkent kuni bo'yicha guruhlangan ("Bugun", "Kecha", "8-oktabr").
  *
  * NIMA UCHUN birlashtiriladi: eskisida lokal yozuvlar alohida blokda tepada
  * turardi - foydalanuvchi bitta yig'ilishni ikki joyda ko'rardi va qaysi biri

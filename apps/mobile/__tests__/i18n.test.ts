@@ -2,9 +2,11 @@ import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 import { DICTS, interpolate, translate, UI_LANGS } from '@/i18n';
+import { callsPart } from '@/i18n/parts/calls';
 import { nav } from '@/i18n/parts/nav';
 import { recordingsPart } from '@/i18n/parts/recordings';
 import { settingsPart } from '@/i18n/parts/settings';
+import { sharePart } from '@/i18n/parts/share';
 import { uz } from '@/i18n/uz';
 
 /** Bo'lim fayllari (parallel quruvchilar): nomi, lug'ati, kalit prefiksi. */
@@ -12,6 +14,8 @@ const PARTS = [
   ['nav', nav, 'nav.'],
   ['settings', settingsPart, 'set.'],
   ['recordings', recordingsPart, 'recs.'],
+  ['share', sharePart, 'share.'],
+  ['calls', callsPart, 'calls.'],
 ] as const;
 
 describe('i18n', () => {
@@ -41,11 +45,11 @@ describe('i18n', () => {
       }
     }
     // Prefikslar faqat bo'lim fayllariga tegishli: asosiy uz.ts ichida qo'lda yozilgan
-    // `nav.`/`set.`/`recs.` kaliti bo'lmasin (bo'lim fayli uni jim ustidan yozib yuborardi).
-    for (const k of Object.keys(uz)) if (/^(nav|set|recs)\./.test(k)) expect([k, seen.has(k)]).toEqual([k, true]);
+    // `nav.`/`set.`/`recs.`/`share.`/`calls.` kaliti bo'lmasin (bo'lim fayli uni jim ustidan yozib yuborardi).
+    for (const k of Object.keys(uz)) if (/^(nav|set|recs|share|calls)\./.test(k)) expect([k, seen.has(k)]).toEqual([k, true]);
     for (const lang of UI_LANGS) {
       const src = readFileSync(join(__dirname, `../src/i18n/${lang}.ts`), 'utf8');
-      expect([lang, src.match(/^\s*['"](nav|set|recs)\./m)]).toEqual([lang, null]);
+      expect([lang, src.match(/^\s*['"](nav|set|recs|share|calls)\./m)]).toEqual([lang, null]);
     }
   });
 

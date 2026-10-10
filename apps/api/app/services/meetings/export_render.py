@@ -175,19 +175,37 @@ def docx_bytes(doc: Document) -> bytes:
     def heading(text: str, level: int) -> None:
         add(d.add_heading("", level=level), text)
 
-    heading(doc.title, 0)
-    for name, value in doc.meta:
-        p = d.add_paragraph()
-        p.paragraph_format.space_after = Pt(0)
-        add(p, f"{name}: ", bold=True)
-        add(p, value)
-    for note in doc.notes:
-        lines_into(d.add_paragraph(), note, italic=True, color=warn)
+    if doc.head:
+        heading(doc.title, 0)
+        for name, value in doc.meta:
+            p = d.add_paragraph()
+            p.paragraph_format.space_after = Pt(0)
+            add(p, f"{name}: ", bold=True)
+            add(p, value)
+        for note in doc.notes:
+            lines_into(d.add_paragraph(), note, italic=True, color=warn)
 
     bullet_styles = ("List Bullet", "List Bullet 2", "List Bullet 3")
     for block in doc.blocks:
         kind = block["kind"]
-        if kind == "h2":
+        if kind == "brief":
+            # "Qisqa xulosa": yolg'iz bo'lsa sarlavha (Title) va bir qatorli meta; keyin "Yorliq: matn"
+            # paragraflari va ro'yxatlar - MD/TXT dagi bilan bir xil tartib.
+            if block.get("title"):
+                heading(block["title"], 0)
+            if block.get("meta"):
+                add(d.add_paragraph(), block["meta"], color=muted)
+            for item in block["items"]:
+                p = d.add_paragraph()
+                add(p, f"{item['label']}:", bold=True)
+                if "list" in item:
+                    p.paragraph_format.space_after = Pt(1)
+                    p.paragraph_format.keep_with_next = True
+                    for text in item["list"]:
+                        add(d.add_paragraph(style=bullet_styles[0]), text)
+                else:
+                    add(p, f" {item['text']}")
+        elif kind == "h2":
             heading(block["text"], 1)
         elif kind == "h3":
             heading(block["text"], 2)
@@ -389,6 +407,7 @@ def _build_pdf(doc: Document, *, tables: bool) -> bytes:
     s_h3 = style("h3", fontName=FONT_BOLD, fontSize=11, leading=14.5, spaceBefore=8, spaceAfter=1, keepWithNext=1)
     s_sub = style("sub", fontSize=8.5, leading=11, textColor=muted, spaceAfter=3, keepWithNext=1)
     s_body = style("body", spaceAfter=5)
+    s_label = style("label", spaceAfter=2, keepWithNext=1)
     s_muted = style("muted", fontSize=9, leading=12, textColor=muted, spaceAfter=4)
     s_quote = style("quote", leftIndent=12, textColor=colors.HexColor(_QUOTE), spaceAfter=5)
     s_cell = style("cell", fontSize=8.8, leading=11.5)
@@ -412,16 +431,33 @@ def _build_pdf(doc: Document, *, tables: bool) -> bytes:
         first, *rest = text.split("\n")
         return _x(first) + "".join(f"<br/><font color='{_WARN}'>{_x(line)}</font>" for line in rest)
 
-    story: list[Any] = [Paragraph(_x(doc.title), s_title)]
-    for name, value in doc.meta:
-        story.append(Paragraph(f"<b>{_x(name)}:</b> {_x(value)}", s_meta))
-    for note in doc.notes:
-        story.append(Paragraph(_x(note), s_note))
-    story.append(Spacer(1, 4))
+    story: list[Any] = []
+    if doc.head:
+        story.append(Paragraph(_x(doc.title), s_title))
+        for name, value in doc.meta:
+            story.append(Paragraph(f"<b>{_x(name)}:</b> {_x(value)}", s_meta))
+        for note in doc.notes:
+            story.append(Paragraph(_x(note), s_note))
+        story.append(Spacer(1, 4))
 
     for block in doc.blocks:
         kind = block["kind"]
-        if kind == "h2":
+        if kind == "brief":
+            if block.get("title"):
+                story.append(Paragraph(_x(block["title"]), s_title))
+            if block.get("meta"):
+                story.append(Paragraph(_x(block["meta"]), s_meta))
+                story.append(Spacer(1, 6))
+            for item in block["items"]:
+                if "list" in item:
+                    # Yorliq o'z ro'yxatidan sahifa oxirida ajralib qolmasin.
+                    story.append(Paragraph(f"<b>{_x(item['label'])}:</b>", s_label))
+                    for text in item["list"]:
+                        story.append(Paragraph(_x(text), bullets[0], bulletText=marks[0]))
+                    story.append(Spacer(1, 3))
+                else:
+                    story.append(Paragraph(f"<b>{_x(item['label'])}:</b> {_x(item['text'])}", s_body))
+        elif kind == "h2":
             story += [Paragraph(_x(block["text"]), s_h2), rule()]
         elif kind == "h3":
             story.append(Paragraph(_x(block["text"]), s_h3))

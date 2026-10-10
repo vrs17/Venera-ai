@@ -105,8 +105,19 @@ ARTIFACT_KINDS = ("preview", "docx", "pdf")
 _ARTIFACT_URL = re.compile(r"/api/hr/artifacts/(?P<token>[\w.~-]{1,256})/(?P<kind>\w+)")
 
 #: Yo'lga qo'yiladigan kalit uchun ruxsat etilgan belgilar. Yo'l ajratgichi
-#: va nuqtali ketma-ketlik yo'q, ya'ni papkadan chiqib bo'lmaydi.
-_SAFE_KEY = re.compile(r"[\w.~:-]{1,128}")
+#: yo'q, va FAQAT nuqtadan iborat kalit (`.`, `..`) ham rad etiladi: `quote()`
+#: nuqtani kodlamaydi, oraliq proksi (nginx `proxy_pass` URI bilan, shlyuz)
+#: esa `/api/chats/..` ni `/api/` ga "normallashtirib", boshqa yo'lga olib
+#: borardi. `\w` - Unicode (eski hujjat kalitlari uchun shunday qoldirilgan).
+_SAFE_KEY = re.compile(r"(?!\.+\Z)[\w.~:-]{1,128}")
+#: Xotira bandi kaliti (`m12`, `h3f2a...`): faqat ASCII, harf/raqam bilan
+#: boshlanadi. `_SAFE_KEY` dan TORROQ, chunki `DELETE /api/memory/{id}` ning
+#: qo'shnisi `DELETE /api/memory` - HAMMASINI unutish: `.` kabi kalit biror
+#: hopda `/api/memory/` ga aylanib, tasdiqsiz tozalashga yetib bormasin.
+_MEMORY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", re.ASCII)
+#: Platforma kaliti (`hrm`, `biznes247_kb`, ...): xizmat ro'yxatidagi kichik
+#: harfli nomlar. Yo'lga to'g'ridan-to'g'ri tushadi, shuning uchun torroq.
+_PLATFORM_ID = re.compile(r"[a-z0-9_]{1,40}")
 
 #: Bitta kadr uchun eng ko'p uzunlik. `sources` kadri eng kattasi, lekin
 #: undan ham kattasi kelishi xizmat nosozligini bildiradi va butun
@@ -656,6 +667,63 @@ class AssistantClient:
             raise AssistantError("suhbat kaliti yaroqsiz", status=400)
         return f"/api/chats/{urllib.parse.quote(chat_id, safe='')}"
 
+    # --- xotira va platforma kalitlari (3.3, 2026-10-10) ---------------------
+    #
+    # Ikkalasi ham suhbatlar kabi `(ilova, user_id)` bo'yicha: odam faqat O'Z
+    # xotirasini ko'radi va o'chiradi, boshqa odamning kaliti 404 beradi. Bizning
+    # ishimiz yana bitta - to'g'ri `user_id` (`chat.assistant_user_id`).
+    #
+    # Beshala yo'l ham `quiet=True`: xizmat xato tanasida odam haqidagi gapni
+    # qaytarsa ham u jurnalga va hisobga tushmaydi. Platforma javobida xotira
+    # yo'q, lekin xizmatdagi xato chat yoki xotira kontekstini xato matniga
+    # "aks ettirsa" ham - `/assistant/*` ning hammasiga BITTA qoida. Muvaffaqiyatli
+    # javob esa umuman yozilmaydi - faqat soni.
+    #
+    # "connectors" NOMI BIZDA BAND: `/api/v1/connectors` - odamning HRM/CRM
+    # LOGIN tokenlari. Xizmatning `/api/connectors` i esa boshqa narsa -
+    # "Barno shu manbadan foydalansinmi" kalitlari. Chalkashmasin deb bizda ular
+    # "platformalar" (`platforms.*`).
+
+    def list_memory(self, *, user_id: str, timeout: float | None = None) -> dict[str, Any]:
+        """Odamning uzoq muddatli xotirasi: o'zi "eslab qol" degani, so'rashidan
+        o'rganilgan odatlar va tasdiqlagan CRM vazifalaridan o'rganilgan tartib."""
+        return self._json("/api/memory", query={"user_id": _owner(user_id)}, what="xotira",
+                          op="memory.list", timeout=timeout, quiet=True)
+
+    def delete_memory_item(self, item_id: str, *, user_id: str,
+                           timeout: float | None = None) -> dict[str, Any]:
+        """Bitta xotira bandini butunlay o'chiradi. Boshqa odamniki yoki yo'q - 404."""
+        if not _MEMORY_ID.fullmatch(item_id or ""):
+            raise AssistantError("xotira kaliti yaroqsiz", status=400)
+        return self._json(f"/api/memory/{urllib.parse.quote(item_id, safe='')}", method="DELETE",
+                          query={"user_id": _owner(user_id)}, what="xotira bandi",
+                          op="memory.delete", timeout=timeout, quiet=True)
+
+    def clear_memory(self, *, user_id: str, timeout: float | None = None) -> dict[str, Any]:
+        """HAMMASINI unutadi (CRM dan o'rganilgan tartib ham). Suhbatlarga
+        tegmaydi. Tasdiqni chaqiruvchi so'raydi - bu yerda faqat bajarish."""
+        return self._json("/api/memory", method="DELETE", query={"user_id": _owner(user_id)},
+                          what="xotirani tozalash", op="memory.clear", timeout=timeout,
+                          quiet=True)
+
+    def list_platforms(self, *, user_id: str, timeout: float | None = None) -> dict[str, Any]:
+        """Barno o'qiydigan platformalar (HRM, CRM, DWH, Biznes 24/7, ...) va
+        odamning har biri uchun kaliti. Odam o'chirmaguncha hammasi yoqiq."""
+        return self._json("/api/connectors", query={"user_id": _owner(user_id)},
+                          what="platformalar", op="platforms.list", timeout=timeout,
+                          quiet=True)
+
+    def set_platform(self, platform_id: str, *, user_id: str, enabled: bool,
+                     timeout: float | None = None) -> dict[str, Any]:
+        """Odam uchun platformani yoqadi/o'chiradi. Server o'chirgan platforma
+        (`available: false`) odam nima desa ham ishlamaydi. Noma'lum id - 404."""
+        if not _PLATFORM_ID.fullmatch(platform_id or ""):
+            raise AssistantError("platforma kaliti yaroqsiz", status=400)
+        return self._json(f"/api/connectors/{platform_id}", method="PUT",
+                          query={"user_id": _owner(user_id)}, body={"enabled": bool(enabled)},
+                          what="platforma kaliti", op="platforms.set", timeout=timeout,
+                          quiet=True)
+
     def _json(
         self,
         path: str,
@@ -666,6 +734,8 @@ class AssistantClient:
         limit: int = _MAX_JSON_BYTES,
         what: str = "javob",
         op: str = "json",
+        timeout: float | None = None,
+        quiet: bool = False,
     ) -> dict[str, Any]:
         """JSON so'rov -> JSON obyekt. Yozuv amallari va suhbatlar tarixi
         uchun umumiy qatlam; oqim (`stream`) va fayllar (`_download`) bundan
@@ -674,6 +744,12 @@ class AssistantClient:
         `what` - xato matnida "qaysi javob" ekani (`amal`, `suhbat`); jurnal
         o'qiydigan odam uchun. `op` - hisobdagi amal nomi (`chats.list`,
         `action.confirm`): admin panel xizmat yukini amal bo'yicha ajratadi.
+
+        `timeout` - shu chaqiruv uchun (berilmasa `self.timeout`, oqimniki):
+        sozlamalar ekrani 120 s kutib turmasligi kerak. `quiet` - xato matniga
+        xizmat javobining TANASI qo'shilmaydi (faqat status): xotira yo'llarida
+        tana odam haqidagi gapni qaytarishi mumkin, xato matni esa jurnalga va
+        hisobga (`api_calls.error`) tushadi.
         """
         if not self.configured:
             raise AssistantError("HR Assistant sozlanmagan", status=501)
@@ -684,9 +760,10 @@ class AssistantClient:
         request_id = uuid.uuid4().hex
         call = begin("assistant", op)
         try:
-            with _mapped_errors(self.client_secret):
+            with _mapped_errors(self.client_secret, quiet=quiet):
                 response = self._open(path, raw_body, accept="application/json",
-                                      request_id=request_id, method=method)
+                                      request_id=request_id, method=method,
+                                      timeout=timeout, follow_redirects=False)
                 with contextlib.closing(response):
                     raw = response.read(limit + 1)
                     served = (response.headers.get("X-Request-Id") or "").strip()
@@ -775,9 +852,18 @@ class AssistantClient:
     # --- past qatlam ---------------------------------------------------------
 
     def _open(self, path: str, body: bytes | None, *, accept: str, request_id: str,
-              method: str | None = None):
+              method: str | None = None, timeout: float | None = None,
+              follow_redirects: bool = True):
         """So'rovni ochadi. `method` berilmasa tanasi borligiga qarab POST/GET:
-        suhbatlar tarixi PATCH, DELETE va tanasiz POST ham ishlatadi."""
+        suhbatlar tarixi PATCH, DELETE va tanasiz POST ham ishlatadi.
+        `timeout` berilmasa - `self.timeout` (oqim uchun tanlangan).
+
+        `follow_redirects=False` (JSON yo'llari): `urllib` 30x ga ergashganda
+        BIZNING sarlavhalarimizni - `X-Client-Secret` ni ham - yangi manzilga,
+        hatto boshqa hostga ko'chirib yuboradi. JSON yo'llariga yo'naltirish
+        hech qachon kerak emas, shuning uchun 30x - xato (`_mapped_errors` da
+        502), sir esa joyida qoladi. Fayl va oqim yo'llari hozircha avvalgidek
+        (hujjat PDF'i yo'naltirilishi mumkinligi tekshirilmagan)."""
         headers = {
             # Ilovaning kredensiallari. HUJJAT BO'YICHA: usiz 401.
             "X-Client-Id": self.client_id,
@@ -798,8 +884,19 @@ class AssistantClient:
         )
         # Muhit proksisi CHETLAB o'tiladi: manzil ichki, va tashqi proksi
         # orqali yuborish so'rovni sirtga chiqarib qo'yardi.
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        return opener.open(request, timeout=self.timeout)
+        handlers: list[urllib.request.BaseHandler] = [urllib.request.ProxyHandler({})]
+        if not follow_redirects:
+            handlers.append(_NoRedirect())
+        opener = urllib.request.build_opener(*handlers)
+        return opener.open(request, timeout=self.timeout if timeout is None else timeout)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """30x ga ergashmaydi: `redirect_request` `None` qaytarsa, `urllib` javobni
+    `HTTPError` (status 30x) qilib ko'taradi - sarlavhalar hech qayerga ketmaydi."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        return None
 
 
 # --- kadrlar --------------------------------------------------------------
@@ -1063,8 +1160,18 @@ def token_warning(token: str, *, key: str = "hrm_token") -> str | None:
             f"sessiyani oldin ham bekor qilishi mumkin) - vaqtincha, {shared}")
 
 
+def _owner(user_id: str) -> str:
+    """Xotira/platforma egasi. BO'SH `user_id` xizmatga HECH QACHON ketmaydi:
+    "hammasini unut" chaqiruvi egasiz ketsa nima bo'lishini xizmatning
+    tekshiruviga qoldirib bo'lmaydi."""
+    value = (user_id or "").strip()
+    if not value:
+        raise AssistantError("foydalanuvchi kimligi bo'sh", status=400)
+    return value
+
+
 @contextlib.contextmanager
-def _mapped_errors(secret: str):
+def _mapped_errors(secret: str, *, quiet: bool = False):
     """`urllib` xatolarini `AssistantError` ga o'giradi.
 
     401/403 ATAYLAB 502 ga tushadi: ular "bizning `X-Client-Secret`
@@ -1075,12 +1182,15 @@ def _mapped_errors(secret: str):
     Har xatoga ICHKI sabab (`reason`) qo'yiladi: foydalanuvchi uchun
     "ulanib bo'lmadi" ham, "xizmat 503 qaytardi" ham bir xil 503, admin esa
     qaysi biri ekanini bilishi kerak (`AssistantError` izohi).
+
+    `quiet` - javob tanasi matnga QO'SHILMAYDI (xotira yo'llari: tana odam
+    haqidagi gapni qaytarishi mumkin, matn esa jurnal va hisobga tushadi).
     """
     try:
         yield
     except urllib.error.HTTPError as exc:
         status = exc.code
-        detail = _redact(_detail(exc), secret)
+        detail = "-" if quiet else _redact(_detail(exc), secret)
         # 410 - taklifning muddati o'tgan (`/api/actions/...`, 2026-10 dan): uni
         # 502 ga ("xizmat javob bermadi") aylantirish odamni chalg'itardi.
         mapped = status if status in (400, 404, 410, 422, 503) else 502

@@ -33,8 +33,13 @@ export type ListRowRight =
 
 export interface ListRowProps {
   title: string;
-  /** BITTA qator, caption uslubi, `textMuted` (qiymat yoki holat - yo'riqnoma emas). */
+  /** Odatda BITTA qator, caption uslubi, `textMuted` (qiymat yoki holat - yo'riqnoma emas). */
   subtitle?: string | null;
+  /**
+   * Default 1. Kalit qatorlarida (masalan "Manbalar") subtitle - "bu nima" izohi: 360 dp telefonda
+   * bitta qatorga ~30 belgi sig'adi, izoh esa 40-57 - kesilsa odam nimani o'chirayotganini bilmaydi.
+   */
+  subtitleLines?: number;
   /** Subtitle rangini `tones[tone].fg` qiladi (masalan `warn` - "qayta kirish kerak"). */
   subtitleTone?: Tone;
   icon?: LucideIcon;
@@ -98,7 +103,7 @@ export function ListRow(p: ListRowProps) {
         </Text>
         {p.subtitle ? (
           <Text
-            numberOfLines={p.selectableSubtitle ? undefined : 1}
+            numberOfLines={p.selectableSubtitle ? undefined : (p.subtitleLines ?? 1)}
             selectable={p.selectableSubtitle}
             style={[typeScale.caption, { color: subColor }]}>
             {p.subtitle}

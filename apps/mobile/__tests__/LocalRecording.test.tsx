@@ -88,7 +88,7 @@ describe('Local recording (not uploaded yet)', () => {
     await open(row({ lastError: 'network' }));
     await waitFor(() => expect(screen.getByTestId('player-dock')).toBeTruthy());
     expect(screen.getByTestId('meeting-title')).toHaveTextContent('Yozuv, 14:05');
-    expect(screen.getByText('10-oktyabr, 14:05')).toBeTruthy();
+    expect(screen.getByText('10-oktabr, 14:05')).toBeTruthy();
 
     const src = (ExpoAudio.useAudioPlayer as jest.Mock).mock.calls.at(-1)[0];
     expect(src).toEqual({ uri: FILE });

@@ -17,10 +17,13 @@ deploy'ni murakkablashtiradi. Bizga kerak bo'lgan ish esa oddiy:
     o'ta olmaydi (indeks yo'q), m4a da `stts/stsz/stco` jadvallari bor - tap
     qilib kerakli soniyaga sakrash shunga tayanadi. `moov` boshida
     (faststart): pleyer butun faylni yuklamay o'ynay boshlaydi.
+  * m4a -> ADTS (`mp4_to_adts`): teskari yo'l - Router (ru/en) uzun m4a ni
+    olmaydi, ADTS esa kadr chegarasida bo'linadi (telefon qo'ng'irog'i yozuvlari).
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import struct
 
@@ -201,9 +204,58 @@ def _child(fh, start: int, end: int, name: str) -> tuple[int, int] | None:
     return None
 
 
+#: Bitta MP4 namunasining ENG KAM davomiyligi kodek bo'yicha - `stsz` dagi namunalar soni shunga
+#: ko'paytiriladi. AAC kadri doim 1024 namuna (chastotaga bo'linadi); AMR kadri 20 ms (3GPP
+#: namunasida bir nechta kadr bo'lishi mumkin - shuning uchun bu PASTKI chegara).
+#: NEGA kodek bo'yicha (2026-10-10, qo'ng'iroq importi): ilgari HAR trek uchun "1024 / chastota"
+#: olinardi - eski Samsung `.3gp` (AMR-NB, 8 kHz) yozuvi 6.4 barobar uzun o'lchanib,
+#: bekorga `too_long` yoki kvota tugashiga olib kelardi.
+_FRAME_SAMPLES = {"mp4a": 1024}
+_FRAME_SECONDS = {"samr": 0.02, "sawb": 0.02}
+
+
+def _mdhd_timescale(fh, mdia: tuple[int, int]) -> int | None:
+    """`mdhd` vaqt shkalasi. v0: yaratilgan(4) + o'zgartirilgan(4) + SHKALA(4); v1: 8 + 8 + SHKALA(4).
+    NEGA alohida: ilgari v0 da `o'zgartirilgan` vaqti o'qilardi - bizning remux u yerga 0 yozgani
+    uchun sezilmagan, telefon yozgan haqiqiy faylda esa `stts` yo'li noto'g'ri shkala olardi."""
+    mdhd = _child(fh, *mdia, "mdhd")
+    if mdhd is None:
+        return None
+    fh.seek(mdhd[0])
+    version = fh.read(4)[:1]
+    need = 20 if version == b"\x01" else 12
+    data = fh.read(need)
+    if len(data) < need:
+        return None
+    return struct.unpack(">I", data[16:20] if version == b"\x01" else data[8:12])[0] or None
+
+
+def _sample_entry(fh, stbl: tuple[int, int]) -> tuple[str, int | None, int, int] | None:
+    """`stsd` dagi birinchi yozuv: (kodek, chastota yoki None, yozuv boshi, yozuv oxiri).
+
+    stsd: 4 (versiya) + 4 (soni), keyin yozuv: 8 (o'lcham+tur) + 8 (SampleEntry) + 8 (zaxira)
+    + 2+2+2+2 + chastota (16.16) = 36 bayt, ichki qutilar (`esds`) shundan keyin."""
+    stsd = _child(fh, *stbl, "stsd")
+    if stsd is None:
+        return None
+    start = stsd[0] + 8
+    fh.seek(start)
+    head = fh.read(8)
+    if len(head) < 8:
+        return None
+    size, kind = struct.unpack(">I4s", head)
+    end = start + size
+    if size < 36 or end > stsd[1]:
+        return None
+    fh.seek(start + 32)
+    raw = fh.read(4)
+    rate = (struct.unpack(">I", raw)[0] >> 16 or None) if len(raw) == 4 else None
+    return kind.decode("latin-1"), rate, start, end
+
+
 def _track_seconds(fh, trak: tuple[int, int]) -> float | None:
-    """Audio trekning HAQIQIY davomiyligi: `stsz` kadrlar soni * 1024 / chastota
-    (AAC kadri doim 1024 namuna) va `stts` yig'indisi / `mdhd` vaqt shkalasi - kattasi."""
+    """Audio trekning HAQIQIY davomiyligi: `stsz` namunalar soni * kodek kadri (AAC: 1024 / chastota)
+    va `stts` yig'indisi / `mdhd` vaqt shkalasi - kattasi."""
     mdia = _child(fh, *trak, "mdia")
     if mdia is None:
         return None
@@ -212,14 +264,7 @@ def _track_seconds(fh, trak: tuple[int, int]) -> float | None:
         fh.seek(hdlr[0] + 8)
         if fh.read(4) != b"soun":
             return None
-    timescale = None
-    mdhd = _child(fh, *mdia, "mdhd")
-    if mdhd is not None:
-        fh.seek(mdhd[0])
-        version = fh.read(4)[:1]
-        data = fh.read(20 if version == b"\x01" else 8)
-        if len(data) >= 8:
-            timescale = struct.unpack(">I", data[16:20] if version == b"\x01" else data[4:8])[0] or None
+    timescale = _mdhd_timescale(fh, mdia)
     minf = _child(fh, *mdia, "minf")
     stbl = _child(fh, *minf, "stbl") if minf else None
     if stbl is None:
@@ -237,22 +282,22 @@ def _track_seconds(fh, trak: tuple[int, int]) -> float | None:
             count, delta = struct.unpack(">II", pair)
             total += count * delta
         best = max(best, total / timescale)
-    rate = None
-    stsd = _child(fh, *stbl, "stsd")
-    if stsd is not None:
-        # stsd: 4 (versiya) + 4 (soni) + yozuv: 8 (o'lcham+tur) + 16 + 2+2+4 + chastota (16.16).
-        fh.seek(stsd[0] + 8 + 8 + 16 + 8)
-        raw = fh.read(4)
-        if len(raw) == 4:
-            rate = struct.unpack(">I", raw)[0] >> 16 or None
-    rate = rate or timescale
+    entry = _sample_entry(fh, stbl)
+    # `stsd` o'qilmasa - AAC deb (avvalgi xulq): bu yo'l kvotani aylanib o'tishga qarshi qo'riqchi.
+    codec = entry[0] if entry else "mp4a"
+    rate = (entry[1] if entry else None) or timescale
+    per_sample = None
+    if codec in _FRAME_SAMPLES and rate:
+        per_sample = _FRAME_SAMPLES[codec] / rate
+    elif codec in _FRAME_SECONDS:
+        per_sample = _FRAME_SECONDS[codec]
     stsz = _child(fh, *stbl, "stsz")
-    if stsz is not None and rate:
+    if stsz is not None and per_sample:
         fh.seek(stsz[0] + 4)
         head = fh.read(8)
         if len(head) == 8:
             count = struct.unpack(">II", head)[1]
-            best = max(best, count * 1024 / rate)
+            best = max(best, count * per_sample)
     return best or None
 
 
@@ -466,9 +511,8 @@ def adts_to_m4a(src: Path | str, dst: Path | str) -> dict:
     return {"samples": count, "durationSec": round(media_duration / rate, 2), "sampleRate": rate}
 
 
-def adts_frame(payload_len: int, *, sr_index: int = 8, channels: int = 1, profile: int = 1,
-               crc: bool = False) -> bytes:
-    """Sintetik ADTS kadri (testlar va jonli tekshiruv uchun): sarlavha + nol bayt."""
+def adts_header(payload_len: int, *, sr_index: int, channels: int, profile: int, crc: bool = False) -> bytes:
+    """ADTS sarlavhasi (7 yoki CRC bilan 9 bayt); bufer to'liqligi 0x7FF - o'zgaruvchan bitreyt."""
     header = 9 if crc else 7
     length = header + payload_len
     b0 = 0xFF
@@ -478,5 +522,243 @@ def adts_frame(payload_len: int, *, sr_index: int = 8, channels: int = 1, profil
     b4 = (length >> 3) & 0xFF
     b5 = ((length & 0x07) << 5) | 0x1F
     b6 = 0xFC
-    head = bytes([b0, b1, b2, b3, b4, b5, b6]) + (b"\x00\x00" if crc else b"")
-    return head + bytes(payload_len)
+    return bytes([b0, b1, b2, b3, b4, b5, b6]) + (b"\x00\x00" if crc else b"")
+
+
+def adts_frame(payload_len: int, *, sr_index: int = 8, channels: int = 1, profile: int = 1,
+               crc: bool = False) -> bytes:
+    """Sintetik ADTS kadri (testlar va jonli tekshiruv uchun): sarlavha + nol bayt."""
+    return adts_header(payload_len, sr_index=sr_index, channels=channels, profile=profile,
+                       crc=crc) + bytes(payload_len)
+
+
+# --- m4a -> ADTS (Router uchun) -----------------------------------------------------
+
+#: ADTS kadri uzunligi 13 bitda (sarlavha bilan).
+_ADTS_MAX_FRAME = 0x1FFF
+#: Namunalar jadvali xotirada: 3 soat 48 kHz ~ 510K namuna - undan ancha ko'pi buzilgan fayl.
+_MAX_SAMPLES = 5_000_000
+
+
+def _descriptor_at(buf: bytes, pos: int) -> tuple[int, int, int]:
+    """MPEG-4 deskriptori `pos` da: (teg, ichi boshi, oxiri). Uzunlik 1-4 bayt, har baytda 7 bit."""
+    tag = buf[pos]
+    pos += 1
+    size = 0
+    for _ in range(4):
+        byte = buf[pos]
+        pos += 1
+        size = (size << 7) | (byte & 0x7F)
+        if not byte & 0x80:
+            break
+    if pos + size > len(buf):
+        raise RemuxError("esds deskriptori kesilgan")
+    return tag, pos, pos + size
+
+
+def _audio_config(esds: bytes) -> tuple[int, int, int]:
+    """`esds` ichidan AudioSpecificConfig -> ADTS uchun (profil, chastota indeksi, kanallar).
+
+    HE-AAC (SBR/PS, aniq belgilangan) - ASOSIY AAC-LC qatlami va uning chastotasi olinadi:
+    dekoder SBR ni ADTS da o'zi topadi. Boshqa kodek (MP3 `mp4a` ichida, ALS, ...) - `RemuxError`."""
+    tag, pos, _ = _descriptor_at(esds, 4)            # 4 bayt - esds versiya/bayroqlari
+    if tag != 0x03:
+        raise RemuxError("ES deskriptori yo'q")
+    flags = esds[pos + 2]
+    pos += 3
+    if flags & 0x80:                                 # streamDependenceFlag
+        pos += 2
+    if flags & 0x40:                                 # URL_Flag
+        pos += 1 + esds[pos]
+    if flags & 0x20:                                 # OCRstreamFlag
+        pos += 2
+    tag, pos, _ = _descriptor_at(esds, pos)
+    if tag != 0x04:
+        raise RemuxError("DecoderConfig yo'q")
+    # 0x40 - MPEG-4 audio, 0x66-0x68 - MPEG-2 AAC; 0x69/0x6B (MP3) ADTS ga sig'maydi.
+    if esds[pos] not in (0x40, 0x66, 0x67, 0x68):
+        raise RemuxError(f"AAC emas (objectType 0x{esds[pos]:02x})")
+    tag, pos, end = _descriptor_at(esds, pos + 13)
+    if tag != 0x05 or end - pos < 2:
+        raise RemuxError("AudioSpecificConfig yo'q")
+    bits = int.from_bytes(esds[pos:end], "big")
+    total = (end - pos) * 8
+    used = 0
+
+    def take(n: int) -> int:
+        nonlocal used
+        used += n
+        if used > total:
+            raise RemuxError("AudioSpecificConfig kesilgan")
+        return (bits >> (total - used)) & ((1 << n) - 1)
+
+    def object_type() -> int:
+        value = take(5)
+        return 32 + take(6) if value == 31 else value
+
+    def rate_index() -> int:
+        index = take(4)
+        if index == 15:
+            freq = take(24)
+            if freq not in SAMPLE_RATES:
+                raise RemuxError(f"ADTS da yo'q chastota: {freq}")
+            index = SAMPLE_RATES.index(freq)
+        return index
+
+    aot = object_type()
+    sr_index = rate_index()
+    channels = take(4)
+    if aot in (5, 29):
+        rate_index()                                 # SBR chiqish chastotasi - ADTS ga kerak emas
+        aot = object_type()
+    if not 1 <= aot <= 4:
+        raise RemuxError(f"ADTS ga sig'maydigan AAC turi: {aot}")
+    if not 1 <= channels <= 7 or sr_index >= len(SAMPLE_RATES):
+        raise RemuxError("kanallar yoki chastota noto'g'ri")
+    return aot - 1, sr_index, channels
+
+
+def _u32_table(fh, box: tuple[int, int], width: int, skip: int = 4) -> list[int]:
+    """`stco`/`co64`/`stsz` kabi jadval: (versiya + `skip`) dan keyin soni va qiymatlar."""
+    fh.seek(box[0] + skip)
+    count = struct.unpack(">I", fh.read(4))[0]
+    if count > _MAX_SAMPLES:
+        raise RemuxError("jadval juda katta")
+    raw = fh.read(width * count)
+    if len(raw) < width * count:
+        raise RemuxError("jadval kesilgan")
+    return list(struct.unpack(f">{count}{'Q' if width == 8 else 'I'}", raw))
+
+
+def _aac_track(fh, trak: tuple[int, int]) -> tuple[tuple[int, int, int], list[tuple[int, int]]] | None:
+    """AAC audio trek: ((profil, chastota indeksi, kanallar), [(fayldagi joyi, uzunligi), ...]).
+    Tovush yoki AAC bo'lmasa - `None` (keyingi trek tekshiriladi)."""
+    mdia = _child(fh, *trak, "mdia")
+    if mdia is None:
+        return None
+    hdlr = _child(fh, *mdia, "hdlr")
+    if hdlr is not None:
+        fh.seek(hdlr[0] + 8)
+        if fh.read(4) != b"soun":
+            return None
+    minf = _child(fh, *mdia, "minf")
+    stbl = _child(fh, *minf, "stbl") if minf else None
+    entry = _sample_entry(fh, stbl) if stbl else None
+    if stbl is None or entry is None or entry[0] != "mp4a":
+        return None
+    start, end = entry[2], entry[3]
+    esds = None
+    # ISO yozuvi - 36 bayt; QuickTime v1/v2 tovush yozuvi - yana 16/36 bayt va `esds` ba'zan `wave` ichida.
+    for skip in (36, 52, 72):
+        if start + skip + 8 > end:
+            break
+        box = _child(fh, start + skip, end, "esds")
+        if box is None:
+            wave = _child(fh, start + skip, end, "wave")
+            box = _child(fh, *wave, "esds") if wave else None
+        if box is not None:
+            fh.seek(box[0])
+            esds = fh.read(box[1] - box[0])
+            break
+    if esds is None:
+        raise RemuxError("esds yo'q")
+    config = _audio_config(esds)
+
+    stsz = _child(fh, *stbl, "stsz")
+    if stsz is None:
+        raise RemuxError("stsz yo'q")
+    fh.seek(stsz[0] + 4)
+    fixed, count = struct.unpack(">II", fh.read(8))
+    if fixed:
+        # Hamma namuna bir xil o'lchamda - jadval yo'q (AAC da deyarli bo'lmaydi, lekin ruxsat).
+        if count > _MAX_SAMPLES:
+            raise RemuxError("jadval juda katta")
+        sizes = [fixed] * count
+    else:
+        sizes = _u32_table(fh, stsz, 4, skip=8)
+    stco = _child(fh, *stbl, "stco")
+    co64 = None if stco else _child(fh, *stbl, "co64")
+    if stco is None and co64 is None:
+        raise RemuxError("stco/co64 yo'q")
+    offsets = _u32_table(fh, stco, 4) if stco else _u32_table(fh, co64, 8)
+    stsc = _child(fh, *stbl, "stsc")
+    if stsc is None:
+        raise RemuxError("stsc yo'q")
+    fh.seek(stsc[0] + 4)
+    runs = struct.unpack(">I", fh.read(4))[0]
+    if runs > _MAX_SAMPLES:
+        raise RemuxError("stsc juda katta")
+    raw = fh.read(12 * runs)
+    if len(raw) < 12 * runs:
+        raise RemuxError("stsc kesilgan")
+    table = [struct.unpack(">III", raw[i * 12:i * 12 + 12])[:2] for i in range(runs)]
+
+    spans: list[tuple[int, int]] = []
+    index = 0
+    for i, (first_chunk, per_chunk) in enumerate(table):
+        last_chunk = table[i + 1][0] - 1 if i + 1 < len(table) else len(offsets)
+        for chunk in range(max(1, first_chunk), min(last_chunk, len(offsets)) + 1):
+            pos = offsets[chunk - 1]
+            for _ in range(per_chunk):
+                if index >= len(sizes):
+                    break
+                spans.append((pos, sizes[index]))
+                pos += sizes[index]
+                index += 1
+    if not spans:
+        raise RemuxError("AAC namunalari yo'q")
+    return config, spans
+
+
+def mp4_to_adts(src: Path | str, dst: Path | str) -> dict:
+    """m4a (AAC) -> ADTS. `{frames, durationSec, sampleRate}` qaytaradi.
+
+    NEGA (2026-10-10, qo'ng'iroq importi): Router (ru/en) bitta so'rovda ~10 daqiqadan uzun
+    m4a ni olmaydi, m4a ni esa kadr chegarasida kesib bo'lmaydi (indeks bir butun). Telefon
+    qo'ng'irog'i yozuvi (Samsung `.m4a`) ko'pincha 10 daqiqadan uzun - xom AAC kadrlariga
+    ADTS sarlavhasi qo'yilib, odatdagi `split_adts` bilan bo'linadi. Asl fayl o'zgarmaydi.
+    Fayl kesilgan bo'lsa (oxirgi namunalar diskda yo'q) - borigacha yoziladi."""
+    src, dst = Path(src), Path(dst)
+    size = os.path.getsize(src)
+    tmp = dst.with_name(dst.name + ".tmp")
+    try:
+        with open(src, "rb") as fh:
+            moov = next(((p, e) for k, p, e in _boxes(fh, 0, size) if k == "moov"), None)
+            if moov is None:
+                raise RemuxError("moov yo'q")
+            track = None
+            for kind, payload, end in list(_boxes(fh, *moov)):
+                if kind == "trak":
+                    track = _aac_track(fh, (payload, end))
+                    if track is not None:
+                        break
+            if track is None:
+                raise RemuxError("AAC audio trek yo'q")
+            (profile, sr_index, channels), spans = track
+            frames = 0
+            fd = os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as out:
+                for pos, length in spans:
+                    if length <= 0 or pos + length > size:
+                        break                        # kesilgan fayl - borigacha
+                    if length + 7 > _ADTS_MAX_FRAME:
+                        raise RemuxError("kadr ADTS uchun juda katta")
+                    fh.seek(pos)
+                    out.write(adts_header(length, sr_index=sr_index, channels=channels, profile=profile))
+                    out.write(fh.read(length))
+                    frames += 1
+        if not frames:
+            raise RemuxError("yozilgan kadr yo'q")
+        os.replace(tmp, dst)
+    except (struct.error, IndexError, ValueError, RemuxError) as exc:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        if isinstance(exc, RemuxError):
+            raise
+        raise RemuxError(f"m4a o'qilmadi: {exc}") from exc
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
+    rate = SAMPLE_RATES[sr_index]
+    return {"frames": frames, "durationSec": round(frames * 1024 / rate, 2), "sampleRate": rate}

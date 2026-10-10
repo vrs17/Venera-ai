@@ -14,6 +14,7 @@
 // nusxasida esa `url` maydoni bor. Ikkalasi ham faqat `https://` bo'lsa havola bo'ladi.
 
 import { safeHttps } from '../../components/chat/sources'
+import { isPlatformId, KNOWLEDGE_PLATFORMS, LIVE_PLATFORMS, PLATFORM_IDS } from '../../components/chat/platforms'
 import type { AnswerSource } from '../../types'
 import type { TurnSource } from '../types'
 
@@ -21,13 +22,26 @@ export function isLawSource(kind: string | null | undefined): boolean {
   return String(kind ?? '').toLowerCase() === 'law'
 }
 
+/** Qo'llanma maqolasi (`biznes247_kb`, `biznes247_help`) - qonun kabi tashqi sahifa:
+ *  `docUrl` yo'q, "Hujjatni ochish" emas - havola (faqat https). */
+export function isGuideKind(kind: string | null | undefined): boolean {
+  return KNOWLEDGE_PLATFORMS.has(String(kind ?? '').toLowerCase())
+}
+
+/** Tashqi sahifa (qonun yoki qo'llanma) - ko'ruvchida ochilmaydi. */
+export function isExternalSource(kind: string | null | undefined): boolean {
+  return isLawSource(kind) || isGuideKind(kind)
+}
+
 /** Savol izidagi qonun manbasining havolasi (faqat https) yoki `null`. */
 export function turnLawUrl(s: TurnSource): string | null {
   return safeHttps(s.ref)
 }
 
-/** Hujjat emas, platforma chaqiruvi (HRM/CRM/boshqa vosita). */
-const TOOL_KINDS = new Set(['hrm', 'crm', 'tool'])
+/** Hujjat emas, platforma chaqiruvi (HRM/CRM/boshqa vosita). 2026-10-10: DWH, Biznes 24/7,
+ *  Superapp ham (`platforms.ts`) - aks holda ular hujjat bo'lib, mavjud bo'lmagan faylga
+ *  "Hujjatni ochish" tugmasi chiqardi. */
+const TOOL_KINDS = new Set([...LIVE_PLATFORMS, 'tool'])
 
 export function isToolSource(kind: string | null | undefined): boolean {
   return TOOL_KINDS.has(String(kind ?? '').toLowerCase())
@@ -39,14 +53,28 @@ export function docUrl(docId: string | null | undefined, page?: number | null): 
   return page && page > 0 ? `${base}#page=${page}` : base
 }
 
-/** Vosita nomidan platforma (`hrm_today_late` -> `hrm`) - chip turi shunga qarab. */
-function toolKind(kind: string | null | undefined, tool: string | null | undefined): 'hrm' | 'crm' {
+/** Vosita nomidan platforma (`hrm_today_late` -> `hrm`, `biznes247_kpi` -> `biznes247`) -
+ *  chip turi va belgisi shunga qarab. Eng uzun mos prefiks; topilmasa - `hrm` (avvalgidek). */
+function toolKind(kind: string | null | undefined, tool: string | null | undefined): string {
   const k = String(kind ?? '').toLowerCase()
-  if (k === 'hrm' || k === 'crm') return k
-  return String(tool ?? '').toLowerCase().startsWith('crm') ? 'crm' : 'hrm'
+  if (isPlatformId(k)) return k
+  const name = String(tool ?? '').toLowerCase()
+  let best = ''
+  for (const id of PLATFORM_IDS) if (name.startsWith(id) && id.length > best.length) best = id
+  return best || 'hrm'
 }
 
 export function fromTurnSource(s: TurnSource): AnswerSource {
+  if (isGuideKind(s.kind) && s.citation != null) {
+    return {
+      kind: String(s.kind).toLowerCase(),
+      title: s.title ?? undefined,
+      citation_index: s.citation,
+      url: turnLawUrl(s),
+      doc_id: null,
+      page: null,
+    }
+  }
   if (isLawSource(s.kind)) {
     return {
       kind: 'law',
@@ -84,6 +112,17 @@ export function fromSnapshotSource(raw: unknown): AnswerSource | null {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
   const kind = str(o.kind)
+  const cite = int(o.citation_index) ?? int(o.citation)
+  if (isGuideKind(kind) && cite != null) {
+    return {
+      kind: String(kind).toLowerCase(),
+      title: str(o.title),
+      citation_index: cite,
+      url: safeHttps(o.url) ?? safeHttps(o.ref),
+      doc_id: null,
+      page: null,
+    }
+  }
   if (isLawSource(kind)) {
     return {
       kind: 'law',
