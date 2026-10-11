@@ -12,6 +12,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as ExpoAudio from 'expo-audio';
 
 import MeetingRoute from '@/app/meeting/[id]';
+import * as PathsMod from '@/lib/paths';
 import { useSettings } from '@/features/settings/settingsStore';
 
 import { fakeMeetingsApi, fakeServices, Providers } from './fixtures/fakeServices';
@@ -257,6 +258,7 @@ describe('Meeting detail', () => {
 
   it('⋮ menu renames and deletes (with confirmation)', async () => {
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const clear = jest.spyOn(PathsMod, 'clearExports').mockImplementation(() => {});
     try {
       const { api } = await open(fakeMeetingsApi(), { withHeader: true });
       await waitFor(() => expect(screen.getByTestId('meeting-menu')).toBeTruthy());
@@ -275,10 +277,13 @@ describe('Meeting detail', () => {
         await buttons.find((b) => b.text === "O'chirish")?.onPress?.();
       });
       await waitFor(() => expect(api.remove).toHaveBeenCalledWith(ID));
+      // O'chirilgan yozuvning eksport nusxasi telefonda qolmaydi.
+      await waitFor(() => expect(clear).toHaveBeenCalled());
       // Deep link'dan ochilgan (orqada ekran yo'q) - ro'yxatga o'tadi, o'chirilgan sahifada qolmaydi.
       await waitFor(() => expect(screen.getByText('meetings-screen')).toBeTruthy());
     } finally {
       alert.mockRestore();
+      clear.mockRestore();
     }
   });
 
