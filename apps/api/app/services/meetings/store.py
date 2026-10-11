@@ -121,8 +121,15 @@ _V2: tuple[str, ...] = (
     "CREATE INDEX action_items_crm ON action_items(crm_token)",
 )
 
+#: v3 (2026-10-11): qo'ng'iroq yozuvi roziligi SERVERDA (avval faqat telefonda edi): odam
+#: "suhbatdoshni ogohlantiring" eslatmasini qachon qabul qilgani va matn versiyasi.
+_V3: tuple[str, ...] = (
+    "ALTER TABLE meetings ADD COLUMN consent_at INTEGER",
+    "ALTER TABLE meetings ADD COLUMN consent_version TEXT",
+)
+
 #: `MIGRATIONS[i]` fayl `user_version = i` dan `i + 1` ga o'tkazadi. FAQAT OXIRIGA.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 #: Apostrofning hamma ko'rinishi - qidiruvda olib tashlanadi ("o'zbek" = "oʻzbek" = "ozbek").

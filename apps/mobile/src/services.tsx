@@ -15,6 +15,7 @@ import { ApiClient } from '@/api/client';
 import { createAuthApi, createMeetingsApi, type AuthApi, type MeetingsApi } from '@/api/meetings';
 import type { RegisterDeviceRequest } from '@/api/types';
 import { useAuth } from '@/features/auth/authStore';
+import { callConsent } from '@/features/calls/callsStore';
 import { createSession, type Session } from '@/features/auth/session';
 import { createTokenStore, type TokenStore } from '@/features/auth/tokenStore';
 import { isFileInUse } from '@/features/meeting/playback';
@@ -146,6 +147,7 @@ async function createAppServices(): Promise<Services> {
     },
     keepDays: () => useSettings.getState().keepDays,
     fileInUse: isFileInUse,
+    callConsent,
     canonicalUri: (clientId) => recordingFile(clientId).uri,
     yieldToUi,
     appVersion,

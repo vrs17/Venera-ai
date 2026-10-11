@@ -268,6 +268,11 @@ def create(user: AuthUser, body: Any, channel: str, now: float | None = None) ->
         "app_version": (body.appVersion or "")[:40] or None, "device": (body.device or "")[:80] or None,
         "recorded_at": recorded, "content_type": body.contentType, "status": "uploading",
         "summary_status": "none", "created_at": int(now), "updated_at": int(now)}
+    consent_at = parse_time(getattr(body, "consentAt", None)) if body.source == "call" else None
+    if consent_at:
+        # Kelajakdagi vaqt (telefon soati) - hozirgiga tushiriladi; versiya - qisqa belgi.
+        fields["consent_at"] = min(consent_at, int(now))
+        fields["consent_version"] = (getattr(body, "consentVersion", None) or "")[:32] or None
     try:
         store.insert_meeting(fields)
     except sqlite3.IntegrityError:
@@ -1301,6 +1306,15 @@ def assistant_identity(user: AuthUser) -> tuple[str, dict[str, str]]:
     allowed = platforms_now("meetings_ask_platforms")
     tokens = {k: v for k, v in dict(_chat._live_tokens(user)).items() if k in allowed}
     return _chat.assistant_user_id(user), tokens
+
+
+def call_consent(m: dict[str, Any]) -> dict[str, Any] | None:
+    """Qo'ng'iroq yozuvining serverdagi rozilik belgisi (`None` - yo'q yoki qo'ng'iroq emas).
+    Agentga (AI) ko'chirish yo'llari qo'ng'iroqni FAQAT shu belgi va egasining alohida qarori
+    bilan yuboradi (migratsiya rejasi W5); bugun hamma agent yo'li qo'ng'iroqni o'tkazib yuboradi."""
+    if str(m.get("source") or "") != "call" or not m.get("consent_at"):
+        return None
+    return {"at": int(m["consent_at"]), "version": m.get("consent_version")}
 
 
 def crm_identity(user: AuthUser) -> tuple[str, dict[str, str]]:
