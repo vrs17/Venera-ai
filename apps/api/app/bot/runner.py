@@ -284,6 +284,12 @@ class Backend:
 
         return _chat.has_own_crm(user)
 
+    def own_crm_token(self, user: AuthUser) -> str | None:
+        """Odamning O'Z CRM tokeni (guruh CRM v4 so'rovi uchun) - umumiy hisob emas."""
+        from ..api.v1 import chat as _chat
+
+        return _chat._connectors.hub.tokens(str(user.actorId)).get("crm") or None
+
     def agent_user_id(self, user: AuthUser) -> str:
         """Agentdagi kimlik (`venera:{actorId}`) - guruh CRM suhbati shu kalit bilan
         yoziladi va keyin o'chiriladi (`group_actions.sweep`)."""

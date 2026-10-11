@@ -70,6 +70,15 @@ NEEDS: dict[str, dict[str, tuple[str, ...]]] = {
                     "shadow": ("complete", "instructions_mode", "shadow")},
     # `route` kadri chat oqimining o'zida keladi - qo'shimcha chaqiruv yo'q.
     "hold_classify": {"agent": ("frames:route",), "shadow": ("frames:route",)},
+    # W1: guruh CRM - v4 chat maydonlari (6.1). `chat_purge` - agentdagi suhbat haqiqiy o'chishi.
+    "group_crm": {"agent": ("purpose", "store", "chat_visibility", "context", "audience", "tools_allowlist",
+                            "chat_purge"),
+                  "shadow": ("purpose", "store", "chat_visibility", "context", "audience", "tools_allowlist",
+                             "shadow")},
+    # W1: yig'ilish vazifasi CRM ga. Shadow yo'q - taklif yaratish fonda takrorlanmaydi
+    # (`shadow` holati amalda `local` kabi ishlaydi, chaqiruv joyida).
+    "meeting_crm": {"agent": ("purpose", "store", "tools_allowlist"),
+                    "shadow": ("purpose", "store", "tools_allowlist", "shadow")},
 }
 
 

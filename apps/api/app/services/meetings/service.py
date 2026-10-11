@@ -1149,13 +1149,17 @@ def _item_to_crm(rt: Any, user: AuthUser, m: dict[str, Any], item_id: str, body:
 
     try:
         with bind(user.actorId):
-            # Qattiq muddat (`within`): v3 jim tursa ham odam `MEETINGS_CRM_TIMEOUT` dan ortiq kutmaydi;
-            # kech kelgan taklif tashlanadi (saqlanmaydi, 15 daqiqada o'zi eskiradi).
-            reply = llm_mod.within(
-                lambda: llm_mod.collect(client, question, user_id=user_id, tokens=tokens,
-                                        max_chars=settings.meetings_v3_max_chars, op="meeting_crm",
-                                        deadline=settings.meetings_crm_timeout),
-                float(settings.meetings_crm_timeout), what="CRM")
+            # W1 (2026-10-11): `meeting_crm` flag'i `agent` bo'lsa - v4 shakli; xato bo'lsa yoki
+            # qo'ng'iroq yozuvi bo'lsa (rozilik hali serverda yo'q) - bugungi v3 yo'li.
+            reply = _meeting_crm_v4(m, question, user_id, tokens)
+            if reply is None:
+                # Qattiq muddat (`within`): v3 jim tursa ham odam `MEETINGS_CRM_TIMEOUT` dan ortiq kutmaydi;
+                # kech kelgan taklif tashlanadi (saqlanmaydi, 15 daqiqada o'zi eskiradi).
+                reply = llm_mod.within(
+                    lambda: llm_mod.collect(client, question, user_id=user_id, tokens=tokens,
+                                            max_chars=settings.meetings_v3_max_chars, op="meeting_crm",
+                                            deadline=settings.meetings_crm_timeout),
+                    float(settings.meetings_crm_timeout), what="CRM")
     except llm_mod.DeadlineExceeded:
         return done({"status": "failed", "proposal": None, "text": None, "reason": crm.TIMEOUT})
     except AssistantError as exc:
@@ -1301,6 +1305,49 @@ def assistant_identity(user: AuthUser) -> tuple[str, dict[str, str]]:
     allowed = platforms_now("meetings_ask_platforms")
     tokens = {k: v for k, v in dict(_chat._live_tokens(user)).items() if k in allowed}
     return _chat.assistant_user_id(user), tokens
+
+
+#: Agent v4 chat savol chegarasi (`/api/v4/limits` -> `chat.max_question_chars`).
+_V4_QUESTION_MAX = 8000
+
+
+def _meeting_crm_v4(m: dict[str, Any], question: str, user_id: str,
+                    tokens: dict[str, str]) -> "llm_mod.V3Reply | None":
+    """Agent v4 orqali CRM taklifi (`purpose: meeting_crm`) yoki `None` - bugungi yo'l.
+
+    Faqat `crm.read` va `crm.propose`, faqat o'z CRM tokeni, `store: false` (tarix va vazifa
+    holati yozilmaydi), `memory_scopes: []` (shaxsiy xotira ishlatilmaydi). Qo'ng'iroq yozuvi
+    (`source == "call"`) agentga BORMAYDI - ikkinchi tomon roziligi hali serverda saqlanmaydi."""
+    from ..brain import routing as _routing
+    from ..integrations.agent_v4 import AgentError
+
+    if str(m.get("source") or "") == "call" or not tokens.get("crm"):
+        return None
+    if not _routing.route("meeting_crm").agent:
+        return None
+    body = {
+        "purpose": "meeting_crm",
+        "question": question[:_V4_QUESTION_MAX],
+        "user_id": user_id,
+        "tokens": {"crm": tokens["crm"]},
+        "store": False,
+        "audience": "private",
+        "tools": ["crm.read", "crm.propose"],
+        "memory_scopes": [],
+        "client": {"channel": "mobile"},
+    }
+    try:
+        payload, _ = _routing.client().chat(body, op="meeting_crm", timeout=float(settings.meetings_crm_timeout),
+                                            units={"chars": len(body["question"])})
+    except AgentError as exc:
+        log.warning("Yig'ilish %s: agent v4 CRM javob bermadi (%s) - bugungi yo'l", m.get("id"), exc.code)
+        return None
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    code = meta.get("error_code")
+    proposals = [p for p in payload.get("proposals") or [] if isinstance(p, dict) and p.get("token")]
+    sources = payload.get("sources") if isinstance(payload.get("sources"), list) else []
+    return llm_mod.V3Reply(text=str(payload.get("answer") or ""), proposals=proposals, sources=len(sources),
+                           engine="v4", error={"code": str(code)} if code else None)
 
 
 def crm_identity(user: AuthUser) -> tuple[str, dict[str, str]]:

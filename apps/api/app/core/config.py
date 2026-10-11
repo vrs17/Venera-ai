@@ -786,6 +786,12 @@ class Settings(BaseSettings):
     meeting_summary_engine: str = "local"
     meeting_ask_engine: str = "local"
     hold_classify_engine: str = "local"
+    #: Guruhdagi CRM so'rovi: `local` - bugungi v3 oqimi; `agent` - v4 shakli (kontekst bloki,
+    #: `surface` suhbat, guruh auditoriyasi); `shadow` - foydalanuvchi bugungisini oladi, v4 fonda.
+    group_crm_engine: str = "local"
+    #: Yig'ilish vazifasini CRM ga taklif qilish: `local` - bugungi v3 oqimi; `agent` - v4
+    #: (`purpose: meeting_crm`, faqat CRM vositalari va o'z CRM tokeni, shaxsiy xotirasiz).
+    meeting_crm_engine: str = "local"
     #: Ovozli "hold" tasnifi: `keyword` - faqat kalit so'z jadvali: ovozli savol (shaxsiy
     #: HR savoli ham) `ollama.com` ga CHIQMAYDI; `llm` - avvalgidek gemma. `.env` dan JONLI
     #: (`hold_classifier_now`), restartsiz.
