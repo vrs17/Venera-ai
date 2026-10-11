@@ -147,6 +147,18 @@ def get_brain(refresh: bool = False) -> AdminBrain:
         raise _unavailable(exc) from exc
 
 
+@router.get("/brain/shadow")
+def get_brain_shadow(days: int = 7) -> dict:
+    """Taqqoslash (shadow) natijalari - har funksiya: soni, xato/timeout, bizning va agentning
+    kechikishi (p50/p95, ms), o'rtacha o'xshashlik (0..1). Matn yo'q - faqat sonlar."""
+    from ...services.brain import shadow as _shadow
+
+    try:
+        return _shadow.summary(days)
+    except (sqlite3.Error, OSError) as exc:
+        raise _unavailable(exc) from exc
+
+
 @router.put("/brain/{feature}", response_model=AdminBrain)
 def put_brain(
     body: BrainFeatureUpdate,

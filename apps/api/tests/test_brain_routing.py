@@ -283,3 +283,7 @@ def test_admin_api(client, auth, user_auth, _isolated_analytics):
                       json={"state": "local"}).status_code == 403
     [audit] = _isolated_analytics.rows("SELECT action, target_id FROM audit_log WHERE action='feature.state'")
     assert audit == {"action": "feature.state", "target_id": "group_ask"}
+    # Taqqoslash jamlanmasi - faqat admin; bo'sh ombor - bo'sh ro'yxat.
+    shadow_view = client.get("/api/v1/admin/engines/brain/shadow?days=3", headers=auth)
+    assert shadow_view.status_code == 200 and shadow_view.json() == {"days": 3, "features": {}}
+    assert client.get("/api/v1/admin/engines/brain/shadow", headers=user_auth).status_code == 403

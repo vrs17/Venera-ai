@@ -3,24 +3,7 @@ import { computed, nextTick, ref } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import {
-  Activity,
-  ArrowLeft,
-  ChevronsUpDown,
-  Flag,
-  GitBranch,
-  LayoutDashboard,
-  LogOut,
-  MessagesSquare,
-  Monitor,
-  Moon,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Search,
-  Server,
-  Sun,
-  Users,
-} from 'lucide-vue-next'
+import { Activity, ArrowLeft, ChevronsUpDown, Flag, GitBranch, LayoutDashboard, LogOut, MessagesSquare, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Search, Server, Sun, Users, Workflow } from 'lucide-vue-next'
 import BrandSpark from '../../components/BrandSpark.vue'
 import VAvatar from '../../ui/VAvatar.vue'
 import VBadge from '../../ui/VBadge.vue'
@@ -91,7 +74,7 @@ async function toggle() {
   next?.focus({ preventScroll: true })
 }
 
-type NavKey = 'overview' | 'conversations' | 'reports' | 'users' | 'usage' | 'versions' | 'system'
+type NavKey = 'overview' | 'conversations' | 'reports' | 'users' | 'usage' | 'versions' | 'migration' | 'system'
 interface NavItem {
   key: NavKey
   path: string
@@ -115,6 +98,8 @@ const items: NavItem[] = [
   { key: 'usage', path: '/admin/usage', icon: Activity, match: under('/admin/usage') },
   // Yordamchi versiyalari - "Foydalanish" va "Tizim" orasida: sozlama, lekin kundalik.
   { key: 'versions', path: '/admin/versions', icon: GitBranch, match: under('/admin/versions') },
+  // AI ishlarini agentga ko'chirish: funksiya holati va taqqoslash natijalari.
+  { key: 'migration', path: '/admin/migration', icon: Workflow, match: under('/admin/migration') },
   { key: 'system', path: '/admin/system', icon: Server, match: under('/admin/system') },
 ]
 
