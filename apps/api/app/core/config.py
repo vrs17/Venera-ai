@@ -758,6 +758,13 @@ class Settings(BaseSettings):
     #: `GET /capabilities` keshi (soniya). Flag `shadow`/`agent` ga faqat kerakli
     #: imkoniyat `true` bo'lsa o'tadi (shartnoma 3.7); kesh bo'sh bo'lsa - `local`.
     agent_capabilities_ttl: float = 300.0
+    #: EGASINING QARORI (2026-10-11): GPU server kelguncha agent v4 ishlarini Ollama
+    #: Cloud'da (gemma4:31b-cloud) bajaradi - `capabilities` da `in_network_models_only:
+    #: false`, `external_models_allowed: true`. Shu kalit `true` bo'lsa himoya bunga ruxsat
+    #: beradi va kontekst bloklariga `policy.external_llm: true` yoziladi (agent `false`
+    #: ni rad etadi). Bugungi yo'l ham shu ma'lumotni Ollama Cloud'ga yuboradi - yomonroq
+    #: emas. JONLI o'qiladi: `false` qilinsa hamma funksiya restartsiz lokalga qaytadi.
+    agent_v4_allow_external_models: bool = True
     #: SHADOW: foydalanuvchi lokal natijani oladi, agent esa fonda, O'Z navbatida
     #: (`max_concurrent`, chatning slotlari emas) va namuna bo'yicha ishlaydi. Navbat
     #: to'lsa vazifa TASHLANADI (hisoblanadi) - foydalanuvchi hech qachon kutmaydi.
@@ -929,6 +936,11 @@ def agent_v4_enabled_now() -> bool:
     """Agent mijozining bosh kaliti (`AGENT_V4_ENABLED`) - `.env` dan JONLI: agent
     noto'g'ri ishlasa hamma funksiya restartsiz lokal yo'lga qaytadi."""
     return _env_flag("agent_v4_enabled", settings.agent_v4_enabled)
+
+
+def agent_v4_external_models_now() -> bool:
+    """`AGENT_V4_ALLOW_EXTERNAL_MODELS` - `.env` dan JONLI (egasining 2026-10-11 qarori)."""
+    return _env_flag("agent_v4_allow_external_models", settings.agent_v4_allow_external_models)
 
 
 #: `HOLD_CLASSIFIER` qiymatlari.
