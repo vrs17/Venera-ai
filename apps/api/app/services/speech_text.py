@@ -279,36 +279,57 @@ _NAME_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9&]{1,31}$")
 _NAME_MAX = 200
 
 
-@lru_cache(maxsize=256)
-def _code_at(code: str) -> re.Pattern[str]:
+#: Shu uzunlikkacha kod (`BA`, `IB`, `BCC`) FAQAT loyiha haqida gap ketganda
+#: ochiladi - ortidan "loyiha..." kelsa. Qisqa harflar boshqa narsa ham bo'ladi:
+#: "BA" - biznes-tahlilchi, "IB" - axborot xavfsizligi; ular gap o'rtasida loyiha
+#: nomiga aylanib qolmasin. Uzun kod (`DVSIB`) esa yolg'iz turganda ham kod.
+_SHORT_CODE = 3
+_PROJECT_AFTER = re.compile(r"[\s*_]*loyiha", re.IGNORECASE)
+
+
+@lru_cache(maxsize=32)
+def _codes_at(codes: tuple[str, ...]) -> re.Pattern[str]:
     """Kod FAQAT o'z o'rnida: alohida so'z, ixtiyoriy qo'shimcha bilan
     (`DVSIBning`, `DVSIB-ga`). Vazifa kaliti (`DVSIB-266`), manzil
-    (`x.uz/DVSIB`, `dvsib@...`) va boshqa so'z ichidagisi TEGILMAYDI - "Barno AI
-    ikki yuz oltmish olti" vazifa kaliti emas, va havola buzilmasin."""
+    (`x.uz/DVSIB`, `dvsib@...`) va boshqa so'z ichidagisi TEGILMAYDI - "Data va
+    sun'iy intellekt bo'limi ikki yuz oltmish olti" vazifa kaliti emas.
+
+    BITTA naqsh, BITTA o'tish: nom ichida boshqa kod bo'lsa ("BRB-TECH CRM"),
+    qo'yilgan nom qayta almashtirilmaydi. Uzuni oldin - `BCCOC` `BCC` dan."""
+    alternatives = "|".join(re.escape(code) for code in codes)
     return re.compile(
-        rf"(?<![\w@/.\-]){re.escape(code)}(?:[-'’ʼ]?(?P<qo>{_SUFFIX}))?(?![\w\-]|\.\w)"
+        rf"(?<![\w@/.\-])(?P<code>{alternatives})"
+        rf"(?:[-'’ʼ]?(?P<qo>{_SUFFIX}))?(?![\w\-]|\.\w)"
     )
 
 
 def _spoken_names(text: str, names: Mapping[str, str]) -> str:
-    for code, spoken in names.items():
-        def expand(m: re.Match[str], spoken: str = spoken) -> str:
-            return attach(spoken, m.group("qo")) if m.group("qo") else spoken
-        text = _code_at(code).sub(expand, text)
-        # Nom matnda kod bilan YONMA-YON yozilgan bo'lsa (`Barno AI (DVSIB)`) u endi
-        # ikki marta aytilardi: "Barno AI (Barno AI)" - qavsdagisi tashlanadi.
+    codes = tuple(sorted(names, key=lambda code: (-len(code), code)))
+
+    def expand(m: re.Match[str]) -> str:
+        code = m.group("code")
+        if len(code) <= _SHORT_CODE and not _PROJECT_AFTER.match(m.string, m.end()):
+            return m.group(0)
+        spoken = names[code]
+        return attach(spoken, m.group("qo")) if m.group("qo") else spoken
+
+    text = _codes_at(codes).sub(expand, text)
+    # Nom matnda kod bilan YONMA-YON yozilgan bo'lsa (`Sotuv bo'limi (SB)`) u endi
+    # ikki marta aytilardi - qavsdagisi tashlanadi.
+    for spoken in set(names.values()):
         twice = re.escape(spoken)
         text = re.sub(rf"({twice})[ \t]*\([ \t]*{twice}[ \t]*\)", r"\1", text, flags=re.IGNORECASE)
     return text
 
 
 class SpokenNames:
-    """Talaffuz lug'ati fayli: `{"DVSIB": "<to'liq nomi>"}`.
+    """Talaffuz lug'ati fayli: `{"DVSIB": "Data va sun'iy intellekt bo'limi"}`.
 
     NEGA FAYL. Loyiha kodi (`DVSIB`) ovozda "de-ve-es-i-be" bo'lib eshitiladi -
-    rahbar esa loyiha NOMINI eshitishni xohlaydi. Nomlar Venera'da yo'q (CRM'da),
-    va ular kam o'zgaradi: fayl o'zgarsa keyingi sintezda o'zi qayta o'qiladi,
-    API'ni qayta ishga tushirish shart emas.
+    rahbar esa loyiha NOMINI eshitishni xohlaydi. Nomlar Venera'da yo'q (CRM
+    loyihalari, `crm_list_projects`), va ular kam o'zgaradi: fayl o'zgarsa
+    keyingi sintezda o'zi qayta o'qiladi, API'ni qayta ishga tushirish shart emas.
+    Fayl git'da (`config/tts_names.json`) - nomlar MR orqali ko'rib chiqiladi.
 
     FAQAT OVOZ. Ekrandagi matn o'zgarmaydi. Fayl yo'q yoki buzuq bo'lsa ovoz
     BARIBIR ishlaydi - lug'atsiz (buzuq faylda oxirgi yaroqli nusxa bilan).

@@ -262,3 +262,44 @@ def test_lugat_fayli(tmp_path):
 
     path.unlink()
     assert names() == {}
+
+
+@pytest.mark.parametrize("text, spoken", [
+    ("BA loyihasida 3 ta vazifa bor.", "BRB-TECH Academy loyihasida 3 ta vazifa bor."),
+    ("**SB** loyihasi bo'yicha", "**Sotuv bo'limi** loyihasi bo'yicha"),
+    ("SB Loyihalari", "Sotuv bo'limi Loyihalari"),
+    # Loyiha haqida emas - qisqa harflar boshqa narsa bo'lishi mumkin:
+    ("BA talablarni yozadi, IB tekshiradi.", "BA talablarni yozadi, IB tekshiradi."),
+    ("SBga yuboring.", "SBga yuboring."),
+])
+def test_qisqa_kod_faqat_loyiha_haqida(text, spoken):
+    names = {"BA": "BRB-TECH Academy", "SB": "Sotuv bo'limi", "IB": "Ichki boshqaruv"}
+    assert for_speech(text, today=BUGUN, names=names) == spoken
+
+
+def test_bitta_otish_va_uzuni_oldin():
+    """Qo'yilgan nom ichidagi boshqa kod qayta almashtirilmaydi; `BCCOC` `BCC`
+    dan oldin taniladi."""
+    names = {"DVSIB": "SALES bo'limi", "SALES": "Sotuv", "BCC": "Call Center", "BCCOC": "Outbound"}
+    assert for_speech("DVSIB loyihasida", today=BUGUN, names=names) == "SALES bo'limi loyihasida"
+    assert for_speech("BCCOC loyihasi", today=BUGUN, names=names) == "Outbound loyihasi"
+
+
+def test_repodagi_lugat():
+    """`config/tts_names.json` - CRM loyihalari (2026-10-12). Hamma yozuv yaroqli
+    (jim tashlanmaydi), va `CRM` YO'Q: u tizim nomi, har javobda "CRM360" bo'lib
+    eshitilardi."""
+    from app.core.config import settings
+
+    path = settings.tts_spoken_names_path
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    names = SpokenNames(path)()
+    assert names == raw
+    assert names["DVSIB"] == "Data va sun'iy intellekt bo'limi"
+    assert "CRM" not in names
+    # Kutish ovozlari ham shu klientdan o'tadi - lug'at ularni o'zgartirmasin.
+    from app.services.hold import all_clips
+
+    changed = [text for _, text in all_clips()
+               if for_speech(text, today=BUGUN, names=names) != speak(text)]
+    assert not changed, changed
