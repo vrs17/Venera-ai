@@ -70,7 +70,14 @@ interface FakeTimer {
 }
 
 function setup(
-  opts: { size?: number; rows?: QueueRow[]; keepDays?: number; canonicalUri?: (id: string) => string; fileInUse?: (uri: string) => boolean } = {},
+  opts: {
+    size?: number;
+    rows?: QueueRow[];
+    keepDays?: number;
+    canonicalUri?: (id: string) => string;
+    fileInUse?: (uri: string) => boolean;
+    callConsent?: () => { consentAt: string; consentVersion: string } | null;
+  } = {},
 ) {
   const server = new FakeServer(CHUNK);
   const tp = tokenProvider();
@@ -95,6 +102,7 @@ function setup(
     onAuthRequired,
     canonicalUri: opts.canonicalUri,
     fileInUse: opts.fileInUse,
+    callConsent: opts.callConsent,
     schedule: (fn, ms) => {
       const t: FakeTimer = { fn, ms, cancelled: false };
       timers.push(t);
@@ -129,6 +137,24 @@ function setup(
 }
 
 describe('uploader', () => {
+  it("call recording: the consent mark goes to the server; other sources never send it", async () => {
+    const consent = { consentAt: '2026-10-08T09:00:00.000Z', consentVersion: 'calls-consent-1' };
+    const call = setup({ rows: [row({ source: 'call' })], callConsent: () => consent });
+    await call.uploader.runOnce();
+    expect([...call.server.meetings.values()][0].createBody).toMatchObject({ source: 'call', ...consent });
+
+    const app = setup({ rows: [row({ source: 'app' })], callConsent: () => consent });
+    await app.uploader.runOnce();
+    const body = [...app.server.meetings.values()][0].createBody ?? {};
+    expect(body.consentAt).toBeUndefined();
+    expect(body.consentVersion).toBeUndefined();
+
+    // Rozilik hali yo'q (eski o'rnatish) - qo'ng'iroq baribir yuklanadi, belgisiz.
+    const none = setup({ rows: [row({ source: 'call' })], callConsent: () => null });
+    await none.uploader.runOnce();
+    expect([...none.server.meetings.values()][0].createBody?.consentAt).toBeUndefined();
+  });
+
   it('creates, uploads 4-MiB-style chunks in order, completes with whole-file sha, then deletes the local file', async () => {
     const s = setup();
     await s.uploader.runOnce();

@@ -357,3 +357,35 @@ def test_uzun_qongiroq_general_ga_qaytadi():
 def test_qongiroqda_tanlangan_shablon_ozgarmaydi():
     template, llm = _classified(None, call_input(repeat=6, template="general"))
     assert template == "general" and "meeting_classify" not in llm.ops()
+
+
+# --- qo'ng'iroq roziligi serverda (2026-10-11) -------------------------------------------------
+
+
+def test_qongiroq_roziligi_serverda_saqlanadi(client, auth, monkeypatch, _isolated_meetings):
+    from app.services.meetings import service as meetings_service
+
+    rt = _isolated_meetings
+    enable(monkeypatch)
+    meeting = create_meeting(client, auth, contentType="audio/mp4", source="call",
+                             consentAt="2026-10-08T09:00:00Z", consentVersion="calls-consent-1")
+    row = rt.store.rows("SELECT consent_at, consent_version, source FROM meetings WHERE id = ?", (meeting["id"],))[0]
+    assert row["consent_version"] == "calls-consent-1" and row["consent_at"] == 1791450000
+    assert meetings_service.call_consent(row) == {"at": 1791450000, "version": "calls-consent-1"}
+    # Kelajakdagi vaqt (telefon soati) - hozirgiga tushiriladi.
+    future = create_meeting(client, auth, contentType="audio/mp4", source="call", consentAt="2099-01-01T00:00:00Z")
+    stored = rt.store.rows("SELECT consent_at FROM meetings WHERE id = ?", (future["id"],))[0]["consent_at"]
+    assert stored <= int(__import__("time").time())
+
+
+def test_rozilik_faqat_qongiroqqa(client, auth, monkeypatch, _isolated_meetings):
+    from app.services.meetings import service as meetings_service
+
+    rt = _isolated_meetings
+    enable(monkeypatch)
+    meeting = create_meeting(client, auth, contentType="audio/mp4", source="app", consentAt="2026-10-08T09:00:00Z")
+    row = rt.store.rows("SELECT consent_at, consent_version, source FROM meetings WHERE id = ?", (meeting["id"],))[0]
+    assert row["consent_at"] is None and meetings_service.call_consent(row) is None
+    without = create_meeting(client, auth, contentType="audio/mp4", source="call")
+    row = rt.store.rows("SELECT consent_at, source FROM meetings WHERE id = ?", (without["id"],))[0]
+    assert meetings_service.call_consent(row) is None

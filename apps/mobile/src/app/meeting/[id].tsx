@@ -55,6 +55,7 @@ import { UploadStatusCard } from '@/features/meeting/UploadStatusCard';
 import { useSettings, useT } from '@/features/settings/settingsStore';
 import type { QueueRow } from '@/features/upload/queueStore';
 import { useQueue } from '@/features/upload/useQueue';
+import { clearExports } from '@/lib/paths';
 import { useServices } from '@/services';
 import { Banner, Button, Loading, Segmented, styles as ui } from '@/ui/components';
 import { EmptyState } from '@/ui/EmptyState';
@@ -220,6 +221,9 @@ function MeetingBody({
                   await services.queue.remove(localRow.clientId).catch(() => {});
                   await services.files.remove(localRow.fileUri).catch(() => {});
                 }
+                // Eksport keshi (oxirgi ulashilgan PDF/Word/audio) ham: o'chirilgan yozuvning nusxasi
+                // telefonda keyingi eksport yoki ilova qayta ochilguncha yotib qolmasin.
+                clearExports();
                 leaveRecording();
               })();
             },

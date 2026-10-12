@@ -173,6 +173,12 @@ export interface CreateMeetingRequest {
   source: EntrySource;
   appVersion: string;
   device: string;
+  /**
+   * Faqat qo'ng'iroq yozuvi (`source: 'call'`): rozilik eslatmasi qabul qilingan vaqt (ISO) va
+   * matn versiyasi. Server saqlaydi - qo'ng'iroq AI agentga faqat shu belgi bilan ketishi mumkin.
+   */
+  consentAt?: string;
+  consentVersion?: string;
 }
 
 export interface UploadPosition {

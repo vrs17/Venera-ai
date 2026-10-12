@@ -180,7 +180,7 @@ def test_migratsiya_v1_dan_v2_ga_malumot_bilan(tmp_path):
     conn.close()
 
     st = MeetingStore(root)
-    assert st.version() == store_mod.SCHEMA_VERSION == 2
+    assert st.version() == store_mod.SCHEMA_VERSION == 3
     summary = st.summary("m1", "s1")
     assert summary["model"] == "gemma4:31b" and summary["provider"] is None
     item = st.action_item("m1", "a1")

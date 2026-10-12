@@ -43,6 +43,11 @@ class CreateMeetingRequest(BaseModel):
     source: EntrySource = "app"
     appVersion: str | None = Field(default=None, max_length=40)
     device: str | None = Field(default=None, max_length=80)
+    #: Qo'ng'iroq yozuvi (`source: call`) uchun: odam ilovada "suhbatdoshni ogohlantiring"
+    #: eslatmasini QACHON qabul qilgani (ISO) va matn versiyasi. Serverda saqlanadi - qo'ng'iroq
+    #: agentga (AI) faqat shu yozuv va egasining alohida qarori bilan ketadi (migratsiya rejasi).
+    consentAt: str | None = Field(default=None, max_length=40)
+    consentVersion: str | None = Field(default=None, max_length=32)
 
     @field_validator("clientId")
     @classmethod

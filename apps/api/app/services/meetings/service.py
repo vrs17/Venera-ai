@@ -268,6 +268,11 @@ def create(user: AuthUser, body: Any, channel: str, now: float | None = None) ->
         "app_version": (body.appVersion or "")[:40] or None, "device": (body.device or "")[:80] or None,
         "recorded_at": recorded, "content_type": body.contentType, "status": "uploading",
         "summary_status": "none", "created_at": int(now), "updated_at": int(now)}
+    consent_at = parse_time(getattr(body, "consentAt", None)) if body.source == "call" else None
+    if consent_at:
+        # Kelajakdagi vaqt (telefon soati) - hozirgiga tushiriladi; versiya - qisqa belgi.
+        fields["consent_at"] = min(consent_at, int(now))
+        fields["consent_version"] = (getattr(body, "consentVersion", None) or "")[:32] or None
     try:
         store.insert_meeting(fields)
     except sqlite3.IntegrityError:
@@ -1317,7 +1322,8 @@ def _meeting_crm_v4(m: dict[str, Any], question: str, user_id: str,
 
     Faqat `crm.read` va `crm.propose`, faqat o'z CRM tokeni, `store: false` (tarix va vazifa
     holati yozilmaydi), `memory_scopes: []` (shaxsiy xotira ishlatilmaydi). Qo'ng'iroq yozuvi
-    (`source == "call"`) agentga BORMAYDI - ikkinchi tomon roziligi hali serverda saqlanmaydi."""
+    (`source == "call"`) agentga BORMAYDI - serverdagi rozilik belgisi (`call_consent`) va egasining
+    alohida qarori (reja W5) kelguncha."""
     from ..brain import routing as _routing
     from ..integrations.agent_v4 import AgentError
 
@@ -1348,6 +1354,15 @@ def _meeting_crm_v4(m: dict[str, Any], question: str, user_id: str,
     sources = payload.get("sources") if isinstance(payload.get("sources"), list) else []
     return llm_mod.V3Reply(text=str(payload.get("answer") or ""), proposals=proposals, sources=len(sources),
                            engine="v4", error={"code": str(code)} if code else None)
+
+
+def call_consent(m: dict[str, Any]) -> dict[str, Any] | None:
+    """Qo'ng'iroq yozuvining serverdagi rozilik belgisi (`None` - yo'q yoki qo'ng'iroq emas).
+    Agentga (AI) ko'chirish yo'llari qo'ng'iroqni FAQAT shu belgi va egasining alohida qarori
+    bilan yuboradi (migratsiya rejasi W5); bugun hamma agent yo'li qo'ng'iroqni o'tkazib yuboradi."""
+    if str(m.get("source") or "") != "call" or not m.get("consent_at"):
+        return None
+    return {"at": int(m["consent_at"]), "version": m.get("consent_version")}
 
 
 def crm_identity(user: AuthUser) -> tuple[str, dict[str, str]]:

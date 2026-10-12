@@ -17,6 +17,8 @@ export interface ServerMeeting {
   complete: boolean;
   completeBody: Record<string, unknown> | null;
   creates: number;
+  /** Oxirgi `POST /meetings` tanasi (rozilik kabi maydonlarni tekshirish uchun). */
+  createBody?: Record<string, unknown>;
 }
 
 const sha = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
@@ -98,6 +100,7 @@ export class FakeServer {
         this.meetings.set(m.id, m);
       }
       m.creates += 1;
+      m.createBody = r.body as Record<string, unknown>;
       return { status: existed ? 200 : 201, json: this.meetingJson(m) };
     }
     const m = this.byId(path);

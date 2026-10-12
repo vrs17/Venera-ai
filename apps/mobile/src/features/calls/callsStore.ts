@@ -53,6 +53,19 @@ export const DEFAULT_CALLS: CallsPrefs = {
   sent: {},
 };
 
+/**
+ * Rozilik eslatmasi matnining versiyasi - serverga yozuv bilan birga ketadi. Eslatma matni
+ * (`calls.consent*` i18n) o'zgarsa - versiya ham oshiriladi.
+ */
+export const CALLS_CONSENT_VERSION = 'calls-consent-1';
+
+/** Qo'ng'iroq yozuvi uchun serverga ketadigan rozilik belgisi (yo'q bo'lsa `null`). */
+export function callConsent(): { consentAt: string; consentVersion: string } | null {
+  const at = useCalls.getState().consentAt;
+  if (!at) return null;
+  return { consentAt: new Date(at).toISOString(), consentVersion: CALLS_CONSENT_VERSION };
+}
+
 /** Yuborilganlar ro'yxati chegarasi - kv qiymati cheksiz o'smasin (eng eskisi tushadi). */
 export const MAX_SENT = 1000;
 

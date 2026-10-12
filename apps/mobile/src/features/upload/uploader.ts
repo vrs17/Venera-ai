@@ -72,6 +72,11 @@ export interface UploaderDeps {
   fileInUse?: (uri: string) => boolean;
   appVersion: string;
   device: string;
+  /**
+   * Qo'ng'iroq yozuvining rozilik belgisi (`source: 'call'` qatorlar uchun so'raladi); `null` -
+   * yuborilmaydi. Server uni yozuv yonida saqlaydi (AI agentga ko'chirish sharti).
+   */
+  callConsent?: () => { consentAt: string; consentVersion: string } | null;
   /** Sessiya tugadi - ilova login ekraniga o'tadi, navbat saqlanadi. */
   onAuthRequired?: () => void;
   onUploaded?: (row: QueueRow, meeting: Meeting) => void;
@@ -245,6 +250,7 @@ export function createUploader(deps: UploaderDeps): Uploader {
           source: row.source,
           appVersion: deps.appVersion,
           device: deps.device,
+          ...(row.source === 'call' ? (deps.callConsent?.() ?? {}) : {}),
         });
         const m = res.data;
         maxChunk = m.upload.maxChunkBytes || DEFAULT_CHUNK_BYTES;
