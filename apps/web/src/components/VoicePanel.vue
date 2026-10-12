@@ -29,6 +29,8 @@ import { preparedGreeting } from '../api/greeting'
 import { localizeApiError } from '../api/errors'
 import { ApiError } from '../api/http'
 import { LOCALES } from '../i18n'
+import type { AnswerSource } from '../types'
+import MarkdownMessage from './MarkdownMessage.vue'
 import VButton from '../ui/VButton.vue'
 import VIconButton from '../ui/VIconButton.vue'
 import { useFocusTrap } from '../ui/composables/useFocusTrap'
@@ -42,6 +44,8 @@ const props = defineProps<{
   busy: boolean
   /** The most recent answer text, shown under the orb once it arrives. */
   answer?: string | null
+  /** O'sha javobning manbalari - `[1]` iqtiboslari chatdagidek ko'rinsin. */
+  answerSources?: AnswerSource[]
   /** O'sha javobning savol kaliti (`X-Venera-Turn`) - ovoz admin izida unga bog'lanadi. */
   answerTurn?: string | null
   /** A holding phrase to say while the answer is still being worked out.
@@ -678,7 +682,12 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
           <VButton variant="secondary" @click="onOrbClick">{{ t('voiceRetry') }}</VButton>
           <VButton variant="primary" @click="confirmSend">{{ t('voiceSendAnyway') }}</VButton>
         </div>
-        <p v-if="answer && state === 'idle'" class="vp-answer">{{ answer }}</p>
+        <!-- Javob MARKDOWN bo'lib keladi (`- **DVSIB-266** — ... [T2]`). Xom matn
+             bo'lib chiqsa yulduzcha, chiziqcha va `[T2]` ko'rinib qolardi - chatdagi
+             AYNI chizgich: ro'yxat ro'yxat bo'ladi, `[T2]` yashiriladi, kalit xira. -->
+        <div v-if="answer && state === 'idle'" class="vp-answer">
+          <MarkdownMessage :source="answer" :sources="answerSources" />
+        </div>
 
         <div v-if="state === 'error'" class="vp-actions">
           <VButton variant="secondary" @click="onOrbClick">{{ t('voiceRetry') }}</VButton>
@@ -907,14 +916,27 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
   gap: var(--s-2);
   margin-top: var(--s-2);
 }
+/* Ro'yxat oddiy xatboshidan baland: 120px da ikkinchi band yarmidan kesilardi. Past
+   ekranda esa pastdagi til belgisiga yetmasin - `vh` bilan cheklanadi. */
 .vp-answer {
-  max-height: 120px;
+  max-height: min(200px, 28vh);
   margin-top: var(--s-2);
   overflow-y: auto;
+  text-align: start;
+}
+/* Chatdagi javob shrifti katta - panelda u shar ostidagi kichik, xira izoh. */
+.vp-answer :deep(.vmd) {
   color: var(--text-2);
   font-size: var(--fs-body-sm);
   line-height: var(--lh-body-sm);
-  text-align: start;
+}
+.vp-answer :deep(.vmd p),
+.vp-answer :deep(.vmd ul),
+.vp-answer :deep(.vmd ol) {
+  margin-bottom: var(--s-2);
+}
+.vp-answer :deep(.vmd li + li) {
+  margin-top: var(--s-1);
 }
 .vp-foot {
   position: absolute;

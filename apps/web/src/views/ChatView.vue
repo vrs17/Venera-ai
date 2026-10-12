@@ -678,6 +678,8 @@ const lastAnswer = computed(() => {
   return last?.response?.answer ?? null
 })
 const lastTurn = computed(() => exchanges.value[exchanges.value.length - 1]?.turnId ?? null)
+// O'sha javobning manbalari: ovoz paneli `[1]` ni chatdagidek iqtibosga aylantiradi.
+const lastSources = computed(() => exchanges.value[exchanges.value.length - 1]?.sources)
 
 // --- Salomlashuv --------------------------------------------------------------
 /** "Salom, {ism}". HRM ism-familiyani ko'pincha rasmiy tartibda beradi ("Mamajonov
@@ -924,6 +926,7 @@ onBeforeUnmount(() => {
         :send="send"
         :busy="phase !== 'idle'"
         :answer="lastAnswer"
+        :answer-sources="lastSources"
         :answer-turn="lastTurn"
         :greeting="t('voiceGreeting')"
         @close="closeVoice"
