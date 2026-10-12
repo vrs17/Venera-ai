@@ -40,7 +40,7 @@ import urllib.request
 import wave
 import weakref
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from socket import timeout as socket_timeout
 
@@ -275,8 +275,11 @@ class TtsClient:
         timeout: float = 60.0,
         max_concurrent: int = 2,
         queue_wait: float = 1.0,
+        spoken_names: Callable[[], Mapping[str, str]] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        #: Talaffuz lug'ati (`speech_text.SpokenNames`): `DVSIB` -> loyiha nomi.
+        self.spoken_names = spoken_names
         self.client_id = client_id
         self.client_secret = client_secret
         self.timeout = timeout
@@ -365,7 +368,7 @@ class TtsClient:
         # Sana, vaqt va "MChJ" - so'z bilan (`speech_text.py`). Qisqartirishdan
         # KEYIN: so'zlar matnni uzaytiradi, va oldin qilinsa, klient allaqachon
         # 3000 belgiga sig'dirgan javobning oxiri shu uzayish hisobiga kesilardi.
-        clean = for_speech(clean)
+        clean = for_speech(clean, names=self.spoken_names() if self.spoken_names else None)
 
         # Normalizator ba'zi raqamlarda yiqiladi - bunday matnni OLDINDAN
         # tanib, normalizatsiyasiz yuboramiz. `/stream` da bu 422 beradi

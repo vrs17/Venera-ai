@@ -7,11 +7,12 @@ qo'riqlanadi - aks holda "tushunarsiz" ovoz sezdirmasdan qaytib kelardi.
 
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import pytest
 
-from app.services.speech_text import attach, cardinal, for_speech, ordinal
+from app.services.speech_text import SpokenNames, attach, cardinal, for_speech, ordinal
 
 #: Testlar sanaga BOG'LIQ bo'lmasligi uchun "bugun" qat'iy.
 BUGUN = date(2026, 9, 23)
@@ -194,3 +195,70 @@ def test_kutish_ovozlariga_tegilmaydi():
 
     changed = [text for _, text in all_clips() if speak(text) != text]
     assert not changed, changed
+
+
+# --- loyiha nomlari (talaffuz lug'ati) -------------------------------------------
+
+#: Haqiqiy nom emas - qoidani tekshirish uchun. "bank" k bilan tugaydi:
+#: qo'shimcha imlosi ham ko'rinsin ("bankka").
+NOMLAR = {"DVSIB": "Raqamli bank"}
+
+
+def nomli(text: str) -> str:
+    return for_speech(text, today=BUGUN, names=NOMLAR)
+
+
+@pytest.mark.parametrize("text, spoken", [
+    ("DVSIB loyihasida 2 ta vazifa topildi:", "Raqamli bank loyihasida 2 ta vazifa topildi:"),
+    ("**DVSIB** loyihasida", "**Raqamli bank** loyihasida"),
+    ("Vazifani DVSIBga qo'shing.", "Vazifani Raqamli bankka qo'shing."),
+    ("DVSIB-ning sprinti", "Raqamli bankning sprinti"),
+    ("Vazifalaringiz odatda DVSIB.", "Vazifalaringiz odatda Raqamli bank."),
+    ("DVSIB va HR loyihalari", "Raqamli bank va HR loyihalari"),
+    # Nom yonida yozilgan bo'lsa - ikki marta aytilmaydi.
+    ("Raqamli bank (DVSIB) loyihasida", "Raqamli bank loyihasida"),
+    ("DVSIB (Raqamli bank) loyihasida", "Raqamli bank loyihasida"),
+])
+def test_loyiha_kodi_nom_bilan_aytiladi(text, spoken):
+    assert nomli(text) == spoken
+
+
+@pytest.mark.parametrize("text", [
+    "DVSIB-266 yopildi.",                       # vazifa kaliti - loyiha nomi EMAS
+    "- DVSIB-12 - Shartnoma tayyor.",
+    "Havola: https://crm.example.uz/DVSIB/board",
+    "Pochta: dvsib@example.uz va DVSIB.uz",
+    "XDVSIB va DVSIBX va DVSIB_1",               # boshqa so'z ichida
+    "Dvsib",                                     # katta-kichik harf aniq
+])
+def test_loyiha_kodi_ozga_joyda_tegilmaydi(text):
+    assert nomli(text) == speak(text)
+
+
+def test_lugatsiz_hech_narsa_ozgarmaydi():
+    assert for_speech("DVSIB loyihasida", today=BUGUN) == "DVSIB loyihasida"
+    assert for_speech("DVSIB loyihasida", today=BUGUN, names={}) == "DVSIB loyihasida"
+
+
+def test_lugat_fayli(tmp_path):
+    """Fayl yo'q - bo'sh; yaroqsiz yozuv tashlanadi; fayl o'zgarsa qayta
+    o'qiladi; buzilsa oxirgi yaroqli nusxa qoladi (ovoz baribir ishlaydi)."""
+    path = tmp_path / "tts_names.json"
+    names = SpokenNames(path)
+    assert names() == {}
+
+    path.write_text(json.dumps({"DVSIB": "  Raqamli   bank ", "bad key": "x", "HR": "",
+                                "N1": 5, "LONG": "y" * 201}), encoding="utf-8")
+    assert names() == {"DVSIB": "Raqamli bank"}
+
+    path.write_text(json.dumps({"DVSIB": "Raqamli bank", "HRM": "kadrlar tizimi"}), encoding="utf-8")
+    assert names() == {"DVSIB": "Raqamli bank", "HRM": "kadrlar tizimi"}
+
+    path.write_text("{buzuq json", encoding="utf-8")
+    assert names() == {"DVSIB": "Raqamli bank", "HRM": "kadrlar tizimi"}
+
+    path.write_text(json.dumps(["ro'yxat", "obyekt emas"]), encoding="utf-8")
+    assert names() == {"DVSIB": "Raqamli bank", "HRM": "kadrlar tizimi"}
+
+    path.unlink()
+    assert names() == {}

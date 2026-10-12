@@ -22,8 +22,16 @@ ketadigan nusxa tayyorlanadi.
 
 from __future__ import annotations
 
+import json
+import logging
 import re
+import threading
+from collections.abc import Mapping
 from datetime import date, datetime, timedelta, timezone
+from functools import lru_cache
+from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 #: Joriy yil shu soat mintaqasi bo'yicha: foydalanuvchilar O'zbekistonda.
 _TASHKENT = timezone(timedelta(hours=5))
@@ -263,14 +271,105 @@ def _times(text: str) -> str:
     return "".join(out)
 
 
+# --- nomlar (talaffuz lug'ati) ---------------------------------------------------
+
+#: Lug'at kaliti - qisqartma kod (`DVSIB`). Katta-kichik harf ANIQ solishtiriladi:
+#: `Dvsib` - kod emas, oddiy so'z bo'lishi mumkin.
+_NAME_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9&]{1,31}$")
+_NAME_MAX = 200
+
+
+@lru_cache(maxsize=256)
+def _code_at(code: str) -> re.Pattern[str]:
+    """Kod FAQAT o'z o'rnida: alohida so'z, ixtiyoriy qo'shimcha bilan
+    (`DVSIBning`, `DVSIB-ga`). Vazifa kaliti (`DVSIB-266`), manzil
+    (`x.uz/DVSIB`, `dvsib@...`) va boshqa so'z ichidagisi TEGILMAYDI - "Barno AI
+    ikki yuz oltmish olti" vazifa kaliti emas, va havola buzilmasin."""
+    return re.compile(
+        rf"(?<![\w@/.\-]){re.escape(code)}(?:[-'’ʼ]?(?P<qo>{_SUFFIX}))?(?![\w\-]|\.\w)"
+    )
+
+
+def _spoken_names(text: str, names: Mapping[str, str]) -> str:
+    for code, spoken in names.items():
+        def expand(m: re.Match[str], spoken: str = spoken) -> str:
+            return attach(spoken, m.group("qo")) if m.group("qo") else spoken
+        text = _code_at(code).sub(expand, text)
+        # Nom matnda kod bilan YONMA-YON yozilgan bo'lsa (`Barno AI (DVSIB)`) u endi
+        # ikki marta aytilardi: "Barno AI (Barno AI)" - qavsdagisi tashlanadi.
+        twice = re.escape(spoken)
+        text = re.sub(rf"({twice})[ \t]*\([ \t]*{twice}[ \t]*\)", r"\1", text, flags=re.IGNORECASE)
+    return text
+
+
+class SpokenNames:
+    """Talaffuz lug'ati fayli: `{"DVSIB": "<to'liq nomi>"}`.
+
+    NEGA FAYL. Loyiha kodi (`DVSIB`) ovozda "de-ve-es-i-be" bo'lib eshitiladi -
+    rahbar esa loyiha NOMINI eshitishni xohlaydi. Nomlar Venera'da yo'q (CRM'da),
+    va ular kam o'zgaradi: fayl o'zgarsa keyingi sintezda o'zi qayta o'qiladi,
+    API'ni qayta ishga tushirish shart emas.
+
+    FAQAT OVOZ. Ekrandagi matn o'zgarmaydi. Fayl yo'q yoki buzuq bo'lsa ovoz
+    BARIBIR ishlaydi - lug'atsiz (buzuq faylda oxirgi yaroqli nusxa bilan).
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        self._lock = threading.Lock()
+        self._stamp: tuple[int, int] | None = None
+        self._names: dict[str, str] = {}
+
+    def __call__(self) -> dict[str, str]:
+        try:
+            st = self.path.stat()
+        except FileNotFoundError:
+            return {}
+        except OSError as exc:
+            log.warning("TTS lug'ati o'qilmadi (%s): %s", self.path, exc)
+            return self._names
+        stamp = (st.st_mtime_ns, st.st_size)
+        with self._lock:
+            if stamp != self._stamp:
+                # Belgi xato bo'lsa ham yangilanadi: buzuq fayl har sintezda
+                # qayta o'qilib, jurnalni to'ldirmasin.
+                self._stamp = stamp
+                self._names = self._load(self._names)
+            return self._names
+
+    def _load(self, previous: dict[str, str]) -> dict[str, str]:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            log.warning("TTS lug'ati buzuq (%s), oldingisi qoldi: %s", self.path, exc)
+            return previous
+        if not isinstance(raw, dict):
+            log.warning("TTS lug'ati obyekt emas (%s), oldingisi qoldi", self.path)
+            return previous
+        names: dict[str, str] = {}
+        for code, spoken in raw.items():
+            spoken = " ".join(spoken.split()) if isinstance(spoken, str) else ""
+            if not _NAME_KEY.match(str(code)) or not spoken or len(spoken) > _NAME_MAX:
+                log.warning("TTS lug'ati: yaroqsiz yozuv tashlandi: %r", code)
+                continue
+            names[str(code)] = spoken
+        log.info("TTS lug'ati: %d ta nom (%s)", len(names), self.path)
+        return names
+
+
 # --- hammasi ------------------------------------------------------------------
 
 
-def for_speech(text: str, *, today: date | None = None) -> str:
+def for_speech(text: str, *, today: date | None = None,
+               names: Mapping[str, str] | None = None) -> str:
     """Matnni TTS o'qishiga tayyorlaydi. Tartib muhim: qisqartma nomni
     qo'shtirnoq bo'yicha taniydi, shuning uchun qo'shtirnoq undan KEYIN
-    olinadi; sana `T08:45` ni vaqtga bo'shatadi, shuning uchun vaqtdan OLDIN."""
+    olinadi; sana `T08:45` ni vaqtga bo'shatadi, shuning uchun vaqtdan OLDIN.
+    Loyiha nomlari (`names`) - hammasidan OLDIN: nomning o'zidagi qo'shtirnoq
+    va sana keyingi qadamlarda boshqalari kabi tozalanadi."""
     this_year = (today or datetime.now(_TASHKENT).date()).year
+    if names:
+        text = _spoken_names(text, names)
     text = _legal_forms(text)
     text = _QUOTES.sub("", text)
     text = _dates(text, this_year)

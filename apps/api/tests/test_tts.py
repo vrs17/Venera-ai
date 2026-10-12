@@ -1018,6 +1018,17 @@ def test_clip_sanalar_sozga_aylanadi(client, auth, server, clip_tts):
     assert "09.09.2025" not in calls[0]["text"]
 
 
+def test_clip_loyiha_kodi_nom_bilan(client, auth, server, monkeypatch):
+    """Talaffuz lug'ati klient orqali ishlaydi: TTS serveriga kod emas, nom ketadi."""
+    import app.api.v1.tts as module
+    monkeypatch.setattr(module, "_client", TtsClient(
+        "http://tts", "frontend", "s3cret", queue_wait=0.05,
+        spoken_names=lambda: {"DVSIB": "Raqamli bank"}))
+    response = _clip(client, auth, text="DVSIB loyihasida DVSIB-266 yopildi.")
+    assert response.status_code == 200
+    assert _stream_calls(server)[-1]["text"] == "Raqamli bank loyihasida DVSIB-266 yopildi."
+
+
 def test_clip_xato_ichki_hostni_ochmaydi(client, auth, server, monkeypatch):
     server.stream_status = 500
     import app.api.v1.tts as module
