@@ -7,6 +7,9 @@
 
 import { apiFetch } from '../api/http'
 import type {
+  AdminBrain,
+  BrainFeatureUpdate,
+  BrainShadow,
   AdminChatPage,
   AdminConnector,
   AdminEngines,
@@ -71,6 +74,21 @@ function send<T>(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body
     method,
     body: body === undefined ? undefined : JSON.stringify(body),
   })
+}
+
+/* ---- AI ko'chirish (miya flag'lari) ---- */
+
+/** Har funksiya: sozlangan va hozir ishlayotgan holat, agent holati. `refresh` - imkoniyatlar darhol. */
+export function getBrain(refresh = false, signal?: AbortSignal): Promise<AdminBrain> {
+  return get<AdminBrain>('/engines/brain', refresh ? { refresh: true } : undefined, signal)
+}
+
+export function putBrain(feature: string, body: BrainFeatureUpdate): Promise<AdminBrain> {
+  return send<AdminBrain>('PUT', `/engines/brain/${seg(feature)}`, body)
+}
+
+export function getBrainShadow(days = 7, signal?: AbortSignal): Promise<BrainShadow> {
+  return get<BrainShadow>('/engines/brain/shadow', { days }, signal)
 }
 
 /* ---- umumiy ko'rinish ---- */

@@ -129,6 +129,13 @@ def _agent_down(exc: AssistantError) -> bool:
         "queue_full", "upstream_unreachable", "upstream_timeout", "upstream_busy")
 
 
+def _brain_route(feature: str):
+    """`routing.route` - HECH QACHON xato bermaydi (shubhada `local`)."""
+    from ..services.brain import routing as _routing
+
+    return _routing.route(feature)
+
+
 def _line(text: str, limit: int = LINE_MAX) -> str:
     text = " ".join(str(text or "").split())
     return text if len(text) <= limit else text[:limit - 1] + "…"
@@ -320,10 +327,21 @@ class GroupActions:
         conversation = self._conversation(chat_id, user)
         question = self._question(msg, text, user, follow=follow)
         rec = TurnRecorder(user, "bot", "bot", _line(text, 500) or "CRM", chat_id=conversation, locale="uz")
+        # W1 (2026-10-11): `group_crm` flag'i. `local` (default) - bugungi v3 oqimi AYNAN; `agent` -
+        # v4 shakli (kontekst bloki, `surface` suhbat); `shadow` - bugungisi + v4 fonda.
+        route = _brain_route("group_crm")
         try:
             with rec.bind():
                 holder = self._send(chat_id, esc(WORKING), reply_to=message_id, thread=thread)
-                parts, proposals, failure = self._ask(question, user, conversation, rec)
+                answered = self._ask_v4(msg, text, user, conversation, rec) if route.agent else None
+                if answered is not None:
+                    parts, proposals, failure = answered
+                else:
+                    started = time.monotonic()
+                    parts, proposals, failure = self._ask(question, user, conversation, rec)
+                    if route.shadow:
+                        self._shadow_v4(msg, text, user, conversation, "".join(parts),
+                                        (time.monotonic() - started) * 1000.0, route.sample_rate)
                 if holder is not None:
                     try:
                         self.api.delete_message(chat_id, holder)
@@ -375,6 +393,103 @@ class GroupActions:
             if callable(close):
                 close()
         return parts, proposals, failure
+
+    # --- agent v4 shakli (W1) -------------------------------------------------------------
+
+    def _v4_body(self, msg: dict[str, Any], text: str, user: AuthUser, conversation: str, *,
+                 shadow: bool = False) -> dict[str, Any] | None:
+        """`POST /api/v4/chat` tanasi yoki `None` (CRM tokeni yo'q). Savol - so'rovchining O'Z
+        matni (sirlar niqobida); guruh yozishmasi va javob qilingan xabar - KONTEKST bloki
+        (ombordagi matn allaqachon niqoblangan), ismlar - eslatma. Eski "[Telegram ish guruhi"
+        sarlavhasi YO'Q: kontekst bloki uning o'rnida (agent jamoasi, 2026-10-11)."""
+        from ..services.brain import group_crm
+
+        token_of = getattr(self.backend, "own_crm_token", None)
+        crm = token_of(user) if callable(token_of) else None
+        if not crm:
+            return None
+        chat = msg.get("chat") or {}
+        chat_id = chat.get("id")
+        thread = msg.get("message_thread_id") if msg.get("is_topic_message") else None
+        rows = self._recent(chat_id, thread)
+        items = [group_crm.item(row.message_id, row.date, row.from_name, strip_forward_time(row.text),
+                                reply_to=row.reply_to) for row in rows]
+        reply = msg.get("reply_to_message")
+        reply_id = reply.get("message_id") if isinstance(reply, dict) else None
+        sender = msg.get("from") or {}
+        if isinstance(reply, dict) and reply_id is not None and str(reply_id) not in {i["id"] for i in items}:
+            # Javob qilingan xabar oynadan tashqarida - u ham bitta band (niqoblangan, `_question` dagidek).
+            quoted = mask_text(render.plain(message_text(reply)))
+            author = " ".join(str((reply.get("from") or {}).get(k) or "") for k in ("first_name", "last_name"))
+            if quoted:
+                items.insert(0, group_crm.item(reply_id, reply.get("date"), author.strip(),
+                                               strip_forward_time(quoted)))
+        people = [sender] + ([reply.get("from")] if isinstance(reply, dict) and isinstance(reply.get("from"), dict)
+                             else [])
+        names = self._names(" ".join([mask_text(text)] + [str(i.get("text") or "") for i in items]), rows, people)
+        asker = _line(user.fullName or user.email or "", 80)
+        notes = []
+        if asker or names:
+            notes.append({"id": "people", "kind": "people", "cites": [],
+                          "text": "; ".join(([f"So'ragan: {asker}"] if asker else []) + names)})
+        block = group_crm.context_block(chat_id, _line(chat.get("title") or "guruh", 80), items, notes=notes,
+                                        window_label=f"oxirgi {int(CONTEXT_HOURS)} soat")
+        question = mask_secrets(text).strip() or _DEFAULT_ASK
+        return group_crm.request(question=question, user_id=self._agent_user(user), chat_id=conversation,
+                                 crm_token=crm, block=block, reply_to=reply_id, shadow=shadow)
+
+    def _ask_v4(self, msg: dict[str, Any], text: str, user: AuthUser, conversation: str,
+                rec: TurnRecorder) -> tuple[list[str], list[dict[str, Any]], str] | None:
+        """v4 yo'li. `None` - bajarilmadi (token yo'q, agent xatosi): chaqiruvchi BUGUNGI yo'lga
+        o'tadi - foydalanuvchi uchun xizmat to'xtamaydi (reja: lokal zahira)."""
+        from ..services.brain import group_crm
+        from ..services.brain import routing as _routing
+        from ..services.integrations.agent_v4 import AgentError
+
+        body = self._v4_body(msg, text, user, conversation)
+        if body is None:
+            return None
+        try:
+            payload, request_id = _routing.client().chat(body, op="group_crm",
+                                                          units={"chars": len(body["question"])})
+        except AgentError as exc:
+            log.warning("Telegram guruh CRM (%s): agent v4 javob bermadi (%s) - bugungi yo'l",
+                        user.actorId, exc.code)
+            return None
+        rec.update(request_id=request_id, engine="v4")
+        answer, proposals, code = group_crm.parse(payload)
+        return ([answer] if answer else []), proposals, (FAILED if code and not answer and not proposals else "")
+
+    def _shadow_v4(self, msg: dict[str, Any], text: str, user: AuthUser, conversation: str,
+                   local_text: str, local_ms: float, sample_rate: float) -> None:
+        """Foydalanuvchi bugungi javobni oldi; v4 fonda (`shadow: true` - taklif ham, yozuv ham yo'q),
+        `shadow_results` ga faqat sonlar."""
+        from ..services.brain import routing as _routing
+        from ..services.brain import shadow as _shadow
+        from ..services.integrations.agent_v4 import AgentError
+
+        body = self._v4_body(msg, text, user, conversation, shadow=True)
+        if body is None:
+            return
+        size = len(body["question"]) + sum(len(str(i.get("text") or "")) for i in body["context"][0]["items"])
+
+        def job() -> None:
+            started = time.monotonic()
+            base = dict(local_ms=local_ms, input_chars=size, local_chars=len(local_text))
+            try:
+                payload, request_id = _routing.client("shadow").chat(body, op="shadow.group_crm")
+            except AgentError as exc:
+                _shadow.record("group_crm", "group_crm", status="error", error=exc,
+                               agent_ms=(time.monotonic() - started) * 1000.0, **base)
+                return
+            answer = str(payload.get("answer") or "")
+            meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+            _shadow.record("group_crm", "group_crm", status="ok", trace_id=meta.get("trace_id"),
+                           request_id=request_id, agent_ms=(time.monotonic() - started) * 1000.0,
+                           agent_chars=len(answer), similarity=_shadow.similarity(local_text, answer),
+                           metrics=_shadow.text_metrics(local_text, answer), **base)
+
+        _shadow.submit("group_crm", job, sample_rate=sample_rate)
 
     def _deliver(self, chat_id: int, message_id: Any, thread: int | None, owner: Owner, parts: list[str],
                  proposals: list[dict[str, Any]], failure: str) -> None:

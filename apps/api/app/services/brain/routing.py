@@ -70,6 +70,15 @@ NEEDS: dict[str, dict[str, tuple[str, ...]]] = {
                     "shadow": ("complete", "instructions_mode", "shadow")},
     # `route` kadri chat oqimining o'zida keladi - qo'shimcha chaqiruv yo'q.
     "hold_classify": {"agent": ("frames:route",), "shadow": ("frames:route",)},
+    # W1: guruh CRM - v4 chat maydonlari (6.1). `chat_purge` - agentdagi suhbat haqiqiy o'chishi.
+    "group_crm": {"agent": ("purpose", "store", "chat_visibility", "context", "audience", "tools_allowlist",
+                            "chat_purge"),
+                  "shadow": ("purpose", "store", "chat_visibility", "context", "audience", "tools_allowlist",
+                             "shadow")},
+    # W1: yig'ilish vazifasi CRM ga. Shadow yo'q - taklif yaratish fonda takrorlanmaydi
+    # (`shadow` holati amalda `local` kabi ishlaydi, chaqiruv joyida).
+    "meeting_crm": {"agent": ("purpose", "store", "tools_allowlist"),
+                    "shadow": ("purpose", "store", "tools_allowlist", "shadow")},
 }
 
 
@@ -109,6 +118,14 @@ class Capabilities:
         self.features: Mapping[str, Any] = features if isinstance(features, Mapping) else {}
         self.contract = str(payload.get("contract") or "") if isinstance(payload, Mapping) else ""
         self.in_network = isinstance(payload, Mapping) and payload.get("in_network_models_only") is True
+        #: Agent tashqi modelga (Ollama Cloud) ruxsat berilganini aytadi (egasining qarori,
+        #: 2026-10-11). Bizning kalit bilan birga himoyadan o'tkazadi (`models_ok`).
+        self.external_allowed = isinstance(payload, Mapping) and payload.get("external_models_allowed") is True
+
+    def models_ok(self) -> bool:
+        """Model qoidasi: ichki tarmoq modeli YOKI egasi ruxsat bergan tashqi model
+        (`AGENT_V4_ALLOW_EXTERNAL_MODELS`, jonli). Ikkalasi ham yo'q - `local`."""
+        return self.in_network or (self.external_allowed and _config.agent_v4_external_models_now())
 
     def has(self, name: str) -> bool:
         key, _, value = name.partition(":")
@@ -122,6 +139,7 @@ class Capabilities:
         return {
             "contract": self.contract,
             "inNetwork": self.in_network,
+            "externalAllowed": self.external_allowed,
             "features": sorted(k for k, v in self.features.items() if v is True),
             "frames": [str(f) for f in self.features.get("frames") or [] if isinstance(f, str)][:40],
             "jobKinds": [str(f) for f in self.features.get("job_kinds") or [] if isinstance(f, str)][:40],
@@ -337,7 +355,7 @@ def route(feature: str) -> Route:
         caps = capabilities().get()
         if caps is None:
             return Route(effective="local", reason="capabilities_unknown", **base)
-        if not caps.in_network:
+        if not caps.models_ok():
             return Route(effective="local", reason="not_in_network", **base)
         missing = [name for name in NEEDS.get(feature, {}).get(choice.state, ("?",)) if not caps.has(name)]
         if missing:
@@ -347,3 +365,46 @@ def route(feature: str) -> Route:
         log_limited("brain.route", "Miya yo'nalishi aniqlanmadi - local", exc_info=True)
         return Route(feature=feature, configured="local", effective="local", source="default",
                      sample_rate=0.0, reason="error")
+
+
+# --- suhbatni haqiqiy o'chirish (shartnoma 10.6) -------------------------------------------
+
+
+def purge_chat(chat_id: str, user_id: str) -> dict[str, Any] | None:
+    """Agentdagi suhbatni HAQIQIY o'chirish: `DELETE /api/v4/chats/{id}?mode=purge
+    &forget_learned=true` - xabarlar, qatorlar, iz va undan o'rganilganlar o'chadi, agent
+    imzolangan kvitansiya qaytaradi. Guruh CRM suhbatlari uchun (ichida boshqa a'zolarning
+    xabarlari bor): F0 da faqat yumshoq o'chirish bor edi.
+
+    Natija:
+      * `None` - v4 o'chirish hozir yo'q (agent o'chiq, `chat_purge` e'lon qilinmagan):
+        chaqiruvchi eski (yumshoq) yo'lga o'tadi;
+      * lug'at - o'chirildi (404 ham: agentda bunday suhbat yo'q);
+      * `AssistantError` - imkoniyat BOR, lekin bajarilmadi: tozalovchi keyinroq qayta
+        uradi (yumshoq o'chirishga TUSHMAYMIZ - aks holda "o'chirildi" deb belgilanib,
+        haqiqiy o'chirish hech qachon bo'lmasdi)."""
+    from urllib.parse import quote
+
+    from ..integrations.assistant import AssistantError
+
+    usable, _ = agent_usable()
+    if not usable:
+        return None
+    caps = capabilities().get()
+    if caps is None or not caps.has("chat_purge"):
+        return None
+    path = (f"/chats/{quote(str(chat_id), safe='')}?user_id={quote(str(user_id), safe='')}"
+            "&mode=purge&forget_learned=true")
+    try:
+        payload, _ = client().request("DELETE", path, op="chat.purge", timeout=30.0)
+    except AgentError as exc:
+        if exc.status == 404:
+            return {}
+        # Tozalovchining `_agent_down` tili: agentning o'zi ishlamasa aylanish to'xtaydi.
+        down = exc.code in ("network", "circuit_open", "busy") or (exc.status or 0) >= 500 \
+            or exc.status in (401, 429)
+        raise AssistantError(f"agent v4 purge: {exc.code}", status=503 if down else (exc.status or 502),
+                             retryable=down, reason="upstream_busy" if down else "upstream_http") from None
+    receipt = payload.get("receipt") if isinstance(payload, dict) else None
+    log.info("Agent: suhbat haqiqiy o'chirildi (kvitansiya %s)", "bor" if receipt else "yo'q")
+    return payload if isinstance(payload, dict) else {}

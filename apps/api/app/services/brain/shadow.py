@@ -22,6 +22,7 @@ QOIDALAR (har biri sabab bilan):
 from __future__ import annotations
 
 import json
+import math
 import logging
 import queue
 import random
@@ -295,3 +296,45 @@ def reset_for_tests(**kwargs: Any) -> ShadowQueue:
 
 def submit(feature: str, job: Callable[[], None], *, sample_rate: float) -> bool:
     return get_queue().submit(feature, job, sample_rate=sample_rate)
+
+
+# --- admin uchun jamlanma ------------------------------------------------------------------------
+
+
+def _pct(values: list[int], q: float) -> int | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, max(0, math.ceil(q * len(ordered)) - 1))]
+
+
+def summary(days: int = 7, *, db: Any = None, now: float | None = None) -> dict[str, Any]:
+    """`GET /api/v1/admin/engines/brain/shadow` - har funksiya bo'yicha taqqoslash natijasi:
+    nechta, xato/timeout ulushi, bizning va agentning kechikishi (p50/p95), o'rtacha o'xshashlik.
+    Egasi "agentga o'tkazamizmi" qarorini SHU raqamlarga qarab beradi (reja 7.2). Faqat sonlar."""
+    days = max(1, min(int(days), 90))
+    since = (time.time() if now is None else now) - days * 86400
+    database = db or _db.get_db()
+    rows = database.rows(
+        "SELECT feature, status, local_ms, agent_ms, similarity, ts FROM shadow_results WHERE ts >= ? "
+        "ORDER BY ts", (since,))
+    out: dict[str, dict[str, Any]] = {}
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(str(row["feature"]), []).append(row)
+    for feature, items in grouped.items():
+        ok = [r for r in items if r["status"] == "ok"]
+        sims = [float(r["similarity"]) for r in ok if r["similarity"] is not None]
+        local = [int(r["local_ms"]) for r in items if r["local_ms"] is not None]
+        agent = [int(r["agent_ms"]) for r in ok if r["agent_ms"] is not None]
+        out[feature] = {
+            "count": len(items),
+            "ok": len(ok),
+            "errors": sum(1 for r in items if r["status"] == "error"),
+            "timeouts": sum(1 for r in items if r["status"] == "timeout"),
+            "similarityAvg": round(sum(sims) / len(sims), 3) if sims else None,
+            "localP50": _pct(local, 0.5), "localP95": _pct(local, 0.95),
+            "agentP50": _pct(agent, 0.5), "agentP95": _pct(agent, 0.95),
+            "lastAt": int(items[-1]["ts"]),
+        }
+    return {"days": days, "features": out}

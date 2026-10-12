@@ -727,3 +727,66 @@ export interface UserQuery extends RangeParams {
   role?: string
   status?: 'active' | 'blocked'
 }
+
+/* ---- AI ko'chirish (miya flag'lari, agentga migratsiya) ---- */
+
+export type BrainState = 'local' | 'shadow' | 'agent'
+
+/** `GET /api/v1/admin/engines/brain` - bitta funksiya. */
+export interface BrainFeatureRow {
+  feature: string
+  label: string
+  ops: string[]
+  /** Sozlangan holat (admin yoki `.env`). */
+  state: BrainState
+  source: 'admin' | 'env' | 'default' | string
+  sampleRate: number
+  envState: BrainState
+  /** Hozir HAQIQATAN ishlayotgani (agent tayyor bo'lmasa `local`). */
+  effective: BrainState
+  /** Nega pastroq: `agent_disabled`, `not_in_network`, `capability_missing:<nom>` ... */
+  reason: string | null
+  note: string | null
+  updatedAt: string | null
+  updatedBy: string | null
+}
+
+export interface AdminBrain {
+  states: BrainState[]
+  features: BrainFeatureRow[]
+  agent: {
+    enabled?: boolean
+    configured?: boolean
+    usable?: boolean
+    reason?: string | null
+    capabilities?: Record<string, unknown>
+    circuit?: Record<string, unknown>
+  }
+  shadow: Record<string, unknown>
+  holdClassifier: string
+}
+
+export interface BrainFeatureUpdate {
+  state?: BrainState | null
+  sampleRate?: number | null
+  note?: string | null
+}
+
+/** `GET /api/v1/admin/engines/brain/shadow` - taqqoslash natijalari (faqat sonlar). */
+export interface BrainShadowStats {
+  count: number
+  ok: number
+  errors: number
+  timeouts: number
+  similarityAvg: number | null
+  localP50: number | null
+  localP95: number | null
+  agentP50: number | null
+  agentP95: number | null
+  lastAt: number
+}
+
+export interface BrainShadow {
+  days: number
+  features: Record<string, BrainShadowStats>
+}

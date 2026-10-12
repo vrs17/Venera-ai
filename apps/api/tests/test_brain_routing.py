@@ -33,7 +33,8 @@ ADMIN = AuthUser(actorId=1, actorType="EMPLOYEE", email="admin@venera.uz", fullN
 
 def test_hamma_funksiya_default_local_va_agent_ochiq(_isolated_analytics):
     assert set(control.BRAIN_FEATURES) == {"group_summary", "group_ask", "brief_extract", "brief_crm",
-                                           "meeting_summary", "meeting_ask", "hold_classify"}
+                                           "meeting_summary", "meeting_ask", "hold_classify", "group_crm",
+                                           "meeting_crm"}
     for feature in control.BRAIN_FEATURES:
         route = routing.route(feature)
         assert (route.configured, route.effective, route.reason) == ("local", "local", None)
@@ -282,3 +283,7 @@ def test_admin_api(client, auth, user_auth, _isolated_analytics):
                       json={"state": "local"}).status_code == 403
     [audit] = _isolated_analytics.rows("SELECT action, target_id FROM audit_log WHERE action='feature.state'")
     assert audit == {"action": "feature.state", "target_id": "group_ask"}
+    # Taqqoslash jamlanmasi - faqat admin; bo'sh ombor - bo'sh ro'yxat.
+    shadow_view = client.get("/api/v1/admin/engines/brain/shadow?days=3", headers=auth)
+    assert shadow_view.status_code == 200 and shadow_view.json() == {"days": 3, "features": {}}
+    assert client.get("/api/v1/admin/engines/brain/shadow", headers=user_auth).status_code == 403

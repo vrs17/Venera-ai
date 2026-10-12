@@ -284,6 +284,12 @@ class Backend:
 
         return _chat.has_own_crm(user)
 
+    def own_crm_token(self, user: AuthUser) -> str | None:
+        """Odamning O'Z CRM tokeni (guruh CRM v4 so'rovi uchun) - umumiy hisob emas."""
+        from ..api.v1 import chat as _chat
+
+        return _chat._connectors.hub.tokens(str(user.actorId)).get("crm") or None
+
     def agent_user_id(self, user: AuthUser) -> str:
         """Agentdagi kimlik (`venera:{actorId}`) - guruh CRM suhbati shu kalit bilan
         yoziladi va keyin o'chiriladi (`group_actions.sweep`)."""
@@ -294,9 +300,13 @@ class Backend:
     def forget_chat(self, chat_id: str, user_id: str) -> None:
         """Guruh CRM suhbatini agentda o'chirish (2026-10-10, F0 maxfiylik): ichida
         guruhdagi boshqa odamlarning xabarlari bor - guruh o'chirilganda, saqlash
-        muddati yoki suhbat muddati tugaganda. Agentdagi o'chirish hozircha YUMSHOQ."""
+        muddati yoki suhbat muddati tugaganda. Agent v4 `chat_purge` ni e'lon qilgan bo'lsa -
+        HAQIQIY o'chirish (kvitansiya bilan); aks holda avvalgidek yumshoq (W1, 2026-10-11)."""
         from ..api.v1 import chat as _chat
+        from ..services.brain import routing as _brain
 
+        if _brain.purge_chat(chat_id, user_id) is not None:
+            return
         _chat._assistant.delete_chat(chat_id, user_id=user_id)
 
     def action(self, verb: str, token: str, user: AuthUser, *, own_tokens: bool = False) -> dict[str, Any]:

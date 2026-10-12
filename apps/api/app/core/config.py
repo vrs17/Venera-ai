@@ -758,6 +758,13 @@ class Settings(BaseSettings):
     #: `GET /capabilities` keshi (soniya). Flag `shadow`/`agent` ga faqat kerakli
     #: imkoniyat `true` bo'lsa o'tadi (shartnoma 3.7); kesh bo'sh bo'lsa - `local`.
     agent_capabilities_ttl: float = 300.0
+    #: EGASINING QARORI (2026-10-11): GPU server kelguncha agent v4 ishlarini Ollama
+    #: Cloud'da (gemma4:31b-cloud) bajaradi - `capabilities` da `in_network_models_only:
+    #: false`, `external_models_allowed: true`. Shu kalit `true` bo'lsa himoya bunga ruxsat
+    #: beradi va kontekst bloklariga `policy.external_llm: true` yoziladi (agent `false`
+    #: ni rad etadi). Bugungi yo'l ham shu ma'lumotni Ollama Cloud'ga yuboradi - yomonroq
+    #: emas. JONLI o'qiladi: `false` qilinsa hamma funksiya restartsiz lokalga qaytadi.
+    agent_v4_allow_external_models: bool = True
     #: SHADOW: foydalanuvchi lokal natijani oladi, agent esa fonda, O'Z navbatida
     #: (`max_concurrent`, chatning slotlari emas) va namuna bo'yicha ishlaydi. Navbat
     #: to'lsa vazifa TASHLANADI (hisoblanadi) - foydalanuvchi hech qachon kutmaydi.
@@ -779,6 +786,12 @@ class Settings(BaseSettings):
     meeting_summary_engine: str = "local"
     meeting_ask_engine: str = "local"
     hold_classify_engine: str = "local"
+    #: Guruhdagi CRM so'rovi: `local` - bugungi v3 oqimi; `agent` - v4 shakli (kontekst bloki,
+    #: `surface` suhbat, guruh auditoriyasi); `shadow` - foydalanuvchi bugungisini oladi, v4 fonda.
+    group_crm_engine: str = "local"
+    #: Yig'ilish vazifasini CRM ga taklif qilish: `local` - bugungi v3 oqimi; `agent` - v4
+    #: (`purpose: meeting_crm`, faqat CRM vositalari va o'z CRM tokeni, shaxsiy xotirasiz).
+    meeting_crm_engine: str = "local"
     #: Ovozli "hold" tasnifi: `keyword` - faqat kalit so'z jadvali: ovozli savol (shaxsiy
     #: HR savoli ham) `ollama.com` ga CHIQMAYDI; `llm` - avvalgidek gemma. `.env` dan JONLI
     #: (`hold_classifier_now`), restartsiz.
@@ -929,6 +942,11 @@ def agent_v4_enabled_now() -> bool:
     """Agent mijozining bosh kaliti (`AGENT_V4_ENABLED`) - `.env` dan JONLI: agent
     noto'g'ri ishlasa hamma funksiya restartsiz lokal yo'lga qaytadi."""
     return _env_flag("agent_v4_enabled", settings.agent_v4_enabled)
+
+
+def agent_v4_external_models_now() -> bool:
+    """`AGENT_V4_ALLOW_EXTERNAL_MODELS` - `.env` dan JONLI (egasining 2026-10-11 qarori)."""
+    return _env_flag("agent_v4_allow_external_models", settings.agent_v4_allow_external_models)
 
 
 #: `HOLD_CLASSIFIER` qiymatlari.

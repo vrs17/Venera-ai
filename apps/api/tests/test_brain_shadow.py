@@ -130,3 +130,24 @@ def test_yozuvchi_tozalashi_shadowni_ham_tozalaydi(_isolated_analytics, monkeypa
     writer._purge()
     assert db.scalar("SELECT COUNT(*) FROM shadow_results") == 0
     assert writer.stats()["purged"]["shadowResults"] == 1
+
+
+def test_admin_shadow_jamlanma(_isolated_analytics):
+    from app.services.brain import shadow as sh
+
+    db = _isolated_analytics
+    now = 1_800_000_000.0
+    rows = [("group_ask", "ok", 1000, 2000, 0.8), ("group_ask", "ok", 1200, 4000, 0.6),
+            ("group_ask", "error", 900, None, None), ("brief_crm", "timeout", 500, None, None)]
+    for i, (feature, status, local, agent, sim) in enumerate(rows):
+        db.execute("INSERT INTO shadow_results (ts, feature, op, status, local_ms, agent_ms, similarity) "
+                   "VALUES (?, ?, ?, ?, ?, ?, ?)", (now - 60 * (i + 1), feature, feature, status, local, agent, sim))
+    # Oynadan tashqari - hisobga olinmaydi.
+    db.execute("INSERT INTO shadow_results (ts, feature, op, status) VALUES (?, 'group_ask', 'group_ask', 'ok')",
+               (now - 30 * 86400,))
+    out = sh.summary(7, db=db, now=now)
+    ask = out["features"]["group_ask"]
+    assert (ask["count"], ask["ok"], ask["errors"], ask["timeouts"]) == (3, 2, 1, 0)
+    assert ask["similarityAvg"] == 0.7 and (ask["agentP50"], ask["agentP95"]) == (2000, 4000)
+    assert (ask["localP50"], ask["localP95"]) == (1000, 1200)
+    assert out["features"]["brief_crm"]["timeouts"] == 1 and out["days"] == 7
