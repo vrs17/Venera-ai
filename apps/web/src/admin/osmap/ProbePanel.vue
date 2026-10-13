@@ -125,7 +125,14 @@ async function startRecord() {
   }
   const mimeType = pickMime()
   const chunks: Blob[] = []
-  recorder = new MediaRecorder(micStream, mimeType ? { mimeType } : undefined)
+  try {
+    recorder = new MediaRecorder(micStream, mimeType ? { mimeType } : undefined)
+  } catch {
+    // Brauzer yozuvchini yarata olmadi - mikrofon ochiq qolmasin.
+    stopMic()
+    error.value = t('admin.osmap.probe.micDenied')
+    return
+  }
   recorder.ondataavailable = (e) => {
     if (e.data.size) chunks.push(e.data)
   }
@@ -323,11 +330,25 @@ function stopAll() {
   busy.value = false
 }
 
-/** Kutish ovozini o'ynatish - AYNI `holdClip` (chat oqimidagi kabi). */
+/** Kutish ovozini o'ynatish - AYNI `holdClip` (chat oqimidagi kabi). Oldingi ovoz to'xtatiladi,
+ *  varaq yopilsa ham (`stopAll`) - ovoz ustma-ust yoki sahifadan keyin eshitilmasin. */
 async function playClip(clip: string) {
+  stopPlayback?.()
+  stopPlayback = null
   const blob = await holdClip(clip)
-  if (blob) play(blob)
-  else error.value = t('admin.osmap.probe.notReady')
+  if (!blob) {
+    error.value = t('admin.osmap.probe.notReady')
+    return
+  }
+  const playback = play(blob)
+  stopPlayback = playback.stop
+  // Brauzer o'ynatmasa (avtoijro taqiqi, buzuq fayl) - ishlanmagan rad etish qolmasin;
+  // kutish ovozi chatda ham jim o'tkazib yuboriladi.
+  playback.done
+    .catch(() => undefined)
+    .finally(() => {
+      if (stopPlayback === playback.stop) stopPlayback = null
+    })
 }
 
 watch(() => props.probe, reset, { immediate: true })

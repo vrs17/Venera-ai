@@ -199,6 +199,18 @@ def test_wake_ha(client, auth):
     assert words["barno"]["isBarno"] is True and words["barno"]["distanceBarno"] == 0
     assert words["salom"]["greeting"] is True
     assert [s["step"] for s in body["trace"]] == ["normalize_heard", "word_limit", "to_latin", "match"]
+    # Oraliq qiymatlar AYNI `is_wake_phrase` dan (`trace`), qayta hisoblanmaydi.
+    match = body["trace"][-1]["detail"]
+    assert match["barno"] is True and match["greetingIn"] == "latin"
+
+
+def test_wake_eski_nom_salom_asl_sozlarda(client, auth):
+    """Eski nom (Venera) - salom ASL so'zlar ichida qidiriladi (`pool`), jadval ham shunday."""
+    body = client.post(f"{API}/probe/wake", json={"text": "Assalom Venera"}, headers=auth).json()
+    assert body["result"]["matched"] is True
+    assert body["trace"][-1]["detail"]["greetingIn"] == "heard"
+    words = {w["word"]: w for w in body["result"]["words"]}
+    assert words["assalom"]["greeting"] is True and words["venera"]["isVenera"] is True
 
 
 def test_wake_kirill_va_uzun(client, auth):
@@ -234,6 +246,15 @@ def test_mask_ishlab_chiqarish_bilan_bir_xil():
     text = "Bearer abc.def-ghi karta 8600123456789012 +7 916 123-45-67 AA1234567"
     assert mask_text(text, {}) == mask_text(text)
     assert mask_secrets(text, {}) == mask_secrets(text)
+
+
+def test_mask_ozgarmagan_moslik_sanalmaydi(client, auth):
+    """`_intl_phone` qisqa sonni (`+12 34 56`) o'z holicha qaytaradi - sinov uni
+    "niqoblandi" deb sanamasin (avval moslik soni sanalardi: 2 ta, niqob esa 1 ta)."""
+    body = client.post(f"{API}/probe/mask", json={"text": "kod +12 34 56, tel +7 916 123-45-67"},
+                       headers=auth).json()
+    assert body["result"]["masked"] == "kod +12 34 56, tel <telefon>"
+    assert body["result"]["fired"] == {"<telefon>": 1}
 
 
 # --- kutish ovozi -------------------------------------------------------------------------------
@@ -369,6 +390,27 @@ def test_brain_guruh_execute_telegramga_yubormaydi(client, auth, no_side_effects
     assert result["calls"][0]["output"].startswith("**Asosiy:**")
     assert result["telegramWouldSend"] and "server" in result["telegramWouldSend"][-1]
     assert body["cost_note"]
+    assert body["ok"] is True
+
+
+def test_brain_execute_model_xatosi_ok_emas(client, auth, no_side_effects, monkeypatch):
+    """Model yiqilsa ishlab chiqarish kodi xatoni o'zi yutadi ("bajarib bo'lmadi" xabari) -
+    sinov buni muvaffaqiyat deb ko'rsatmasin."""
+    import app.api.v1.admin_probe as probe
+    from app.services.integrations.ollama import OllamaError
+
+    class Down:
+        model = "soxta"
+
+        def complete(self, system, user, **kwargs):
+            raise OllamaError("model ishlamayapti")
+
+    monkeypatch.setattr(probe, "_live_writer", lambda feature: Down())
+    body = client.post(f"{API}/probe/brain/group_summary",
+                       json={"input": "Ali: salom\nVali: server tuzaldi", "execute": True}, headers=auth).json()
+    assert body["ok"] is False
+    assert "output" not in body["result"]["calls"][0]
+    assert body["result"]["telegramWouldSend"]
 
 
 def test_brain_brif_dry(client, auth, no_side_effects):
@@ -408,6 +450,15 @@ def test_brain_crm_tana_tokensiz(client, auth, no_side_effects):
     request = body["result"]["agentRequest"]
     assert request["tokens"] == {"crm": "<crm-token>"}
     assert "<telefon>" in request["context"][0]["items"][0]["text"]
+    # AYNI `GroupActions._v4_body`: oyna yorlig'i, so'ragan odam eslatmasi, `assistant_user_id`.
+    block = request["context"][0]
+    assert block["window"]["label"].startswith("oxirgi")
+    assert block["notes"][0]["kind"] == "people"
+    assert request["user_id"].startswith("venera:") and request["chat_id"] == "tgcrm-probe"
+    secret = client.post(f"{API}/probe/brain/group_crm",
+                         json={"input": "Ali: salom", "question": "vazifa qil, parol: qwerty123"},
+                         headers=auth).json()["result"]["agentRequest"]
+    assert "qwerty123" not in secret["question"]
     meeting = client.post(f"{API}/probe/brain/meeting_crm", json={"input": "Hisobotni tayyorlash"},
                           headers=auth).json()
     assert meeting["result"]["agentRequest"]["tokens"] == {"crm": "<crm-token>"}

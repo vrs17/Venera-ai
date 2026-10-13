@@ -153,11 +153,18 @@ def _is_legacy(word: str) -> bool:
     return False
 
 
-def is_wake_phrase(text: str) -> tuple[bool, str]:
+def is_wake_phrase(text: str, trace: dict[str, object] | None = None) -> tuple[bool, str]:
     """(uyg'otadimi, sabab). Sabab log uchun - "nega uyg'onmadi" degan savol
-    aynan shu yerda javob topadi."""
+    aynan shu yerda javob topadi.
+
+    `trace` (ixtiyoriy) - admin "Tizim xaritasi" sinovi: oraliq qiymatlar (tozalangan
+    matn, lotin so'zlar, nom qaysi shaklda topildi, salom qaysi so'zlar ichida
+    qidirildi) shu lug'atga yoziladi - sinov ularni o'zicha qayta hisoblamaydi.
+    `None` da xulq o'zgarmaydi."""
+    note: dict[str, object] = trace if trace is not None else {}
     heard = normalize_heard(text)
     words = heard.split()
+    note.update(heard=heard, words=words)
     if not words:
         return False, "bo'sh"
     if len(words) > MAX_WORDS:
@@ -165,9 +172,11 @@ def is_wake_phrase(text: str) -> tuple[bool, str]:
     latin = heard.translate(_TO_LATIN).split()
     # "bar no" - model nomni ikkiga bo'lib yozadi.
     barno = any(_is_barno(word) for word in latin) or any(a + b == NAME for a, b in zip(latin, latin[1:]))
+    note.update(latin=latin, barno=barno)
     if not barno and not any(_is_legacy(word) for word in words):
         return False, "nom yo'q"
     pool = latin if barno else words
+    note["pool"] = "latin" if barno else "heard"
     if any(distance(word, greeting, 2) <= 2 for word in pool for greeting in GREETINGS):
         return True, "salom + nom"
     if len(words) <= NAME_ONLY_WORDS:

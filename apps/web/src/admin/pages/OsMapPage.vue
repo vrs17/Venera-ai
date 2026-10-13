@@ -16,7 +16,7 @@ import { useAdminQuery } from '../components/useAdminQuery'
 import { KINDS, KIND_ORDER } from '../osmap/kinds'
 import OsMapCanvas from '../osmap/OsMapCanvas.vue'
 import OsMapDrawer from '../osmap/OsMapDrawer.vue'
-import type { OsFlow, OsMapData, OsNode } from '../osmap/types'
+import type { OsCode, OsEdge, OsFlow, OsMapData, OsNode, OsPrompt, OsStreamingRow } from '../osmap/types'
 
 // "Tizim xaritasi": butun Barno AI OS - oqimlar (STT, TTS, chat, guruh, brif...), har
 // birida qadamlar va ular orasidagi chiziqlar, n8n kabi kanvasda. Qadam bosilsa - o'ngda
@@ -34,7 +34,41 @@ const isPhone = useIsPhone()
 
 const q = useAdminQuery((_p: null, signal: AbortSignal) => getOsMap(signal), { params: null })
 const data = computed<OsMapData | null>(() => q.data.value)
-const flows = computed<OsFlow[]>(() => data.value?.flows ?? [])
+const flows = computed<OsFlow[]>(() => normalizeFlows(data.value))
+
+/* ---------------------------------------------------------------- fayl shakli */
+
+const arr = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : [])
+const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : v == null ? fallback : String(v))
+const codes = (v: unknown): OsCode[] => arr<OsCode>(v).filter((c) => !!c && typeof c.path === 'string')
+
+/** Fayl qo'lda qo'yiladi (build.py) va server faqat `flows` ro'yxatini tekshiradi: eski yoki
+ *  chala yozuv (qadamsiz oqim, matnsiz prompt, yo'lsiz kod) sahifani yiqitmasin - bo'sh
+ *  ro'yxat va satr bilan to'ldiriladi, id siz qadam va uchsiz chiziq tashlanadi. */
+function normalizeFlows(raw: OsMapData | null): OsFlow[] {
+  return arr<OsFlow>(raw?.flows)
+    .filter((f) => !!f && typeof f.id === 'string' && !!f.id)
+    .map((f) => ({
+      ...f,
+      title: str(f.title, f.id),
+      gaps: arr<unknown>(f.gaps).map((g) => str(g)),
+      streaming: arr<OsStreamingRow>(f.streaming).map((row) => ({ ...row, code: codes(row?.code) })),
+      nodes: arr<OsNode>(f.nodes)
+        .filter((n) => !!n && typeof n.id === 'string' && !!n.id)
+        .map((n) => ({
+          ...n,
+          label: str(n.label, n.id),
+          summary: str(n.summary),
+          flags: arr<unknown>(n.flags).map((x) => str(x)),
+          prompts: arr<OsPrompt>(n.prompts).map((p) => ({ ...p, title: str(p?.title), text: str(p?.text) })),
+          code: codes(n.code),
+          probe: typeof n.probe === 'string' && n.probe ? n.probe : undefined,
+        })),
+      edges: arr<OsEdge>(f.edges)
+        .filter((e) => !!e && typeof e.from === 'string' && typeof e.to === 'string')
+        .map((e) => ({ ...e, code: codes(e.code) })),
+    }))
+}
 const missing = computed(() => q.errorStatus.value === 404)
 // 404 da serverning O'Z xabari (faylni qayerga qo'yish) - umumiy "topilmadi" emas.
 const missingText = computed(() => (q.error.value instanceof ApiError ? q.error.value.message : ''))

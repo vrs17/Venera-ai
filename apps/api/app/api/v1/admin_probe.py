@@ -264,23 +264,26 @@ def probe_tts_text(body: TtsTextProbe, admin: AuthUser = Depends(admin_only)) ->
 @router.post("/wake", response_model=ProbeResult)
 def probe_wake(body: WakeProbe, admin: AuthUser = Depends(admin_only)) -> ProbeResult:
     """Eshitilgan matn -> qaror (`is_wake_phrase`) va uning ichki qadamlari: tozalash,
-    so'z chegarasi, kirill -> lotin, har so'zning nomgacha masofasi."""
+    so'z chegarasi, kirill -> lotin, har so'zning nomgacha masofasi. Oraliq qiymatlar
+    AYNI funksiyaning o'zidan (`trace`) - sinov ularni qayta hisoblamaydi."""
     tr = _Trace()
-    with tr.step("normalize_heard") as d:
-        heard = _wake.normalize_heard(body.text)
-        words = heard.split()
-        d.update(heard=heard, words=len(words))
-    with tr.step("word_limit") as d:
-        d.update(words=len(words), max=_wake.MAX_WORDS, nameOnlyWords=_wake.NAME_ONLY_WORDS,
-                 ok=0 < len(words) <= _wake.MAX_WORDS)
-    with tr.step("to_latin") as d:
-        latin = heard.translate(_wake._TO_LATIN).split()
-        d.update(latin=" ".join(latin), changed=latin != words)
-    with tr.step("match") as d:
-        matched, reason = _wake.is_wake_phrase(body.text)
-        d.update(matched=matched, reason=reason)
+    seen: dict[str, Any] = {}
+    started = time.monotonic()
+    matched, reason = _wake.is_wake_phrase(body.text, trace=seen)
+    ms = _ms(started)
+    heard = str(seen.get("heard") or "")
+    words = list(seen.get("words") or [])
+    # Uzun yoki bo'sh gapda funksiya lotinga o'tmasdan to'xtaydi - jadval uchun baribir ko'rsatiladi.
+    latin = list(seen["latin"]) if "latin" in seen else heard.translate(_wake._TO_LATIN).split()
+    tr.add("normalize_heard", heard=heard, words=len(words))
+    tr.add("word_limit", words=len(words), max=_wake.MAX_WORDS, nameOnlyWords=_wake.NAME_ONLY_WORDS,
+           ok=0 < len(words) <= _wake.MAX_WORDS)
+    tr.add("to_latin", latin=" ".join(latin), changed=latin != words, reached="latin" in seen)
+    tr.add("match", ms, matched=matched, reason=reason, barno=seen.get("barno"), greetingIn=seen.get("pool"))
+    # Salom - funksiya qidirgan so'zlar ichida (`pool`: nom lotincha topilsa - lotin, aks holda asl).
+    pool = words if seen.get("pool") == "heard" else latin
     detail = []
-    for word, lat in zip(words, latin):
+    for word, lat, greet in zip(words, latin, pool):
         detail.append({
             "word": word,
             "latin": lat,
@@ -288,7 +291,7 @@ def probe_wake(body: WakeProbe, admin: AuthUser = Depends(admin_only)) -> ProbeR
             "distanceVenera": _wake.distance(word, _wake.LEGACY_NAME, 3),
             "isBarno": _wake._is_barno(lat),
             "isVenera": _wake._is_legacy(word),
-            "greeting": any(_wake.distance(lat, g, 2) <= 2 for g in _wake.GREETINGS),
+            "greeting": any(_wake.distance(greet, g, 2) <= 2 for g in _wake.GREETINGS),
         })
     return _finish(admin, "wake", tr, ok=True, result={
         "heard": heard, "latin": " ".join(latin), "words": detail, "matched": matched, "reason": reason,
@@ -731,18 +734,20 @@ def _summary_input(raw: str) -> Any:
 def _meeting_summary(body: BrainProbe, admin: AuthUser) -> tuple[dict[str, Any], str | None]:
     """Yig'ilish xulosasi - AYNI `Pipeline` (shablon tanlovi, bir o'tish yoki map), birinchi
     model chaqiruvigacha. Keyingi qadamlar model javobiga bog'liq - DRY da ular yo'q."""
-    from ...services.meetings.summarize import Pipeline
-    from ...services.meetings.worker import _think
+    from types import SimpleNamespace
+
+    from ...services.meetings.worker import _pipeline
 
     inp = _summary_input(body.input)
     if not inp.segments:
         raise error_status(422, "input: yig'ilish matni kerak (har qatorda `S1: matn`)")
     writer = _Recording()
-    pipeline = Pipeline(writer, single_pass_chars=settings.meetings_single_pass_chars,
-                        map_chars=settings.meetings_map_chars, verify=settings.meetings_verify,
-                        num_ctx=settings.meetings_llm_num_ctx, think=_think(),
-                        extract_predict=settings.meetings_extract_num_predict,
-                        map_predict=settings.meetings_map_num_predict)
+    # AYNI quvur yasovchi (`worker._pipeline`, `ollama` bo'g'ini) - sozlamalar bu yerda
+    # qayta yozilmaydi. Map keshi - bo'sh va yozilmaydigan (jonli yig'ilish keshiga tegmaydi).
+    null_cache = SimpleNamespace(part=lambda *a, **k: None, put_part=lambda *a, **k: None)
+    provider = SimpleNamespace(name="ollama", client=writer, model=writer.model, max_prompt_chars=0)
+    pipeline = _pipeline(SimpleNamespace(store=null_cache), {"id": "probe", "transcript_rev": 1},
+                         {"language": inp.language}, provider, False, None)
     skipped = None
     try:
         out = pipeline.run(inp)
@@ -793,21 +798,36 @@ def _hold_classify(body: BrainProbe, admin: AuthUser) -> tuple[dict[str, Any], s
     return out, cost
 
 
+class _ProbeCrmBackend:
+    """Guruh CRM uchun bot "orqasi" o'rnida: token o'rniga `_TOKEN` belgisi, kimlik - AYNI
+    `assistant_user_id` (jonli `runner` dagi kabi). Agentga hech narsa yubormaydi."""
+
+    @staticmethod
+    def own_crm_token(user: AuthUser) -> str:
+        return _TOKEN
+
+    @staticmethod
+    def agent_user_id(user: AuthUser) -> str:
+        return _chat.assistant_user_id(user)
+
+
 def _group_crm(body: BrainProbe, admin: AuthUser) -> tuple[dict[str, Any], str | None]:
-    """Guruhdagi CRM so'rovi - agent v4 tanasi (AYNI `group_crm.context_block` va `request`):
-    yozishma niqoblanadi (`mask_text`), so'rov - faqat sirlar (`mask_secrets`)."""
-    from ...services.brain import group_crm
+    """Guruhdagi CRM so'rovi - agent v4 tanasi, AYNI `GroupActions._v4_body` vaqtinchalik ombor
+    ustida: oxirgi yozishma oynasi (`_recent`), niqob (`mask_text`, so'rov - `mask_secrets`),
+    ismlar eslatmasi va kontekst bloki. Agent chaqirilmaydi."""
+    from ...bot.group_actions import GroupActions
 
     lines = _lines(body.input)
     if not lines:
         raise error_status(422, "input: guruh xabarlari kerak (har qatorda `Ism: matn`)")
     now = time.time()
-    items = [group_crm.item(n, now - (len(lines) - n) * 60, author, _groups.mask_text(text))
-             for n, (author, text) in enumerate(lines, 1)]
-    block = group_crm.context_block(_CHAT, _TITLE, items)
-    question = _groups.mask_secrets(body.question).strip() or "Yozishmadan CRM vazifasi taklif qil"
-    request = group_crm.request(question=question, user_id=_chat.assistant_user_id(admin), chat_id="tgcrm-probe",
-                                crm_token=_TOKEN, block=block)
+    with _sandbox() as store:
+        _seed(store, lines, now)
+        actions = GroupActions(_NullTelegram(), store, _ProbeCrmBackend(), resolve=lambda _tg_id: None,
+                               clock=lambda: now)
+        msg = {"chat": {"id": _CHAT, "type": "supergroup", "title": _TITLE}, "message_id": len(lines) + 1,
+               "date": int(now), "from": {"id": 8_999_999, "first_name": "Admin"}, "text": body.question}
+        request = actions._v4_body(msg, body.question, admin, "tgcrm-probe")
     return {"agentRequest": request,
             "note": "chat_id sinov belgisi; jonli yo'lda guruhga bog'langan `tgcrm-` suhbat"}, None
 
@@ -886,7 +906,17 @@ def probe_brain(
             # Birinchi chaqiruvning agent holatidagi tanasi - `BrainChat`/zanjir bo'g'ini
             # agentga AYNAN shuni yuborardi.
             out["agentRequest"] = _agent_complete_body(calls[0], client_name)
+    ok = True
+    if body.execute:
+        # Ishlab chiqarish kodi model xatosini o'zi yutadi (guruhga "bajarib bo'lmadi" yozadi,
+        # brif kunini "failed" qiladi, tasnif jadvalga tushadi) - sinov buni "ok" demasin.
+        if name == "hold_classify":
+            ok = out.get("label") is not None
+        else:
+            ok = bool(calls) and all("output" in c for c in calls)
+            if name == "brief_extract":
+                ok = ok and out.get("events") is not None
     result = {"feature": name, "mode": "execute" if body.execute else "dry",
               "route": {"configured": route.configured, "effective": route.effective, "reason": route.reason},
               **out}
-    return _finish(admin, f"brain:{name}", tr, ok=True, result=result, cost_note=cost)
+    return _finish(admin, f"brain:{name}", tr, ok=ok, result=result, cost_note=cost)

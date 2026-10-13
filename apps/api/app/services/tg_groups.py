@@ -221,16 +221,23 @@ def _mask_kind(replacement: Any) -> str:
 def _apply_masks(text: str, masks: tuple[tuple[re.Pattern[str], Any], ...],
                  fired: dict[str, int] | None) -> str:
     """Qoidalar ketma-ket (tartib muhim - `_MASKS` izohi). `fired` berilsa - qaysi qoida
-    necha marta ishlagani yoziladi (admin "Tizim xaritasi" sinovi: AYNI qoidalar, nusxa emas)."""
+    necha marta ishlagani yoziladi (admin "Tizim xaritasi" sinovi: AYNI qoidalar, nusxa emas).
+
+    Faqat matnni HAQIQATAN o'zgartirgan moslik sanaladi: `_intl_phone` qisqa sonni
+    (`+12 34 56`) o'z holicha qaytaradi - u "niqoblandi" deb ko'rsatilmasin."""
     for pattern, replacement in masks:
         if fired is None:
             text = pattern.sub(replacement, text)
             continue
-        before = text
-        text, count = pattern.subn(replacement, text)
-        if count and text != before:
-            kind = _mask_kind(replacement)
-            fired[kind] = fired.get(kind, 0) + count
+        kind = _mask_kind(replacement)
+
+        def counted(match: re.Match[str], replacement: Any = replacement, kind: str = kind) -> str:
+            out = replacement(match) if callable(replacement) else match.expand(replacement)
+            if out != match.group(0):
+                fired[kind] = fired.get(kind, 0) + 1
+            return out
+
+        text = pattern.sub(counted, text)
     return text
 
 
