@@ -60,6 +60,8 @@ const LABEL_KEYS: Record<string, string> = {
   error: 'error',
   artifact: 'artifact',
   proposal: 'proposal',
+  // v4 ovozli suhbat: odam "ha" deb AYTDI va agent taklifni o'zi bajardi (`action` kadri).
+  action: 'action',
   // Prod'dan: xodimlar ma'lumotnomasi (`open_stream` dagi birinchi oraliq) va
   // "Pro" rejimi (`pro.requested` nuqtasi, `done.pro` dan `pro` kadri).
   contacts: 'contacts',
@@ -143,6 +145,9 @@ function subOf(e: TurnEvent, routeLabel: (r: string) => string, t: Translate): s
       return text(p.title) ?? undefined
     case 'proposal':
       return text(p.summary) ?? text(p.operation) ?? undefined
+    case 'action':
+      // Holati (`executed`, `failed` ...) va nima edi - qaysi taklif tugmasiz bajarilgani.
+      return joined([p.status, p.summary])
     case 'hold.classify':
       return p.skipped ? (text(p.skipped) ?? undefined) : joined([p.model, p.topic])
     case 'hold.skip':

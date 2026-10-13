@@ -20,7 +20,10 @@ Farqi uchta, qolgani v3 bilan bir xil (kimlik, tokenlar, `chat_id`, "Pro", xatol
      Oddiy suhbat - `purpose: "chat"`, `store: true`, `chat_visibility:
      "personal"` (suhbat odamning ro'yxatida ko'rinadi va xotirasi bor - v3 dagi
      kabi). Tarix `(user_id, chat_id)` bo'yicha, dvigatelsiz: v3 da boshlangan
-     suhbat v4 da davom etadi. Gapirilgan savolda `style: "voice"` (`_V4_VOICE`);
+     suhbat v4 da davom etadi. Gapirilgan savolda `style: "voice"` (`_V4_VOICE`).
+     Telegram GURUHIDAGI CRM so'rovi (`audience="group"`) - `_V4_GROUP`: agent
+     shaxsiy xotirani ishlatmaydi, guruhdan o'rganmaydi va faqat CRM vositalari
+     (v4 ning yangi `work_activity` i ham yo'q - javobni guruhdagi hamma ko'radi);
   2. KADRLAR: `ping` (15 s jimlikda) va `result` (`response_format` so'ralganda,
      biz so'ramaymiz) - XIZMAT kadrlari, klientga O'TMAYDI. `done` dagi `meta`
      (model nomi, navbat) va `cited_ids` (biz kontekst yubormaymiz) olib
@@ -118,6 +121,20 @@ V4_CONTRACT = "4.0"
 #: majburiy; `store` va `chat_visibility` agentning `chat` uchun default'i, lekin ochiq
 #: yoziladi: default o'zgarsa suhbatlar jimgina saqlanmay yoki ro'yxatdan yo'qolmasin.
 _V4_CHAT = {"purpose": "chat", "store": True, "chat_visibility": "personal"}
+
+#: Telegram guruhidagi CRM so'rovi (`bot/runner.py: stream_group`) - `_V4_CHAT` ustiga.
+#: v3 da buni aytib bo'lmaydi: u yerda faqat HRM tokeni olib tashlanadi (`platforms`).
+#: v4 da esa agentning o'zi kodda to'sadi (agentning `engine/privacy.py`):
+#:   * `audience: group` - HRM vositalari yo'q, shaxsiy xotira yo'q, guruhdan o'rganmaydi;
+#:   * `tools` - FAQAT CRM o'qish va taklif. Ro'yxatsiz v4 so'roviga agent o'zining yangi
+#:     `work_activity` vositasini ham beradi (GitLab va CRM dagi kim nima qilgani; ruxsatli
+#:     odamga - HAMMANIKI) - guruhda u javob bo'lib hammaga chiqardi;
+#:   * `purpose: group_crm` - agentning hisobida shaxsiy suhbat emas, guruh ishi.
+#: `store` (`_V4_CHAT` dan, `true`) qoladi: guruhdagi davomi ("shuni ham qo'sh") tarixga
+#: tayanadi, suhbatni `group_actions.sweep` o'zi o'chiradi. Shakl W1 dagi guruh so'rovi
+#: bilan bir xil (`services/brain/group_crm.py: request`), faqat kontekst blokisiz.
+_V4_GROUP = {"purpose": "group_crm", "audience": "group", "tools": ["crm.read", "crm.propose"],
+             "memory_scopes": []}
 
 #: Ovozli suhbat uslubi (agentning `docs/VOICE_MODE.md`): javob quloq uchun yoziladi,
 #: har `token` - bitta tugal gap. FAQAT v4 da: v1-v3 da odamlar bugungi xulqda qolsin.
@@ -220,11 +237,15 @@ class AssistantError(Exception):
     """
 
     def __init__(self, message: str, *, status: int = 502, retryable: bool = False,
-                 reason: str | None = None) -> None:
+                 reason: str | None = None, upstream_status: int | None = None) -> None:
         super().__init__(message)
         self.status = status
         self.retryable = retryable
         self.reason = reason
+        #: Yuqoridagi xizmatning O'Z HTTP statusi (`_mapped_errors`), `status` dan farqli
+        #: foydalanuvchiga ko'rsatilmaydi. Masalan 409 - taklif allaqachon yakunlangan
+        #: (`actions._settled`): foydalanuvchi uchun u 502 bo'lib qolardi.
+        self.upstream_status = upstream_status
 
 
 @dataclass
@@ -351,6 +372,7 @@ class AssistantClient:
         engine: str = "",
         op: str = "stream",
         style: str = "standard",
+        audience: str = "private",
     ) -> AnswerStream:
         """Savolni yuboradi va kadr generatorini qaytaradi.
 
@@ -369,6 +391,9 @@ class AssistantClient:
 
         `style` - `voice`: savol GAPIRILGAN (ovozli suhbat, `chat.voice_style`). Faqat
         v4 ga yuboriladi (`_V4_VOICE`); boshqa dvigatelda e'tiborsiz.
+
+        `audience` - `group`: javob Telegram GURUHIDA hammaga ko'rinadi (`_V4_GROUP`).
+        Faqat v4 da ma'noli - v1-v3 da cheklov tokenlar bilan (`chat.open_stream`).
         """
         if engine not in ROUTES:
             # Dasturchi xatosi: `core/engines.py` faqat shu qiymatlarni beradi.
@@ -427,7 +452,10 @@ class AssistantClient:
             # maydonlar v3 niki - agent ularni o'sha ma'noda o'qiydi.
             headers["X-Barno-Contract"] = V4_CONTRACT
             payload.update(_V4_CHAT)
-            if style == _V4_VOICE:
+            if audience == "group":
+                # Ovoz guruhda yo'q: "ha" so'zi bilan bajarish faqat shaxsiy suhbatda.
+                payload.update(_V4_GROUP)
+            elif style == _V4_VOICE:
                 payload["style"] = _V4_VOICE
 
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -1298,7 +1326,8 @@ def _mapped_errors(secret: str, *, quiet: bool = False):
         # 502 ga ("xizmat javob bermadi") aylantirish odamni chalg'itardi.
         mapped = status if status in (400, 404, 410, 422, 503) else 502
         raise AssistantError(f"Assistant {status}: {detail}", status=mapped,
-                             reason="upstream_busy" if status == 503 else "upstream_http") from exc
+                             reason="upstream_busy" if status == 503 else "upstream_http",
+                             upstream_status=status) from exc
     except urllib.error.URLError as exc:
         raise AssistantError(f"Assistant serveriga ulanib bo'lmadi: {exc.reason}",
                              status=503, retryable=True, reason="upstream_unreachable") from exc

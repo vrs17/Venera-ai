@@ -12,7 +12,9 @@ katalogga qo'shiladi va admin uni avval bitta odamga (`engine_access`), keyin ha
   * JIMLIK: `ping` `timeout` ni uzaytirmaydi (v3 dagi kabi 504);
   * XATO: v4 xato tanasi (`{"error": {"code", "message"}}`) jurnalda kodi bilan;
   * ADMIN: bitta odamga berilgan v4 - faqat uning savoli v4 ga; iz, "Pro" byudjeti va
-    ovozda "ha" bilan bajarilgan amal (`action`) holati.
+    ovozda "ha" bilan bajarilgan amal (`action`) holati;
+  * GURUH: Telegram guruhidagi CRM so'rovi v4 da agentga guruh deb aytiladi (`_V4_GROUP`);
+  * ESKIRGAN KARTA: ovozda bajarilgan taklifning tugmasi 409 o'rniga haqiqiy holatni oladi.
 
 Tarmoqqa chiqilmaydi: agent soxta (`build_opener`), ombor vaqtinchalik.
 """
@@ -423,3 +425,108 @@ def test_pro_byudjeti_v4_da_bor(wired, client, user_auth, agent, db):
     grant(db, DEMO_ID, ["v4"], "v4")
     body = client.get("/api/v1/pro/quota", headers={**user_auth, "X-Venera-Client": "web"}).json()
     assert body["engine"] == "v4" and body["available"] is True
+
+
+# ================================================================ Telegram guruhi
+
+
+def test_guruh_sorovi_v4_da_agentning_guruh_cheklovi_bilan(agent):
+    """Guruhdagi CRM so'rovi: javobni guruhdagi HAMMA ko'radi. v4 da agentga buni aytamiz -
+    shaxsiy xotira, HRM va v4 ning `work_activity` vositasi kodda to'siladi. Ovoz yo'q."""
+    client = make_client()
+    frames_of(client.stream("vazifa och", user_id="venera:7", chat_id="tgcrm-1",
+                            tokens={"crm": "own-crm"}, engine="v4", audience="group",
+                            style="voice"))
+    frames_of(client.stream("vazifa och", user_id="venera:7", chat_id="tgcrm-1",
+                            tokens={"crm": "own-crm"}, engine="v3", audience="group"))
+    v4, v3 = agent.calls
+    assert v4["body"] == {
+        "question": "vazifa och", "user_id": "venera:7", "chat_id": "tgcrm-1",
+        "tokens": {"crm": "own-crm"},
+        "purpose": "group_crm", "store": True, "chat_visibility": "personal",
+        "audience": "group", "tools": ["crm.read", "crm.propose"], "memory_scopes": [],
+    }
+    # v3 - bugungi so'rov: cheklov faqat tokenlarda (`platforms`), tana o'zgarmagan.
+    assert v3["body"] == {"question": "vazifa och", "user_id": "venera:7", "chat_id": "tgcrm-1",
+                          "tokens": {"crm": "own-crm"}}
+
+
+def test_bot_guruhi_v4_odamda_guruh_sifatida_ketadi(wired, agent, db, monkeypatch):
+    """Haqiqiy yo'l: `Backend.stream_group` -> `open_stream` -> agent. Shaxsiy bot savoli
+    esa oddiy shaxsiy suhbat bo'lib qoladi."""
+    from types import SimpleNamespace
+
+    from app.bot.runner import Backend
+
+    grant(db, 7, ["v4"], "v4")
+    monkeypatch.setattr(wired._connectors.hub, "tokens", lambda uid: {"crm": "own-crm", "hrm": "own-hrm"})
+    monkeypatch.setattr(wired, "_live_tokens", lambda user: {"crm": "own-crm", "hrm": "own-hrm"})
+    user = SimpleNamespace(actorId=7, roles=[], email="", fullName="")
+    frames_of(Backend().stream_group("vazifa och", user, "tgcrm-7"))
+    frames_of(Backend().stream("Vazifalarim?", user, "c-7"))
+    group, private = agent.streams()
+    assert group["path"] == private["path"] == "/api/v4/chat/stream"
+    assert group["body"]["tokens"] == {"crm": "own-crm"}                     # HRM yo'q
+    assert group["body"]["audience"] == "group" and group["body"]["purpose"] == "group_crm"
+    assert private["body"]["purpose"] == "chat" and "audience" not in private["body"]
+    assert private["body"]["tokens"] == {"crm": "own-crm", "hrm": "own-hrm"}
+
+
+# ================================================================ eskirgan karta (ovozda bajarilgan)
+
+
+def _actions_agent(agent, monkeypatch, *, view: dict | None, conflict: str = "already_executed"):
+    """`/api/actions/...`: tasdiq va rad etish 409 beradi, holat (`GET`) - `view`
+    (`None` - holat ham o'qilmaydi, 503)."""
+    original = agent.open
+
+    def open_(request, timeout=None):
+        path = urllib.parse.urlsplit(request.full_url).path
+        if not path.startswith("/api/actions/"):
+            return original(request, timeout)
+        agent.calls.append({"path": path, "method": request.get_method(), "body": None,
+                            "headers": {}})
+        if path.endswith(("/confirm", "/cancel")):
+            body = {"detail": {"code": conflict, "message": "This action was already carried out."}}
+            raise urllib.error.HTTPError(request.full_url, 409, "Conflict", {},
+                                         io.BytesIO(json.dumps(body).encode()))
+        if view is None:
+            raise urllib.error.HTTPError(request.full_url, 503, "busy", {}, io.BytesIO(b"{}"))
+        return _Ndjson([json.dumps(view).encode()])
+
+    monkeypatch.setattr(agent, "open", open_)
+
+
+def test_ovozda_bajarilgan_taklifning_tugmasi_haqiqiy_holatni_oladi(wired, client, auth, agent,
+                                                                     db, monkeypatch):
+    """Odam "ha" deb AYTDI, agent bajardi; karta tugmalari bilan qolgan. Keyin bosilgan
+    "Tasdiqlash" 409 oladi - foydalanuvchi "xizmat javob bermadi" emas, "Bajarildi" ko'radi,
+    ikkinchi yozuv esa yo'q (holat faqat O'QILADI)."""
+    token = "a" * 32
+    _actions_agent(agent, monkeypatch, view={"token": token, "status": "executed",
+                                             "summary": "Ovoz sinovi", "ok": None})
+    response = client.post(f"/api/v1/actions/{token}/confirm", headers=auth)
+    assert response.status_code == 200
+    assert response.json()["status"] == "executed" and response.json()["summary"] == "Ovoz sinovi"
+    assert [(c["method"], c["path"]) for c in agent.calls] == [
+        ("POST", f"/api/actions/{token}/confirm"), ("GET", f"/api/actions/{token}")]
+    # Rad etish ham - bajarilgan amalni "rad etildi" deb ko'rsatmaydi.
+    assert client.post(f"/api/v1/actions/{token}/cancel", headers=auth).json()["status"] == "executed"
+
+
+def test_409_holati_oqilmasa_avvalgi_xato(wired, client, auth, agent, monkeypatch):
+    _actions_agent(agent, monkeypatch, view=None)
+    assert client.post(f"/api/v1/actions/{'b' * 32}/confirm", headers=auth).status_code == 502
+    # Hali `pending` (agent boshqa sabab bilan 409 berdi) - ham avvalgidek xato.
+    _actions_agent(agent, monkeypatch, view={"token": "c" * 32, "status": "pending"})
+    assert client.post(f"/api/v1/actions/{'c' * 32}/confirm", headers=auth).status_code == 502
+
+
+def test_xizmat_statusi_xatoda_saqlanadi():
+    """`upstream_status` - foydalanuvchi statusidan (`status`) alohida: 409 -> 502 + 409."""
+    from app.services.integrations.assistant import _mapped_errors
+
+    with pytest.raises(AssistantError) as caught:
+        with _mapped_errors("sir"):
+            raise urllib.error.HTTPError(f"{BASE}/x", 409, "Conflict", {}, io.BytesIO(b"{}"))
+    assert caught.value.status == 502 and caught.value.upstream_status == 409

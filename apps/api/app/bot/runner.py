@@ -272,11 +272,12 @@ class Backend:
     def stream_group(self, question: str, user: AuthUser, chat_id: str):
         """Guruhdagi CRM so'rovi (`group_actions.py`): shaxsiy chatdagi AYNI yo'l, lekin
         FAQAT odamning O'Z CRM tokeni bilan - HRM yo'q (javob guruhdagi hammaga
-        ko'rinadi), umumiy agent hisobi yo'q (vazifa so'ragan odam nomidan)."""
+        ko'rinadi), umumiy agent hisobi yo'q (vazifa so'ragan odam nomidan). `audience` -
+        v4 da agent o'zi ham guruh deb biladi: shaxsiy xotira va `work_activity` yo'q."""
         from ..api.v1 import chat as _chat
 
         return _chat.open_stream(question, user, chat_id, channel="bot", mode=BOT_MODE, engine=None,
-                                 platforms=("crm",), own_tokens=True)
+                                 platforms=("crm",), own_tokens=True, audience="group")
 
     def own_crm(self, user: AuthUser) -> bool:
         """Odamning O'Z CRM ulanishi bormi (guruhda CRM so'rovi sharti)."""

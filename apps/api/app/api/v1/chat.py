@@ -559,7 +559,7 @@ def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
                 before_upstream: Callable[[], None] | None = None,
                 channel: str | None = "api", engine: str | None = None,
                 platforms: tuple[str, ...] | None = None, own_tokens: bool = False,
-                style: str = "standard") -> AnswerStream:
+                style: str = "standard", audience: str = "private") -> AnswerStream:
     """Savol -> javob oqimi: web, mini app va Telegram bot BITTA yo'ldan.
 
     HAR savol yordamchiga ketadi - SHU ODAM VA KANAL uchun tanlangan
@@ -589,7 +589,10 @@ def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
       * `own_tokens` - faqat odamning O'Z ulanishlari: umumiy `.env` tokeni va
         agent sessiyasiga TUSHILMAYDI (guruhda vazifa so'ragan odam nomidan);
       * `style` - `voice`: savol GAPIRILGAN (`voice_style`). Yuqoriga faqat v4 da
-        ketadi (`assistant.stream`), boshqa dvigatellar bugungidek.
+        ketadi (`assistant.stream`), boshqa dvigatellar bugungidek;
+      * `audience` - `group`: javob Telegram GURUHIDA (`bot/runner.py: stream_group`).
+        v4 da agentning o'zi guruh cheklovini kodda qo'yadi (`assistant._V4_GROUP`);
+        v1-v3 da faqat `platforms` - bugungidek.
 
     Ulanish SHU YERDA ochiladi, generator ichida emas: 400/501/503 shunda
     oddiy `AssistantError` bo'lib chaqiruvchiga chiqadi.
@@ -651,6 +654,7 @@ def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
             max_chars=settings.hrm_assistant_max_question_chars,
             engine=engine,
             style=style,
+            audience=audience,
         )
         info["requestId"] = answer.request_id
         info["engine"] = engine

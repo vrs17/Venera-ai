@@ -58,6 +58,10 @@ def _run(call, user: AuthUser, token: str, what: str, verb: str | None = None) -
         result = call()
     except AssistantError as exc:
         log.warning("Amal %s (%s, %s): %s", what, user.email, token, exc)
+        if verb and exc.upstream_status == 409:
+            settled = _settled(token, user)
+            if settled is not None:
+                return settled
         if verb and exc.status in EXPIRED_STATUSES:
             # Taklifning muddati o'tgan (15 daqiqa) - izda ham shunday.
             set_proposal_status(token, "expired")
@@ -72,6 +76,32 @@ def _run(call, user: AuthUser, token: str, what: str, verb: str | None = None) -
             set_proposal_status(token, outcome)
             _meeting_item(user, token, outcome, result.get("result"))
     return ActionResult(**{k: v for k, v in result.items() if k in ActionResult.model_fields})
+
+
+def _settled(token: str, user: AuthUser) -> ActionResult | None:
+    """Tasdiq/rad etish 409 oldi: taklif ALLAQACHON yakunlangan (`already_executed` yoki
+    `cancelled`) - haqiqiy holat qaytariladi, xato emas.
+
+    NEGA. v4 ovozli suhbatda odam "ha" deb AYTADI va agent taklifni o'zi bajaradi
+    (`assistant._V4_VOICE`), suhbatdagi karta esa tugmalari bilan qoladi. Keyin bosilgan
+    "Tasdiqlash" 409 olib, foydalanuvchiga "Savol-javob xizmati javob bermadi" (502)
+    ko'rinardi - vazifa esa CRMda ochilgan. Ikki qurilmadan bosilganda ham shu. Endi
+    karta "Bajarildi" / "Rad etilgan" deydi. Ikkinchi yozuv BO'LMAYDI - agent 409 ni
+    egalikni tekshirgandan keyin beradi va amalni qaytarmaydi.
+
+    Holatni o'qib bo'lmasa (yoki u hali `pending`) - `None`: chaqiruvchi avvalgi xato yo'li."""
+    try:
+        view = _chat._assistant.get_action(token)
+    except AssistantError as exc:
+        log.warning("Amal holati o'qilmadi (%s, %s): %s", user.email, token, exc)
+        return None
+    status = view.get("status") if isinstance(view, dict) else None
+    if status not in PROPOSAL_STATUSES or status == "pending":
+        return None
+    log.info("Amal allaqachon yakunlangan (%s): token=%s holat=%s", user.email, token, status)
+    set_proposal_status(token, status)
+    _meeting_item(user, token, status, view.get("result"))
+    return ActionResult(**{k: v for k, v in view.items() if k in ActionResult.model_fields})
 
 
 def _meeting_item(user: AuthUser, token: str, outcome: str, result: object = None) -> None:

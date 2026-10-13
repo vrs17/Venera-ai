@@ -255,6 +255,8 @@ def test_backend_guruhda_faqat_oz_crm_tokeni(monkeypatch):
     user = SimpleNamespace(actorId=7)
     assert Backend().stream_group("savol", user, "c1") == "stream"
     assert calls["platforms"] == ("crm",) and calls["own_tokens"] is True and calls["channel"] == "bot"
+    # v4 da agent o'zi ham guruh deb biladi (`assistant._V4_GROUP`); v1-v3 da e'tiborsiz.
+    assert calls["audience"] == "group"
 
     seen = {}
     monkeypatch.setattr(chat._connectors.hub, "tokens", lambda uid: {"crm": "own-crm", "hrm": "own-hrm"})
