@@ -22,8 +22,16 @@ ketadigan nusxa tayyorlanadi.
 
 from __future__ import annotations
 
+import json
+import logging
 import re
+import threading
+from collections.abc import Mapping
 from datetime import date, datetime, timedelta, timezone
+from functools import lru_cache
+from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 #: Joriy yil shu soat mintaqasi bo'yicha: foydalanuvchilar O'zbekistonda.
 _TASHKENT = timezone(timedelta(hours=5))
@@ -263,14 +271,126 @@ def _times(text: str) -> str:
     return "".join(out)
 
 
+# --- nomlar (talaffuz lug'ati) ---------------------------------------------------
+
+#: Lug'at kaliti - qisqartma kod (`DVSIB`). Katta-kichik harf ANIQ solishtiriladi:
+#: `Dvsib` - kod emas, oddiy so'z bo'lishi mumkin.
+_NAME_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9&]{1,31}$")
+_NAME_MAX = 200
+
+
+#: Shu uzunlikkacha kod (`BA`, `IB`, `BCC`) FAQAT loyiha haqida gap ketganda
+#: ochiladi - ortidan "loyiha..." kelsa. Qisqa harflar boshqa narsa ham bo'ladi:
+#: "BA" - biznes-tahlilchi, "IB" - axborot xavfsizligi; ular gap o'rtasida loyiha
+#: nomiga aylanib qolmasin. Uzun kod (`DVSIB`) esa yolg'iz turganda ham kod.
+_SHORT_CODE = 3
+_PROJECT_AFTER = re.compile(r"[\s*_]*loyiha", re.IGNORECASE)
+
+
+@lru_cache(maxsize=32)
+def _codes_at(codes: tuple[str, ...]) -> re.Pattern[str]:
+    """Kod FAQAT o'z o'rnida: alohida so'z, ixtiyoriy qo'shimcha bilan
+    (`DVSIBning`, `DVSIB-ga`). Vazifa kaliti (`DVSIB-266`), manzil
+    (`x.uz/DVSIB`, `dvsib@...`) va boshqa so'z ichidagisi TEGILMAYDI - "Data va
+    sun'iy intellekt bo'limi ikki yuz oltmish olti" vazifa kaliti emas.
+
+    BITTA naqsh, BITTA o'tish: nom ichida boshqa kod bo'lsa ("BRB-TECH CRM"),
+    qo'yilgan nom qayta almashtirilmaydi. Uzuni oldin - `BCCOC` `BCC` dan."""
+    alternatives = "|".join(re.escape(code) for code in codes)
+    return re.compile(
+        rf"(?<![\w@/.\-])(?P<code>{alternatives})"
+        rf"(?:[-'’ʼ]?(?P<qo>{_SUFFIX}))?(?![\w\-]|\.\w)"
+    )
+
+
+def _spoken_names(text: str, names: Mapping[str, str]) -> str:
+    codes = tuple(sorted(names, key=lambda code: (-len(code), code)))
+
+    def expand(m: re.Match[str]) -> str:
+        code = m.group("code")
+        if len(code) <= _SHORT_CODE and not _PROJECT_AFTER.match(m.string, m.end()):
+            return m.group(0)
+        spoken = names[code]
+        return attach(spoken, m.group("qo")) if m.group("qo") else spoken
+
+    text = _codes_at(codes).sub(expand, text)
+    # Nom matnda kod bilan YONMA-YON yozilgan bo'lsa (`Sotuv bo'limi (SB)`) u endi
+    # ikki marta aytilardi - qavsdagisi tashlanadi.
+    for spoken in set(names.values()):
+        twice = re.escape(spoken)
+        text = re.sub(rf"({twice})[ \t]*\([ \t]*{twice}[ \t]*\)", r"\1", text, flags=re.IGNORECASE)
+    return text
+
+
+class SpokenNames:
+    """Talaffuz lug'ati fayli: `{"DVSIB": "Data va sun'iy intellekt bo'limi"}`.
+
+    NEGA FAYL. Loyiha kodi (`DVSIB`) ovozda "de-ve-es-i-be" bo'lib eshitiladi -
+    rahbar esa loyiha NOMINI eshitishni xohlaydi. Nomlar Venera'da yo'q (CRM
+    loyihalari, `crm_list_projects`), va ular kam o'zgaradi: fayl o'zgarsa
+    keyingi sintezda o'zi qayta o'qiladi, API'ni qayta ishga tushirish shart emas.
+    Fayl git'da (`config/tts_names.json`) - nomlar MR orqali ko'rib chiqiladi.
+
+    FAQAT OVOZ. Ekrandagi matn o'zgarmaydi. Fayl yo'q yoki buzuq bo'lsa ovoz
+    BARIBIR ishlaydi - lug'atsiz (buzuq faylda oxirgi yaroqli nusxa bilan).
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        self._lock = threading.Lock()
+        self._stamp: tuple[int, int] | None = None
+        self._names: dict[str, str] = {}
+
+    def __call__(self) -> dict[str, str]:
+        try:
+            st = self.path.stat()
+        except FileNotFoundError:
+            return {}
+        except OSError as exc:
+            log.warning("TTS lug'ati o'qilmadi (%s): %s", self.path, exc)
+            return self._names
+        stamp = (st.st_mtime_ns, st.st_size)
+        with self._lock:
+            if stamp != self._stamp:
+                # Belgi xato bo'lsa ham yangilanadi: buzuq fayl har sintezda
+                # qayta o'qilib, jurnalni to'ldirmasin.
+                self._stamp = stamp
+                self._names = self._load(self._names)
+            return self._names
+
+    def _load(self, previous: dict[str, str]) -> dict[str, str]:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            log.warning("TTS lug'ati buzuq (%s), oldingisi qoldi: %s", self.path, exc)
+            return previous
+        if not isinstance(raw, dict):
+            log.warning("TTS lug'ati obyekt emas (%s), oldingisi qoldi", self.path)
+            return previous
+        names: dict[str, str] = {}
+        for code, spoken in raw.items():
+            spoken = " ".join(spoken.split()) if isinstance(spoken, str) else ""
+            if not _NAME_KEY.match(str(code)) or not spoken or len(spoken) > _NAME_MAX:
+                log.warning("TTS lug'ati: yaroqsiz yozuv tashlandi: %r", code)
+                continue
+            names[str(code)] = spoken
+        log.info("TTS lug'ati: %d ta nom (%s)", len(names), self.path)
+        return names
+
+
 # --- hammasi ------------------------------------------------------------------
 
 
-def for_speech(text: str, *, today: date | None = None) -> str:
+def for_speech(text: str, *, today: date | None = None,
+               names: Mapping[str, str] | None = None) -> str:
     """Matnni TTS o'qishiga tayyorlaydi. Tartib muhim: qisqartma nomni
     qo'shtirnoq bo'yicha taniydi, shuning uchun qo'shtirnoq undan KEYIN
-    olinadi; sana `T08:45` ni vaqtga bo'shatadi, shuning uchun vaqtdan OLDIN."""
+    olinadi; sana `T08:45` ni vaqtga bo'shatadi, shuning uchun vaqtdan OLDIN.
+    Loyiha nomlari (`names`) - hammasidan OLDIN: nomning o'zidagi qo'shtirnoq
+    va sana keyingi qadamlarda boshqalari kabi tozalanadi."""
     this_year = (today or datetime.now(_TASHKENT).date()).year
+    if names:
+        text = _spoken_names(text, names)
     text = _legal_forms(text)
     text = _QUOTES.sub("", text)
     text = _dates(text, this_year)

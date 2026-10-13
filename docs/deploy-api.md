@@ -181,6 +181,7 @@ haqida TTS serverida hech narsa qolmaydi.
 | `TTS_SPEED` | *(bo'sh -> 0.95)* | rasmiy 0.90, yangiliklar 1.0 |
 | `TTS_CHUNK_SEC` | `1.5` | bo'lakning maqsadli davomiyligi (server 0.5-10 talab qiladi) |
 | `TTS_MAX_CHARS` | `600` | undan uzun matn so'z chegarasida qisqartiriladi |
+| `TTS_SPOKEN_NAMES_PATH` | `config/tts_names.json` | talaffuz lug'ati (git'da): CRM loyiha kodi ovozda nom bo'lib aytiladi, `DVSIB` -> "Data va sun'iy intellekt bo'limi" (vazifa kaliti `DVSIB-266` emas; 3 harfgacha kod faqat ortidan "loyiha" kelsa). O'zgarsa qayta ishga tushirishsiz o'qiladi |
 
 **`TTS_CLIENT_SECRET` ga FAQAT sirning o'zi yoziladi.** TTS serverining
 `AUTH_CLIENTS` o'zgaruvchisi yozuvlarni `client_id:sir` ko'rinishida saqlaydi.

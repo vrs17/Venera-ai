@@ -40,6 +40,7 @@ from ...schemas.auth import AuthUser
 from ...schemas.tts import CLIP_MAX_CHARS, ClipRequest, SpeakRequest
 from ...services.analytics import bind, valid_turn_id
 from ...services.hold import HoldVoices, all_clips
+from ...services.speech_text import SpokenNames
 from ...services.tts import LOCALE_TO_TTS, TtsClient, TtsError
 from ..deps import current_user
 
@@ -56,6 +57,7 @@ _client = TtsClient(
     settings.tts_client_secret,
     timeout=settings.tts_timeout,
     max_concurrent=settings.tts_max_concurrent,
+    spoken_names=SpokenNames(settings.tts_spoken_names_path),
 )
 
 #: Foydalanuvchiga ko'rinadigan xabarlar - status bo'yicha, ichki matnsiz.

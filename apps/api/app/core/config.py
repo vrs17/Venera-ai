@@ -238,6 +238,11 @@ class Settings(BaseSettings):
     #: jumlani qamrab, TTFB ~5x sekinlashadi; 10.0 da streaming umuman
     #: yo'qoladi. Server 0.5-10 dan tashqarisiga 422 beradi.
     tts_chunk_sec: float = 1.5
+    #: Talaffuz lug'ati: `{"DVSIB": "Data va sun'iy intellekt bo'limi"}` - CRM
+    #: loyiha kodi ovozda NOM bo'lib aytiladi (ekrandagi matn o'zgarmaydi). Fayl
+    #: git'da; yo'q bo'lsa lug'at bo'sh; o'zgarsa keyingi sintezda qayta
+    #: o'qiladi (`speech_text.SpokenNames`).
+    tts_spoken_names_path: Path = BASE_DIR / "config" / "tts_names.json"
     #: Matn chegarasi - ZAXIRA to'siq. Asosiy qisqartirish frontendda, GAP
     #: chegarasida bo'ladi (`VoicePanel.vue`, `SPEAK_LIMIT`); bu yerda esa
     #: so'z chegarasida kesiladi va xato qaytarilmaydi.
