@@ -30,6 +30,7 @@ from collections.abc import Mapping
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -382,16 +383,30 @@ class SpokenNames:
 
 
 def for_speech(text: str, *, today: date | None = None,
-               names: Mapping[str, str] | None = None) -> str:
+               names: Mapping[str, str] | None = None,
+               trace: list[dict[str, Any]] | None = None) -> str:
     """Matnni TTS o'qishiga tayyorlaydi. Tartib muhim: qisqartma nomni
     qo'shtirnoq bo'yicha taniydi, shuning uchun qo'shtirnoq undan KEYIN
     olinadi; sana `T08:45` ni vaqtga bo'shatadi, shuning uchun vaqtdan OLDIN.
     Loyiha nomlari (`names`) - hammasidan OLDIN: nomning o'zidagi qo'shtirnoq
-    va sana keyingi qadamlarda boshqalari kabi tozalanadi."""
+    va sana keyingi qadamlarda boshqalari kabi tozalanadi.
+
+    `trace` (ixtiyoriy) - admin "Tizim xaritasi" sinovi uchun: har bosqichdan
+    keyingi matn shu ro'yxatga yoziladi. NEGA SHU YERDA, sinovda nusxa emas:
+    bosqichlar tartibi aynan shu funksiyada - nusxa vaqt o'tib undan ajralib
+    ketardi va sinov boshqa narsani ko'rsatardi. `None` da xulq o'zgarmaydi."""
     this_year = (today or datetime.now(_TASHKENT).date()).year
+
+    def step(stage: str, value: str, **detail: Any) -> str:
+        if trace is not None:
+            trace.append({"stage": stage, "text": value, **detail})
+        return value
+
     if names:
-        text = _spoken_names(text, names)
-    text = _legal_forms(text)
-    text = _QUOTES.sub("", text)
-    text = _dates(text, this_year)
-    return _times(text)
+        text = step("spoken_names", _spoken_names(text, names), names=len(names))
+    else:
+        step("spoken_names", text, names=0, skipped="lug'at bo'sh")
+    text = step("legal_forms", _legal_forms(text))
+    text = step("quotes", _QUOTES.sub("", text))
+    text = step("dates", _dates(text, this_year), year=this_year)
+    return step("times", _times(text))

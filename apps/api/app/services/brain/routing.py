@@ -252,11 +252,11 @@ def _shared_breaker() -> Breaker:
     return _breaker
 
 
-def _build(name: str) -> AgentV4Client:
+def _build(name: str, *, breaker: Breaker | None = None) -> AgentV4Client:
     base = settings.agent_v4_base_url or settings.hrm_assistant_base_url
     common = dict(prefix=settings.agent_v4_prefix, contract=settings.agent_v4_contract,
                   client_id=settings.hrm_assistant_client_id,
-                  client_secret=settings.hrm_assistant_client_secret, breaker=_shared_breaker())
+                  client_secret=settings.hrm_assistant_client_secret, breaker=breaker or _shared_breaker())
     if name == "shadow":
         # Shadow: BITTA o'rin (default), ishchi ip slotni kutadi - foydalanuvchi emas.
         return AgentV4Client(base, timeout=settings.agent_shadow_timeout,
@@ -291,6 +291,16 @@ def client(name: str = "interactive") -> AgentV4Client:
         if name not in _clients:
             _clients[name] = _build(name)
         return _clients[name]
+
+
+def probe_client() -> AgentV4Client:
+    """Admin "Tizim xaritasi" sinovi uchun mijoz: sozlamasi `interactive` bilan AYNAN bir
+    xil (manzil, kalit, shartnoma), lekin uzgichi O'ZINIKI va keshlanmaydi.
+
+    NEGA ALOHIDA UZGICH. Uzgich hamma mijozga umumiy: agent o'chiq paytda admin "Sinab
+    ko'rish" ni uch marta bossa, guruh, brif va yig'ilish 30 s davomida lokal yo'lga
+    o'tib qolardi - sinov ishlab turgan tizimning xulqini o'zgartirmasligi kerak."""
+    return _build("interactive", breaker=Breaker())
 
 
 def capabilities() -> CapabilityCache:

@@ -533,6 +533,12 @@ class Settings(BaseSettings):
     #: 6 soatda o'chiriladi. Shikoyatlar va admin auditi SAQLANADI - ular
     #: statistika emas, hujjat. 0 - hech narsa o'chirilmaydi.
     analytics_retention_days: int = 180
+    #: "Tizim xaritasi" (admin panel, `/admin/os-map`) ma'lumoti: oqimlar, qadamlar,
+    #: kod parchalari va ICHKI PROMPTLAR so'zma-so'z. Shuning uchun `data/` da
+    #: (gitignore) va STATIK FAYL SIFATIDA BERILMAYDI - faqat
+    #: `GET /api/v1/admin/osmap` (ADMIN). Fayl xarita yig'uvchisidan (`build.py`)
+    #: qo'lda nusxalanadi; yo'q bo'lsa sahifa 404 va tushunarli xabar ko'rsatadi.
+    osmap_path: Path = BASE_DIR / "data" / "osmap" / "osmap.json"
     #: Vergul bilan loginlar/emaillar (harf registriga qaramaydi) - ular
     #: HAR DOIM ADMIN, admin paneldan ham olib bo'lmaydi. Birinchi
     #: administratorni tayinlash va "hamma adminlar o'zini bloklab qo'ydi"

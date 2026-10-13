@@ -211,18 +211,37 @@ _MASKS: tuple[tuple[re.Pattern[str], Any], ...] = _SECRET_MASKS + (
 )
 
 
-def mask_text(text: str) -> str:
+def _mask_kind(replacement: Any) -> str:
+    """Qoida nomi - admin sinovi uchun (`<email>`, `<telefon>`, `parol`...)."""
+    if callable(replacement):
+        return "<telefon>"
+    return "parol" if "***" in str(replacement) else str(replacement)
+
+
+def _apply_masks(text: str, masks: tuple[tuple[re.Pattern[str], Any], ...],
+                 fired: dict[str, int] | None) -> str:
+    """Qoidalar ketma-ket (tartib muhim - `_MASKS` izohi). `fired` berilsa - qaysi qoida
+    necha marta ishlagani yoziladi (admin "Tizim xaritasi" sinovi: AYNI qoidalar, nusxa emas)."""
+    for pattern, replacement in masks:
+        if fired is None:
+            text = pattern.sub(replacement, text)
+            continue
+        before = text
+        text, count = pattern.subn(replacement, text)
+        if count and text != before:
+            kind = _mask_kind(replacement)
+            fired[kind] = fired.get(kind, 0) + count
+    return text
+
+
+def mask_text(text: str, fired: dict[str, int] | None = None) -> str:
     """Telefon, email, karta, JSHSHIR, pasport va tokenlarni niqoblaydi, qatorlarni saqlaydi."""
-    for pattern, replacement in _MASKS:
-        text = pattern.sub(replacement, text)
-    return text
+    return _apply_masks(text, _MASKS, fired)
 
 
-def mask_secrets(text: str) -> str:
+def mask_secrets(text: str, fired: dict[str, int] | None = None) -> str:
     """Faqat tokenlar, kalitlar va parollar (`_SECRET_MASKS`) - telefon va email qoladi."""
-    for pattern, replacement in _SECRET_MASKS:
-        text = pattern.sub(replacement, text)
-    return text
+    return _apply_masks(text, _SECRET_MASKS, fired)
 
 
 # --- xabar -> yozuv --------------------------------------------------------------

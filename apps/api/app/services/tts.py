@@ -43,6 +43,7 @@ import weakref
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from socket import timeout as socket_timeout
+from typing import Any
 
 from .analytics.meter import begin, metered
 from .speech_text import for_speech
@@ -265,6 +266,55 @@ def clip(text: str, limit: int) -> tuple[str, bool]:
     return cut.rstrip(" ,.;:-"), True
 
 
+@dataclass(frozen=True)
+class SpeechText:
+    """TTS serveriga AYNAN ketadigan matn va unga bog'liq qarorlar."""
+
+    text: str
+    #: Matn chegaradan uzun edi va kesildi (`clip`).
+    truncated: bool
+    #: Serverning raqam normalizatori yoqiladimi (`risky_for_normalizer` qarori).
+    normalize_numbers: bool
+
+
+def prepare_speech(text: str, *, max_chars: int, names: Mapping[str, str] | None = None,
+                   normalize_numbers: bool = True,
+                   trace: list[dict[str, Any]] | None = None) -> SpeechText:
+    """Serverdagi BUTUN matn tayyorlash zanjiri - `stream()` (ya'ni `/tts/speak`
+    va `/tts/clip`) shu funksiyani chaqiradi.
+
+    NEGA ALOHIDA FUNKSIYA. Admin "Tizim xaritasi" sinovi (`admin_probe.py`) har
+    bosqichdan keyingi matnni ko'rsatadi. Sinov bosqichlarni o'zicha qayta
+    yozsa, vaqt o'tib haqiqiy yo'ldan ajralib ketardi va noto'g'ri narsani
+    "to'g'ri" deb ko'rsatardi. Shuning uchun ikkalasi ham shu bitta funksiyadan
+    o'tadi; `trace` berilmasa xulq avvalgidek.
+
+    Tartib (o'zgarmagan): kesish -> bo'sh tekshiruvi -> `for_speech` (lug'at,
+    qisqartma, qo'shtirnoq, sana, vaqt) -> normalizator xavfi."""
+    clean, truncated = clip(text, max_chars)
+    if trace is not None:
+        trace.append({"stage": "clip", "text": clean, "limit": max_chars, "truncated": truncated})
+    if not clean:
+        raise TtsError("matn bo'sh", status=400)
+    # Sana, vaqt va "MChJ" - so'z bilan (`speech_text.py`). Qisqartirishdan
+    # KEYIN: so'zlar matnni uzaytiradi, va oldin qilinsa, klient allaqachon
+    # 3000 belgiga sig'dirgan javobning oxiri shu uzayish hisobiga kesilardi.
+    clean = for_speech(clean, names=names, trace=trace)
+
+    # Normalizator ba'zi raqamlarda yiqiladi - bunday matnni OLDINDAN
+    # tanib, normalizatsiyasiz yuboramiz. `/stream` da bu 422 beradi
+    # (`/generate` da 500 edi), lekin ikkalasi ham foydalanuvchi uchun
+    # "ovoz yo'q" degani.
+    risky = bool(normalize_numbers) and risky_for_normalizer(clean)
+    if risky:
+        log.info("TTS: xavfli raqam naqshi - normalize_numbers o'chirildi")
+        normalize_numbers = False
+    if trace is not None:
+        trace.append({"stage": "risky_for_normalizer", "text": clean, "risky": risky,
+                      "normalize_numbers": bool(normalize_numbers)})
+    return SpeechText(text=clean, truncated=truncated, normalize_numbers=bool(normalize_numbers))
+
+
 class TtsClient:
     def __init__(
         self,
@@ -334,6 +384,14 @@ class TtsClient:
 
     # --- sintez ---------------------------------------------------------
 
+    def prepare(self, text: str, *, max_chars: int, normalize_numbers: bool = True,
+                trace: list[dict[str, Any]] | None = None) -> SpeechText:
+        """Sintezga ketadigan matn - tarmoqsiz, slotsiz (`prepare_speech` + shu
+        klientning talaffuz lug'ati). `stream()` ham, admin sinovi ham shuni chaqiradi."""
+        names = self.spoken_names() if self.spoken_names else None
+        return prepare_speech(text, max_chars=max_chars, names=names,
+                              normalize_numbers=normalize_numbers, trace=trace)
+
     def stream(
         self,
         text: str,
@@ -362,21 +420,10 @@ class TtsClient:
             raise TtsError("TTS sozlanmagan (client_secret yo'q)", status=501)
         if voice not in VOICES:
             raise TtsError(f"noma'lum ovoz: {voice}", status=400)
-        clean, truncated = clip(text, max_chars)
-        if not clean:
-            raise TtsError("matn bo'sh", status=400)
-        # Sana, vaqt va "MChJ" - so'z bilan (`speech_text.py`). Qisqartirishdan
-        # KEYIN: so'zlar matnni uzaytiradi, va oldin qilinsa, klient allaqachon
-        # 3000 belgiga sig'dirgan javobning oxiri shu uzayish hisobiga kesilardi.
-        clean = for_speech(clean, names=self.spoken_names() if self.spoken_names else None)
-
-        # Normalizator ba'zi raqamlarda yiqiladi - bunday matnni OLDINDAN
-        # tanib, normalizatsiyasiz yuboramiz. `/stream` da bu 422 beradi
-        # (`/generate` da 500 edi), lekin ikkalasi ham foydalanuvchi uchun
-        # "ovoz yo'q" degani.
-        if normalize_numbers and risky_for_normalizer(clean):
-            log.info("TTS: xavfli raqam naqshi - normalize_numbers o'chirildi")
-            normalize_numbers = False
+        # Matn tayyorlash - BITTA funksiyada (`prepare_speech`): admin sinovi ham
+        # aynan shu yo'ldan o'tadi.
+        prepared = self.prepare(text, max_chars=max_chars, normalize_numbers=normalize_numbers)
+        clean, truncated, normalize_numbers = prepared.text, prepared.truncated, prepared.normalize_numbers
 
         if not self._slots.acquire(timeout=self.queue_wait):
             # Server BITTA GPU'da ketma-ket ishlaydi va 429 QAYTARMAYDI:

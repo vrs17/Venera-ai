@@ -118,9 +118,12 @@ class HoldClassifier:
         finally:
             self._slots.release()
 
-    def _ask(self, question: str) -> tuple[str, str] | None:
+    def request_body(self, question: str) -> dict[str, Any]:
+        """Ollama'ga AYNAN ketadigan so'rov tanasi (kalitsiz). `_ask` shuni yuboradi,
+        admin "Tizim xaritasi" sinovi esa modelni chaqirmasdan ko'rsatadi - prompt
+        ikki joyda alohida yig'ilsa, sinov vaqt o'tib boshqa promptni ko'rsatardi."""
         mavzular = "\n".join(f"- {nom}: {tavsif}" for nom, tavsif in MAVZULAR.items())
-        body = json.dumps({
+        return {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": _PROMPT.format(mavzular=mavzular)},
@@ -136,7 +139,10 @@ class HoldClassifier:
                 # yozishga kirishsa ham tez to'xtaydi va rad etiladi.
                 "num_predict": 12,
             },
-        }).encode("utf-8")
+        }
+
+    def _ask(self, question: str) -> tuple[str, str] | None:
+        body = json.dumps(self.request_body(question)).encode("utf-8")
         request = urllib.request.Request(
             f"{self.base_url}/api/chat", data=body, method="POST",
             headers={"Authorization": f"Bearer {self._api_key}",

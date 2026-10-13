@@ -44,6 +44,9 @@ const adminRoutes: RouteRecordRaw = {
     { path: 'versions', name: 'admin-versions', component: () => import('../admin/pages/VersionsPage.vue') },
     { path: 'migration', name: 'admin-migration', component: () => import('../admin/pages/MigrationPage.vue') },
     { path: 'system', name: 'admin-system', component: () => import('../admin/pages/SystemPage.vue') },
+    // Tizim xaritasi: butun Barno AI OS kanvasda + qadamni jonli sinash. Alohida (lazy)
+    // bo'lak - kanvas va sinov kodi faqat shu sahifa ochilganda yuklanadi.
+    { path: 'os-map', name: 'admin-osmap', component: () => import('../admin/pages/OsMapPage.vue') },
   ],
 }
 

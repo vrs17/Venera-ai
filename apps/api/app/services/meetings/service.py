@@ -1316,6 +1316,22 @@ def assistant_identity(user: AuthUser) -> tuple[str, dict[str, str]]:
 _V4_QUESTION_MAX = 8000
 
 
+def meeting_crm_v4_body(question: str, user_id: str, crm_token: str) -> dict[str, Any]:
+    """`POST /api/v4/chat` tanasi (`purpose: meeting_crm`). Alohida funksiya - admin
+    "Tizim xaritasi" sinovi tanani AYNAN shu yerdan oladi (token o'rniga belgi bilan)."""
+    return {
+        "purpose": "meeting_crm",
+        "question": question[:_V4_QUESTION_MAX],
+        "user_id": user_id,
+        "tokens": {"crm": crm_token},
+        "store": False,
+        "audience": "private",
+        "tools": ["crm.read", "crm.propose"],
+        "memory_scopes": [],
+        "client": {"channel": "mobile"},
+    }
+
+
 def _meeting_crm_v4(m: dict[str, Any], question: str, user_id: str,
                     tokens: dict[str, str]) -> "llm_mod.V3Reply | None":
     """Agent v4 orqali CRM taklifi (`purpose: meeting_crm`) yoki `None` - bugungi yo'l.
@@ -1331,17 +1347,7 @@ def _meeting_crm_v4(m: dict[str, Any], question: str, user_id: str,
         return None
     if not _routing.route("meeting_crm").agent:
         return None
-    body = {
-        "purpose": "meeting_crm",
-        "question": question[:_V4_QUESTION_MAX],
-        "user_id": user_id,
-        "tokens": {"crm": tokens["crm"]},
-        "store": False,
-        "audience": "private",
-        "tools": ["crm.read", "crm.propose"],
-        "memory_scopes": [],
-        "client": {"channel": "mobile"},
-    }
+    body = meeting_crm_v4_body(question, user_id, tokens["crm"])
     try:
         payload, _ = _routing.client().chat(body, op="meeting_crm", timeout=float(settings.meetings_crm_timeout),
                                             units={"chars": len(body["question"])})

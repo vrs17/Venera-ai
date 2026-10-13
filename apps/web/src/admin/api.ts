@@ -38,6 +38,7 @@ import type {
   TurnQuery,
   UserQuery,
 } from './types'
+import type { OsMapData, ProbeResult } from './osmap/types'
 
 const BASE = '/api/v1/admin'
 
@@ -196,6 +197,28 @@ export function getUsage(params: RangeParams = {}, signal?: AbortSignal): Promis
 
 export function getSystem(signal?: AbortSignal): Promise<AdminSystem> {
   return get<AdminSystem>('/system', undefined, signal)
+}
+
+/* ---- tizim xaritasi va jonli sinovlar ---- */
+
+/** Xarita: oqimlar, qadamlar, kod va promptlar (ichki - faqat ADMIN, statik fayl emas). */
+export function getOsMap(signal?: AbortSignal): Promise<OsMapData> {
+  return get<OsMapData>('/osmap', undefined, signal)
+}
+
+/** O'qiydigan sinovlar (`agent`, `health`) - GET, tanasiz. */
+export function getProbe(name: 'agent' | 'health', signal?: AbortSignal): Promise<ProbeResult> {
+  return get<ProbeResult>(`/probe/${name}`, undefined, signal)
+}
+
+/** JSON tanali sinov (`tts-text`, `wake`, `hold`, `mask`, `brain/<funksiya>`). */
+export function runProbe(path: string, body: unknown, signal?: AbortSignal): Promise<ProbeResult> {
+  return apiFetch<ProbeResult>(`${BASE}/probe/${path}`, { method: 'POST', body: JSON.stringify(body), signal })
+}
+
+/** STT sinovi - multipart: ovoz paneli yuboradigan AYNI fayl (16 kHz WAV). */
+export function runSttProbe(form: FormData, signal?: AbortSignal): Promise<ProbeResult> {
+  return apiFetch<ProbeResult>(`${BASE}/probe/stt`, { method: 'POST', body: form, signal })
 }
 
 /* ---- qidiruv, nishon ---- */

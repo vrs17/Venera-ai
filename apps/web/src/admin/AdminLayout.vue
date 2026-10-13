@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterView, useRoute, useRouter } from 'vue-router'
-import { Activity, ArrowLeft, Flag, GitBranch, LayoutDashboard, Menu, MessagesSquare, Search, Server, Users, Workflow } from 'lucide-vue-next'
+import { Activity, ArrowLeft, Flag, GitBranch, LayoutDashboard, Menu, MessagesSquare, Network, Search, Server, Users, Workflow } from 'lucide-vue-next'
 import VCommandPalette from '../ui/VCommandPalette.vue'
 import VIconButton from '../ui/VIconButton.vue'
 import VResizeHandle from '../ui/VResizeHandle.vue'
@@ -117,6 +117,7 @@ const PAGES = [
   { key: 'usage', path: '/admin/usage', icon: Activity },
   { key: 'versions', path: '/admin/versions', icon: GitBranch },
   { key: 'migration', path: '/admin/migration', icon: Workflow },
+  { key: 'osmap', path: '/admin/os-map', icon: Network },
   { key: 'system', path: '/admin/system', icon: Server },
 ] as const
 

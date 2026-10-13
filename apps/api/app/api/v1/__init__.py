@@ -12,7 +12,7 @@ from fastapi import APIRouter
 
 from . import actions, auth, chat, chats, connectors, pro, stt, telegram, tts
 from . import admin_users, reports
-from . import admin, admin_engines
+from . import admin, admin_engines, admin_osmap, admin_probe
 from . import devices, meetings
 from . import assistant_extras
 
@@ -30,6 +30,10 @@ router.include_router(reports.router)
 router.include_router(admin_users.router)
 router.include_router(admin.router)
 router.include_router(admin_engines.router)
+# "Tizim xaritasi": xarita ma'lumoti (ichki promptlar - faqat ADMIN, statik fayl
+# EMAS) va qadamlarni jonli serverda AYNI kod bilan sinash (`admin_probe.py`).
+router.include_router(admin_osmap.router)
+router.include_router(admin_probe.router)
 # Barno xotirasi va platforma kalitlari - yuqoridagi xizmat ustidan proksi
 # (`assistant_extras.py`). `/connectors` dan ALOHIDA: u yerda odamning
 # HRM/CRM login tokenlari.

@@ -223,7 +223,7 @@ def _upstream_status(exc: BaseException) -> int | None:
 
 
 def _metered_transcribe(client, op: str, audio: bytes, language: str,
-                        content_type: str, budget: float) -> Transcript:
+                        content_type: str, budget: float, trace: list | None = None) -> Transcript:
     """Bitta variantga murojaat - hisob bilan (`api_calls`).
 
     NEGA SHU YERDA, klientlar ichida emas: amal nomi (`transcribe` yoki
@@ -235,22 +235,36 @@ def _metered_transcribe(client, op: str, audio: bytes, language: str,
     """
     service = "stt_gapi" if isinstance(client, GapiSttClient) else "stt_router"
     call = begin(service, op, units={"bytes": len(audio)})
+    started = time.monotonic()
     try:
         result = client.transcribe(audio, language=language, content_type=content_type,
                                    budget=budget)
     except SttError as exc:
         call.end("error", http_status=_upstream_status(exc), error=exc)
+        _traced(trace, service, started, ok=False, status=exc.status,
+                upstream=_upstream_status(exc), error=str(exc)[:200])
         raise
     except BaseException as exc:
         call.end("error", error=exc)
         raise
     call.end(http_status=200, units={"audioSec": float(result.duration_sec or 0.0)})
+    _traced(trace, service, started, ok=True, backend=result.backend, model=result.model,
+            audioSec=result.duration_sec)
     return result
+
+
+def _traced(trace: list | None, step: str, started: float, **detail) -> None:
+    """Admin sinovi (`admin_probe.py`) uchun qadam yozuvi; `trace` yo'q bo'lsa hech narsa.
+    Matn yozilmaydi - faqat holat va vaqt (transkript javobning o'zida qaytadi)."""
+    if trace is not None:
+        trace.append({"step": step, "ms": round((time.monotonic() - started) * 1000.0, 1),
+                      "detail": detail})
 
 
 def _transcribe_with_fallback(client, audio: bytes, language: str,
                               content_type: str, *, yol: str,
-                              budget: float, op: str = "transcribe") -> Transcript:
+                              budget: float, op: str = "transcribe",
+                              trace: list | None = None) -> Transcript:
     """Transkripsiya - 2-variant berilmasa 1-variant (Router) bilan.
 
     NEGA ZAHIRA KERAK. 2-variant (GAPI) PULLIK va chegaralangan: kunlik
@@ -276,10 +290,14 @@ def _transcribe_with_fallback(client, audio: bytes, language: str,
 
     Javobdagi `backend` maydoni qaysi variant ishlaganini aytadi, ya'ni bu
     almashish jim emas: jurnalda ham, javobda ham ko'rinadi.
+
+    `trace` - admin "Tizim xaritasi" sinovi: qaysi variant, necha ms, zahira
+    ishladimi. Sinov AYNAN shu funksiyani chaqiradi (nusxa emas); `None` da
+    xulq o'zgarmaydi.
     """
     started = time.monotonic()
     try:
-        return _metered_transcribe(client, op, audio, language, content_type, budget)
+        return _metered_transcribe(client, op, audio, language, content_type, budget, trace)
     except SttError as gapi_exc:
         if client is _router_client or gapi_exc.status in _NO_FALLBACK:
             raise
@@ -293,9 +311,10 @@ def _transcribe_with_fallback(client, audio: bytes, language: str,
         # ulanishga yozilardi. Eng kami 2 s: Router 0.13 sekundda javob
         # beradi, ya'ni bu unga yetib ortadi.
         qolgan = max(2.0, budget - (time.monotonic() - started))
+        _traced(trace, "fallback", started, reason=gapi_exc.status, budgetSec=round(qolgan, 1))
         try:
             return _metered_transcribe(_router_client, op, audio, language, content_type,
-                                       qolgan)
+                                       qolgan, trace)
         except SttError as router_exc:
             # IKKISI HAM yiqildi. Endpoint faqat OXIRGI xatoni yozadi, ya'ni
             # jurnalda Router aybdor bo'lib ko'rinardi va asl sabab (kvota,
@@ -353,6 +372,28 @@ _MESSAGES = {
 }
 
 
+def upload_bytes(file: UploadFile) -> bytes:
+    """Yuklangan audio baytlari - hajm chegarasi va bo'sh tekshiruvi bilan.
+
+    `/transcribe` va admin sinovi (`admin_probe.py`) BIR XIL qoidadan o'tsin:
+    sinov chegarani o'zicha tekshirsa, katta faylni sinovda "o'tadi" deb
+    ko'rsatib, jonli yo'lda rad etilishi mumkin edi."""
+    audio = file.file.read()
+    limit = int(settings.stt_max_upload_mb * 1024 * 1024)
+    if len(audio) > limit:
+        raise bad_request(f"audio juda katta ({len(audio) // 1024} KB, chegara {settings.stt_max_upload_mb} MB)")
+    if not audio:
+        raise bad_request("audio bo'sh")
+    return audio
+
+
+def public_error(exc: SttError) -> tuple[int, str]:
+    """Status -> foydalanuvchi xabari (`_MESSAGES`); ro'yxatda yo'q status 502 bo'ladi.
+    Admin sinovi ham aynan shu xabarni ko'rsatadi - odam ko'radigan matn bilan bir xil."""
+    status = exc.status if exc.status in _MESSAGES else 502
+    return status, _MESSAGES[status]
+
+
 @router.post("/transcribe", response_model=TranscriptResponse)
 def transcribe(
     file: UploadFile = File(description="Audio (webm/ogg/wav)"),
@@ -370,12 +411,7 @@ def transcribe(
     if stt_language is None:
         raise bad_request(f"til qo'llab-quvvatlanmaydi: {language}")
 
-    audio = file.file.read()
-    limit = int(settings.stt_max_upload_mb * 1024 * 1024)
-    if len(audio) > limit:
-        raise bad_request(f"audio juda katta ({len(audio) // 1024} KB, chegara {settings.stt_max_upload_mb} MB)")
-    if not audio:
-        raise bad_request("audio bo'sh")
+    audio = upload_bytes(file)
 
     try:
         result = _transcribe_with_fallback(
@@ -389,8 +425,8 @@ def transcribe(
         )
     except SttError as exc:
         log.warning("STT (%s, %s): %s", user.email, stt_language, exc)
-        status = exc.status if exc.status in _MESSAGES else 502
-        raise error_status(status, _MESSAGES[status]) from exc
+        status, message = public_error(exc)
+        raise error_status(status, message) from exc
 
     return TranscriptResponse(
         text=result.text,
