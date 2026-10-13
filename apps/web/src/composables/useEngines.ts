@@ -142,7 +142,7 @@ function reset(): void {
 
 /** "Pro" bor dvigatellar, katalog yuklanmagan bo'lsa (Mini App versiya tanlovini
  *  yuklamaydi) - server katalogi bilan bir xil (`core/engines.py`, `pro: True`). */
-const PRO_FALLBACK: ReadonlySet<string> = new Set(['v2', 'v3'])
+const PRO_FALLBACK: ReadonlySet<string> = new Set(['v2', 'v3', 'v4'])
 
 /** Javob bergan dvigatelda "Pro" bormi: avval serverdan kelgan katalog, bo'lmasa
  *  ma'lum ro'yxat. Chat "Pro so'raldi, lekin berilmadi (versiya)" belgisini shunga qarab

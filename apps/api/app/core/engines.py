@@ -11,6 +11,11 @@
                                     aniqlanadi. So'rov va kadrlar v2 bilan bir
                                     xil, `done` ga vazifa holati va iz kaliti
                                     (`task`, `trace_id`) qo'shiladi
+    v4   POST /api/v4/chat/stream   agentning v4 dvigateli (2026-10-13): o'sha Core
+                                    + yangi imkoniyatlar. v1-v3 agent tomonida
+                                    MUZLATILGAN - har yangilik faqat v4 ga tushadi.
+                                    Shartnoma 4.0 (`X-Barno-Contract`, `purpose`),
+                                    qolgani v3 bilan bir xil - `assistant.py`
     ""   POST /api/chat/stream      xizmatning default'i (bugun = v1) - eski,
                                     versiyasiz yo'l (prod hozir shunda)
 
@@ -32,7 +37,7 @@ VERSIYASIZ QOLADIGANLAR: suhbatlar tarixi (`/api/chats`), yozuv amallari,
 ariza fayllari, hujjat PDF'lari va `/api/pro/quota` - xat bo'yicha ular
 ikkala dvigatel uchun bitta.
 
-"PRO" FAQAT `pro: True` DVIGATELLARDA (v2, v3). Boshqasida `mode=pro` yuqoriga YUBORILMAYDI
+"PRO" FAQAT `pro: True` DVIGATELLARDA (v2, v3, v4). Boshqasida `mode=pro` yuqoriga YUBORILMAYDI
 (`chat.open_stream`), `GET /api/v1/pro/quota` esa `available: false` qaytaradi
 - yuqoriga bormasdan.
 
@@ -74,6 +79,9 @@ ENGINES: tuple[dict[str, object], ...] = (
     {"id": "v2", "pro": True, "law": True},
     # v3 avval odamlarga ALOHIDA (admin panel) beriladi; hammaga - sinovdan keyin.
     {"id": "v3", "pro": True, "law": True},
+    # v4 - xuddi shu tartib: avval bitta odamga, keyin hammaga. "Pro" va qonun manbasi
+    # v3 niki bilan BIR XIL yo'ldan (agentda v3 va v4 - bitta Core), ya'ni `True` halol.
+    {"id": "v4", "pro": True, "law": True},
 )
 
 #: Katalogdagi kalitlar - admin va klient tanlovi faqat shulardan.
@@ -136,7 +144,7 @@ def default_engine() -> str:
     raw = getattr(settings, "hrm_assistant_engine", DEFAULT_ENGINE)
     found = normalize(raw)
     if found is None:
-        _warn_once(f"HRM_ASSISTANT_ENGINE={raw!r} tanilmadi (v1 | v2 | v3 | bo'sh) - "
+        _warn_once(f"HRM_ASSISTANT_ENGINE={raw!r} tanilmadi (v1 | v2 | v3 | v4 | bo'sh) - "
                    f"{DEFAULT_ENGINE} ishlatiladi")
         return DEFAULT_ENGINE
     return found
@@ -160,7 +168,7 @@ def channel_overrides() -> tuple[dict[str, str], list[str]]:
         engine = normalize(value)
         if not sep or channel is None or engine is None:
             problems.append(f"HRM_ASSISTANT_ENGINE_BY_CHANNEL: {part!r} tanilmadi "
-                            "(kanal=v1|v2|v3|legacy) - e'tiborsiz qoldirildi")
+                            "(kanal=v1|v2|v3|v4|legacy) - e'tiborsiz qoldirildi")
             continue
         found[channel] = engine
     return found, problems

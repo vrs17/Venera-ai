@@ -12,6 +12,23 @@ default'i (bugun = v1). So'rov va javob shakli bir xil; qaysi yo'lga borishni
 chaqiruvchi aytadi (`stream(engine=...)`), klient o'zi tanlamaydi. Tarix,
 amallar, fayllar va `/api/pro/quota` VERSIYASIZ.
 
+v4 (2026-10-13, `/api/v4/chat/stream`) - agentning SHARTNOMA 4.0 yo'li. Agentda v3
+va v4 - bitta Core, lekin v1-v3 muzlatilgan: har yangilik faqat v4 ga tushadi.
+Farqi uchta, qolgani v3 bilan bir xil (kimlik, tokenlar, `chat_id`, "Pro", xatolar):
+
+  1. SO'ROV: `X-Barno-Contract: 4.0` sarlavhasi va u bilan MAJBURIY `purpose`.
+     Oddiy suhbat - `purpose: "chat"`, `store: true`, `chat_visibility:
+     "personal"` (suhbat odamning ro'yxatida ko'rinadi va xotirasi bor - v3 dagi
+     kabi). Tarix `(user_id, chat_id)` bo'yicha, dvigatelsiz: v3 da boshlangan
+     suhbat v4 da davom etadi. Gapirilgan savolda `style: "voice"` (`_V4_VOICE`);
+  2. KADRLAR: `ping` (15 s jimlikda) va `result` (`response_format` so'ralganda,
+     biz so'ramaymiz) - XIZMAT kadrlari, klientga O'TMAYDI. `done` dagi `meta`
+     (model nomi, navbat) va `cited_ids` (biz kontekst yubormaymiz) olib
+     tashlanadi - klient v3 ning `done` ini oladi (`_from_v4`);
+  3. JIMLIK: `ping` jimlik hisobini YANGILAMAYDI - aks holda osilib qolgan agent
+     ishchisi har 15 s da "tirik" deb, `timeout` o'rniga oqim muddatigacha (600 s)
+     slotni ushlardi. v3 dagi kabi `timeout` soniya javobsiz - 504.
+
 NEGA OQIM VA `/api/chat` EMAS. Bitta javob to'liq yozilishini kutish LLM
 uchun o'n soniyalar. Oqimda birinchi so'z darhol keladi va odam javob
 yozilayotganini KO'RADI. Hujjat ham shuni talab qiladi: "proxy it
@@ -88,6 +105,31 @@ log = logging.getLogger(__name__)
 #: qo'shsa, Venera'ni qayta yozmasdan ishlashi kerak) - lekin faqat shakli
 #: to'g'ri bo'lsa: `type` maydoni bor JSON obyekti.
 FRAME_TYPES = frozenset({"stage", "sources", "artifact", "proposal", "token", "done", "error"})
+
+#: Shartnoma 4.0 bilan ochiladigan dvigatellar (modul izohi, v4). Ro'yxat - ertaga v5
+#: chiqsa ham shu yo'l bilan ketishi uchun; bugun bitta.
+CONTRACT_ENGINES = frozenset({"v4"})
+
+#: `X-Barno-Contract` qiymati. Asosiy raqami 4 bo'lishi SHART: agent boshqasini
+#: `unsupported_field` bilan rad etadi.
+V4_CONTRACT = "4.0"
+
+#: v4 so'roviga qo'shiladigan maydonlar - ODDIY suhbat. `purpose` sarlavha bilan
+#: majburiy; `store` va `chat_visibility` agentning `chat` uchun default'i, lekin ochiq
+#: yoziladi: default o'zgarsa suhbatlar jimgina saqlanmay yoki ro'yxatdan yo'qolmasin.
+_V4_CHAT = {"purpose": "chat", "store": True, "chat_visibility": "personal"}
+
+#: Ovozli suhbat uslubi (agentning `docs/VOICE_MODE.md`): javob quloq uchun yoziladi,
+#: har `token` - bitta tugal gap. FAQAT v4 da: v1-v3 da odamlar bugungi xulqda qolsin.
+_V4_VOICE = "voice"
+
+#: v4 ning XIZMAT kadrlari - klientga O'TMAYDI: `ping` - agent bilan bizning orada
+#: tiriklik belgisi, `result` - biz so'ramaydigan `response_format` javobi.
+_V4_SERVICE_FRAMES = frozenset({"ping", "result"})
+
+#: v4 `done` idagi qo'shimchalar - klientga O'TMAYDI: `meta` ichki (model nomi, navbat,
+#: tokenlar), `cited_ids` - kontekst bandlari (biz kontekst yubormaymiz, doim bo'sh).
+_V4_DONE_EXTRA = ("meta", "cited_ids")
 
 #: Yuqoridagi xizmatning yozuv amallari (`/api/actions/{token}/...`).
 ACTION_VERBS = ("confirm", "cancel")
@@ -208,7 +250,7 @@ class AnswerStream:
     #: Oqim o'qilgach to'ladi - shu sababli `field(default_factory=dict)`.
     #: `pump()` yakunda `route` va kadr sonini shu yerga yozadi.
     outcome: dict[str, Any] = field(default_factory=dict)
-    #: So'ralgan dvigatel (`v1` | `v2` | `""`). Yordamchiga bormagan javob
+    #: So'ralgan dvigatel (`v1` ... `v4` | `""`). Yordamchiga bormagan javob
     #: (xodimlar ma'lumotnomasi) - `None`. Javobning `done.engine` i bo'lsa
     #: haqiqatda qaysi dvigatel javob bergani - o'sha (`outcome["engine"]`).
     engine: str | None = None
@@ -308,6 +350,7 @@ class AssistantClient:
         mode: str = "standard",
         engine: str = "",
         op: str = "stream",
+        style: str = "standard",
     ) -> AnswerStream:
         """Savolni yuboradi va kadr generatorini qaytaradi.
 
@@ -316,13 +359,16 @@ class AssistantClient:
         ichida ochilsa, biz allaqachon 200 yuborib bo'lgan bo'lardik va
         xato brauzerga "uzilgan oqim" bo'lib ko'rinardi.
 
-        `engine` - `v1` | `v2` | `""` (versiyasiz, xizmat default'i). Default
+        `engine` - `v1` ... `v4` | `""` (versiyasiz, xizmat default'i). Default
         `""`: klient o'zi tanlamaydi - qaysi dvigatel ekanini chaqiruvchi
         (`chat.open_stream`, kanal bo'yicha) aytadi.
 
         `op` - hisobdagi amal nomi (`assistant / <op>`). Chat - `stream`; yig'ilish
         xulosasi o'z nomlari bilan (`meeting_extract`, ...) - admin panelda chat
         savollari va fondagi xulosa yuki ajralib ko'rinsin.
+
+        `style` - `voice`: savol GAPIRILGAN (ovozli suhbat, `chat.voice_style`). Faqat
+        v4 ga yuboriladi (`_V4_VOICE`); boshqa dvigatelda e'tiborsiz.
         """
         if engine not in ROUTES:
             # Dasturchi xatosi: `core/engines.py` faqat shu qiymatlarni beradi.
@@ -374,6 +420,15 @@ class AssistantClient:
         elif mode == "pro":
             log.info("Assistant: 'pro' tashlandi - dvigatel %s ('pro' faqat %s da)",
                      engine or "versiyasiz", ", ".join(sorted(PRO_ENGINES)))
+        contract = engine in CONTRACT_ENGINES
+        headers: dict[str, str] = {}
+        if contract:
+            # Shartnoma 4.0: sarlavha bilan `purpose` MAJBURIY (usiz 400). Qolgan
+            # maydonlar v3 niki - agent ularni o'sha ma'noda o'qiydi.
+            headers["X-Barno-Contract"] = V4_CONTRACT
+            payload.update(_V4_CHAT)
+            if style == _V4_VOICE:
+                payload["style"] = _V4_VOICE
 
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         path = stream_path(engine)
@@ -396,7 +451,7 @@ class AssistantClient:
         try:
             with _mapped_errors(self.client_secret):
                 response = self._open(path, body, accept="application/x-ndjson",
-                                      request_id=request_id)
+                                      request_id=request_id, extra_headers=headers)
             end.response = response
             end.call.http_status = _http_status(response)
             # Xizmat o'z `X-Request-Id` ini qaytarsa - AUDIT kaliti o'shanikisi.
@@ -416,6 +471,10 @@ class AssistantClient:
                 # borardi (`mock:cut` stsenariysi, `tools/dev_mock_upstream.py`).
                 finished = False
                 failure: BaseException | None = None
+                # v4: oxirgi HAQIQIY kadr vaqti (`ping` emas) va javob matni boshlanganmi
+                # (ovozli gaplar orasiga bo'shliq) - modul izohi, v4.
+                heard = opened_at
+                said = False
                 try:
                     while True:
                         # "Tirik" belgisi: oqim o'qilyapti. O'qilmay qolgan
@@ -469,6 +528,19 @@ class AssistantClient:
                         out = _clean_frame(line, self.base_url)
                         if out is None:
                             continue
+                        if contract:
+                            if out.get("type") == "ping":
+                                # Agent tirik, lekin JAVOB yo'q. v3 dagi kabi `timeout`
+                                # soniyadan keyin uziladi - `ping` jimlikni uzaytirmaydi.
+                                if self._clock() - heard > self.timeout:
+                                    raise AssistantError("javob to'xtab qoldi (timeout)",
+                                                         status=504, reason="upstream_timeout")
+                                continue
+                            heard = self._clock()
+                            out = _from_v4(out, said)
+                            if out is None:
+                                continue
+                            said = said or (out.get("type") == "token" and bool(out.get("text")))
                         frames += 1
                         if out.get("type") == "done":
                             outcome["route"] = out.get("route")
@@ -853,10 +925,12 @@ class AssistantClient:
 
     def _open(self, path: str, body: bytes | None, *, accept: str, request_id: str,
               method: str | None = None, timeout: float | None = None,
-              follow_redirects: bool = True):
+              follow_redirects: bool = True, extra_headers: Mapping[str, str] | None = None):
         """So'rovni ochadi. `method` berilmasa tanasi borligiga qarab POST/GET:
         suhbatlar tarixi PATCH, DELETE va tanasiz POST ham ishlatadi.
         `timeout` berilmasa - `self.timeout` (oqim uchun tanlangan).
+        `extra_headers` - yo'lga xos sarlavhalar (v4: `X-Barno-Contract`); asosiylarni
+        (kalit, `X-Request-Id`) almashtira OLMAYDI.
 
         `follow_redirects=False` (JSON yo'llari): `urllib` 30x ga ergashganda
         BIZNING sarlavhalarimizni - `X-Client-Secret` ni ham - yangi manzilga,
@@ -878,6 +952,8 @@ class AssistantClient:
         }
         if body is not None:
             headers["Content-Type"] = "application/json; charset=utf-8"
+        for name, value in (extra_headers or {}).items():
+            headers.setdefault(name, value)
         request = urllib.request.Request(
             f"{self.base_url}{path}", data=body, headers=headers,
             method=method or ("POST" if body is not None else "GET"),
@@ -1022,6 +1098,33 @@ def _rewrite_sources(frame: dict[str, Any]) -> None:
                 page = item.get("page")
                 if isinstance(page, int) and page > 0 and item.get("docUrl"):
                     item["docUrl"] = f"{item['docUrl']}#page={page}"
+
+
+def _from_v4(frame: dict[str, Any], said: bool) -> dict[str, Any] | None:
+    """v4 kadri -> klientlar biladigan (v3) shakl; `None` - klientga O'TMAYDI.
+
+    XIZMAT kadrlari (`ping`, `result`) tashlanadi, `done` dan v4 qo'shimchalari
+    (`meta`, `cited_ids`) olinadi - modul izohi, v4. Notanish YANGI kadrlar
+    (`action` - ovozda "ha" bilan bajarilgan amal) avvalgidek o'tadi: klientlar
+    ularni e'tiborsiz qoldiradi, iz esa yozib oladi.
+
+    OVOZLI USLUBDA (`style: voice`) har `token` - TUGAL gap (`sentence: n`), agent
+    hujjati "gaplarni bo'shliq bilan qo'shing" deydi. Bizning klientlar (web, Mini App,
+    Android, bot) bo'laklarni TO'G'RIDAN-TO'G'RI qo'shadi - bo'shliqsiz "...o'tgan.Qolgan"
+    bo'lib qolardi. `said` - shu javobda oldin matn bo'lgan: bo'shliq SHU YERDA, bitta
+    joyda qo'shiladi (to'rt klientni o'zgartirish o'rniga).
+    """
+    kind = frame.get("type")
+    if kind in _V4_SERVICE_FRAMES:
+        return None
+    if kind == "token" and said and "sentence" in frame:
+        text = frame.get("text")
+        if isinstance(text, str) and text and not text[0].isspace():
+            frame["text"] = " " + text
+    elif kind == "done":
+        for key in _V4_DONE_EXTRA:
+            frame.pop(key, None)
+    return frame
 
 
 def stream_path(engine: str) -> str:
@@ -1224,6 +1327,13 @@ def _detail(exc: urllib.error.HTTPError) -> str:
     except ValueError:
         return raw[:300]
     if isinstance(parsed, dict):
+        nested = parsed.get("error")
+        if isinstance(nested, dict):
+            # v4 xato shakli: `{"error": {"code", "message", ...}}` - xabar kirishimizni
+            # qaytarmaydi (agent shartnomasi); kod admin uchun sababni aytadi.
+            code = str(nested.get("code") or "")[:48]
+            message = str(nested.get("message") or "")
+            return (f"{code}: {message}" if code else message)[:300] or raw[:300]
         for key in ("detail", "message", "error", "text"):
             value = parsed.get(key)
             if isinstance(value, str) and value:

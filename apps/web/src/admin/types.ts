@@ -49,7 +49,7 @@ export type Route = (typeof ROUTES)[number]
 
 /** Yordamchi dvigateli (2026-10-02): `v1` - barqaror, `v2` - yangi (qonun, "Pro").
  *  Filtrda faqat shu ikkitasi; `null` (eski yozuvlar, versiyasiz yo'l) - filtrsiz. */
-export const ENGINES = ['v1', 'v2', 'v3'] as const
+export const ENGINES = ['v1', 'v2', 'v3', 'v4'] as const
 export type Engine = (typeof ENGINES)[number]
 
 export type ProposalStatus = 'pending' | 'executed' | 'cancelled' | 'failed' | 'expired'

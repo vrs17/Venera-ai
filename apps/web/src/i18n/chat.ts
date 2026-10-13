@@ -38,7 +38,7 @@ const en = {
   lawCaption: '{site} · legislation',
   lawOpen: 'Open in a new tab',
   // Yordamchi versiyasi (kompozerdagi "v2 ▾"): faqat odamga tanlov berilgan bo'lsa ko'rinadi.
-  // `v1`/`v2`/`v3` - nomi, `*Desc` - bitta qator; noma'lum versiya - faqat kaliti ("v4").
+  // `v1`...`v4` - nomi, `*Desc` - bitta qator; noma'lum versiya - faqat kaliti ("v5").
   engines: {
     label: 'Assistant version',
     pill: 'Assistant version: {v}',
@@ -48,6 +48,8 @@ const en = {
     v2Desc: 'Written by the model: Labour Code and LEX.UZ',
     v3: 'Core',
     v3Desc: 'One agent for everything: keeps the task across messages',
+    v4: 'Core+',
+    v4Desc: 'Core with the newest updates: work activity, voice-style replies',
     answeredBy: 'Answered by {v}',
     switched: 'Next answers: {v}',
   },
@@ -91,6 +93,8 @@ const uz: Mirror<typeof en> = {
     v2Desc: 'Model yozadi: Mehnat kodeksi va LEX.UZ',
     v3: 'Core',
     v3Desc: 'Hammasi uchun bitta agent: vazifani xabarlar orasida eslab qoladi',
+    v4: 'Core+',
+    v4Desc: 'Core va eng yangi imkoniyatlar: ish faolligi, ovozli javoblar',
     answeredBy: '{v} javob berdi',
     switched: 'Keyingi javoblar: {v}',
   },
@@ -134,6 +138,8 @@ const uzCyrl: Mirror<typeof en> = {
     v2Desc: 'Модел ёзади: Меҳнат кодекси ва LEX.UZ',
     v3: 'Core',
     v3Desc: 'Ҳаммаси учун битта агент: вазифани хабарлар орасида эслаб қолади',
+    v4: 'Core+',
+    v4Desc: 'Core ва энг янги имкониятлар: иш фаоллиги, овозли жавоблар',
     answeredBy: '{v} жавоб берди',
     switched: 'Кейинги жавоблар: {v}',
   },
@@ -177,6 +183,8 @@ const ru: Mirror<typeof en> = {
     v2Desc: 'Пишет модель: Трудовой кодекс и LEX.UZ',
     v3: 'Core',
     v3Desc: 'Один агент для всего: помнит задачу между сообщениями',
+    v4: 'Core+',
+    v4Desc: 'Core с новейшими возможностями: рабочая активность, голосовые ответы',
     answeredBy: 'Ответ: {v}',
     switched: 'Следующие ответы: {v}',
   },

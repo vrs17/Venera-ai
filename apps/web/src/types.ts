@@ -175,9 +175,10 @@ export interface ProWindows {
 
 /** Yuqoridagi yordamchining "dvigateli" (2026-10-02): `v1` - barqaror (eski
  *  ko'rinish), `v2` - yangi (qonun moddalari, "Pro"), `v3` - "Venera Core" (2026-10-08:
- *  bitta vazifa-sikli, vazifa holati xabarlar orasida). `''` - versiyasiz `/api/chat`
+ *  bitta vazifa-sikli, vazifa holati xabarlar orasida), `v4` - o'sha Core va agentning
+ *  barcha yangiliklari (2026-10-13; v1-v3 agentda muzlatilgan). `''` - versiyasiz `/api/chat`
  *  yo'li (server default'i). Qaysi biri ishlashini admin panel va `.env` hal qiladi. */
-export type AssistantEngine = 'v1' | 'v2' | 'v3' | ''
+export type AssistantEngine = 'v1' | 'v2' | 'v3' | 'v4' | ''
 
 /** schemas/pro.py: ProQuota - `GET /api/v1/pro/quota`. Chegaralar rolga
  *  qarab o'zgaradi, shuning uchun ular QOTIRILMAYDI - shundan o'qiladi. */

@@ -73,7 +73,7 @@ NOTE_CAP = 2000
 TURN_STATUSES = ("running", "ok", "error", "cancelled")
 #: Dvigatel filtri (`?engine=`): `default` - ustun NULL (versiyasiz yo'l yoki
 #: yordamchiga bormagan javob), umumiy ko'rinishdagi `engines` bilan bir xil nom.
-TURN_ENGINES = ("v1", "v2", "v3", "default")
+TURN_ENGINES = ("v1", "v2", "v3", "v4", "default")
 #: NULL dvigatelning ko'rinadigan nomi (`engines[].engine`).
 DEFAULT_ENGINE = "default"
 REPORT_STATUSES = ("new", "reviewing", "resolved", "dismissed")

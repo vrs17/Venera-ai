@@ -186,11 +186,16 @@ const docMax = computed(() => Math.max(1, ...docs.value.map((d) => d.citations))
    RANG. Dvigatel - toifa, lekin toifa ranglari (--viz-1, --viz-2 ...) shu sahifada
    KANALLARGA band (web ko'k, mini app to'q sariq): v2 ni ko'k qilsak, "web" bilan adashadi.
    Shuning uchun bitta (ketma-ket) shkalaning pog'onalari, versiya tartibida ochdan to'qqa -
-   v1 --viz-seq-2, v2 --viz-seq-4, v3 --viz-seq-5 - va yozilmagani jim kulrang (--text-4),
+   v1 --viz-seq-2 ... v4 --viz-seq-5 (har versiya bir pog'ona) - va yozilmagani jim kulrang (--text-4),
    yo'nalishsiz savollar kabi. Rang
    yolg'iz ma'no tashimaydi: har qatorda nomi va raqami MATN bo'lib turadi. */
-const ENGINE_COLOR: Record<string, string> = { v1: '--viz-seq-2', v2: '--viz-seq-4', v3: '--viz-seq-5' }
-const ENGINE_ORDER: Record<string, number> = { v1: 0, v2: 1, v3: 2 }
+const ENGINE_COLOR: Record<string, string> = {
+  v1: '--viz-seq-2',
+  v2: '--viz-seq-3',
+  v3: '--viz-seq-4',
+  v4: '--viz-seq-5',
+}
+const ENGINE_ORDER: Record<string, number> = { v1: 0, v2: 1, v3: 2, v4: 3 }
 
 const engineRows = computed(() =>
   [...(ov.value?.engines ?? [])]

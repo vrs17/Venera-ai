@@ -52,6 +52,7 @@ from ...services import engine_control as _engine_control
 from ...services.analytics import TurnRecorder, bind, carry, redact
 from ...services.integrations.assistant import (
     ARTIFACT_KINDS,
+    CONTRACT_ENGINES,
     AnswerStream,
     AssistantClient,
     AssistantError,
@@ -557,7 +558,8 @@ def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
                 mode: str = "standard", recorder: TurnRecorder | None = None,
                 before_upstream: Callable[[], None] | None = None,
                 channel: str | None = "api", engine: str | None = None,
-                platforms: tuple[str, ...] | None = None, own_tokens: bool = False) -> AnswerStream:
+                platforms: tuple[str, ...] | None = None, own_tokens: bool = False,
+                style: str = "standard") -> AnswerStream:
     """Savol -> javob oqimi: web, mini app va Telegram bot BITTA yo'ldan.
 
     HAR savol yordamchiga ketadi - SHU ODAM VA KANAL uchun tanlangan
@@ -585,7 +587,9 @@ def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
         (Telegram guruhi: faqat `crm` - javob guruhdagi hammaga ko'rinadi,
         HR ma'lumoti u yerga chiqa olmasin). `None` - hammasi (odatiy);
       * `own_tokens` - faqat odamning O'Z ulanishlari: umumiy `.env` tokeni va
-        agent sessiyasiga TUSHILMAYDI (guruhda vazifa so'ragan odam nomidan).
+        agent sessiyasiga TUSHILMAYDI (guruhda vazifa so'ragan odam nomidan);
+      * `style` - `voice`: savol GAPIRILGAN (`voice_style`). Yuqoriga faqat v4 da
+        ketadi (`assistant.stream`), boshqa dvigatellar bugungidek.
 
     Ulanish SHU YERDA ochiladi, generator ichida emas: 400/501/503 shunda
     oddiy `AssistantError` bo'lib chaqiruvchiga chiqadi.
@@ -646,10 +650,38 @@ def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
             mode=mode,
             max_chars=settings.hrm_assistant_max_question_chars,
             engine=engine,
+            style=style,
         )
         info["requestId"] = answer.request_id
         info["engine"] = engine
+        if style == "voice" and engine in CONTRACT_ENGINES:
+            # Izda: javob quloq uchun yozildi (qisqa gaplar) - "nega javob qisqa" savoliga.
+            info["style"] = style
     return answer
+
+
+#: `input` yubormaydigan, lekin `voice: true` faqat GAPIRILGAN savolda keladigan kanallar:
+#: web ovoz paneli (desktop ilova ham o'sha web) - panelda yozish maydoni yo'q.
+_VOICE_PANEL_CHANNELS = frozenset({"web", "desktop"})
+
+
+def voice_style(body: StreamRequest, channel: str | None) -> str:
+    """Savol GAPIRILGANmi -> agentning ovozli uslubi (`voice`), aks holda `standard`.
+
+    `input` bo'lsa - o'sha (Android ovoz rejimi aniq aytadi). Bo'lmasa `voice`, lekin
+    faqat web ovoz panelida (`_VOICE_PANEL_CHANNELS`). YANGI Mini App ikkalasini ham
+    yubormaydi - matn.
+
+    NEGA FAQAT GAPIRILGAN SAVOL. Ovozli uslubda agent "ha" ni TASDIQ deb oladi va
+    kutib turgan yozuv amalini o'zi bajaradi (agentning `docs/VOICE_MODE.md`, 4).
+    YOZIB yuborilgan "ha" hech qachon amal bajarmasligi kerak - matnli chatda faqat
+    tugma. Eski Mini App build'i o'qib berishni default yoqib (`voice: true`) `input`
+    siz keladi - shuning uchun kanal ham tekshiriladi."""
+    if body.input is not None:
+        spoken = body.input == "voice"
+    else:
+        spoken = body.voice and normalize_channel(channel, default=None) in _VOICE_PANEL_CHANNELS
+    return "voice" if spoken else "standard"
 
 
 @contextlib.contextmanager
@@ -767,7 +799,7 @@ def stream(body: StreamRequest, request: Request,
             # oxiri `.env`. Mini App ham shu yo'ldan (kanal `miniapp`).
             answer = open_stream(body.question, user, body.chatId, mode=body.mode,
                                  recorder=rec, before_upstream=start_hold, channel=channel,
-                                 engine=body.engine)
+                                 engine=body.engine, style=voice_style(body, channel))
         except AssistantError as exc:
             # Sabab bo'yicha kod: `queue_full` / `upstream_unreachable` /
             # `upstream_busy`, qolgani `open_failed` (`open_error_code`).

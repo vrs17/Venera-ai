@@ -1,6 +1,6 @@
 """Agent ("HR Assistant API") ning v4 shartnomasi mijozi - `agent-contract.md`.
 
-NEGA ALOHIDA MIJOZ. `assistant.py` - bugungi chat oqimi (`/api/v1|v2|v3/chat/stream`)
+NEGA ALOHIDA MIJOZ. `assistant.py` - bugungi chat oqimi (`/api/v1|v2|v3|v4/chat/stream`)
 va uning 4 ta o'rni (`hrm_assistant_max_concurrent`). Bu mijoz esa LLM ishlarini
 agentga ko'chirish uchun YANGI endpointlarni chaqiradi: `capabilities`, `limits`,
 `complete`, `chat` (yangi maydonlar bilan), `jobs`. O'z navbati bilan (`max_concurrent`):

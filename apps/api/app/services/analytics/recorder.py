@@ -605,6 +605,20 @@ class TurnRecorder:
         ) if prop.get(key) is not None}
         self._event("frame", "proposal", payload)
 
+    def _on_action(self, frame: Mapping[str, Any]) -> None:
+        # v4 ovozli suhbat (`style: voice`): odam "ha" deb AYTDI va agent shu suhbatdagi
+        # taklifni O'ZI bajardi - `/actions/{token}/confirm` ga bormasdan. Holat tugma
+        # bosilgandagi kabi yangilanadi, aks holda admin panelda taklif abadiy "pending"
+        # turardi. Kalit vaqt chizig'iga TUSHMAYDI (`_on_proposal` dagi qoida).
+        act = frame.get("action") if isinstance(frame.get("action"), Mapping) else frame
+        token = _str(act.get("token"), 256)
+        status = _str(act.get("status"), 32)
+        if token and status in PROPOSAL_STATUSES and status != "pending":
+            set_proposal_status(token, status, writer=self._writer)
+        payload = {key: act.get(key) for key in ("status", "summary", "result", "error")
+                   if act.get(key) is not None}
+        self._event("frame", "action", payload)
+
     def _on_done(self, frame: Mapping[str, Any]) -> None:
         route = frame.get("route")
         self.route = _str(route, 64)
@@ -832,6 +846,7 @@ _HANDLERS = {
     "done": TurnRecorder._on_done,
     "error": TurnRecorder._on_error,
     "hold": TurnRecorder._on_hold,
+    "action": TurnRecorder._on_action,
 }
 
 
