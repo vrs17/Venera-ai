@@ -741,6 +741,8 @@ BRAIN_FEATURES: dict[str, BrainFeature] = {f.name: f for f in (
     # Bizning LLM op'imiz yo'q (bugun ham agentga boradi) - faqat so'rov SHAKLI ko'chadi (W1).
     BrainFeature("group_crm", (), "Guruhdagi CRM so'rovi (agent v4 shakli)"),
     BrainFeature("meeting_crm", (), "Yig'ilish vazifasi CRM ga (agent v4 shakli)"),
+    # Modelsiz: agentning `/speech` qoidalari raqamlarni so'z bilan yozadi (o'qib berish).
+    BrainFeature("tts_speech", (), "Ovoz uchun matn (raqamlar so'z bilan)"),
 )}
 
 #: Op -> funksiya (bitta op faqat bitta funksiyada).

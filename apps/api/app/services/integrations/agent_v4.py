@@ -307,6 +307,12 @@ class AgentV4Client:
         return self.request("POST", "/complete", body=body, op=op, idempotent=True, timeout=timeout,
                             units=units)
 
+    def speech(self, text: str, *, lang: str = "uz_latn", timeout: float | None = None) -> dict[str, Any]:
+        """`POST /speech` - matnni quloq uchun yozadi (raqam, foiz, sana so'z bilan). Model
+        chaqirilmaydi; javob `{"text", "lang"}`."""
+        return self.request("POST", "/speech", body={"text": text, "lang": lang}, op="speech",
+                            timeout=timeout)[0]
+
     def chat(self, body: Mapping[str, Any], *, op: str, timeout: float | None = None,
              units: Mapping[str, Any] | None = None) -> tuple[dict[str, Any], str]:
         """`POST /chat` - oqimsiz javob (6.2), yangi maydonlar bilan (6.1)."""

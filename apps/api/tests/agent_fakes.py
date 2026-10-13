@@ -22,6 +22,7 @@ FULL_CAPS: dict[str, Any] = {
         "purpose": True, "store": True, "chat_visibility": True, "context": True, "audience": True,
         "tools_allowlist": True, "response_format": True, "chat_template": False, "shadow": True,
         "complete": True, "instructions_mode": True, "jobs": True, "job_kinds": ["meeting_summary"],
+        "speech": True,
         "frames": ["route", "stage", "sources", "token", "done", "error"],
     },
     "engines": ["v2", "v3", "v4"],

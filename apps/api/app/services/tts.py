@@ -277,8 +277,12 @@ class SpeechText:
     normalize_numbers: bool
 
 
+#: Agentdan ovoz uchun matn: `(matn | None, izoh)` (`brain.routing.speakable`).
+Speakable = Callable[[str], "tuple[str | None, dict[str, Any]]"]
+
+
 def prepare_speech(text: str, *, max_chars: int, names: Mapping[str, str] | None = None,
-                   normalize_numbers: bool = True,
+                   normalize_numbers: bool = True, speakable: Speakable | None = None,
                    trace: list[dict[str, Any]] | None = None) -> SpeechText:
     """Serverdagi BUTUN matn tayyorlash zanjiri - `stream()` (ya'ni `/tts/speak`
     va `/tts/clip`) shu funksiyani chaqiradi.
@@ -289,8 +293,15 @@ def prepare_speech(text: str, *, max_chars: int, names: Mapping[str, str] | None
     "to'g'ri" deb ko'rsatardi. Shuning uchun ikkalasi ham shu bitta funksiyadan
     o'tadi; `trace` berilmasa xulq avvalgidek.
 
-    Tartib (o'zgarmagan): kesish -> bo'sh tekshiruvi -> `for_speech` (lug'at,
-    qisqartma, qo'shtirnoq, sana, vaqt) -> normalizator xavfi."""
+    Tartib: kesish -> bo'sh tekshiruvi -> `for_speech` (lug'at, qisqartma,
+    qo'shtirnoq, sana, vaqt) -> agentning `/speech` i (flag `tts_speech`) ->
+    normalizator xavfi.
+
+    NEGA `/speech`. OmniVoice normalizatori vergulni minglik ajratuvchi deb o'qiydi:
+    "40,98 trln" -> "to'rt ming to'qson sakkiz", "-0,2%" -> minus belgisiz. Agent
+    raqamni, foizni, mln/mlrd/trln ni va kasrni o'zbekcha so'z bilan yozadi; bizning
+    lug'at (loyiha nomlari) undan OLDIN - agent harflarga tegmaydi. Javob kelmasa
+    yoki kechiksa - bugungi yo'l, ovoz baribir chiqadi."""
     clean, truncated = clip(text, max_chars)
     if trace is not None:
         trace.append({"stage": "clip", "text": clean, "limit": max_chars, "truncated": truncated})
@@ -300,6 +311,18 @@ def prepare_speech(text: str, *, max_chars: int, names: Mapping[str, str] | None
     # KEYIN: so'zlar matnni uzaytiradi, va oldin qilinsa, klient allaqachon
     # 3000 belgiga sig'dirgan javobning oxiri shu uzayish hisobiga kesilardi.
     clean = for_speech(clean, names=names, trace=trace)
+    if speakable is not None:
+        started = time.monotonic()
+        try:
+            got, info = speakable(clean)
+        except Exception as exc:                           # noqa: BLE001
+            log.warning("TTS: /speech chaqiruvi yiqildi (%s) - bugungi yo'l", type(exc).__name__)
+            got, info = None, {"error": type(exc).__name__}
+        if got:
+            clean = got
+        if trace is not None:
+            trace.append({"stage": "agent_speech", "text": clean, "used": bool(got),
+                          "ms": round((time.monotonic() - started) * 1000, 1), **info})
 
     # Normalizator ba'zi raqamlarda yiqiladi - bunday matnni OLDINDAN
     # tanib, normalizatsiyasiz yuboramiz. `/stream` da bu 422 beradi
@@ -326,10 +349,12 @@ class TtsClient:
         max_concurrent: int = 2,
         queue_wait: float = 1.0,
         spoken_names: Callable[[], Mapping[str, str]] | None = None,
+        speakable: Speakable | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         #: Talaffuz lug'ati (`speech_text.SpokenNames`): `DVSIB` -> loyiha nomi.
         self.spoken_names = spoken_names
+        self.speakable = speakable
         self.client_id = client_id
         self.client_secret = client_secret
         self.timeout = timeout
@@ -390,7 +415,7 @@ class TtsClient:
         klientning talaffuz lug'ati). `stream()` ham, admin sinovi ham shuni chaqiradi."""
         names = self.spoken_names() if self.spoken_names else None
         return prepare_speech(text, max_chars=max_chars, names=names,
-                              normalize_numbers=normalize_numbers, trace=trace)
+                              normalize_numbers=normalize_numbers, speakable=self.speakable, trace=trace)
 
     def stream(
         self,

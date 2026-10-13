@@ -58,7 +58,16 @@ _client = TtsClient(
     timeout=settings.tts_timeout,
     max_concurrent=settings.tts_max_concurrent,
     spoken_names=SpokenNames(settings.tts_spoken_names_path),
+    speakable=lambda text: _speakable(text),
 )
+
+
+def _speakable(text: str):
+    """Agentning `/speech` i (`brain.routing.speakable`). Kech import: `brain` modul
+    boshida import qilinsa, `tts` -> `brain` -> `chat` aylanma bog'liqligi paydo bo'ladi."""
+    from ...services.brain import routing
+
+    return routing.speakable(text)
 
 #: Foydalanuvchiga ko'rinadigan xabarlar - status bo'yicha, ichki matnsiz.
 #: Ichki host va sir xabarga HECH QACHON tushmaydi.

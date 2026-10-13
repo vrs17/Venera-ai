@@ -79,7 +79,15 @@ NEEDS: dict[str, dict[str, tuple[str, ...]]] = {
     # (`shadow` holati amalda `local` kabi ishlaydi, chaqiruv joyida).
     "meeting_crm": {"agent": ("purpose", "store", "tools_allowlist"),
                     "shadow": ("purpose", "store", "tools_allowlist", "shadow")},
+    # Ovoz uchun matn: `features.speech`. Shadow yo'q (natija deterministik, taqqoslash
+    # foyda bermaydi) - `shadow` chaqiruv joyida `local` kabi ishlaydi.
+    "tts_speech": {"agent": ("speech",), "shadow": ("speech",)},
 }
+
+#: Modelsiz funksiyalar: agent matnni hech qanday modelga yubormaydi (sof kod, o'sha
+#: serverda). Ularga "ichki tarmoq modeli / tashqi modelga ruxsat" qoidasi tegishli EMAS -
+#: aks holda tashqi modellar o'chirilganda `/speech` ham behuda yopilib qolardi.
+MODEL_FREE: frozenset[str] = frozenset({"tts_speech"})
 
 
 @dataclass(frozen=True)
@@ -270,6 +278,11 @@ def _build(name: str, *, breaker: Breaker | None = None) -> AgentV4Client:
         return AgentV4Client(base, timeout=settings.agent_shadow_timeout,
                              max_concurrent=settings.agent_v4_batch_max_concurrent, channel="worker",
                              name="batch", **common)
+    if name == "speech":
+        # O'qib berish birinchi ovozgacha shuni kutadi: qisqa kutish va O'Z uzgichi - sekin
+        # `/speech` guruh, brif va yig'ilishlarni lokal yo'lga o'tkazib yubormasin.
+        return AgentV4Client(base, timeout=settings.tts_agent_speech_timeout, max_concurrent=4,
+                             channel="web", name="speech", **{**common, "breaker": breaker or Breaker()})
     if name == "meetings":
         # Yig'ilish xulosasi o'z o'rnida: uzun xulosa guruh va brif chaqiruvlarini kuttirmasin.
         return AgentV4Client(base, timeout=settings.meetings_llm_timeout,
@@ -291,6 +304,30 @@ def client(name: str = "interactive") -> AgentV4Client:
         if name not in _clients:
             _clients[name] = _build(name)
         return _clients[name]
+
+
+def speakable(text: str) -> tuple[str | None, dict[str, Any]]:
+    """Ovoz uchun matn agentdan (`POST /speech`): raqam, foiz, mln/mlrd/trln, sana va vaqt
+    o'zbekcha so'z bilan. `(matn, izoh)`; matn `None` - bugungi yo'l qoladi (flag `local`,
+    agent tayyor emas, xato yoki kechikish). HECH QACHON xato bermaydi: ovoz bunga
+    bog'liq bo'lib qolmasin."""
+    found = route("tts_speech")
+    info: dict[str, Any] = {"route": found.effective, "reason": found.reason}
+    if not found.agent:
+        return None, info
+    try:
+        payload = client("speech").speech(text, lang="uz_latn")
+    except AgentError as exc:
+        log_limited("brain.speech", "Agent /speech ishlamadi (%s) - bugungi yo'l", exc.code)
+        info["error"] = exc.code
+        return None, info
+    got = payload.get("text")
+    # Bo'sh yoki g'ayritabiiy uzun javob - ishonmaymiz (so'z bilan yozish matnni
+    # uzaytiradi, lekin o'n baravardan ko'p emas).
+    if not isinstance(got, str) or not got.strip() or len(got) > 10 * len(text) + 2000:
+        info["error"] = "bad_response"
+        return None, info
+    return got.strip(), info
 
 
 def probe_client() -> AgentV4Client:
@@ -365,7 +402,7 @@ def route(feature: str) -> Route:
         caps = capabilities().get()
         if caps is None:
             return Route(effective="local", reason="capabilities_unknown", **base)
-        if not caps.models_ok():
+        if feature not in MODEL_FREE and not caps.models_ok():
             return Route(effective="local", reason="not_in_network", **base)
         missing = [name for name in NEEDS.get(feature, {}).get(choice.state, ("?",)) if not caps.has(name)]
         if missing:

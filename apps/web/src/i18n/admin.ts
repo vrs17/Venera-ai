@@ -662,6 +662,7 @@ const en = {
       hold_classify: "Voice wait phrase",
       group_crm: "CRM requests in groups",
       meeting_crm: "Meeting task to CRM",
+      tts_speech: "Text for speech (numbers as words)",
     },
     hint: {
       group_summary: "A summary of a work group's chat",
@@ -673,6 +674,7 @@ const en = {
       hold_classify: "Picks the phrase Barno says while the answer is written",
       group_crm: "Task proposals from group messages",
       meeting_crm: "Creates a CRM task from a meeting task",
+      tts_speech: "Writes numbers, percents and dates as words before read-aloud (agent /speech, no model)",
     },
     reason: {
       agent_disabled: "the agent is switched off (AGENT_V4_ENABLED)",
@@ -1402,6 +1404,7 @@ const uz: Mirror<typeof en> = {
       hold_classify: "Ovozli kutish gapi",
       group_crm: "Guruhdagi CRM so'rovlari",
       meeting_crm: "Yig'ilish vazifasi CRM ga",
+      tts_speech: "Ovoz uchun matn (raqamlar so'z bilan)",
     },
     hint: {
       group_summary: "Ish guruhi yozishmasining xulosasi",
@@ -1413,6 +1416,7 @@ const uz: Mirror<typeof en> = {
       hold_classify: "Javob yozilayotganda Barno aytadigan gapni tanlaydi",
       group_crm: "Guruh xabarlaridan vazifa takliflari",
       meeting_crm: "Yig'ilish vazifasidan CRM vazifasi yaratadi",
+      tts_speech: "O'qib berishdan oldin raqam, foiz va sanani so'z bilan yozadi (agent /speech, modelsiz)",
     },
     reason: {
       agent_disabled: "agent o'chirilgan (AGENT_V4_ENABLED)",
@@ -2142,6 +2146,7 @@ const uzCyrl: Mirror<typeof en> = {
       hold_classify: "Овозли кутиш гапи",
       group_crm: "Гуруҳдаги CRM сўровлари",
       meeting_crm: "Йиғилиш вазифаси CRM га",
+      tts_speech: "Овоз учун матн (рақамлар сўз билан)",
     },
     hint: {
       group_summary: "Иш гуруҳи ёзишмасининг хулосаси",
@@ -2153,6 +2158,7 @@ const uzCyrl: Mirror<typeof en> = {
       hold_classify: "Жавоб ёзилаётганда Barno айтадиган гапни танлайди",
       group_crm: "Гуруҳ хабарларидан вазифа таклифлари",
       meeting_crm: "Йиғилиш вазифасидан CRM вазифаси яратади",
+      tts_speech: "Ўқиб беришдан олдин рақам, фоиз ва санани сўз билан ёзади (агент /speech, моделсиз)",
     },
     reason: {
       agent_disabled: "агент ўчирилган (AGENT_V4_ENABLED)",
@@ -2882,6 +2888,7 @@ const ru: Mirror<typeof en> = {
       hold_classify: "Фраза ожидания в голосе",
       group_crm: "Запросы CRM в группах",
       meeting_crm: "Задача встречи в CRM",
+      tts_speech: "Текст для озвучки (числа словами)",
     },
     hint: {
       group_summary: "Итоги переписки рабочей группы",
@@ -2893,6 +2900,7 @@ const ru: Mirror<typeof en> = {
       hold_classify: "Выбирает фразу, которую Barno говорит, пока пишется ответ",
       group_crm: "Предложения задач из сообщений группы",
       meeting_crm: "Создаёт задачу в CRM из задачи встречи",
+      tts_speech: "Перед чтением вслух пишет числа, проценты и даты словами (агент /speech, без модели)",
     },
     reason: {
       agent_disabled: "агент выключен (AGENT_V4_ENABLED)",

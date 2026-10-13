@@ -242,7 +242,8 @@ def _isolated_contacts(tmp_path, monkeypatch):
 #: Miya (agentga ko'chish) sozlamalari - testlar KODDAGI default'ni kutadi.
 _BRAIN_DEFAULTS = ("agent_v4_enabled", "agent_v4_base_url", "hold_classifier", "agent_shadow_sample_rate",
                    "group_summary_engine", "group_ask_engine", "brief_extract_engine", "brief_crm_engine",
-                   "meeting_summary_engine", "meeting_ask_engine", "hold_classify_engine")
+                   "meeting_summary_engine", "meeting_ask_engine", "hold_classify_engine",
+                   "tts_speech_engine")
 
 
 @pytest.fixture(autouse=True)

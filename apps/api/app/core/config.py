@@ -803,6 +803,12 @@ class Settings(BaseSettings):
     #: Yig'ilish vazifasini CRM ga taklif qilish: `local` - bugungi v3 oqimi; `agent` - v4
     #: (`purpose: meeting_crm`, faqat CRM vositalari va o'z CRM tokeni, shaxsiy xotirasiz).
     meeting_crm_engine: str = "local"
+    #: Ovoz uchun matn (o'qib berish, ovozli javob): `agent` - agentning `POST /speech` i
+    #: raqam, foiz, mln/mlrd/trln, sana va vaqtni o'zbekcha so'z bilan yozadi (model YO'Q,
+    #: ~4 ms); javob kelmasa yoki kechiksa - bugungi yo'l (OmniVoice normalizatori).
+    tts_speech_engine: str = "local"
+    #: `/speech` uchun kutish: o'qish birinchi ovozgacha shuni kutadi, shuning uchun qisqa.
+    tts_agent_speech_timeout: float = 0.5
     #: Ovozli "hold" tasnifi: `keyword` - faqat kalit so'z jadvali: ovozli savol (shaxsiy
     #: HR savoli ham) `ollama.com` ga CHIQMAYDI; `llm` - avvalgidek gemma. `.env` dan JONLI
     #: (`hold_classifier_now`), restartsiz.
