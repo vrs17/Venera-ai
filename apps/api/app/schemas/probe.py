@@ -46,6 +46,8 @@ class HoldProbe(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     #: `true` - gemma tasnifi HAQIQATAN chaqiriladi (pullik, savol ollama.com ga chiqadi).
     use_llm: bool = False
+    #: Pullik yo'l (`use_llm`) uchun aniq tasdiq - tasdiqsiz 428.
+    confirm_cost: bool = False
 
 
 class MaskProbe(BaseModel):
@@ -62,3 +64,5 @@ class BrainProbe(BaseModel):
     kind: Literal["project", "support"] = "project"
     #: `false` (default) - model CHAQIRILMAYDI, faqat prompt va agent tanasi.
     execute: bool = False
+    #: `execute` (pullik) uchun aniq tasdiq - tasdiqsiz 428.
+    confirm_cost: bool = False

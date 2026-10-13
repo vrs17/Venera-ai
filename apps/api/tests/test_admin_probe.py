@@ -383,7 +383,7 @@ def test_brain_guruh_execute_telegramga_yubormaydi(client, auth, no_side_effects
 
     monkeypatch.setattr(probe, "_live_writer", lambda feature: Model())
     body = client.post(f"{API}/probe/brain/group_ask",
-                       json={"input": "Ali: salom\nVali: server tuzaldi", "question": "server?", "execute": True},
+                       json={"input": "Ali: salom\nVali: server tuzaldi", "question": "server?", "execute": True, "confirm_cost": True},
                        headers=auth).json()
     result = body["result"]
     assert result["mode"] == "execute"
@@ -407,7 +407,7 @@ def test_brain_execute_model_xatosi_ok_emas(client, auth, no_side_effects, monke
 
     monkeypatch.setattr(probe, "_live_writer", lambda feature: Down())
     body = client.post(f"{API}/probe/brain/group_summary",
-                       json={"input": "Ali: salom\nVali: server tuzaldi", "execute": True}, headers=auth).json()
+                       json={"input": "Ali: salom\nVali: server tuzaldi", "execute": True, "confirm_cost": True}, headers=auth).json()
     assert body["ok"] is False
     assert "output" not in body["result"]["calls"][0]
     assert body["result"]["telegramWouldSend"]
@@ -481,3 +481,33 @@ def test_audit_yoziladi_matnsiz(client, auth, _isolated_analytics):
     rows = [r for r in _audit(_isolated_analytics) if r["action"] == "probe.run"]
     assert rows and rows[-1]["target_type"] == "probe" and rows[-1]["target_id"] == "mask"
     assert "8600" not in json.dumps(rows[-1]["detail"])
+
+
+def test_pullik_sinov_tasdiqsiz_428(client, auth):
+    """Sahifadagi tasdiq yetmaydi: API ni to'g'ridan-to'g'ri chaqirgan admin ham pullik
+    yo'lni aniq tasdiqlashi kerak - model chaqirilmaydi."""
+    r = client.post(f"{API}/probe/brain/group_summary", json={"input": "Ali: salom", "execute": True}, headers=auth)
+    assert r.status_code == 428
+    r = client.post(f"{API}/probe/hold", json={"question": "kim kech qoldi", "use_llm": True}, headers=auth)
+    assert r.status_code == 428
+    # Bepul yo'l tasdiqsiz ishlaydi.
+    assert client.post(f"{API}/probe/hold", json={"question": "kim kech qoldi"}, headers=auth).status_code == 200
+
+
+def test_pullik_sinov_soatlik_chek(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.api.v1 import admin_probe as probe
+    from app.schemas.auth import AuthUser
+
+    monkeypatch.setattr(probe, "PAID_PER_HOUR", 2)
+    monkeypatch.setattr(probe, "_paid_runs", {})
+    admin = AuthUser(actorId=1, email="admin@test", fullName="Admin", roles=["ADMIN"])
+    probe._paid_gate(admin, "stt", True, "")
+    probe._paid_gate(admin, "stt", True, "")
+    try:
+        probe._paid_gate(admin, "stt", True, "")
+    except HTTPException as exc:
+        assert exc.status_code == 429
+    else:  # pragma: no cover
+        raise AssertionError("chekdan oshgan sinov o'tib ketdi")

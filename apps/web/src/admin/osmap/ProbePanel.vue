@@ -253,6 +253,8 @@ async function run() {
         form.append('file', upload.blob, upload.name)
         form.append('language', language.value)
         form.append('provider', provider.value)
+        // Sahifada narx tasdiqlangan (`paid` bo'lsa) - server ham aniq tasdiqni talab qiladi.
+        form.append('confirm_cost', String(paid.value))
         const res = await runSttProbe(form, signal)
         result.value = { ...res, trace: [...steps, ...res.trace] }
         break
@@ -269,7 +271,7 @@ async function run() {
         result.value = await runProbe('wake', { text: text.value }, signal)
         break
       case 'hold':
-        result.value = await runProbe('hold', { question: text.value, use_llm: useLlm.value }, signal)
+        result.value = await runProbe('hold', { question: text.value, use_llm: useLlm.value, confirm_cost: useLlm.value }, signal)
         break
       case 'mask':
         result.value = await runProbe('mask', { text: text.value }, signal)
@@ -281,7 +283,7 @@ async function run() {
       case 'brain':
         result.value = await runProbe(
           `brain/${encodeURIComponent(feature.value)}`,
-          { input: text.value, question: question.value, kind: briefKind.value, execute: execute.value },
+          { input: text.value, question: question.value, kind: briefKind.value, execute: execute.value, confirm_cost: execute.value },
           signal,
         )
         break

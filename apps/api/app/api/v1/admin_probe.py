@@ -38,8 +38,10 @@ import logging
 import re
 import sqlite3
 import tempfile
+import threading
 import time
 
+from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -126,6 +128,30 @@ def _audit(admin: AuthUser, probe: str, ok: bool, ms: float) -> None:
         log.warning("Admin sinovi auditga yozilmadi (%s): %s", probe, type(exc).__name__)
 
 
+#: Pullik sinovlar (GAPI daqiqasi, gemma, model `execute`) - admin boshiga soatiga.
+#: Sahifadagi tasdiq yetmaydi: API ni to'g'ridan-to'g'ri chaqirgan admin (skript, curl)
+#: uni chetlab o'tardi, va GAPI ning kunlik hisobi foydalanuvchilar bilan BITTA.
+PAID_PER_HOUR = 30
+_paid_runs: dict[str, deque[float]] = {}
+_paid_lock = threading.Lock()
+
+
+def _paid_gate(admin: AuthUser, probe: str, confirmed: bool, note: str) -> None:
+    """Pullik sinov: aniq tasdiq (`confirm_cost`) va soatlik chek. Tasdiqsiz - 428
+    (narx yozuvi bilan), chekdan oshsa - 429. Bepul sinovlarga tegmaydi."""
+    if not confirmed:
+        raise error_status(428, f"Pullik sinov ({probe}): {note} Davom etish uchun confirm_cost=true yuboring.")
+    who = _admin._by(admin)
+    now = time.monotonic()
+    with _paid_lock:
+        runs = _paid_runs.setdefault(who, deque())
+        while runs and now - runs[0] > 3600:
+            runs.popleft()
+        if len(runs) >= PAID_PER_HOUR:
+            raise error_status(429, f"Pullik sinovlar chegarasi: soatiga {PAID_PER_HOUR} ta. Birozdan keyin urinib ko'ring.")
+        runs.append(now)
+
+
 class _Stamped(list):
     """Ishlab chiqarish funksiyasi `trace.append(...)` qilganda vaqt tamg'asini qo'shadi -
     bosqichlar vaqtini o'lchash uchun ishlab chiqarish kodiga soat qo'shish shart emas."""
@@ -160,6 +186,7 @@ def probe_stt(
     file: UploadFile = File(description="Audio - ovoz paneli yuboradigan 16 kHz WAV yoki boshqa format"),
     language: Literal["uz", "ru", "en"] = Form("uz"),
     provider: Literal["auto", "gapi", "router"] = Form("auto", description="`auto` - `STT_PROVIDER`"),
+    confirm_cost: bool = Form(False, description="GAPI (pullik) tanlansa - aniq tasdiq"),
     admin: AuthUser = Depends(admin_only),
 ) -> ProbeResult:
     """Audio -> matn, `/stt/transcribe` bilan AYNI yo'l: hajm tekshiruvi (`upload_bytes`),
@@ -177,6 +204,8 @@ def probe_stt(
         chosen = "router" if client is _stt._router_client else "gapi"
         d.update(requested=provider, setting=settings.stt_provider, chosen=chosen,
                  why=_pick_reason(wanted, stt_language))
+    if chosen == "gapi":
+        _paid_gate(admin, "stt", confirm_cost, "GAPI audio-daqiqasi kunlik hisobdan ketadi.")
     inner: list[dict[str, Any]] = []
     forwarded = {"filename": safe_filename(ctype), "contentType": ctype, "bytes": len(audio)}
     try:
@@ -338,6 +367,7 @@ def probe_hold(body: HoldProbe, admin: AuthUser = Depends(admin_only)) -> ProbeR
     label, source = (topic, "oddiy"), "jadval"
     cost = None
     if body.use_llm:
+        _paid_gate(admin, "hold", body.confirm_cost, "gemma tasnifi pullik, savol tashqi modelga chiqadi.")
         clf = _chat._hold_classifier
         with tr.step("classify") as d:
             d.update(model=clf.model, configured=clf.configured)
@@ -892,6 +922,8 @@ def probe_brain(
     handler, refuse = _BRAIN[name]
     if body.execute and refuse:
         raise error_status(409, refuse)
+    if body.execute:
+        _paid_gate(admin, f"brain:{name}", body.confirm_cost, "model haqiqatan chaqiriladi (pullik).")
     tr = _Trace()
     with tr.step("route") as d:
         route = _routing.route(name)
