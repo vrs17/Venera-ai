@@ -132,9 +132,9 @@ function toggleWake() {
   wakeEnabled.value = !wakeEnabled.value
 }
 
-// Jonli ovozli suhbat hozircha FAQAT "Salom Venera" bilan ochiladi: kompozerdagi
-// mikrofon endi ovoz bilan yozadi (InputDock), panelni ochmaydi. Suhbat
-// tugmasi keyinroq qaytadi - panel va uning kodi o'z joyida.
+// Jonli ovozli suhbat ikki yo'l bilan ochiladi: kompozerdagi "Jonli suhbat"
+// tugmasi va "Salom Venera". Kompozerdagi mikrofon esa ovoz bilan YOZADI
+// (InputDock), panelni ochmaydi.
 function closeVoice() {
   voiceOpen.value = false
 }
@@ -916,7 +916,7 @@ onBeforeUnmount(() => {
         <!-- Yozish maydoni DOIM shu joyda (salomlashuvda ham) - yuborilganda qayta
              yaratilmaydi, fokus saqlanadi; salomlashuvda CSS uni markazga qo'yadi. -->
         <div ref="composerEl" class="chat-composer">
-          <InputDock ref="dock" :phase="phase" :send="send" :stop="stop" @dictating="dictating = $event" />
+          <InputDock ref="dock" :phase="phase" :send="send" :stop="stop" @dictating="dictating = $event" @live="voiceOpen = true" />
         </div>
       </div>
 

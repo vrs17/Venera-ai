@@ -7,6 +7,9 @@
 import type { Mirror } from './ui'
 
 const en = {
+  // Jonli ovozli suhbat (kompozerdagi tugma, VoicePanel).
+  live: "Live conversation",
+  liveBargeIn: "Talk — Barno stops when you speak",
   placeholder: 'Ask anything',
   message: 'Message',
   add: 'Add',
@@ -43,6 +46,9 @@ const en = {
 }
 
 const uz: Mirror<typeof en> = {
+  // Jonli ovozli suhbat (kompozerdagi tugma, VoicePanel).
+  live: "Jonli suhbat",
+  liveBargeIn: "Gapiring - siz gapirsangiz, Barno to'xtaydi",
   placeholder: 'Savol bering',
   message: 'Xabar',
   add: 'Qoʻshish',
@@ -78,6 +84,9 @@ const uz: Mirror<typeof en> = {
 }
 
 const uzCyrl: Mirror<typeof en> = {
+  // Jonli ovozli suhbat (kompozerdagi tugma, VoicePanel).
+  live: "Жонли суҳбат",
+  liveBargeIn: "Гапиринг - сиз гапирсангиз, Барно тўхтайди",
   placeholder: 'Савол беринг',
   message: 'Хабар',
   add: 'Қўшиш',
@@ -113,6 +122,9 @@ const uzCyrl: Mirror<typeof en> = {
 }
 
 const ru: Mirror<typeof en> = {
+  // Jonli ovozli suhbat (kompozerdagi tugma, VoicePanel).
+  live: "Живой разговор",
+  liveBargeIn: "Говорите - Barno замолчит, когда вы заговорите",
   placeholder: 'Спросите что угодно',
   message: 'Сообщение',
   add: 'Добавить',

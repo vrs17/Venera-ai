@@ -2,6 +2,12 @@
 /**
  * Voice conversation. Tap the orb, speak, pause — the pause ends the turn.
  *
+ * LIVE LOOP. Once an answer has been read out the panel listens again by
+ * itself, so a conversation needs no hands. While the answer plays a second,
+ * cheap microphone tap watches for the person talking over it ("barge-in"):
+ * sustained speech above the echo level stops playback and starts a new turn.
+ * The loop ends on silence (the 30 s turn limit), an error or close.
+ *
  * The flow is: microphone → MediaRecorder → our /api/v1/stt/transcribe proxy →
  * the chat pipeline. Nothing here talks to the STT server directly; see
  * `api/stt.api.ts` for why.
@@ -22,6 +28,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Globe, Mic, MicOff, Volume2, X } from 'lucide-vue-next'
+import { useBargeIn } from '../composables/useBargeIn'
 import { micAvailable, micBlockedByPolicy, secureUrl, transcribe } from '../api/stt.api'
 import { canSpeak, holdClip, play, speakStream } from '../api/tts.api'
 import { prepareSpeech } from './chat/readAloud'
@@ -116,6 +123,17 @@ const speech = ref<Blob | null>(null)
 /** Brauzer avtomatik ijroga ruxsat bermadi: tugma ko'rsatiladi. */
 const speechBlocked = ref(false)
 
+// Javob o'qilayotganda odam gapirsa - o'qish to'xtaydi, yangi turn o'sha
+// mikrofon oqimidan yoziladi (`composables/useBargeIn.ts`).
+const bargeIn = useBargeIn({
+  onBarge: (taken) => void startListening(taken),
+  onLevel: (value) => { level.value = value },
+})
+const { armed: bargeArmed, building: bargeBuilding } = bargeIn
+/** Joriy turn bo'lib gapirishdan boshlangan. Unda hech narsa tanilmasa XATO
+ *  ko'rsatilmaydi: odam shunchaki Barnoni to'xtatdi ("bo'ldi", yo'tal). */
+let bargeTurn = false
+
 /** Speech must be seen before silence can end the turn, otherwise the recorder
  *  stops instantly in a quiet room. */
 const SPEECH_RMS = 0.045
@@ -149,6 +167,12 @@ function pickMime(): string {
   return ''
 }
 
+/** Jim to'xtash: xato matnisiz bo'sh holatga - odam sharni bosib davom etadi. */
+function settle() {
+  teardown()
+  state.value = 'idle'
+}
+
 function fail(message: string, hint = '') {
   errorText.value = message
   errorHint.value = hint
@@ -177,6 +201,7 @@ function stopSpeaking() {
   speechAborter?.abort()
   speechAborter = null
   stopAudio()
+  bargeIn.stop()
 }
 
 function teardown() {
@@ -226,8 +251,13 @@ function meter() {
   rafId = requestAnimationFrame(tick)
 }
 
-async function startListening() {
-  if (!supported.value || state.value === 'listening') return
+/** `taken` - bo'lib gapirish tinglagichidan olingan, allaqachon ochiq oqim:
+ *  odam AYNI damda gapiryapti, qayta getUserMedia kutib so'z yo'qotilmaydi. */
+async function startListening(taken?: MediaStream) {
+  if (!supported.value || state.value === 'listening') {
+    taken?.getTracks().forEach((track) => track.stop())
+    return
+  }
   // MAJBURIY: oldingi turnning javobi hali yangrayotgan bo'lishi mumkin
   // (masalan 'confirm' holatida sfera bosiladigan bo'lib qoladi). To'xtatmasak
   // karnaydan chiqayotgan ovoz mikrofonga qaytadan yozilardi va sukunat
@@ -242,7 +272,9 @@ async function startListening() {
   errorText.value = ''
   errorHint.value = ''
   chunks = []
-  speechSeen = false
+  // Bo'lib gapirishda gap ALLAQACHON eshitilgan: sukunat darhol turnni yopa oladi.
+  bargeTurn = !!taken
+  speechSeen = bargeTurn
   silenceSince = performance.now()
   clearTimeout(turnTimer)
   aborter?.abort()
@@ -250,9 +282,11 @@ async function startListening() {
   const turn = ++turnId
 
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    })
+    stream = taken?.getAudioTracks().some((track) => track.readyState === 'live')
+      ? taken
+      : await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        })
   } catch (err) {
     const name = (err as DOMException)?.name
     if (name === 'NotAllowedError' || name === 'SecurityError') {
@@ -315,7 +349,8 @@ async function handleRecorded() {
   // flag and will happily "hear" a word in room noise, which would then be
   // sent to chat as a question.
   if (!speechSeen || blob.size < 1200) {
-    fail(t('voiceNoSpeech'))
+    if (bargeTurn) settle()
+    else fail(t('voiceNoSpeech'))
     return
   }
 
@@ -326,7 +361,8 @@ async function handleRecorded() {
     teardown()
     const text = result.text.trim()
     if (!text) {
-      fail(t('voiceNoSpeech'))
+      if (bargeTurn) settle()
+      else fail(t('voiceNoSpeech'))
       return
     }
     heard.value = text
@@ -378,7 +414,15 @@ function voiceErrorText(err: unknown): string {
  * Bu turnning ASOSIY ishi EMAS. Sintez yiqilsa javob EKRANDA qoladi - ya'ni
  * kelgan javob ishlamayotgan TTS tufayli yo'qolmaydi.
  */
-async function speak(text: string, turn: number, after?: Promise<unknown>, turnKey?: string | null) {
+async function speak(
+  text: string,
+  turn: number,
+  after?: Promise<unknown>,
+  turnKey?: string | null,
+  /** O'qish paytida bo'lib gapirishni tinglash. Faqat JAVOBlar uchun:
+   *  salomlashuvda mikrofonga ruxsat hali so'ralmagan bo'lishi mumkin. */
+  listenOver = false,
+) {
   if (!canSpeak(String(locale.value))) return
   speechAborter?.abort()
   speechAborter = new AbortController()
@@ -397,6 +441,7 @@ async function speak(text: string, turn: number, after?: Promise<unknown>, turnK
     stopHandle = playback.stop
     speaking.value = true
     speechBlocked.value = false
+    if (listenOver) void bargeIn.start()
     // The replay blob only exists once the stream has finished; wiring it up
     // here rather than awaiting it keeps the button from appearing early.
     void playback.recorded.then((blob) => {
@@ -407,6 +452,8 @@ async function speak(text: string, turn: number, after?: Promise<unknown>, turnK
     } finally {
       speaking.value = false
       stopHandle = null
+      bargeIn.stop()
+      if (state.value !== 'listening') level.value = 0
     }
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') return
@@ -477,7 +524,7 @@ async function speakAnswer(turn: number) {
   if (shortened && !note.value) note.value = t('voiceAnswerShortened')
   // A holding clip still playing is NEVER cut. The answer's TTS request goes
   // out now and buffers; playback starts the instant the clip ends.
-  await speak(text, turn, holdPlaying ?? undefined, props.answerTurn)
+  await speak(text, turn, holdPlaying ?? undefined, props.answerTurn, true)
 }
 
 /** Ijro. Rad etilishi XATO EMAS: brauzer avtomatik ijroga ruxsat bermasligi
@@ -552,7 +599,14 @@ function onOrbClick() {
 watch(() => props.busy, (busy) => {
   if (busy || state.value !== 'thinking') return
   state.value = 'idle'
-  void speakAnswer(turnId)
+  const turn = turnId
+  void speakAnswer(turn).then(() => {
+    // Jonli suhbat: javob o'qib bo'lindi - navbat yana odamda. Bo'lib
+    // gapirilgan bo'lsa turn allaqachon yangi (`turnId` o'zgargan). Javob
+    // kelmagan bo'lsa (xato) aylana to'xtaydi: xato chatda ko'rinib turadi.
+    if (turn !== turnId || !props.open || state.value !== 'idle' || !props.answer?.trim()) return
+    void startListening()
+  })
 }, { flush: 'post' })
 /** Greets, then listens. The order matters: the greeting comes out of the
  *  speakers, and `startListening()` stops any playback before opening the
@@ -626,6 +680,8 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
       ref="rootRef"
       class="vp"
       :data-state="supported ? state : 'unsupported'"
+      :data-speaking="speaking ? '' : undefined"
+      :data-barge="bargeBuilding ? '' : undefined"
       :style="orbVars"
       role="dialog"
       aria-modal="true"
@@ -633,6 +689,10 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
       tabindex="-1"
       @keydown="onKeydown"
     >
+      <!-- Pastdagi tuman: ovoz balandligi (--lvl) bilan ko'tariladi, Barno
+           gapirganda nafas oladi, odam uning ustidan gapira boshlasa rangi
+           o'zgaradi - "sizni eshityapman, to'xtayman". -->
+      <div class="vp-fog" aria-hidden="true" />
       <VIconButton class="vp-close" :label="t('voiceClose')" :icon="X" size="lg" tooltip-placement="bottom" @click="close" />
 
       <div class="vp-stage">
@@ -668,10 +728,13 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
 
         <!-- Ovoz javobi. Ijro davom etayotgani ko'rinib turadi, chunki panel
              o'zi jim: shar esa mikrofonga qaraydi, karnayga emas. -->
-        <p v-if="speaking" class="vp-speaking">
-          <Volume2 :size="16" :stroke-width="1.75" aria-hidden="true" />
-          {{ t('voiceSpeaking') }}
-        </p>
+        <template v-if="speaking">
+          <p class="vp-speaking">
+            <Volume2 :size="16" :stroke-width="1.75" aria-hidden="true" />
+            {{ t('voiceSpeaking') }}
+          </p>
+          <p v-if="bargeArmed" class="vp-sub">{{ t('composer.liveBargeIn') }}</p>
+        </template>
         <div v-else-if="speech" class="vp-actions">
           <VButton variant="ghost" size="sm" :icon="Volume2" @click="replay">
             {{ speechBlocked ? t('voicePlay') : t('voiceReplay') }}
@@ -731,6 +794,58 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
 @keyframes vp-in {
   from {
     opacity: 0;
+  }
+}
+
+/* ── Tuman ─────────────────────────────────────────────────────────────── */
+/* z-index -1: `.vp` o'z qatlam kontekstini yaratadi - tuman uning fonidan
+   yuqorida, lekin matn va tugmalardan PASTDA chiziladi. */
+.vp-fog {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: -1;
+  height: 46vh;
+  pointer-events: none;
+  background: radial-gradient(70% 100% at 50% 100%, color-mix(in srgb, var(--brand) 26%, transparent) 0%, transparent 72%);
+  opacity: calc(0.35 + var(--lvl) * 0.65);
+  transform-origin: 50% 100%;
+  transform: scaleY(calc(0.75 + var(--lvl) * 0.45));
+  transition:
+    opacity 120ms linear,
+    transform 120ms linear;
+}
+/* Gapirish to'lqini alohida qatlamda: animatsiya --lvl transformini bosib o'tmasin. */
+.vp-fog::before,
+.vp-fog::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transform-origin: 50% 100%;
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+.vp-fog::before {
+  background: radial-gradient(60% 90% at 50% 100%, color-mix(in srgb, var(--brand-2) 30%, transparent) 0%, transparent 70%);
+}
+.vp-fog::after {
+  background: radial-gradient(75% 100% at 50% 100%, color-mix(in srgb, var(--brand-2) 45%, transparent) 0%, transparent 70%);
+}
+.vp[data-speaking] .vp-fog::before {
+  opacity: 1;
+  animation: vp-fog-speak 2.4s ease-in-out infinite;
+}
+.vp[data-barge] .vp-fog::after {
+  opacity: 1;
+}
+@keyframes vp-fog-speak {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scaleY(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scaleY(1.08);
   }
 }
 
@@ -952,8 +1067,13 @@ const orbVars = computed(() => ({ '--lvl': level.value.toFixed(3) }))
 @media (prefers-reduced-motion: reduce) {
   .vp,
   .vp-stage,
-  .vp-speaking {
+  .vp-speaking,
+  .vp[data-speaking] .vp-fog::before {
     animation: none;
+  }
+  .vp-fog {
+    transform: none;
+    transition: none;
   }
   /* Ovoz darajasi baribir ko'rinadi (halqa), lekin shar o'zi silkinmaydi. */
   .vp-orb,

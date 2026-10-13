@@ -2,8 +2,8 @@
 //
 // NIMA QILADI. Mikrofon -> MediaRecorder -> /api/v1/stt/transcribe -> matn
 // yozish maydoniga QO'YILADI. Hech narsa o'zi yuborilmaydi: odam matnni ko'radi,
-// tuzatadi va o'zi yuboradi. Jonli ovozli suhbat (VoicePanel) - boshqa narsa, u
-// keyinroq qaytadi; bu fayl unga tegmaydi.
+// tuzatadi va o'zi yuboradi. Jonli ovozli suhbat (VoicePanel, "Jonli suhbat"
+// tugmasi) - boshqa narsa; bu fayl unga tegmaydi.
 //
 // QAYTA ISHLATILGANI, ATAYLAB. Yozib olish yo'li VoicePanel bilan bir xil
 // (MediaRecorder, keyin `transcribe()` ichidagi `toWav16k`): bu real mashinalarda

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowUp, Mic, Square } from 'lucide-vue-next'
+import { ArrowUp, AudioLines, Mic, Square } from 'lucide-vue-next'
 import type { Phase } from '../types'
 import { ApiError } from '../api/http'
 import { localizeApiError } from '../api/errors'
@@ -41,7 +41,11 @@ const props = defineProps<{
 // Diktovka paytida mikrofon kompozerniki: ChatView shunga qarab "Salom Venera"
 // tinglovchisini to'xtatib turadi (VoicePanel ochiqdagidek), aks holda u
 // aytilgan gapni ham eshitib, serverga "uyg'otish so'zi" deb yuborardi.
-const emit = defineEmits<{ (e: 'dictating', on: boolean): void }>()
+const emit = defineEmits<{
+  (e: 'dictating', on: boolean): void
+  /** Jonli ovozli suhbatni ochish (ChatView VoicePanel ni ochadi). */
+  (e: 'live'): void
+}>()
 
 const { t, locale } = useI18n({ useScope: 'global' })
 const inputId = useId('composer')
@@ -314,6 +318,15 @@ defineExpose({ focus: () => taRef.value?.focus({ preventScroll: true }) })
              aytilgan savol baribir javob tugaguncha ketmaydi. Mikrofon ishlamaydigan
              joyda (HTTP) ham KO'RINADI - bosilganda nega ishlamasligini aytadi. -->
         <VIconButton :label="t('composer.dictate.start')" :icon="Mic" size="sm" :disabled="busy" @click="onMicClick" />
+        <!-- Jonli suhbat: gapir - eshit - yana gapir, qo'l tegizmasdan. Javob
+             yozilayotganda yoki diktovka paytida o'chiq - mikrofon bitta. -->
+        <VIconButton
+          :label="t('composer.live')"
+          :icon="AudioLines"
+          size="sm"
+          :disabled="busy || dictating"
+          @click="emit('live')"
+        />
         <!-- pointerdown.prevent: sichqoncha bilan bosilganda fokus matnda qoladi -
              keyingi savolni darhol yozish mumkin (telefonda klaviatura ham yopilmaydi). -->
         <VIconButton
