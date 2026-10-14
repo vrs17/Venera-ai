@@ -71,6 +71,13 @@ _MARGIN = 90.0
 _RETRY_PAUSE = 20.0
 #: 429 dan keyin - chegara daqiqa bo'yicha hisoblanadi.
 _RATE_PAUSE = 65.0
+#: Parol/hisob rad etilganda (`AUTH_FAILED`) tanaffus har safar ikki baravar:
+#: 20, 40, 80 ... s, shu chegaragacha. NEGA: noto'g'ri parol o'z-o'zidan
+#: tuzalmaydi, 20 s lik tanaffus esa savollar orasida tugab qolardi - har
+#: savol 0.1-0.5 s ni muvaffaqiyatsiz loginga sarflardi (prod: 294 ta urinish),
+#: Keycloak esa ko'p xato loginda hisobni bloklashi mumkin. Parol tuzatilsa,
+#: eng ko'pi shu vaqt ichida o'zi tiklanadi; restart darhol tiklaydi.
+_AUTH_MAX_PAUSE = 1800.0
 
 #: Bu kodlarda QAYTA URINISH BEFOYDA: Keycloak token beradi, CRM esa
 #: hisobni rad etadi. Yana login qilsak yana yaroqli token va yana
@@ -140,6 +147,8 @@ class CrmAuth:
         self._fatal_code = ""
         self._last_error = ""
         self._next_try = 0.0
+        #: Ketma-ket `AUTH_FAILED` lar soni (tanaffusni ikkilantirish uchun).
+        self._auth_failures = 0
         self._logins = 0
         self._refreshes = 0
 
@@ -194,6 +203,7 @@ class CrmAuth:
             "logins": self._logins,
             "refreshes": self._refreshes,
             "fatal": self._fatal_code or None,
+            "auth_failures": self._auth_failures,
             "last_error": self._last_error or None,
         }
 
@@ -245,6 +255,9 @@ class CrmAuth:
             log.error("CRM hisobi rad etildi (%s) - qayta urinilmaydi", exc.code)
             return
         pause = _RATE_PAUSE if exc.rate_limited else _RETRY_PAUSE
+        if exc.code == "AUTH_FAILED":
+            self._auth_failures += 1
+            pause = min(_AUTH_MAX_PAUSE, _RETRY_PAUSE * 2 ** (self._auth_failures - 1))
         self._next_try = time.monotonic() + pause
         log.warning("CRM sessiyasi olinmadi (%s), %.0f s tanaffus",
                     _safe(str(exc)), pause)
@@ -287,6 +300,7 @@ class CrmAuth:
         self._access = access
         self._expires_at = time.monotonic() + ttl
         self._last_error = ""
+        self._auth_failures = 0
         if how == "login":
             self._logins += 1
         else:

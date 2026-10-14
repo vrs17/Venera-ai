@@ -314,3 +314,43 @@ def test_logout_bekor_qiladi_va_ochiradi(crm):
     assert fake.calls[-1][1] == {"refresh_token": f"{REFRESH}-1"}
     assert not auth.store.exists()
     assert auth.status()["has_token"] is False
+
+
+def test_rad_etilgan_parolda_tanaffus_ikki_baravar_oshadi(crm, monkeypatch):
+    """Noto'g'ri parol o'zi tuzalmaydi: har savolda login qilsak har savol 0.1-0.5 s
+    yo'qotardi va Keycloak hisobni bloklashi mumkin edi. Tanaffus 20, 40, 80 ... s,
+    30 daqiqagacha; muvaffaqiyatli login hisobni nolga qaytaradi."""
+    auth, fake = crm
+    now = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    fake.fail_always = (400, {"error": {"code": "AUTH_FAILED", "message": "Authentication failed"}})
+
+    gaps = []
+    for _ in range(9):
+        calls = len(fake.calls)
+        assert auth.token() == ""
+        assert len(fake.calls) == calls + 1
+        # Tanaffus ichida qayta urinilmaydi.
+        assert auth.token() == "" and len(fake.calls) == calls + 1
+        gaps.append(round(auth._next_try - now[0]))
+        now[0] = auth._next_try + 0.1
+    assert gaps == [20, 40, 80, 160, 320, 640, 1280, 1800, 1800]
+    assert auth.status()["auth_failures"] == 9
+
+    # Parol tuzatildi: keyingi urinish o'tadi va hisob nolga qaytadi.
+    fake.fail_always = None
+    assert auth.token().startswith(ACCESS)
+    assert auth.status()["auth_failures"] == 0
+
+
+def test_tarmoq_xatosida_tanaffus_oshmaydi(crm, monkeypatch):
+    """Ikki baravar faqat rad etilgan parolda: CRM vaqtincha o'chsa 20 s qoladi."""
+    auth, fake = crm
+    now = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    fake.fail_always = (503, {"error": {"code": "UNAVAILABLE", "message": "down"}})
+    for _ in range(3):
+        auth.token()
+        assert round(auth._next_try - now[0]) == 20
+        now[0] = auth._next_try + 0.1
+    assert auth.status()["auth_failures"] == 0
