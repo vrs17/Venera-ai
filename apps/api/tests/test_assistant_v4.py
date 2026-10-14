@@ -349,7 +349,9 @@ def test_v4_bitta_odamga_berilsa_faqat_uning_savoli_v4_ga(wired, client, auth, u
     assert sent["body"]["purpose"] == "chat" and sent["body"]["chat_id"] == "c-9"
     assert sent["body"]["user_id"] == f"venera:{DEMO_ID}"
     got = lines(mine)
-    assert [f["type"] for f in got] == ["stage", "sources", "token", "done"]
+    # Faqat jonli so'rovli `sources` kadri mijozga ketmaydi (hujjat emas - ega qarori,
+    # `answer_sources.py`); admin izi uni baribir ko'radi.
+    assert [f["type"] for f in got] == ["stage", "token", "done"]
     assert got[-1]["engine"] == "v4" and "meta" not in got[-1]
     recorded = rows(db, "SELECT id, engine FROM turns ORDER BY started_at")
     assert [r["engine"] for r in recorded] == ["v4", "v2"]

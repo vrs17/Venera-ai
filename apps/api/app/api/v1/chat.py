@@ -50,6 +50,7 @@ from ...schemas.engines import EngineChoice
 from ...services import brain as _brain
 from ...services import engine_control as _engine_control
 from ...services.analytics import TurnRecorder, bind, carry, redact
+from ...services.answer_sources import client_view
 from ...services.integrations.assistant import (
     ARTIFACT_KINDS,
     CONTRACT_ENGINES,
@@ -859,7 +860,10 @@ def stream(body: StreamRequest, request: Request,
         # `wrap` - kadrlarni O'ZGARTIRMASDAN va BUFERSIZ uzatadi, yo'l-yo'lakay
         # izga yozadi (kutish kadrlari ham, xato kadri ham) va oxirida savolni
         # yakunlaydi: klient uzilsa `cancelled`, xato kadri bo'lsa `error`.
-        rec.wrap(frames()),
+        # `client_view` - manbalardan jonli so'rovlar (HRM, CRM, DWH...) olib
+        # tashlanadi: odam faqat hujjat manbalarini ko'radi (`answer_sources.py`).
+        # Iz (`rec.wrap`) undan OLDIN - admin hammasini ko'radi.
+        client_view(rec.wrap(frames())),
         media_type="application/x-ndjson",
         headers={
             # Javob shu odamga xos - proksi yoki brauzer keshiga tushmasin.

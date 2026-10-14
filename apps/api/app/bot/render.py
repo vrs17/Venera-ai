@@ -46,6 +46,7 @@ import re
 
 from typing import Any
 
+from ..services.answer_sources import documents
 from ..services.integrations.assistant import safe_source_url
 
 #: Telegram xabari 4096 belgigacha. HTML teglari bilan hisoblaymiz - ya'ni
@@ -327,8 +328,9 @@ def doc_sources(items: Any) -> list[dict[str, Any]]:
     izining o'zi, u esa yuqorida olib tashlangan."""
     if not isinstance(items, list):
         return []
-    return [item for item in items
-            if isinstance(item, dict) and str(item.get("kind")) not in LOOKUP_KINDS]
+    # Veb va ilova bilan BITTA qoida (`answer_sources.is_lookup`): DWH, Biznes 24/7,
+    # Superapp so'rovlari ham hujjat emas.
+    return documents(items)
 
 
 def source_label(source: dict[str, Any], index: int) -> str:
