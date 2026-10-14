@@ -1,0 +1,28 @@
+diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt
+index 992239b..193e0ac 100644
+--- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt
++++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt
+@@ -28,6 +28,7 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
+ import androidx.media3.exoplayer.smoothstreaming.SsMediaSource
+ import androidx.media3.exoplayer.source.MediaSource
+ import androidx.media3.exoplayer.source.ProgressiveMediaSource
++import androidx.media3.extractor.DefaultExtractorsFactory
+ import expo.modules.interfaces.permissions.Permissions
+ import expo.modules.kotlin.Promise
+ import expo.modules.kotlin.exception.Exceptions
+@@ -931,7 +932,14 @@ class AudioModule : Module() {
+       CONTENT_TYPE_SS -> SsMediaSource.Factory(factory)
+       CONTENT_TYPE_DASH -> DashMediaSource.Factory(factory)
+       CONTENT_TYPE_HLS -> HlsMediaSource.Factory(factory)
+-      CONTENT_TYPE_OTHER -> ProgressiveMediaSource.Factory(factory)
++      // Barno: AAC (ADTS) faylda indeks yo'q - CBR qidiruvisiz ExoPlayer sakray olmaydi va
++      // slayder/+-15 s ijroni boshiga qaytaradi. Doimiy bitreyt bo'yicha qidiruv yoqiladi.
++      CONTENT_TYPE_OTHER -> ProgressiveMediaSource.Factory(
++        factory,
++        DefaultExtractorsFactory()
++          .setConstantBitrateSeekingEnabled(true)
++          .setConstantBitrateSeekingAlwaysEnabled(true)
++      )
+       else -> throw IllegalStateException("Unsupported type: $type")
+     }.createMediaSource(mediaItem)
+   }
