@@ -311,6 +311,10 @@ watch(
 .vmd :deep(p) {
   margin: 0 0 var(--s-4);
 }
+/* Sarlavhalar darajasi ko'zga ajralsin (ega, 2026-10-15): avval hammasi 16px - matn bilan bir
+   o'lchamda edi, sarlavha faqat qalinligi bilan farq qilardi. Agent `###` ni faqat 2+ bo'limli
+   uzun javobda yozadi (H1/H2 ni ham `###` ga tushiradi) - h3 javobning asosiy bo'lim sarlavhasi;
+   h1/h2 - qo'lda yozilgan yoki eski matn uchun; h4-h6 - bo'lim ichidagi kichik yorliq. */
 .vmd :deep(h1),
 .vmd :deep(h2),
 .vmd :deep(h3),
@@ -318,10 +322,34 @@ watch(
 .vmd :deep(h5),
 .vmd :deep(h6) {
   margin: var(--s-6) 0 var(--s-2);
-  font-size: var(--fs-title-3);
-  line-height: var(--lh-title-3);
+  font-weight: 650;
+  color: var(--text);
+}
+.vmd :deep(h1) {
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.vmd :deep(h2) {
+  font-size: var(--fs-title-2);
+  line-height: var(--lh-title-2);
+  letter-spacing: -0.015em;
+}
+.vmd :deep(h3) {
+  font-size: 18px;
+  line-height: 26px;
+  letter-spacing: -0.012em;
+}
+.vmd :deep(h4),
+.vmd :deep(h5),
+.vmd :deep(h6) {
+  margin: var(--s-4) 0 var(--s-1_5);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
   font-weight: 600;
-  letter-spacing: -0.011em;
+  letter-spacing: 0.01em;
+  color: var(--text-2);
 }
 .vmd :deep(ul),
 .vmd :deep(ol) {
