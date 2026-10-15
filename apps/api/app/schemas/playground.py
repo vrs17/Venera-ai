@@ -37,7 +37,7 @@ def _model(value: str | None) -> str | None:
 
 class RunParams(BaseModel):
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
-    max_tokens: int | None = Field(default=None, ge=16, le=8192)
+    max_tokens: int | None = Field(default=None, ge=16, le=8000)
 
 
 class StageRun(BaseModel):

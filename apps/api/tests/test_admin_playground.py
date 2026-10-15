@@ -36,17 +36,44 @@ CAPTURE = {
 }
 
 
+class QueryFake(FakeAgent):
+    """Agent `/debug/prompt` - GET, parametrlar so'rov qatorida: yo'l so'rovsiz izlanadi,
+    parametrlar `queries` da (shartnoma: agent jamoasi, ab675d8)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.queries: list[dict] = []
+
+    def __call__(self, method, url, headers, body, timeout):
+        from urllib.parse import parse_qs, urlsplit
+
+        parts = urlsplit(url)
+        if parts.query:
+            self.queries.append({k: v[0] for k, v in parse_qs(parts.query).items()})
+            url = url.split("?", 1)[0]
+        return super().__call__(method, url, headers, body, timeout)
+
+
+def _run_ok(body):
+    # Agentning haqiqiy shakli: vosita chaqiruvlari `output` ichida.
+    return {"stage": body["stage"], "model": body.get("model") or "gpt-6-luna",
+            "output": {"text": "javob", "tool_calls": [{"id": "c1", "name": "crm_my_issues", "arguments": {}}],
+                       "finish": "tool_calls"},
+            "ms": 1500, "tokens_in": 900, "tokens_out": 40}
+
+
 @pytest.fixture
 def agent(monkeypatch):
-    fake = FakeAgent()
+    fake = QueryFake()
     fake.handlers.update({
-        "/debug/models": lambda body: {"models": ["gemma4:31b-cloud", "gpt-6-luna"], "default": "gemma4:31b-cloud"},
+        "/debug/models": lambda body: {"models": [
+            {"id": "gpt-6-luna", "provider": "openai", "configured_as": ["main", "agent"]},
+            {"id": "gemma4:31b-cloud", "provider": "ollama", "configured_as": []}]},
         "/debug/turns/rid-1": lambda body: CAPTURE,
         "/debug/turns/rid-old": lambda body: (404, {"error": {"code": "turn_not_found", "message": "yo'q"}}),
-        "/debug/prompt": lambda body: {"stage": body["stage"], "input": {"system": "S", "messages": []}},
-        "/debug/run": lambda body: {"model": body.get("model") or "gemma4:31b-cloud", "output": {"text": "javob"},
-                                    "ms": 1500, "tokens_in": 900, "tokens_out": 40,
-                                    "tool_calls": [{"name": "crm_my_issues", "arguments": {}}]},
+        "/debug/turns/rid-new": lambda body: (404, {"error": {"code": "capture_not_enabled", "message": "off"}}),
+        "/debug/prompt": lambda body: {"stage": "agent", "model": "gpt-6-luna", "input": {"system": "S", "messages": []}},
+        "/debug/run": _run_ok,
     })
     monkeypatch.setattr(routing, "probe_client", lambda: fake.client(channel="bot"))
     admin_probe._paid_runs.clear()
@@ -89,7 +116,8 @@ def test_faqat_admin(client, user_auth, agent, method, path, body):
 
 def test_status_modellar_va_debug_yoqilmagan(client, auth, agent):
     body = client.get(f"{API}/status", headers=auth).json()
-    assert body["available"] is True and body["models"] == ["gemma4:31b-cloud", "gpt-6-luna"]
+    assert body["available"] is True and body["models"] == ["gpt-6-luna", "gemma4:31b-cloud"]
+    assert body["default_model"] == "gpt-6-luna" and body["providers"]["gemma4:31b-cloud"] == "ollama"
     # Agentda yo'l yo'q (FastAPI 404 `detail` bilan) - debug yoqilmagan deb aytiladi.
     agent.handlers["/debug/models"] = lambda body: (404, {"detail": "Not Found"})
     body = client.get(f"{API}/status", headers=auth).json()
@@ -113,6 +141,10 @@ def test_savol_va_bosqichlar(client, auth, agent):
 def test_saqlanmagan_va_raqamsiz_savol(client, auth, agent):
     _turn("t2", "rid-old")
     _turn("t3", None)
+    _turn("t4", "rid-new")
+    off = client.get(f"{API}/turns/t4", headers=auth).json()
+    assert off["capture"] is None and off["problem"]["code"] == "capture_not_enabled"
+    assert "Yangi savol" in off["problem"]["message"]
     old = client.get(f"{API}/turns/t2", headers=auth).json()
     assert old["capture"] is None and old["problem"]["code"] == "not_captured"
     bare = client.get(f"{API}/turns/t3", headers=auth).json()
@@ -128,7 +160,7 @@ def test_ishga_tushirish_tasdiq_va_ikki_model(client, auth, agent):
                        json={**run, "compare_model": "gpt-6-luna", "confirm_cost": True,
                              "params": {"temperature": 0.2}}).json()
     assert [r["model"] for r in body["runs"]] == ["gemma4:31b-cloud", "gpt-6-luna"]
-    assert all(r["ok"] and r["output"] == {"text": "javob"} for r in body["runs"])
+    assert all(r["ok"] and r["output"]["text"] == "javob" for r in body["runs"])
     # Vosita chaqiruvi QAYTARILADI (bajarilmaydi) - sahifa ko'rsatadi.
     assert body["runs"][0]["tool_calls"][0]["name"] == "crm_my_issues"
     sent = agent.bodies("/debug/run")
@@ -151,6 +183,17 @@ def test_ishga_tushirish_chegaralari(client, auth, agent, monkeypatch):
     assert client.post(f"{API}/run", headers=auth, json=ok).status_code == 429
 
 
+def test_kpi_bosqichi_va_model_xatosi(client, auth, agent):
+    agent.handlers["/debug/run"] = lambda body: (400, {"error": {"code": "not_supported", "message": "kpi"}})
+    run = client.post(f"{API}/run", headers=auth,
+                      json={"stage": "kpi_plan", "input": {}, "confirm_cost": True}).json()["runs"][0]
+    assert run["ok"] is False and run["code"] == "not_supported" and "KPI" in run["message"]
+    agent.handlers["/debug/run"] = lambda body: (502, {"error": {"code": "model_error", "message": "x"}})
+    run = client.post(f"{API}/run", headers=auth,
+                      json={"stage": "agent", "input": {}, "confirm_cost": True}).json()["runs"][0]
+    assert run["ok"] is False and run["code"] == "model_error"
+
+
 def test_agent_ruxsat_bermadi_va_xato(client, auth, agent):
     agent.handlers["/debug/run"] = lambda body: (403, {"error": {"code": "forbidden", "message": "no scope"}})
     body = client.post(f"{API}/run", headers=auth,
@@ -163,8 +206,9 @@ def test_prompt_yigish(client, auth, agent):
     body = client.post(f"{API}/prompt", headers=auth,
                        json={"stage": "agent", "question": "CRMda vazifalarim", "platforms": ["crm", "hrm"]}).json()
     assert body["stage"] == "agent"
-    assert agent.bodies("/debug/prompt")[0] == {"stage": "agent", "question": "CRMda vazifalarim",
-                                                "lang": "uz_latn", "platforms": ["crm", "hrm"]}
+    assert agent.calls[-1]["method"] == "GET"
+    assert agent.queries[-1] == {"stage": "agent", "question": "CRMda vazifalarim", "lang": "uz_latn",
+                                 "platforms": "crm,hrm", "engine": "v4"}
 
 
 def test_sinovlar_saqlash_eksport_arxiv(client, auth, agent):

@@ -8,6 +8,7 @@ export interface PgStatus {
   message: string | null
   models: string[]
   default_model?: string | null
+  providers?: Record<string, string | null>
 }
 
 export interface PgMessage {

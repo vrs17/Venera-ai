@@ -27,6 +27,8 @@ import logging
 import time
 import uuid
 
+from urllib.parse import urlencode
+
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
@@ -73,6 +75,10 @@ def _from_agent(exc: AgentError) -> Unavailable:
         return Unavailable(502, code, "Agentga ulanib bo'lmadi (tarmoq).")
     if code == "not_configured":
         return Unavailable(503, code, "Agent manzili yoki kaliti sozlanmagan.")
+    if code == "not_supported":
+        return Unavailable(400, code, "Bu bosqichni qayta ishga tushirish agentda hali yo'q (masalan KPI bosqichlari).")
+    if code == "model_error":
+        return Unavailable(502, code, "Model javob bermadi yoki xato qaytardi.")
     if exc.status and 400 <= exc.status < 500:
         detail = f": {exc.detail}" if getattr(exc, "detail", "") else ""
         return Unavailable(400, code, f"Agent kirishni qabul qilmadi ({code}){detail}")
@@ -101,9 +107,15 @@ def status() -> dict[str, Any]:
         payload = _call("GET", "/models", op="debug.models")
     except Unavailable as exc:
         return {"available": False, "code": exc.code, "message": exc.message, "models": []}
-    models = payload.get("models") if isinstance(payload.get("models"), list) else []
-    return {"available": True, "code": None, "message": None, "models": models,
-            "default_model": payload.get("default")}
+    raw = payload.get("models") if isinstance(payload.get("models"), list) else []
+    # Agent: `[{id, provider, configured_as: ["main", "agent"]}]` (eski shakl - satrlar ro'yxati).
+    models = [m.get("id") if isinstance(m, dict) else m for m in raw]
+    models = [m for m in models if isinstance(m, str) and m]
+    default = next((m.get("id") for m in raw if isinstance(m, dict) and "main" in (m.get("configured_as") or [])),
+                   payload.get("default") or (models[0] if models else None))
+    providers = {m.get("id"): m.get("provider") for m in raw if isinstance(m, dict) and m.get("id")}
+    return {"available": True, "code": None, "message": None, "models": models, "default_model": default,
+            "providers": providers}
 
 
 def turn(turn_id: str) -> dict[str, Any] | None:
@@ -121,7 +133,11 @@ def turn(turn_id: str) -> dict[str, Any] | None:
         try:
             capture = _call("GET", f"/turns/{row['request_id']}", op="debug.turn")
         except Unavailable as exc:
-            if exc.status == 400 and exc.code in ("not_found", "turn_not_found", "expired"):
+            if exc.code == "capture_not_enabled":
+                problem = {"code": exc.code,
+                           "message": "Agent bosqichlarni saqlashi hali yoqilmagan (xom matn diskka yoziladi - ega "
+                                      "qarori kutilmoqda). Hozircha \"Yangi savol\" rejimidan foydalaning."}
+            elif exc.status == 400 and exc.code in ("not_found", "turn_not_found", "expired"):
                 problem = {"code": "not_captured",
                            "message": "Agent bu savolning bosqichlarini saqlamagan (eski yoki muddati o'tgan)."}
             else:
@@ -131,7 +147,9 @@ def turn(turn_id: str) -> dict[str, Any] | None:
 
 def prompt(query: PromptQuery) -> dict[str, Any]:
     """Yangi savol uchun bosqich kirishini yig'ish - model chaqirilmaydi."""
-    return _call("POST", "/prompt", op="debug.prompt", body=query.model_dump(), timeout=30.0)
+    params = {"stage": query.stage, "question": query.question, "lang": query.lang,
+              "platforms": ",".join(query.platforms), "engine": "v4"}
+    return _call("GET", f"/prompt?{urlencode(params)}", op="debug.prompt", timeout=30.0)
 
 
 def _one(body: dict[str, Any]) -> dict[str, Any]:
@@ -141,9 +159,13 @@ def _one(body: dict[str, Any]) -> dict[str, Any]:
     except Unavailable as exc:
         return {"model": body.get("model"), "ok": False, "code": exc.code, "message": exc.message,
                 "ms": round((time.monotonic() - started) * 1000)}
-    return {"model": out.get("model") or body.get("model"), "ok": True, "output": out.get("output"),
+    output = out.get("output")
+    calls = out.get("tool_calls")
+    if calls is None and isinstance(output, dict):
+        calls = output.get("tool_calls")
+    return {"model": out.get("model") or body.get("model"), "ok": True, "output": output,
             "ms": out.get("ms"), "tokens_in": out.get("tokens_in"), "tokens_out": out.get("tokens_out"),
-            "tool_calls": out.get("tool_calls")}
+            "tool_calls": calls or []}
 
 
 def check_size(req: StageRun) -> None:
