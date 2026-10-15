@@ -326,6 +326,48 @@ export interface Ev {
   start: number | null;
 }
 
+/** `alsoIn.section`: fakt yana qaysi bo'limda bor edi (server `compact.py`). */
+export type AlsoInSection =
+  | 'decisions'
+  | 'openQuestions'
+  | 'risks'
+  | 'keyPoints'
+  | 'nextSteps'
+  | 'template'
+  | 'topics'
+  | 'highlights'
+  | (string & {});
+
+/**
+ * Server bir xil faktlarni birlashtirgan (har fakt BIR marta, 2026-10-15): qolgan bandga -
+ * fakt yana qayerda edi. `label` - XULOSA tilida tayyor chip matni ("Tanlangan", "Xavf");
+ * `key` - shablon bo'limi kaliti (`section === 'template'` bo'lsa, masalan 'shortlist').
+ * Eski xulosalarda yo'q.
+ */
+export interface AlsoIn {
+  section: AlsoInSection;
+  key?: string | null;
+  label: string;
+}
+
+/** Birlashtirilgan bandlarda ixtiyoriy `alsoIn`. */
+export interface Merged {
+  alsoIn?: AlsoIn[] | null;
+}
+
+/**
+ * "Hal qilinmagan masalalar" (server `summarize._follow_ups`, modelsiz): o'z bandiga havola
+ * (`ref` - A1/D1/Q1/R1) va sabab kodlari. Vazifa, qaror va ochiq savolga havola qilganlari
+ * serverda olib tashlanadi (ular "Qisqa xulosa" kartasida holati bilan bor).
+ */
+export type FollowUp = {
+  id: string; // F1
+  kind: 'openQuestion' | 'decision' | 'actionItem' | 'risk' | (string & {});
+  ref: string;
+  text: string;
+  reasons: string[];
+} & Ev;
+
 export interface SummaryParticipant {
   speaker: string;
   suggestedName: string | null;
@@ -346,10 +388,10 @@ export interface SummaryTopic {
   endSegmentId: number;
   start: number;
   end: number;
-  keyPoints: ({ text: string } & Ev)[];
+  keyPoints: ({ text: string } & Ev & Merged)[];
 }
 
-export type KeyPoint = { id: string; text: string } & Ev;
+export type KeyPoint = { id: string; text: string } & Ev & Merged;
 
 export type DecisionStatus = 'final' | 'tentative' | 'conditional' | 'reversed';
 
@@ -365,7 +407,7 @@ export type Decision = {
   quote: string;
   needsConfirmation: boolean;
   verified: boolean | null;
-} & Ev;
+} & Ev & Merged;
 
 export type OwnerKind = 'person' | 'team' | 'role' | 'unknown';
 export type OwnerBasis =
@@ -395,7 +437,7 @@ export type SummaryActionItem = {
   confidence: number;
   needsConfirmation: boolean;
   verified: boolean | null;
-} & Ev;
+} & Ev & Merged;
 
 export type OpenQuestion = {
   id: string; // Q1
@@ -403,7 +445,7 @@ export type OpenQuestion = {
   raisedBy: string | null;
   directedTo: string | null;
   whyOpen: 'no_answer' | 'no_owner' | 'deferred';
-} & Ev;
+} & Ev & Merged;
 
 export type Risk = {
   id: string; // R1
@@ -412,11 +454,11 @@ export type Risk = {
   raisedBy: string | null;
   severity: 'high' | 'medium' | 'low' | null;
   mitigation: string | null;
-} & Ev;
+} & Ev & Merged;
 
 export type NumberFact = { id: string; value: string; unit: string | null; what: string } & Ev;
 export type DateFact = { id: string; date: string | null; time: string | null; raw: string; what: string } & Ev;
-export type NextStep = { id: string; text: string } & Ev;
+export type NextStep = { id: string; text: string } & Ev & Merged;
 export type NextMeeting = {
   date: string | null;
   time: string | null;
@@ -449,7 +491,7 @@ export type Sentiment = {
 
 export interface TemplateSection {
   key: string;
-  items: ({ text: string; speaker: string | null } & Ev)[];
+  items: ({ text: string; speaker: string | null } & Ev & Merged)[];
 }
 
 export interface SummaryQuality {
@@ -495,6 +537,10 @@ export interface SummaryContent {
   templateSections: TemplateSection[];
   followUpMessage: { subject: string | null; body: string } | null;
   quality: SummaryQuality;
+  /** Kuzatish kerak bo'lganlar - ilovada alohida bo'lim emas, o'z bandida chip. Eski serverda yo'q. */
+  followUps?: FollowUp[];
+  /** Server takrorlarni birlashtirgan bo'lsa: ko'rinish versiyasi va nechta band qo'shildi. */
+  view?: { compact: number; merged: number } | null;
 }
 
 // ---------------------------------------------------------------- endpoints 22-25

@@ -7,11 +7,15 @@ import type { Speaker, SummaryContent } from '@/api/types';
 import {
   briefCovers,
   briefDate,
+  briefDurationSec,
+  briefPointCount,
+  briefRefs,
   briefToMarkdown,
   briefToText,
   buildBrief,
   durationWords,
   firstSentences,
+  meetingTier,
   pluralForm,
   summaryTitle,
 } from '@/features/meeting/brief';
@@ -77,6 +81,7 @@ const meeting = { title: "Yig'ilish 10-oktyabr, 12:37", titleSource: 'auto' as c
 
 describe('short stakeholder summary (brief)', () => {
   it("reproduces the owner's approved format word for word (plain text and Markdown)", () => {
+    // 2026-10-15: 15 daqiqagacha yig'ilishda kartada 3 ta asosiy fikr (K4, K5 - "Batafsil" da).
     const b = buildBrief(ownerExample(), meeting, twoSpeakers)!;
     expect(briefToMarkdown(b)).toBe(
       [
@@ -92,8 +97,6 @@ describe('short stakeholder summary (brief)', () => {
         "- Transkript spikerlar bo'yicha ajratib chiqariladi.",
         "- Suhbat mazmunidan CRM'ga vazifa yaratiladi, tizim loyihalar bo'yicha kontekst to'plab boradi.",
         "- G'oya: chatda yig'ilishdagi kelishuvga zid gap yozilsa, tizim ogohlantiradi va deadline'larni eslatadi.",
-        '- Yozuv paytida "Muhim" belgisi bilan kerakli joyni belgilash va izoh qo\'shish mumkin.',
-        "- Ma'lumot manbalari (CRM, HRM va boshqalar) alohida yoqib-o'chiriladi.",
         '',
         '**Vazifa:**',
         "- Skriptni yuborish. Mas'ul: 2-ishtirokchi. Muddat belgilanmagan.",
@@ -114,14 +117,18 @@ describe('short stakeholder summary (brief)', () => {
     ]);
     expect(b.lists.map((l) => l.key)).toEqual(['keyPoints', 'actionItems', 'openQuestions']);
     expect(b.lists[0].items[1].start).toBe(20);
+    // Karta bandi to'liq xulosadagi manbasini biladi (chip va tafsilot uchun) - matnga ta'sirsiz.
+    expect(b.lists[0].items.map((i) => i.source)).toEqual(['K1', 'K2', 'K3'].map((id) => ({ section: 'keyPoints', id })));
+    expect(b.lists[1].items[0]).toMatchObject({ source: { section: 'actionItems', id: 'A1' }, liveId: null });
+    expect(b.lists[2].items[0].source).toEqual({ section: 'openQuestions', id: 'Q1' });
   });
 
   it('plural labels, decisions, named/team owners, due dates and the "check" flag', () => {
     const b = buildBrief(base, { ...meeting, recordedAt: '2026-10-09T06:00:00Z', durationSec: 3600.4 }, summary().speakers)!;
     expect(b.title).toBe('Narxlar va hisobot'); // avto nom emas - xulosa sarlavhasi
     expect(b.meta).toBe('9-oktabr 2026 (juma), 11:00 · 1 soat · 2 ishtirokchi'); // S3 S1 ga birlashtirilgan
-    // Qisqacha - ko'pi 2 gap (3-gap tushib qoladi).
-    expect(b.overview).toEqual({ label: 'Qisqacha', text: "Aziz narxlarni ko'rib chiqdi. 2-ishtirokchi hisobot yuboradi." });
+    // Qisqacha - BITTA gap (qolgani "Batafsil" dagi umumiy xulosada).
+    expect(b.overview).toEqual({ label: 'Qisqacha', text: "Aziz narxlarni ko'rib chiqdi." });
     const list = (k: string) => b.lists.find((l) => l.key === k)!;
     expect(b.lists.map((l) => l.key)).toEqual(['keyPoints', 'decisions', 'actionItems', 'openQuestions']);
     expect(list('keyPoints').label).toBe('Asosiy fikr'); // bitta fikr - birlik
@@ -188,12 +195,56 @@ describe('short stakeholder summary (brief)', () => {
     );
   });
 
-  it('briefCovers: which full-summary sections the brief repeats word for word', () => {
-    // Qisqa qo'ng'iroq: 1 gaplik umumiy xulosa va 5 ta fikr - ikkalasi ham blokda to'liq.
-    expect([...briefCovers(ownerExample())].sort()).toEqual(['keyPoints', 'openQuestions', 'overview']);
-    // 3 gaplik umumiy xulosa qisqartiriladi va 7 ta fikrdan 6 tasi sig'adi - bo'limlar qoladi.
-    const long = ownerExample({ overview: 'Bir. Ikki. Uch.', keyPoints: Array.from({ length: 7 }, (_, i) => ({ id: `K${i}`, text: `Fikr ${i}`, ...ev(i) })) });
-    expect([...briefCovers(long)]).toEqual(['openQuestions']);
+  it('briefCovers: sections the card holds completely; briefRefs: items it holds one by one', () => {
+    // Maqsad, vazifalar, ochiq savollar, kuzatuv - doim kartada; 1 gaplik umumiy xulosa ham.
+    expect([...briefCovers(ownerExample())].sort()).toEqual(['actionItems', 'followUps', 'openQuestions', 'overview', 'purpose']);
+    // 3 gaplik umumiy xulosa kartada 1 gapga qisqaradi - to'lig'i "Batafsil" da qoladi.
+    expect(briefCovers(ownerExample({ overview: 'Bir. Ikki. Uch.' })).has('overview')).toBe(false);
+    expect(briefCovers(ownerExample({ overview: '' })).has('overview')).toBe(true);
+    // Qarorlar va asosiy fikrlar bo'lim sifatida emas, bandma-band: bekor qilingan qaror va
+    // sig'magan fikrlar kartada yo'q - "Batafsil" ularni ko'rsatadi.
+    expect(briefCovers(ownerExample()).has('decisions' as never)).toBe(false);
+    const [d] = base.decisions;
+    const content = ownerExample({ decisions: [{ ...d, id: 'D1' }, { ...d, id: 'D2', status: 'reversed' }] });
+    const refs = briefRefs(buildBrief(content, meeting, twoSpeakers));
+    expect([...refs].sort()).toEqual(['actionItems/A1', 'decisions/D1', 'keyPoints/K1', 'keyPoints/K2', 'keyPoints/K3', 'openQuestions/Q1']);
+    expect(briefRefs(null).size).toBe(0);
+  });
+
+  it('key points by meeting length: <= 15 min 3, <= 45 min 4, longer 5 (unknown 3)', () => {
+    expect([null, undefined, 0, -5, NaN, 113, 900].map(briefPointCount)).toEqual([3, 3, 3, 3, 3, 3, 3]);
+    expect([900.5, 1800, 2700].map(briefPointCount)).toEqual([4, 4, 4]);
+    expect([2701, 3600, 4 * 3600].map(briefPointCount)).toEqual([5, 5, 5]);
+    expect([meetingTier(0), meetingTier(600), meetingTier(1800), meetingTier(3600)]).toEqual([null, 'short', 'medium', 'long']);
+    const nine = ownerExample({ keyPoints: Array.from({ length: 9 }, (_, i) => ({ id: `K${i}`, text: `Fikr ${i}`, ...ev(i) })) });
+    const count = (durationSec: number | null) => buildBrief(nine, { ...meeting, durationSec }, twoSpeakers)!.lists[0].items.length;
+    expect([count(113), count(1800), count(3600)]).toEqual([3, 4, 5]);
+    // Yozuv davomiyligi yo'q - xulosadagisi (meta qatori kabi).
+    expect(briefDurationSec(nine, { durationSec: null })).toBe(113);
+    expect(count(null)).toBe(3);
+    // Matnsiz band sanalmaydi.
+    const blanks = ownerExample({ keyPoints: [{ id: 'K0', text: '', ...ev(0) }, ...nine.keyPoints] });
+    expect(buildBrief(blanks, meeting, twoSpeakers)!.lists[0].items.map((i) => i.text)).toEqual(['Fikr 0.', 'Fikr 1.', 'Fikr 2.']);
+  });
+
+  it('a decision condition sits in the same parenthesis; "conditional" is not said twice', () => {
+    const [d] = base.decisions;
+    const b = buildBrief(
+      ownerExample({
+        decisions: [
+          { ...d, id: 'D1', text: "Narx 15 mln so'm bo'ladi", status: 'conditional', condition: 'byudjet tasdiqlansa', verified: false },
+          { ...d, id: 'D2', text: 'Push keyingi versiyaga.', status: 'tentative', condition: "test o'tsa", verified: true },
+          { ...d, id: 'D3', text: 'Reliz juma', status: 'conditional', condition: null, verified: true },
+        ],
+      }),
+      meeting,
+      twoSpeakers,
+    )!;
+    expect(b.lists.find((l) => l.key === 'decisions')!.items.map((i) => i.text)).toEqual([
+      "Narx 15 mln so'm bo'ladi (shart: byudjet tasdiqlansa, aniqlashtirish kerak).",
+      "Push keyingi versiyaga (taxminiy, shart: test o'tsa).",
+      'Reliz juma (shartli).',
+    ]);
   });
 
   it('the primary summary uses the LIVE action items (edited, added, done, dismissed)', () => {
@@ -210,6 +261,10 @@ describe('short stakeholder summary (brief)', () => {
       "✓ Shartnoma. Mas'ul: Jamoa. Muddat belgilanmagan.",
       "Narxni tasdiqlash. Mas'ul belgilanmagan. Muddat: 12-oktabr, 10:00. (aniqlashtirish kerak)",
     ]);
+    // Jonli vazifa: CRM uchun o'z id'si, tafsilot uchun xulosadagi bandi (`summaryItemId`); odam qo'shgani - manbasiz.
+    expect(b.lists.find((l) => l.key === 'actionItems')!.items[0]).toMatchObject({ liveId: actionItem.id, source: { section: 'actionItems', id: 'A1' } });
+    const own = buildBrief(base, meeting, [], { actions: [{ ...actionItem, id: 'u1', summaryItemId: null, origin: 'user' }] })!;
+    expect(own.lists.find((l) => l.key === 'actionItems')!.items[0]).toMatchObject({ liveId: 'u1', source: null });
     // Bo'sh jonli ro'yxat - vazifa yo'q (xulosadagilar qaytib kelmaydi).
     expect(buildBrief(base, meeting, [], { actions: [] })!.lists.some((l) => l.key === 'actionItems')).toBe(false);
   });
@@ -233,14 +288,14 @@ describe('short stakeholder summary (brief)', () => {
       keyPoints: [],
       topics: [{ ...base.topics[0], keyPoints: [{ text: 'Narx 15 mln', sourceSegmentIds: [2], start: 4.3 }] }],
     });
-    expect(buildBrief(topicsOnly, meeting, twoSpeakers)!.lists[0]).toEqual({ key: 'keyPoints', label: 'Asosiy fikr', items: [{ text: 'Narx 15 mln.', start: 4.3 }] });
+    expect(buildBrief(topicsOnly, meeting, twoSpeakers)!.lists[0]).toEqual({
+      key: 'keyPoints',
+      label: 'Asosiy fikr',
+      items: [{ text: 'Narx 15 mln.', start: 4.3, source: { section: 'topics', id: 'T1.1' } }],
+    });
 
     const topicNoPoints = ownerExample({ keyPoints: [], topics: [{ ...base.topics[0], summary: '[S1] narxni so\'radi', keyPoints: [] }] });
-    expect(buildBrief(topicNoPoints, meeting, twoSpeakers)!.lists[0].items[0].text).toBe("1-ishtirokchi narxni so'radi.");
-
-    // Ko'p fikr - eng ko'pi 6 ta.
-    const many = ownerExample({ keyPoints: Array.from({ length: 9 }, (_, i) => ({ id: `K${i}`, text: `Fikr ${i}`, ...ev(i) })) });
-    expect(buildBrief(many, meeting, twoSpeakers)!.lists[0].items).toHaveLength(6);
+    expect(buildBrief(topicNoPoints, meeting, twoSpeakers)!.lists[0].items[0]).toMatchObject({ text: "1-ishtirokchi narxni so'radi.", source: { section: 'topics', id: 'T1' } });
 
     // Hech narsa yo'q - blok yo'q.
     expect(buildBrief(ownerExample({ purpose: null, overview: '', keyPoints: [], actionItems: [], openQuestions: [] }), meeting, twoSpeakers)).toBeNull();
@@ -276,7 +331,9 @@ describe('short stakeholder summary (brief)', () => {
     expect(briefDate(null, '2026-10-11', 'en')).toBe('October 11, 2026 (Sunday)');
     expect(briefDate('bad', null, 'ru')).toBe('');
     // Gap chegarasi: bosh harf/raqam bilan boshlansa; "15 mln. so'm" bo'linmaydi.
-    expect(firstSentences("Narx 15 mln. so'm bo'ldi. Ikkinchi gap! 3-gap? To'rtinchi.")).toBe("Narx 15 mln. so'm bo'ldi. Ikkinchi gap!");
+    expect(firstSentences("Narx 15 mln. so'm bo'ldi. Ikkinchi gap! 3-gap? To'rtinchi.", 2)).toBe("Narx 15 mln. so'm bo'ldi. Ikkinchi gap!");
+    // Standart - bitta gap (kartadagi "Qisqacha").
+    expect(firstSentences("Narx 15 mln. so'm bo'ldi. Ikkinchi gap!")).toBe("Narx 15 mln. so'm bo'ldi.");
     expect(firstSentences('Bitta gap')).toBe('Bitta gap');
     expect(firstSentences('Один. Два. Три.', 1)).toBe('Один.');
   });

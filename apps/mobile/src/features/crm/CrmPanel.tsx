@@ -38,6 +38,9 @@ export function useCrmController(): CrmController {
   return useMemo(() => createCrmController({ meetings, actions, qc }), [meetings, actions, qc]);
 }
 
+/** Belgi katagi (24) + oraliq (10): ixcham holatlar vazifa matni bilan bir chiziqda. */
+const INDENT = 34;
+
 const REASON_KEYS: Record<string, TKey> = {
   assistant_busy: 'crm.fail.busy',
   timeout: 'crm.fail.timeout',
@@ -65,7 +68,11 @@ function backToChat(): void {
   }
 }
 
-export function CrmPanel({ item, speakers }: { item: ActionItem; speakers?: Speaker[] }) {
+/**
+ * `indent` - ixcham holatlar (tugma, "qo'shilgan") chapdan qancha surilsin: Vazifalar tabida belgi
+ * katagi kengligi (34), "Qisqa xulosa" kartasida - band matni bilan bir chiziq.
+ */
+export function CrmPanel({ item, speakers, indent = INDENT }: { item: ActionItem; speakers?: Speaker[]; indent?: number }) {
   const t = useT();
   const th = useTheme();
   const lang = useSettings((st) => st.uiLang);
@@ -86,7 +93,7 @@ export function CrmPanel({ item, speakers }: { item: ActionItem; speakers?: Spea
 
     case 'idle':
       return (
-        <View style={[s.panel, s.indent]}>
+        <View style={[s.panel, { marginLeft: indent }]}>
           {view.note === 'cancelled' ? <Text style={[s.note, { color: th.textMuted }]}>{t('crm.cancelled')}</Text> : null}
           <Button
             small
@@ -161,7 +168,7 @@ export function CrmPanel({ item, speakers }: { item: ActionItem; speakers?: Spea
     case 'added': {
       const link = view.link;
       return (
-        <View testID={`crm-added-${id}`} style={[ui.row, s.panel, s.indent, { flexWrap: 'wrap' }]}>
+        <View testID={`crm-added-${id}`} style={[ui.row, s.panel, { marginLeft: indent, flexWrap: 'wrap' }]}>
           <View style={[s.added, { backgroundColor: th.tones.good.bg }]}>
             <Text style={[s.addedText, { color: th.tones.good.fg }]}>
               ✓ {t('crm.added')}
@@ -214,8 +221,6 @@ function Requesting({ id, startedAt }: { id: string; startedAt: number }) {
 
 const s = StyleSheet.create({
   panel: { marginTop: 8 },
-  /** Belgi katagi (24) + oraliq (10): ixcham holatlar vazifa matni bilan bir chiziqda. */
-  indent: { marginLeft: 34 },
   left: { alignSelf: 'flex-start' },
   note: { fontSize: 12, lineHeight: 17, marginTop: 6 },
   box: { borderWidth: 1, borderRadius: 14, padding: 12, marginTop: 8 },

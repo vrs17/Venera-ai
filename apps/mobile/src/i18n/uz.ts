@@ -238,6 +238,18 @@ export const uz = {
   'sum.meetingType': 'Turi: {type}',
   'sum.subject': 'Mavzu: {subject}',
   'sum.generatedBy': 'Tayyorladi: {engine}',
+  // Kuzatish sababi (server `followUps[].reasons`) - o'z bandida chip.
+  'sum.reason.no_answer': 'Javob berilmagan',
+  'sum.reason.no_owner': "Mas'ul belgilanmagan",
+  'sum.reason.deferred': 'Keyinga qoldirilgan',
+  'sum.reason.tentative': 'Taxminiy qaror',
+  'sum.reason.conditional': "Shartga bog'liq",
+  'sum.reason.no_due': 'Muddat belgilanmagan',
+  'sum.reason.no_mitigation': 'Yechim aytilmagan',
+  // Xulosa ostidagi bitta jim qator (kartalar o'rniga).
+  'sum.meta.sentiment': 'Kayfiyat: {value}',
+  'sum.meta.keywords': "Kalit so'zlar: {value}",
+  'sum.meta.talk': 'Faollik: {value}',
 
   'tr.search': 'Matndan qidirish',
   'tr.noResults': 'Hech narsa topilmadi',

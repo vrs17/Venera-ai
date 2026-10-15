@@ -3,7 +3,7 @@
  * xulosa bo'limlari, transkript dialogi, vazifalar, savol, banner va
  * tahrirlash oqimlari. Tarmoqqa chiqmaydi.
  */
-import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react-native';
 import { Stack } from 'expo-router';
 import { renderRouter } from 'expo-router/testing-library';
 import type { ReactNode } from 'react';
@@ -41,21 +41,33 @@ beforeEach(() => {
 });
 
 describe('Meeting detail', () => {
-  it('shows the header, player and the Plaud-superset summary sections in layout order', async () => {
+  it('shows the header, player, the card and the remaining sections as collapsed groups in layout order', async () => {
     const { api } = await open();
     expect(screen.getByText(/Yig'ilish 9-oktyabr, 11:00/)).toBeTruthy();
     await waitFor(() => expect(screen.getByTestId('summary-body')).toBeTruthy());
-    for (const key of ['overview', 'actionItems', 'decisions', 'topics', 'risks', 'numbers', 'dates', 'nextSteps', 'nextMeeting', 'highlights', 'participants', 'keywords', 'sentiment', 'objections']) {
-      expect(screen.getByTestId(`section-${key}`)).toBeTruthy();
-    }
-    // "Qisqa xulosa" to'liq takrorlaydigan bo'limlar (hammasi sig'gan asosiy fikrlar, ochiq
-    // savollar) "Batafsil" ostida qayta chiqmaydi - server eksporti (`brief_covers`) kabi.
-    for (const key of ['keyPoints', 'openQuestions']) expect(screen.queryByTestId(`section-${key}`)).toBeNull();
+    // 1 soatlik yig'ilish - kartada yo'q hamma bo'lim yig'iq qator bo'lib ko'rinadi.
+    const groups = ['overview', 'topics', 'risks', 'numbers', 'dates', 'nextSteps', 'nextMeeting', 'highlights', 'participants', 'objections'];
+    for (const key of groups) expect(screen.getByTestId(`section-${key}`)).toBeTruthy();
+    const json = JSON.stringify(screen.toJSON());
+    const order = groups.map((k) => json.indexOf(`"section-${k}"`));
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(screen.queryByTestId('details-more')).toBeNull();
+    // Har fakt bir marta: kartadagilar (vazifalar, qarorlar, savollar, sig'gan fikrlar) "Batafsil" da
+    // yo'q; kalit so'zlar, kayfiyat - pastdagi jim qatorda.
+    for (const key of ['actionItems', 'decisions', 'keyPoints', 'openQuestions', 'keywords', 'sentiment']) expect(screen.queryByTestId(`section-${key}`)).toBeNull();
     expect(screen.getByTestId('brief-openQuestions')).toBeTruthy();
+    expect(screen.getByTestId('section-topics')).toHaveTextContent('Mavzular · 1');
+    expect(screen.getByTestId('section-participants')).toHaveTextContent('Ishtirokchilar · 2');
+    // Yig'iq: to'liq umumiy xulosa qator bosilganda ochiladi.
+    expect(screen.queryByText("Aziz narxlarni ko'rib chiqdi. 2-ishtirokchi hisobot yuboradi. Aziz rozi bo'ldi.")).toBeNull();
+    await fireEvent.press(screen.getByTestId('group-overview'));
     expect(screen.getByText("Aziz narxlarni ko'rib chiqdi. 2-ishtirokchi hisobot yuboradi. Aziz rozi bo'ldi.")).toBeTruthy();
-    expect(screen.getAllByText('tekshiring').length).toBeGreaterThan(0);
-    // Xulosa ostida - qaysi model yozgani (server `generatedBy`).
-    expect(screen.getByTestId('summary-provenance')).toHaveTextContent('Tayyorladi: Gemma');
+    expect(screen.getByTestId('group-overview').props.accessibilityState).toMatchObject({ expanded: true });
+    // Tasdiqlanmagan qaror - kartada "(aniqlashtirish kerak)", ochilganda "tekshiring" chipi.
+    await fireEvent.press(screen.getByTestId('brief-decisions-1'));
+    expect(within(screen.getByTestId('brief-decisions-1-details')).getByText('tekshiring')).toBeTruthy();
+    // Eng pastda bitta jim qator: kayfiyat, kalit so'zlar, faollik, qaysi model yozgani.
+    expect(screen.getByTestId('summary-meta')).toHaveTextContent("Kayfiyat: ijobiy · Kalit so'zlar: narx, hisobot · Faollik: Aziz 58%, 2-ishtirokchi 42% · Tayyorladi: Gemma");
     expect(api.summary).toHaveBeenCalledWith(ID, 'b'.repeat(32));
     // Pleer audio'ni Bearer bilan oladi.
     await waitFor(() => expect(ExpoAudio.useAudioPlayer).toHaveBeenCalled());
@@ -65,10 +77,14 @@ describe('Meeting detail', () => {
 
   it('evidence chips seek the player; suggested names can be accepted', async () => {
     const { api } = await open();
-    await waitFor(() => expect(screen.getByTestId('summary-body')).toBeTruthy());
-    await fireEvent.press(screen.getAllByTestId('ev-9.5')[0]);
+    await waitFor(() => expect(screen.getByTestId('brief-actionItems-0')).toBeTruthy());
+    // Kartadagi vazifa ochiladi - ▶ vaqt tafsilot ichida.
+    await fireEvent.press(screen.getByTestId('brief-actionItems-0'));
+    await fireEvent.press(within(screen.getByTestId('brief-actionItems-0-details')).getByTestId('ev-9.5'));
     const player = (ExpoAudio as unknown as { __player: { seekTo: jest.Mock } }).__player;
     await waitFor(() => expect(player.seekTo).toHaveBeenCalledWith(9.5));
+    // Taklif qilingan ism - "Ishtirokchilar" guruhida (faqat shu sababli qolgan).
+    await fireEvent.press(screen.getByTestId('group-participants'));
     await fireEvent.press(screen.getByText('Ha'));
     await waitFor(() => expect(api.renameSpeaker).toHaveBeenCalledWith(ID, 'S2', 'Dilnoza'));
   });
@@ -79,23 +95,29 @@ describe('Meeting detail', () => {
     await waitFor(() => expect(screen.getByTestId('summary-copy')).toBeTruthy());
     await fireEvent.press(screen.getByTestId('summary-copy'));
     const copied = (Clipboard.setStringAsync as jest.Mock).mock.calls[0][0] as string;
-    expect(copied).toContain('Narxlar va hisobot');
-    expect(copied).toContain('## Vazifalar');
+    // Ekrandagining o'zi: karta matni, keyin faqat kartada yo'q bo'limlar, oxirida jim qator.
+    expect(copied.startsWith('Narxlar va hisobot\n9-oktabr 2026 (juma), 11:00 · 1 soat · 2 ishtirokchi\n')).toBe(true);
+    expect(copied).toContain("Vazifa:\n- Hisobotni yuborish. Mas'ul: 2-ishtirokchi. Muddat: 10-oktabr.");
+    expect(copied).not.toContain('## Vazifalar');
+    expect(copied).not.toContain('## Qarorlar');
+    expect(copied).toContain('## Xavflar');
+    expect(copied.trimEnd().endsWith('Tayyorladi: Gemma')).toBe(true);
     await fireEvent.press(screen.getByTestId('summary-share'));
     await waitFor(() => expect(share).toHaveBeenCalledWith({ message: '# Narxlar', title: 'Narxlar va hisobot' }));
     expect(api.exportSummary).toHaveBeenCalledWith(ID, 'b'.repeat(32), 'md');
   });
 
-  it('summary written by v3 says "Tayyorladi: Barno Core"; no caption when the server does not say', async () => {
+  it('summary written by v3 says "Tayyorladi: Barno Core" in the meta line', async () => {
     const v3 = fakeMeetingsApi({ summary: jest.fn(async () => summary({ generatedBy: { provider: 'v3', model: 'venera-core' } })) });
     await open(v3);
-    await waitFor(() => expect(screen.getByTestId('summary-provenance')).toHaveTextContent('Tayyorladi: Barno Core'));
+    await waitFor(() => expect(screen.getByTestId('summary-meta')).toHaveTextContent(/· Tayyorladi: Barno Core$/));
   });
 
-  it('no provenance caption for an old summary without generatedBy', async () => {
+  it('no model caption for an old summary without generatedBy (the rest of the meta line stays)', async () => {
     await open(fakeMeetingsApi({ summary: jest.fn(async () => summary({ generatedBy: null })) }));
     await waitFor(() => expect(screen.getByTestId('summary-body')).toBeTruthy());
-    expect(screen.queryByTestId('summary-provenance')).toBeNull();
+    expect(screen.getByTestId('summary-meta')).not.toHaveTextContent(/Tayyorladi/);
+    expect(screen.getByTestId('summary-meta')).toHaveTextContent(/^Kayfiyat: ijobiy/);
   });
 
   it('creates a new summary tab from another template', async () => {

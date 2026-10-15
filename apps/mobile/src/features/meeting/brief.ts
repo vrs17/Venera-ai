@@ -5,8 +5,8 @@
  *   **Sarlavha**
  *   10-oktabr 2026 (shanba), 12:37 · 1 daq 53 s · 2 ishtirokchi
  *   **Maqsad:** ...            (purpose)
- *   **Qisqacha:** ...          (overview, ko'pi 2 gap)
- *   **Asosiy fikrlar:** - ...  (keyPoints, ko'pi 6 ta)
+ *   **Qisqacha:** ...          (overview, BITTA gap)
+ *   **Asosiy fikrlar:** - ...  (keyPoints, 3/4/5 ta - yig'ilish uzunligiga qarab)
  *   **Qarorlar:** - ...        (faqat bo'lsa)
  *   **Vazifa(lar):** - Ish. Mas'ul: X. Muddat: Y.
  *   **Ochiq savol(lar):** - ...
@@ -22,6 +22,9 @@
  *
  * Server eksporti (`export.brief_block`) AYNAN shu matnni beradi: umumiy namuna
  * `packages/fixtures/meeting-brief.json` ni jest ham (`briefGolden.test.ts`), pytest ham tekshiradi.
+ *
+ * "Har fakt BIR marta" (egasi, 2026-10-15): karta - xulosaning o'zi, "Batafsil" faqat kartada
+ * YO'Q narsalar. NEGA qisqaroq: 8,5 daqiqalik yig'ilish 16 ekran bo'lardi - bitta fakt 7 joyda.
  */
 import type { ActionItem, Lang, Meeting, OwnerKind, Speaker, SummaryContent } from '@/api/types';
 import { translate, type TKey, type TParams } from '@/i18n';
@@ -35,6 +38,15 @@ export interface BriefItem {
   text: string;
   /** Dalil: audio/transkriptda shu soniya. */
   start: number | null;
+  /**
+   * To'liq xulosadagi manba band: bo'lim va id (`keyPoints`/K1, `topics`/T1.2, `decisions`/D1,
+   * `actionItems`/A1, `openQuestions`/Q1). Kartada band chiplari va ochiladigan tafsilot shundan,
+   * "Batafsil" esa kartadagi bandni qayta ko'rsatmaydi. Ulashiladigan matnga TA'SIR QILMAYDI.
+   * null - manbasi yo'q (odam qo'shgan jonli vazifa).
+   */
+  source?: { section: string; id: string } | null;
+  /** Jonli vazifa id'si (asosiy xulosa) - kartadagi CRM tugmasi shu vazifaniki. */
+  liveId?: string | null;
 }
 
 export interface BriefList {
@@ -70,10 +82,39 @@ export interface BriefOptions {
   actions?: ActionItem[] | null;
 }
 
-/** Asosiy fikrlar 3-6 ta (prompt qoidasi); model ko'p bersa ham blok qisqa qoladi. */
-export const MAX_KEY_POINTS = 6;
-/** "Qisqacha" - ko'pi 2 gap (eski xulosalarda umumiy xulosa 3-5 gap edi). */
-export const MAX_OVERVIEW_SENTENCES = 2;
+/**
+ * "Qisqacha" - BITTA gap (egasi, 2026-10-15: "xulosa qisqa bo'lishi kerak"). To'liq umumiy
+ * xulosa uzunroq bo'lsa - "Batafsil" ostida yig'iq qatorda qoladi (`briefCovers`).
+ */
+export const MAX_OVERVIEW_SENTENCES = 1;
+
+/** Yig'ilish uzunligi: <= 15 daq - qisqa, <= 45 daq - o'rta, undan uzun - uzun. */
+export type MeetingTier = 'short' | 'medium' | 'long';
+
+/** Davomiylik noma'lum (0, null, NaN) - `null`: qoidalar uni qisqa yig'ilishdek ko'radi. */
+export function meetingTier(durationSec: number | null | undefined): MeetingTier | null {
+  if (durationSec == null || !Number.isFinite(durationSec) || durationSec <= 0) return null;
+  if (durationSec <= 15 * 60) return 'short';
+  if (durationSec <= 45 * 60) return 'medium';
+  return 'long';
+}
+
+const POINTS: Record<MeetingTier, number> = { short: 3, medium: 4, long: 5 };
+
+/**
+ * Kartadagi asosiy fikrlar soni: <= 15 daq - 3, <= 45 daq - 4, uzunroq - 5 (noma'lum - 3).
+ * Server `export.brief_points` bilan bir xil. NEGA uzunlikka qarab: 2 daqiqalik qo'ng'iroqda
+ * 6 ta fikr - aslida 2-3 fakt qayta aytilgani; soatlik yig'ilishda 3 ta - kam. Qolgan fikrlar
+ * "Batafsil" ostida (`keyPoints` guruhi).
+ */
+export function briefPointCount(durationSec: number | null | undefined): number {
+  return POINTS[meetingTier(durationSec) ?? 'short'];
+}
+
+/** Qoidalar uchun davomiylik: yozuvniki ustun, bo'lmasa xulosadagi (meta qatori kabi). */
+export function briefDurationSec(content: Pick<SummaryContent, 'meeting'> | null | undefined, meeting: BriefMeeting = {}): number | null {
+  return meeting.durationSec ?? content?.meeting?.durationSec ?? null;
+}
 
 /** Hafta kunlari - serverdagi `dates.WEEKDAYS` bilan bir xil (dushanbadan). */
 const WEEKDAYS: Record<Lang, string[]> = {
@@ -210,6 +251,9 @@ interface TaskSource {
   done: boolean;
   check: boolean;
   start: number | null;
+  /** Xulosadagi vazifa id'si (A1): jonli vazifada `summaryItemId` (odam qo'shganida null). */
+  id: string | null;
+  liveId: string | null;
 }
 
 function tasksOf(content: SummaryContent, live: ActionItem[] | null | undefined): TaskSource[] {
@@ -227,6 +271,8 @@ function tasksOf(content: SummaryContent, live: ActionItem[] | null | undefined)
         done: i.status === 'done',
         check: i.needsConfirmation,
         start: i.start,
+        id: i.summaryItemId,
+        liveId: i.id,
       }));
   }
   return (content.actionItems ?? []).map((a) => ({
@@ -240,6 +286,8 @@ function tasksOf(content: SummaryContent, live: ActionItem[] | null | undefined)
     done: a.status === 'done_in_meeting',
     check: needsCheck(a),
     start: a.start,
+    id: a.id,
+    liveId: null,
   }));
 }
 
@@ -264,7 +312,7 @@ export function buildBrief(
   const meta: string[] = [];
   const date = briefDate(meeting.recordedAt, content.meeting?.date, lang);
   if (date) meta.push(date);
-  const dur = durationWords(meeting.durationSec ?? content.meeting?.durationSec, lang);
+  const dur = durationWords(briefDurationSec(content, meeting), lang);
   if (dur) meta.push(dur);
   // Spikerlar ajratilmagan bo'lsa (router rejimi) son yolg'on bo'lardi - yozilmaydi.
   if (content.quality?.speakersAvailable !== false) {
@@ -282,14 +330,28 @@ export function buildBrief(
 
   // Asosiy fikrlar har bir shablonda bo'lishi kerak; eski/qisqa xulosada bo'sh bo'lsa -
   // mavzular ichidagi fikrlar, ular ham bo'lmasa mavzularning o'zi (qo'shimcha himoya).
-  let points: BriefItem[] = (content.keyPoints ?? []).map((k) => ({ text: withDot(R(k.text)), start: k.start }));
-  if (!points.length) points = (content.topics ?? []).flatMap((tp) => tp.keyPoints.map((k) => ({ text: withDot(R(k.text)), start: k.start })));
-  if (!points.length) points = (content.topics ?? []).map((tp) => ({ text: withDot(R(tp.summary) || R(tp.title)), start: tp.start }));
-  push('keyPoints', 'recs.brief.keyPoint', 'recs.brief.keyPoints', points.slice(0, MAX_KEY_POINTS));
+  // `source` id'lari `summaryModel` bandlarining id'si bilan bir xil (mavzu fikri - `T1.2`).
+  const src = (section: string, id: string) => ({ section, id });
+  // Server kabi: matnsiz band zaxiraga o'tishda ham, sanoqda ham hisobga olinmaydi.
+  let points: BriefItem[] = (content.keyPoints ?? [])
+    .filter((k) => k.text)
+    .map((k) => ({ text: withDot(R(k.text)), start: k.start, source: src('keyPoints', k.id) }));
+  if (!points.length) {
+    points = (content.topics ?? []).flatMap((tp) =>
+      tp.keyPoints.flatMap((k, i) => (k.text ? [{ text: withDot(R(k.text)), start: k.start, source: src('topics', `${tp.id}.${i + 1}`) }] : [])),
+    );
+  }
+  if (!points.length) {
+    points = (content.topics ?? []).map((tp) => ({ text: withDot(R(tp.summary) || R(tp.title)), start: tp.start, source: src('topics', tp.id) }));
+  }
+  points = points.filter((p) => p.text).slice(0, briefPointCount(briefDurationSec(content, meeting)));
+  push('keyPoints', 'recs.brief.keyPoint', 'recs.brief.keyPoints', points);
 
-  // Bekor qilingan qaror endi qaror emas - qisqa blokda chalg'itadi. Yakuniy bo'lmagani va
-  // tasdiqlanmagani belgilanadi (bitta qavsda, nuqtadan oldin): tasdiqlanmagan band HECH
-  // QACHON tasdiqlangandek ketmaydi.
+  // Bekor qilingan qaror endi qaror emas - qisqa blokda chalg'itadi (u "Batafsil" da qoladi).
+  // Yakuniy bo'lmagani, sharti va tasdiqlanmagani belgilanadi (BITTA qavsda, nuqtadan oldin):
+  // tasdiqlanmagan band HECH QACHON tasdiqlangandek ketmaydi. Shart vazifadagidek "shart: X";
+  // sharti yozilgan shartli qarorda "shartli" so'zi tushadi - "(shartli, shart: X)" ikki marta
+  // aytardi. Karta qarorning to'liq bo'limi o'rnida - shart kartaning o'zida ko'rinsin.
   push(
     'decisions',
     'recs.brief.decision',
@@ -297,10 +359,16 @@ export function buildBrief(
     (content.decisions ?? [])
       .filter((d) => d.status !== 'reversed')
       .map((d) => {
-        const status = d.status === 'tentative' || d.status === 'conditional' ? tr(lang, `recs.brief.${d.status}`) : '';
-        const tags = [status, needsCheck(d) ? checkWord : ''].filter(Boolean);
+        const cond = R(d.condition);
+        const showStatus = d.status === 'tentative' || (d.status === 'conditional' && !cond);
+        const status = showStatus ? tr(lang, `recs.brief.${d.status}` as TKey) : '';
+        const tags = [status, cond ? tr(lang, 'recs.brief.condition', { text: cond }) : '', needsCheck(d) ? checkWord : ''].filter(Boolean);
         const text = R(d.text);
-        return { text: text && tags.length ? `${text.replace(TRAIL, '')} (${tags.join(', ')}).` : withDot(text), start: d.start };
+        return {
+          text: text && tags.length ? `${text.replace(TRAIL, '')} (${tags.join(', ')}).` : withDot(text),
+          start: d.start,
+          source: src('decisions', d.id),
+        };
       }),
   );
 
@@ -311,6 +379,7 @@ export function buildBrief(
     tasksOf(content, opts.actions).map((a) => {
       const base = R(a.task);
       if (!base) return { text: '', start: a.start };
+      const ref = { source: a.id ? src('actionItems', a.id) : null, liveId: a.liveId };
       const cond = R(a.condition);
       const task = withDot(cond ? `${base} (${tr(lang, 'recs.brief.condition', { text: cond })})` : base);
       const bySpeaker = a.ownerSpeaker ? speakerLabel(a.ownerSpeaker, speakers, lang) : null;
@@ -319,7 +388,7 @@ export function buildBrief(
       const due = formatDue(a.due.date, a.due.time, a.due.raw, lang);
       const ownerPart = owner ? tr(lang, 'recs.brief.owner', { owner }) : tr(lang, 'recs.brief.noOwner');
       const duePart = due ? tr(lang, 'recs.brief.due', { due }) : tr(lang, 'recs.brief.noDue');
-      return { text: `${a.done ? '✓ ' : ''}${task} ${ownerPart}. ${duePart}.${a.check ? ` (${checkWord})` : ''}`, start: a.start };
+      return { text: `${a.done ? '✓ ' : ''}${task} ${ownerPart}. ${duePart}.${a.check ? ` (${checkWord})` : ''}`, start: a.start, ...ref };
     }),
   );
 
@@ -327,7 +396,7 @@ export function buildBrief(
     'openQuestions',
     'recs.brief.question',
     'recs.brief.questions',
-    (content.openQuestions ?? []).map((q) => ({ text: withQuestionMark(R(q.text)), start: q.start })),
+    (content.openQuestions ?? []).map((q) => ({ text: withQuestionMark(R(q.text)), start: q.start, source: src('openQuestions', q.id) })),
   );
 
   const purposeText = R(content.purpose);
@@ -338,23 +407,33 @@ export function buildBrief(
   return { language: lang, title, meta: meta.join(' · '), purpose, overview, lists };
 }
 
-export type BriefCovered = 'overview' | 'keyPoints' | 'openQuestions';
+export type BriefCovered = 'overview' | 'purpose' | 'actionItems' | 'openQuestions' | 'followUps';
 
 /**
- * To'liq xulosaning qaysi bo'limlarini "Qisqa xulosa" TO'LIQ takrorlaydi (server
- * `export.brief_covers` bilan bir xil qoida): umumiy xulosa (qisqartirilmagan bo'lsa),
- * asosiy fikrlar (hammasi sig'gan bo'lsa) va ochiq savollar (blokda hammasi bor). NEGA:
- * qisqa qo'ng'iroqda "Batafsil" ostida xuddi shu matn ikkinchi marta chiqardi. Qarorlar va
- * vazifalar bo'limi (holat, mas'ul, CRM, belgilash) doim qoladi.
+ * To'liq xulosaning qaysi bo'limlarini "Qisqa xulosa" kartasi BUTUNLAY o'z ichiga oladi - ular
+ * "Batafsil" ostida qayta chiqmaydi (egasi, 2026-10-15: "har fakt bir marta"). Server
+ * `export.brief_covers` bilan bir xil qoida:
+ *  - maqsad, qarorlar, vazifalar, ochiq savollar - kartada (qaror va vazifa bosilsa tafsiloti
+ *    ochiladi, vazifada CRM tugmasi ham shu yerda); `followUps` - o'z bandida chip;
+ *  - umumiy xulosa - faqat BITTA gap bo'lsa (yoki bo'sh); uzunrog'i yig'iq qatorda qoladi.
+ *
+ * Bo'lim butunlay emas, BANDMA-BAND kartada bo'lganlari: asosiy fikrlar (kartada birinchi
+ * `briefPointCount` tasi, qolgani "Batafsil" da) va bekor qilingan qarorlar (kartada yo'q -
+ * "Batafsil" da qoladi). Ular `BriefItem.source` orqali chiqariladi, bu ro'yxatga kirmaydi.
  */
 export function briefCovers(content: SummaryContent | null | undefined, speakers: Speaker[] = []): Set<BriefCovered> {
-  const covered = new Set<BriefCovered>(['openQuestions']);
+  const covered = new Set<BriefCovered>(['purpose', 'actionItems', 'openQuestions', 'followUps']);
   if (!content) return covered;
   const overview = renderTokens(content.overview, speakers, content.language).replace(/\s+/g, ' ').trim();
   if (!overview || firstSentences(overview) === overview) covered.add('overview');
-  const points = (content.keyPoints ?? []).filter((k) => k.text);
-  if (points.length && points.length <= MAX_KEY_POINTS) covered.add('keyPoints');
   return covered;
+}
+
+/** Kartadagi bandlar (`bo'lim/id`) - "Batafsil" ularni qayta ko'rsatmaydi. */
+export function briefRefs(b: Brief | null | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const l of b?.lists ?? []) for (const i of l.items) if (i.source) out.add(`${i.source.section}/${i.source.id}`);
+  return out;
 }
 
 function render(b: Brief, markdown: boolean): string {

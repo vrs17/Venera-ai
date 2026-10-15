@@ -57,6 +57,8 @@ const uz = {
   'recs.brief.copy': 'Nusxa olish',
   'recs.brief.share': 'Ulashish',
   'recs.brief.details': 'Batafsil',
+  // "Batafsil" - qisqa yig'ilishda birinchi guruhlar, qolgani shu qator ortida.
+  'recs.brief.moreGroups': "Yana {n} ta bo'lim",
   // Qisqa xulosa ichidagi yorliqlar va iboralar - server `export._BRIEF_*` bilan SO'ZMA-SO'Z bir xil
   // (umumiy namuna: packages/fixtures/meeting-brief.json). Blok XULOSA tilida chiziladi.
   'recs.brief.purpose': 'Maqsad',
@@ -156,6 +158,7 @@ const ru: Record<K, string> = {
   'recs.brief.copy': 'Копировать',
   'recs.brief.share': 'Поделиться',
   'recs.brief.details': 'Подробно',
+  'recs.brief.moreGroups': 'Ещё разделов: {n}',
   'recs.brief.purpose': 'Цель',
   'recs.brief.overview': 'Кратко',
   'recs.brief.keyPoint': 'Ключевой момент',
@@ -249,6 +252,7 @@ const en: Record<K, string> = {
   'recs.brief.copy': 'Copy',
   'recs.brief.share': 'Share',
   'recs.brief.details': 'Details',
+  'recs.brief.moreGroups': '{n} more sections',
   'recs.brief.purpose': 'Purpose',
   'recs.brief.overview': 'In short',
   'recs.brief.keyPoint': 'Key point',

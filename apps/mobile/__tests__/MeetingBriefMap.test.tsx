@@ -76,8 +76,8 @@ describe('short summary card', () => {
     expect(screen.getByTestId('brief-title')).toHaveTextContent('Narxlar va hisobot');
     expect(screen.getByTestId('brief-meta')).toHaveTextContent('9-oktabr 2026 (juma), 11:00 · 1 soat · 2 ishtirokchi');
     expect(screen.getByTestId('brief-purpose')).toHaveTextContent('Maqsad: Narxlarni kelishish.');
-    // Qisqacha - ko'pi 2 gap.
-    expect(screen.getByTestId('brief-overview')).toHaveTextContent("Qisqacha: Aziz narxlarni ko'rib chiqdi. 2-ishtirokchi hisobot yuboradi.");
+    // Qisqacha - bitta gap (to'liq umumiy xulosa "Batafsil" da yig'iq qatorda).
+    expect(screen.getByTestId('brief-overview')).toHaveTextContent("Qisqacha: Aziz narxlarni ko'rib chiqdi.");
     expect(within(screen.getByTestId('brief-keyPoints')).getByText('Asosiy fikr:')).toBeTruthy();
     // Asosiy xulosa - vazifalar jonli ro'yxatdan (Vazifalar tabidagi bitta vazifa).
     await waitFor(() => expect(within(screen.getByTestId('brief-actionItems')).getByText('Vazifa:')).toBeTruthy());
@@ -126,6 +126,85 @@ describe('short summary card', () => {
     await waitFor(() => expect(player.seekTo).toHaveBeenCalledWith(15.2));
     // Blok to'liq takrorlaydigan "Ochiq savollar" bo'limi "Batafsil" ostida yo'q.
     expect(screen.queryByTestId('section-openQuestions')).toBeNull();
+  });
+
+  it('decision and task rows open their details; tasks keep the CRM button; point/question rows play', async () => {
+    await open();
+    await waitFor(() => expect(within(screen.getByTestId('brief-actionItems')).getByText('Vazifa:')).toBeTruthy());
+    // Qaror: o'q belgisi, bosilsa sabab, kim taklif qildi, iqtibos va ▶ vaqt.
+    const d1 = screen.getByTestId('brief-decisions-0');
+    expect(d1.props.accessibilityLabel).toBe("Narx 15 mln so'm.: ochish");
+    expect(d1.props.accessibilityState).toMatchObject({ expanded: false });
+    expect(screen.queryByTestId('brief-decisions-0-details')).toBeNull();
+    await fireEvent.press(d1);
+    const details = within(screen.getByTestId('brief-decisions-0-details'));
+    expect(details.getByText('Sabab: Bozor narxi')).toBeTruthy();
+    expect(details.getByText('Taklif: Aziz')).toBeTruthy();
+    expect(details.getByText('“kelishdik”')).toBeTruthy();
+    expect(details.getByText('Yakuniy')).toBeTruthy();
+    await fireEvent.press(details.getByTestId('ev-15.2'));
+    await waitFor(() => expect(player.seekTo).toHaveBeenCalledWith(15.2));
+    expect(screen.getByTestId('brief-decisions-0').props.accessibilityState).toMatchObject({ expanded: true });
+    await fireEvent.press(screen.getByTestId('brief-decisions-0'));
+    expect(screen.queryByTestId('brief-decisions-0-details')).toBeNull();
+    // Vazifa: mas'ul/muddat kartadagi matnda (jonli), ochilganda - qolgan tafsilot (eskirgan mas'ul emas).
+    await fireEvent.press(screen.getByTestId('brief-actionItems-0'));
+    const task = within(screen.getByTestId('brief-actionItems-0-details'));
+    expect(task.getByText('Natija: PDF hisobot')).toBeTruthy();
+    expect(task.queryByText("Mas'ul: 2-ishtirokchi")).toBeNull();
+    expect(task.getByText('Muhim')).toBeTruthy();
+    // CRM tugmasi kartadagi jonli vazifa ostida (Vazifalar tabidagi o'sha `CrmPanel`).
+    expect(screen.getByTestId(`crm-add-${AI}`)).toBeTruthy();
+    // Fikr bandi ochilmaydi - bosilsa yozuv o'sha joydan.
+    expect(screen.getByTestId('brief-keyPoints-0').props.accessibilityLabel).toBe('Narx kelishildi., 00:15 dan eshitish');
+  });
+
+  it('merged facts (alsoIn) and follow-up reasons show as chips on the card rows and in the groups', async () => {
+    const s = summary();
+    const c = s.content!;
+    c.keyPoints[0].alsoIn = [
+      { section: 'template', key: 'shortlist', label: 'Tanlangan' },
+      { section: 'template', key: 'pros', label: 'Afzallik' },
+    ];
+    c.decisions[1].alsoIn = [{ section: 'risks', label: 'Xavf' }];
+    c.actionItems[0].alsoIn = [{ section: 'nextSteps', label: 'Keyingi qadam' }];
+    c.risks[0].mitigation = null;
+    c.followUps = [{ id: 'F1', kind: 'risk', ref: 'R1', text: 'Kurs oshishi', reasons: ['no_mitigation'], sourceSegmentIds: [2], start: 4.3 }];
+    c.view = { compact: 1, merged: 4 };
+    await open(fakeMeetingsApi({ summary: jest.fn(async () => s) }));
+    await waitFor(() => expect(screen.getByTestId('brief-keyPoints-0-tags')).toBeTruthy());
+    expect(screen.getByTestId('brief-keyPoints-0-tags')).toHaveTextContent('TanlanganAfzallik');
+    expect(screen.getByTestId('brief-decisions-1-tags')).toHaveTextContent('Xavf');
+    // Jonli vazifa chipi xulosadagi bandidan (`summaryItemId`).
+    await waitFor(() => expect(screen.getByTestId('brief-actionItems-0-tags')).toHaveTextContent('Keyingi qadam'));
+    expect(screen.queryByTestId('brief-decisions-0-tags')).toBeNull();
+    // Yechimsiz xavf - "Hal qilinmagan" bo'limi emas, xavfning o'z bandida chip.
+    await fireEvent.press(screen.getByTestId('group-risks'));
+    expect(within(screen.getByTestId('group-body-risks')).getByText('Yechim aytilmagan')).toBeTruthy();
+    expect(screen.queryByTestId('section-followUps')).toBeNull();
+  });
+
+  it('short meeting: two groups, then "N more sections"; chapters (topics) go last', async () => {
+    const short = meeting({ durationSec: 540 });
+    const s = summary();
+    s.content!.meeting = { ...s.content!.meeting, durationSec: 540 };
+    s.content!.keyPoints = Array.from({ length: 5 }, (_, i) => ({ id: `K${i + 1}`, text: `Fikr ${i + 1}`, sourceSegmentIds: [1], start: i }));
+    await open(fakeMeetingsApi({ get: jest.fn(async () => short), summary: jest.fn(async () => s) }));
+    await waitFor(() => expect(screen.getByTestId('details')).toBeTruthy());
+    // 9 daqiqa - kartada 3 ta fikr; qolgan 2 tasi "Asosiy fikrlar · 2" guruhida.
+    expect(within(screen.getByTestId('brief-keyPoints')).getAllByText(/^Fikr \d\.$/)).toHaveLength(3);
+    expect(screen.getByTestId('section-overview')).toBeTruthy();
+    expect(screen.getByTestId('section-risks')).toBeTruthy();
+    expect(screen.queryByTestId('section-topics')).toBeNull();
+    expect(screen.getByTestId('details-more')).toHaveTextContent("Yana 9 ta bo'lim");
+    await fireEvent.press(screen.getByTestId('details-more'));
+    expect(screen.queryByTestId('details-more')).toBeNull();
+    expect(screen.getByTestId('section-keyPoints')).toHaveTextContent('Asosiy fikrlar · 2');
+    const json = JSON.stringify(screen.toJSON());
+    expect(json.indexOf('"section-topics"')).toBeGreaterThan(json.indexOf('"section-objections"'));
+    await fireEvent.press(screen.getByTestId('group-keyPoints'));
+    expect(within(screen.getByTestId('group-body-keyPoints')).getByText(/Fikr 4/)).toBeTruthy();
+    expect(within(screen.getByTestId('group-body-keyPoints')).queryByText(/Fikr 1/)).toBeNull();
   });
 
   it('no card when the summary has nothing to say', async () => {

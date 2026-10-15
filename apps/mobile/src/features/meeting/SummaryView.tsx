@@ -1,32 +1,49 @@
 /**
- * Xulosa tabi (spec 7.4): tepada "Qisqa xulosa" kartasi (egasi tasdiqlagan
- * format, bir bosishda nusxa/ulashish), keyin `layout` tartibidagi bo'limlar,
- * har biri uchun mos karta; dalil chiplari audio/transkriptga o'tkazadi. Shablon
- * almashtirgich (+ Yangi xulosa), Markdown ulashish, matn nusxalash,
- * xato bo'lsa qayta urinish.
+ * Xulosa tabi (spec 7.4) - "har fakt BIR marta" (egasi, 2026-10-15):
+ *
+ *  1. "Qisqa xulosa" kartasi (doim ochiq; bir bosishda nusxa/ulashish): maqsad, bir gaplik
+ *     qisqacha, asosiy fikrlar, qarorlar, vazifalar (mas'ul, muddat, CRM tugmasi), ochiq savollar.
+ *     Qaror va vazifa bosilsa tafsiloti ochiladi (sabab, shart, iqtibos, ▶ vaqt).
+ *  2. "Batafsil" - FAQAT kartada yo'q narsalar, har bo'lim bitta yig'iq qator ("G'oyalar · 2").
+ *  3. Eng pastda bitta jim qator: kayfiyat, kalit so'zlar, faollik, qaysi model yozgani.
+ *
+ * NEGA: 8,5 daqiqalik yig'ilish 16 ekran edi - bitta fakt 7 joyda (karta, keyin har bo'lim yana).
+ * Server birlashtirgan fakt (`alsoIn`) bandida chip bo'lib qoladi - ma'no yo'qolmaydi.
+ * Shablon almashtirgich (+ Yangi xulosa), Markdown ulashish, matn nusxalash, xato bo'lsa qayta urinish.
  *
  * Ko'rsatish mantig'i `summaryModel.ts` va `brief.ts` da - bu fayl faqat chizadi.
  */
 import * as Clipboard from 'expo-clipboard';
-import { Copy, Share2, Sparkles } from 'lucide-react-native';
+import { ChevronDown, ChevronRight, Copy, Share2, Sparkles } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 
-import type { Meeting, Speaker, Summary, SummaryCard, TemplateId } from '@/api/types';
+import type { ActionItem, Meeting, Speaker, Summary, SummaryCard, TemplateId } from '@/api/types';
 import { useAuth } from '@/features/auth/authStore';
+import { CrmPanel } from '@/features/crm/CrmPanel';
 import { useT } from '@/features/settings/settingsStore';
 import { useServices } from '@/services';
-import { Banner, Body, Button, Card, Chip, EvidenceChip, Loading, Muted, styles as ui } from '@/ui/components';
+import { Banner, Body, Button, Chip, EvidenceChip, Loading, Muted, styles as ui } from '@/ui/components';
 import { errorText, shareableText, showToast } from '@/ui/errors';
 import { PickerModal, type PickerOption } from '@/ui/modals';
 import { useTheme } from '@/ui/theme';
 import { radius, type as typeScale } from '@/ui/tokens';
 
-import { buildBrief, briefCovers, briefToText, type Brief } from './brief';
+import { briefCovers, briefDurationSec, briefRefs, briefToText, buildBrief, type Brief, type BriefItem, type BriefListKey } from './brief';
 import { formatClock, formatDateTime, formatDuration } from './formatDate';
-import { engineLabel } from './provenance';
 import { useActionItems, useMeetingMutations, useSummaries, useSummary } from './queries';
-import { buildSummaryView, summaryToText, type ItemView, type SectionView } from './summaryModel';
+import {
+  buildSummaryView,
+  detailGroups,
+  summaryMetaParts,
+  summaryToText,
+  type DetailGroup,
+  type DetailPlan,
+  type ItemView,
+  type SectionView,
+} from './summaryModel';
+
+const NO_GROUPS: DetailPlan = { shown: [], more: [] };
 
 export const TEMPLATE_IDS: TemplateId[] = [
   'auto',
@@ -163,14 +180,15 @@ function SummaryBody(props: {
     () => (summary ? buildBrief(summary.content, meeting, briefSpeakers ?? [], { actions }) : null),
     [summary, meeting, briefSpeakers, actions],
   );
-  // Blok to'liq takrorlaydigan bo'limlar "Batafsil" ostida qayta chiqmaydi (server eksporti
-  // `brief_covers` bilan bir xil); ularning vaqtga o'tishi blok bandlarida saqlanadi.
-  const sections = useMemo(() => {
-    if (!view) return [];
-    if (!brief || !summary) return view.sections;
-    const covered = briefCovers(summary.content, briefSpeakers ?? []);
-    return view.sections.filter((sec) => !covered.has(sec.key as never));
-  }, [view, brief, summary, briefSpeakers]);
+  // "Batafsil" - kartada YO'Q narsalar (server eksporti `brief_covers` bilan bir xil qoida):
+  // karta qamragan bo'limlar va kartadagi bandlar qayta chiqmaydi; vaqtga o'tish karta bandida.
+  const plan = useMemo(() => {
+    if (!view) return NO_GROUPS;
+    const covered = brief && summary ? briefCovers(summary.content, briefSpeakers ?? []) : new Set<string>();
+    return detailGroups(view, { covered, inCard: briefRefs(brief), durationSec: briefDurationSec(summary?.content, meeting) });
+  }, [view, brief, summary, briefSpeakers, meeting]);
+  const liveById = useMemo(() => new Map((actions ?? []).map((a) => [a.id, a])), [actions]);
+  const metaParts = useMemo(() => (summary ? summaryMetaParts(summary, t, props.speakers) : []), [summary, t, props.speakers]);
 
   if (card.status === 'queued' || card.status === 'running') return <Banner tone="info" text={t('detail.processing')} />;
   if (card.status === 'skipped') return <Banner tone="neutral" text={t('detail.summarySkipped')} />;
@@ -191,27 +209,37 @@ function SummaryBody(props: {
       {card.stale ? (
         <Banner tone="warn" text={t('detail.stale')} action={{ title: t('detail.regenerate'), onPress: props.onRegenerate }} />
       ) : null}
-      {brief ? <BriefCard brief={brief} onSeek={props.onSeek} /> : null}
-      {brief && sections.length ? <Text style={[typeScale.label, s.details, { color: th.textMuted }]}>{t('recs.brief.details')}</Text> : null}
-      {sections.map((sec) => (
-        <SectionCard key={sec.key} section={sec} onSeek={props.onSeek} onAcceptName={props.onAcceptName} />
-      ))}
+      {brief ? <BriefCard brief={brief} onSeek={props.onSeek} index={view.index} live={liveById} speakers={briefSpeakers} /> : null}
+      {brief && plan.shown.length ? <Text style={[typeScale.label, s.details, { color: th.textMuted }]}>{t('recs.brief.details')}</Text> : null}
+      {plan.shown.length ? <DetailList key={card.id} plan={plan} onSeek={props.onSeek} onAcceptName={props.onAcceptName} /> : null}
       {view.warnings.length ? <Muted>{view.warnings.join('\n')}</Muted> : null}
-      {/* To'liq xulosa nusxasi pastda: tepadagi "Qisqa xulosa" tugmalari bilan adashmasin. */}
-      <ShareRow meeting={meeting} summary={summary} text={() => summaryToText(view, t, { header: [headerLine(meeting, summary)] })} />
-      <Provenance summary={summary} />
+      {/* To'liq xulosa nusxasi pastda: tepadagi "Qisqa xulosa" tugmalari bilan adashmasin. Matn - ekrandagining
+          o'zi: karta, keyin "Batafsil" guruhlari (yashiringanlari ham), oxirida jim qator; hech narsa ikki marta emas. */}
+      <ShareRow
+        meeting={meeting}
+        summary={summary}
+        text={() =>
+          summaryToText({ title: view.title, sections: [...plan.shown, ...plan.more].map((g) => g.section) }, t, {
+            header: [headerLine(meeting, summary)],
+            brief: brief ? briefToText(brief) : null,
+            footer: metaParts.length ? [metaParts.join(' · ')] : [],
+          })
+        }
+      />
+      <SummaryMeta parts={metaParts} />
     </View>
   );
 }
 
-/** "Xulosa: Barno Core" - qaysi model yozgani; server aytmasa ko'rinmaydi. */
-export function Provenance({ summary }: { summary: Pick<Summary, 'generatedBy'> }) {
-  const t = useT();
-  const engine = engineLabel(summary.generatedBy);
-  if (!engine) return null;
+/**
+ * Xulosa ostidagi BITTA jim qator ("Kayfiyat: neytral · Kalit so'zlar: ... · Tayyorladi: Gemma") -
+ * avval bular alohida kartalar edi. Qismlar `summaryMetaParts` dan; bo'sh bo'lsa hech narsa.
+ */
+export function SummaryMeta({ parts }: { parts: string[] }) {
+  if (!parts.length) return null;
   return (
-    <Muted testID="summary-provenance" style={s.provenance}>
-      {t('sum.generatedBy', { engine })}
+    <Muted testID="summary-meta" style={s.provenance}>
+      {parts.join(' · ')}
     </Muted>
   );
 }
@@ -226,10 +254,29 @@ function headerLine(meeting: Meeting, summary: Summary): string {
  * "Qisqa xulosa": egasi tasdiqlagan tartib (sarlavha, meta, Maqsad, Qisqacha, Asosiy
  * fikrlar, Qarorlar, Vazifalar, Ochiq savollar). Nusxa va ulashish - ODDIY matn
  * (`briefToText`): messenjerda `**` ko'rinib qolmasin; kartadagi bilan so'zma-so'z bir xil.
- * Dalili bor band bosilsa - yozuv o'sha joydan (takrorlanmaydigan bo'limlar yashirilgani uchun
- * vaqtga o'tish shu yerda); vaqt bandning o'ng tomonida kichik, ulashiladigan matnga kirmaydi.
+ *
+ * Karta endi qaror va vazifaning TO'LIQ bo'limi o'rnida ("Batafsil" da ular yo'q), shuning uchun:
+ *  - qaror/vazifa bandi bosilsa tafsiloti ochiladi (sabab, shart, kim taklif qildi, iqtibos,
+ *    ▶ vaqt) - o'ngda o'q belgisi; tafsiloti yo'q band (fikr, savol) bosilsa yozuv o'sha joydan;
+ *  - jonli vazifa ostida CRM tugmasi/holati (Vazifalar tabidagi `CrmPanel` - o'sha mantiq);
+ *  - server birlashtirgan fakt chipi ("Tanlangan", "Xavf") band ostida doim ko'rinadi.
+ * Vaqt, chip va tafsilot ulashiladigan matnga kirmaydi.
  */
-export function BriefCard({ brief, onSeek }: { brief: Brief; onSeek?: (t: number) => void }) {
+export function BriefCard({
+  brief,
+  onSeek,
+  index,
+  live,
+  speakers,
+}: {
+  brief: Brief;
+  onSeek?: (t: number) => void;
+  /** To'liq xulosa bandlari (`SummaryViewModel.index`) - chip va tafsilot shundan. */
+  index?: Map<string, ItemView>;
+  /** Jonli vazifalar id bo'yicha (asosiy xulosa) - CRM tugmasi uchun. */
+  live?: Map<string, ActionItem>;
+  speakers?: Speaker[];
+}) {
   const t = useT();
   const th = useTheme();
   const [copied, setCopied] = useState(false);
@@ -267,25 +314,18 @@ export function BriefCard({ brief, onSeek }: { brief: Brief; onSeek?: (t: number
       {brief.lists.map((l) => (
         <View key={l.key} testID={`brief-${l.key}`} style={s.briefGap}>
           <Text style={[s.briefText, s.bold, { color: th.text }]}>{`${l.label}:`}</Text>
-          {l.items.map((it, i) => {
-            const seekable = it.start != null && !!onSeek;
-            return (
-              <Pressable
-                key={i}
-                testID={`brief-${l.key}-${i}`}
-                disabled={!seekable}
-                accessibilityRole={seekable ? 'button' : undefined}
-                accessibilityLabel={seekable ? t('recs.map.playAt', { name: it.text, time: formatClock(it.start) }) : undefined}
-                onPress={() => it.start != null && onSeek?.(it.start)}
-                style={s.bullet}>
-                <Text style={[s.briefText, { color: th.textMuted }]}>•</Text>
-                <Text selectable={!seekable} style={[s.briefText, s.flex, { color: th.text }]}>
-                  {it.text}
-                </Text>
-                {seekable ? <Text style={[typeScale.micro, s.briefTime, { color: th.textMuted }]}>{formatClock(it.start)}</Text> : null}
-              </Pressable>
-            );
-          })}
+          {l.items.map((it, i) => (
+            <BriefRow
+              key={i}
+              testID={`brief-${l.key}-${i}`}
+              listKey={l.key}
+              item={it}
+              detail={it.source ? index?.get(`${it.source.section}/${it.source.id}`) : undefined}
+              liveItem={it.liveId ? live?.get(it.liveId) : undefined}
+              speakers={speakers}
+              onSeek={onSeek}
+            />
+          ))}
         </View>
       ))}
       <View style={s.briefActions}>
@@ -321,6 +361,96 @@ export function BriefCard({ brief, onSeek }: { brief: Brief; onSeek?: (t: number
           }}
         />
       </View>
+    </View>
+  );
+}
+
+/** Qaror va vazifa - karta ularning to'liq bo'limi o'rnida: bosilsa tafsiloti ochiladi. */
+const EXPANDABLE: ReadonlySet<BriefListKey> = new Set(['decisions', 'actionItems']);
+
+function BriefRow({
+  testID,
+  listKey,
+  item,
+  detail,
+  liveItem,
+  speakers,
+  onSeek,
+}: {
+  testID: string;
+  listKey: BriefListKey;
+  item: BriefItem;
+  detail?: ItemView;
+  liveItem?: ActionItem;
+  speakers?: Speaker[];
+  onSeek?: (t: number) => void;
+}) {
+  const t = useT();
+  const th = useTheme();
+  const [open, setOpen] = useState(false);
+  // Yig'iq turganda ham ko'rinadigan chiplar: fakt yana qayerda edi (`alsoIn`), kuzatish sababi.
+  const tags = detail?.chips.filter((c) => c.kind) ?? [];
+  // Ochilganda: band matnida yo'q qatorlar (vazifada mas'ul/muddat matnning o'zida), iqtibos, holat chiplari.
+  const lines = detail ? (detail.more ?? detail.sub) : [];
+  const chips = detail?.chips.filter((c) => !c.kind) ?? [];
+  const expandable = EXPANDABLE.has(listKey) && !!detail && (lines.length > 0 || !!detail.quote || chips.length > 0);
+  const seekable = !expandable && item.start != null && !!onSeek;
+  const Chevron = open ? ChevronDown : ChevronRight;
+  return (
+    <View>
+      <Pressable
+        testID={testID}
+        disabled={!expandable && !seekable}
+        accessibilityRole={expandable || seekable ? 'button' : undefined}
+        accessibilityState={expandable ? { expanded: open } : undefined}
+        accessibilityLabel={
+          expandable
+            ? t(open ? 'recs.map.collapseNode' : 'recs.map.expandNode', { name: item.text })
+            : seekable
+              ? t('recs.map.playAt', { name: item.text, time: formatClock(item.start) })
+              : undefined
+        }
+        onPress={() => {
+          if (expandable) setOpen((x) => !x);
+          else if (item.start != null) onSeek?.(item.start);
+        }}
+        style={s.bullet}>
+        <Text style={[s.briefText, { color: th.textMuted }]}>•</Text>
+        <Text selectable={!expandable && !seekable} style={[s.briefText, s.flex, { color: th.text }]}>
+          {item.text}
+        </Text>
+        {expandable ? (
+          <View style={s.briefChevron}>
+            <Chevron size={16} color={th.textMuted} strokeWidth={2} />
+          </View>
+        ) : seekable ? (
+          <Text style={[typeScale.micro, s.briefTime, { color: th.textMuted }]}>{formatClock(item.start)}</Text>
+        ) : null}
+      </Pressable>
+      {tags.length ? (
+        <View testID={`${testID}-tags`} style={[ui.wrap, s.briefInset]}>
+          {tags.map((c) => (
+            <Chip key={c.label} label={c.label} tone={c.tone} />
+          ))}
+        </View>
+      ) : null}
+      {open && detail ? (
+        <View testID={`${testID}-details`} style={[s.briefInset, s.briefDetails]}>
+          {lines.map((line, i) => (
+            <Text key={i} style={[s.sub, { color: th.textMuted }]}>
+              {line}
+            </Text>
+          ))}
+          {detail.quote ? <Text style={[s.quote, { color: th.textMuted, borderColor: th.border }]}>“{detail.quote}”</Text> : null}
+          <View style={ui.wrap}>
+            {chips.map((c, i) => (
+              <Chip key={i} label={c.label} tone={c.tone} />
+            ))}
+            <EvidenceChip start={item.start ?? detail.start} onSeek={onSeek} />
+          </View>
+        </View>
+      ) : null}
+      {liveItem ? <CrmPanel item={liveItem} speakers={speakers} indent={BULLET_INSET} /> : null}
     </View>
   );
 }
@@ -371,13 +501,99 @@ function ShareRow({ meeting, summary, text }: { meeting: Meeting; summary: Summa
   );
 }
 
-function SectionCard({ section, onSeek, onAcceptName }: { section: SectionView; onSeek?: (t: number) => void; onAcceptName?: (speaker: string, name: string) => void }) {
+/**
+ * "Batafsil": har bo'lim bitta yig'iq qator "Sarlavha · son" (bosilsa ochiladi), qisqa yig'ilishda
+ * birinchi guruhlar - qolgani "Yana N ta bo'lim" ortida. Bandlar ichida ▶ vaqt va iqtibos avvalgidek.
+ */
+function DetailList({
+  plan,
+  onSeek,
+  onAcceptName,
+}: {
+  plan: DetailPlan;
+  onSeek?: (t: number) => void;
+  onAcceptName?: (speaker: string, name: string) => void;
+}) {
+  const t = useT();
   const th = useTheme();
+  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
+  const [all, setAll] = useState(false);
+  const groups = all ? [...plan.shown, ...plan.more] : plan.shown;
+  const toggle = (key: string) =>
+    setOpen((cur) => {
+      const next = new Set(cur);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   return (
-    <Card>
-      <Text testID={`section-${section.key}`} style={[s.sectionTitle, { color: th.text }]}>
-        {section.title}
-      </Text>
+    <View testID="details" style={[s.groups, { backgroundColor: th.surface, borderColor: th.border }]}>
+      {groups.map((g, i) => (
+        <GroupRow key={g.key} group={g} first={i === 0} open={open.has(g.key)} onToggle={() => toggle(g.key)} onSeek={onSeek} onAcceptName={onAcceptName} />
+      ))}
+      {!all && plan.more.length ? (
+        <Pressable testID="details-more" accessibilityRole="button" onPress={() => setAll(true)} style={[s.groupHead, s.groupLine, { borderColor: th.border }]}>
+          <Text style={[s.groupMore, { color: th.textMuted }]}>{t('recs.brief.moreGroups', { n: plan.more.length })}</Text>
+          <ChevronDown size={18} color={th.textMuted} strokeWidth={2} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+function GroupRow({
+  group,
+  first,
+  open,
+  onToggle,
+  onSeek,
+  onAcceptName,
+}: {
+  group: DetailGroup;
+  first: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onSeek?: (t: number) => void;
+  onAcceptName?: (speaker: string, name: string) => void;
+}) {
+  const t = useT();
+  const th = useTheme();
+  const label = group.count != null ? `${group.title} · ${group.count}` : group.title;
+  const Chevron = open ? ChevronDown : ChevronRight;
+  return (
+    <View style={first ? null : [s.groupLine, { borderColor: th.border }]}>
+      <Pressable
+        testID={`group-${group.key}`}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        accessibilityLabel={t(open ? 'recs.map.collapseNode' : 'recs.map.expandNode', { name: label })}
+        onPress={onToggle}
+        style={s.groupHead}>
+        <Text testID={`section-${group.key}`} style={[s.groupTitle, { color: th.text }]}>
+          {label}
+        </Text>
+        <Chevron size={18} color={th.textMuted} strokeWidth={2} />
+      </Pressable>
+      {open ? (
+        <View testID={`group-body-${group.key}`} style={s.groupBody}>
+          <SectionBody section={group.section} onSeek={onSeek} onAcceptName={onAcceptName} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function SectionBody({
+  section,
+  onSeek,
+  onAcceptName,
+}: {
+  section: SectionView;
+  onSeek?: (t: number) => void;
+  onAcceptName?: (speaker: string, name: string) => void;
+}) {
+  return (
+    <>
       {section.kind === 'text' && section.text ? <Body selectable>{section.text}</Body> : null}
       {section.kind === 'tags' ? (
         <View style={ui.wrap}>
@@ -389,7 +605,7 @@ function SectionCard({ section, onSeek, onAcceptName }: { section: SectionView; 
       {section.items.map((it) => (
         <ItemRow key={it.id} item={it} onSeek={onSeek} onAcceptName={onAcceptName} checkable={section.key === 'actionItems'} />
       ))}
-    </Card>
+    </>
   );
 }
 
@@ -445,9 +661,11 @@ function ItemRow({
   );
 }
 
+/** Band matni chapdan qancha ichkarida (• + oraliq) - chip, tafsilot va CRM shu chiziqda. */
+const BULLET_INSET = 16;
+
 const s = StyleSheet.create({
   tabs: { marginBottom: 10, flexGrow: 0 },
-  sectionTitle: { fontSize: 17, fontWeight: '700', marginBottom: 6 },
   item: { paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth },
   itemText: { fontSize: 15, lineHeight: 21 },
   sub: { fontSize: 13, lineHeight: 18, marginTop: 2 },
@@ -463,5 +681,14 @@ const s = StyleSheet.create({
   bullet: { flexDirection: 'row', gap: 8, paddingLeft: 2 },
   briefTime: { paddingTop: 4, fontVariant: ['tabular-nums'] },
   briefActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 },
+  briefChevron: { paddingTop: 3 },
+  briefInset: { marginLeft: BULLET_INSET },
+  briefDetails: { marginTop: 2, marginBottom: 4 },
   details: { marginTop: 4, marginBottom: 8, marginLeft: 4 },
+  groups: { borderRadius: radius.lg, borderWidth: 1, paddingHorizontal: 14, marginBottom: 14 },
+  groupLine: { borderTopWidth: StyleSheet.hairlineWidth },
+  groupHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 48, paddingVertical: 12, gap: 8 },
+  groupTitle: { flex: 1, fontSize: 15, lineHeight: 21, fontWeight: '600' },
+  groupMore: { flex: 1, fontSize: 14, lineHeight: 20 },
+  groupBody: { paddingBottom: 8 },
 });
