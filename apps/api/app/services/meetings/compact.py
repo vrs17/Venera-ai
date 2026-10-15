@@ -10,7 +10,7 @@ o'xshash bandlar bitta fakt. Fakt eng muhim bo'limda qoladi, boshqa bo'limdagi
 nusxasi o'chadi va qolgan bandga belgi (`alsoIn`: "Tanlangan", "Afzallik",
 "Xavf") bo'lib qo'shiladi - ma'no yo'qolmaydi, takror yo'qoladi.
 
-Tartib (`RANKS`): vazifa > qaror > ochiq savol > asosiy fikr > xavf > keyingi qadam >
+Tartib: vazifa > qaror > ochiq savol > asosiy fikr > xavf > keyingi qadam >
 shablon bo'limlari > mavzu ichidagi fikr > muhim lahza. NEGA asosiy fikr xavfdan
 oldin: "Qisqa xulosa" kartasida vazifa, qaror, savol va asosiy fikr bor - kartadagi
 fakt kartada qolsin, yopiq "Batafsil" ga ko'chib ketmasin.
@@ -196,7 +196,7 @@ def compact(content: dict[str, Any] | None) -> dict[str, Any] | None:
     merged = 0
 
     def lists() -> list[tuple[str, str | None, list[dict[str, Any]], bool]]:
-        """(bo'lim, shablon kaliti, ro'yxat, o'chirsa bo'ladimi) - `RANKS` tartibida."""
+        """(bo'lim, shablon kaliti, ro'yxat, o'chirsa bo'ladimi) - muhimlik tartibida (modul izohi)."""
         rows: list[tuple[str, str | None, list[dict[str, Any]], bool]] = [
             ("actionItems", None, out.get("actionItems") or [], False),
             ("decisions", None, out.get("decisions") or [], False),
@@ -263,8 +263,9 @@ def compact(content: dict[str, Any] | None) -> dict[str, Any] | None:
     for f in out.get("followUps") or []:
         if not isinstance(f, dict):
             continue
-        ref = removed.get(str(f.get("ref")), str(f.get("ref")))
-        if ref in shown:
+        ref = f.get("ref")
+        ref = removed.get(str(ref), ref) if ref is not None else None
+        if ref is not None and str(ref) in shown:
             merged += 1
             continue
         follow.append({**f, "ref": ref})

@@ -142,6 +142,9 @@ def test_kuzatuv_va_belgilar_qayta_bog_lanadi():
     # Vazifa va savol kartada o'z holati bilan - kuzatuv ro'yxatida qayta chiqmaydi. Xavf fikrga
     # qo'shildi - kuzatuv shu fikrga ko'chadi.
     assert [(f["id"], f["ref"]) for f in out["followUps"]] == [("F3", "K2")]
+    # Havolasiz kuzatuv o'zgarmaydi ("None" bo'lib qolmaydi).
+    loose = compact({"language": "uz", "followUps": [{"id": "F1", "text": "Narx?", "ref": None, "reasons": []}]})
+    assert loose["followUps"] == [{"id": "F1", "text": "Narx?", "ref": None, "reasons": []}]
     assert out["userMarks"][0]["coveredBy"] == ["K2", "H2"]
 
 
