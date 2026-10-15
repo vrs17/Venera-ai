@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ChevronDown, ChevronUp, CircleAlert, Mic, RotateCw, SearchX, X } from 'lucide-vue-next'
+import { ArrowLeft, ChevronDown, ChevronUp, CircleAlert, FlaskConical, Mic, RotateCw, SearchX, X } from 'lucide-vue-next'
 import MarkdownMessage from '../../components/MarkdownMessage.vue'
 import VBadge from '../../ui/VBadge.vue'
 import VButton from '../../ui/VButton.vue'
@@ -280,6 +280,15 @@ const statusLabel = computed(() => {
             {{ t('admin.nav.conversations') }}
           </VButton>
           <div class="tp-tools">
+            <!-- Agent playground: shu savolning bosqichlari, tahrir va modellarni solishtirish. -->
+            <VButton
+              variant="ghost"
+              size="sm"
+              :icon="FlaskConical"
+              :to="{ name: 'admin-playground', query: { turn: id } }"
+            >
+              {{ t('admin.playground.openInPlayground') }}
+            </VButton>
             <template v-if="nav.available.value">
               <VIconButton
                 :icon="ChevronUp"

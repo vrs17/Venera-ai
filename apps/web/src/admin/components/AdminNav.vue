@@ -3,7 +3,27 @@ import { computed, nextTick, ref } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { Activity, ArrowLeft, ChevronsUpDown, Flag, GitBranch, LayoutDashboard, LogOut, MessagesSquare, Monitor, Moon, Network, PanelLeftClose, PanelLeftOpen, Search, Server, Sun, Users, Workflow } from 'lucide-vue-next'
+import {
+  Activity,
+  ArrowLeft,
+  ChevronsUpDown,
+  Flag,
+  FlaskConical,
+  GitBranch,
+  LayoutDashboard,
+  LogOut,
+  MessagesSquare,
+  Monitor,
+  Moon,
+  Network,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
+  Server,
+  Sun,
+  Users,
+  Workflow,
+} from 'lucide-vue-next'
 import BrandSpark from '../../components/BrandSpark.vue'
 import VAvatar from '../../ui/VAvatar.vue'
 import VBadge from '../../ui/VBadge.vue'
@@ -74,7 +94,7 @@ async function toggle() {
   next?.focus({ preventScroll: true })
 }
 
-type NavKey = 'overview' | 'conversations' | 'reports' | 'users' | 'usage' | 'versions' | 'migration' | 'osmap' | 'system'
+type NavKey = 'overview' | 'conversations' | 'reports' | 'users' | 'usage' | 'versions' | 'migration' | 'osmap' | 'playground' | 'system'
 interface NavItem {
   key: NavKey
   path: string
@@ -102,6 +122,7 @@ const items: NavItem[] = [
   { key: 'migration', path: '/admin/migration', icon: Workflow, match: under('/admin/migration') },
   // Butun tizim xaritasi: oqimlar, promptlar, kod va qadamni jonli sinash.
   { key: 'osmap', path: '/admin/os-map', icon: Network, match: under('/admin/os-map') },
+  { key: 'playground', path: '/admin/playground', icon: FlaskConical, match: under('/admin/playground') },
   { key: 'system', path: '/admin/system', icon: Server, match: under('/admin/system') },
 ]
 

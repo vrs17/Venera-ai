@@ -73,11 +73,11 @@ SPEC_TABLES = {"turns", "turn_events", "turn_sources", "api_calls", "auth_events
                # Sxema v3 (2026-10-04): dvigatelni admin panel boshqaradi.
                "engine_policy", "engine_access",
                # Sxema v4 (2026-10-10): miya flag'lari va shadow taqqoslash.
-               "brain_routing", "shadow_results"}
+               "brain_routing", "shadow_results", "playground_cases"}
 SPEC_INDEXES = {"turns_started", "turns_actor", "turns_channel", "turns_chat",
                 "turn_sources_ref", "api_calls_ts", "api_calls_service", "api_calls_turn",
                 "auth_events_ts", "reports_status", "turns_engine",
-                "shadow_results_ts", "shadow_results_feature"}
+                "shadow_results_ts", "shadow_results_feature", "playground_cases_created"}
 TURN_COLUMNS = [
     "id", "started_at", "ended_at", "actor_id", "user_name", "user_login", "channel", "kind",
     "input_mode", "locale", "chat_id", "request_id", "question", "answer", "route", "status",
@@ -90,7 +90,7 @@ TURN_COLUMNS = [
 
 
 def test_sxema_spetsifikatsiya_boyicha(adb):
-    assert adb.version() == SCHEMA_VERSION == 4
+    assert adb.version() == SCHEMA_VERSION == 5
     tables = {r["name"] for r in adb.rows(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
     assert tables == SPEC_TABLES

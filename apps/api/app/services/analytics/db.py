@@ -263,10 +263,34 @@ _V4: tuple[str, ...] = (
     "CREATE INDEX shadow_results_feature ON shadow_results(feature, ts)",
 )
 
+#: 5-qadam (2026-10-15): admin "Agent playground" - saqlangan regressiya sinovlari.
+#:
+#: `playground_cases` - savollar ketma-ketligi va kutilgan xulq (oddiy gaplar). Bosqich
+#: kirishi (prompt, ma'lumot jadvali) SAQLANMAYDI: unda xodim va bank ma'lumoti bor - sinov
+#: har safar haqiqiy yo'ldan qayta o'tadi. Eksport `run_inproc` sinov to'plami shaklida.
+#:
+#: Faqat YANGI jadval: eski kod (`user_version` 4) faylni ochsa uni ko'rmaydi.
+_V5: tuple[str, ...] = (
+    """CREATE TABLE playground_cases (
+  id TEXT PRIMARY KEY,
+  created_at REAL NOT NULL,
+  created_by TEXT,
+  title TEXT NOT NULL,
+  area TEXT NOT NULL,              -- suite area (playground, bank_context, crm_context, ...)
+  needs TEXT NOT NULL,             -- none | owner
+  dialog TEXT NOT NULL,            -- JSON list of user questions, in order
+  expect TEXT NOT NULL,            -- JSON list of plain-sentence expectations
+  turn_id TEXT,                    -- source turn (turns.id), optional
+  stage TEXT,                      -- agent stage the case is about, optional
+  note TEXT,
+  archived INTEGER NOT NULL DEFAULT 0)""",
+    "CREATE INDEX playground_cases_created ON playground_cases(created_at)",
+)
+
 #: `MIGRATIONS[i]` fayl `user_version = i` dan `i + 1` ga o'tkazadi.
 #: FAQAT OXIRIGA QO'SHILADI - mavjud qadamni o'zgartirish uni allaqachon
 #: bajargan fayllarni sxemadan ajratib qo'yardi.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4, _V5)
 
 SCHEMA_VERSION = len(MIGRATIONS)
 

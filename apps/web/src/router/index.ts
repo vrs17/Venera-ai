@@ -47,6 +47,9 @@ const adminRoutes: RouteRecordRaw = {
     // Tizim xaritasi: butun Barno AI OS kanvasda + qadamni jonli sinash. Alohida (lazy)
     // bo'lak - kanvas va sinov kodi faqat shu sahifa ochilganda yuklanadi.
     { path: 'os-map', name: 'admin-osmap', component: () => import('../admin/pages/OsMapPage.vue') },
+    // Agent playground: agent bosqichlarining aniq kirishi, tahrirlab qayta ishga tushirish va
+    // modellarni solishtirish (`?turn=<id>` - savol sahifasidagi "Playground'da ochish").
+    { path: 'playground', name: 'admin-playground', component: () => import('../admin/pages/PlaygroundPage.vue') },
   ],
 }
 

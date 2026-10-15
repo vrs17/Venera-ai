@@ -39,6 +39,16 @@ import type {
   UserQuery,
 } from './types'
 import type { OsMapData, ProbeResult } from './osmap/types'
+import type {
+  PgCase,
+  PgCaseBody,
+  PgInput,
+  PgPromptBody,
+  PgRunBody,
+  PgRunResponse,
+  PgStatus,
+  PgTurn,
+} from './playground/types'
 
 const BASE = '/api/v1/admin'
 
@@ -231,4 +241,39 @@ export function searchAdmin(q: string, signal?: AbortSignal): Promise<AdminSearc
 /** Arzon so'rov: menyudagi "yangi xabarlar" nishoni uchun davriy chaqiriladi. */
 export function getAdminMe(signal?: AbortSignal): Promise<AdminMe> {
   return get<AdminMe>('/me', undefined, signal)
+}
+
+/* ---- Agent playground (agent bosqichlari, modellarni solishtirish, sinovlar) ---- */
+
+export function getPlaygroundStatus(signal?: AbortSignal): Promise<PgStatus> {
+  return get<PgStatus>('/playground/status', undefined, signal)
+}
+
+export function getPlaygroundTurn(id: string, signal?: AbortSignal): Promise<PgTurn> {
+  return get<PgTurn>(`/playground/turns/${seg(id)}`, undefined, signal)
+}
+
+export function buildPlaygroundPrompt(body: PgPromptBody): Promise<{ stage: string; input: PgInput }> {
+  return send<{ stage: string; input: PgInput }>('POST', '/playground/prompt', body)
+}
+
+/** Bitta bosqich (va ixtiyoriy ikkinchi model). Pullik - `confirm_cost` sahifadagi tasdiqdan keyin. */
+export function runPlayground(body: PgRunBody): Promise<PgRunResponse> {
+  return send<PgRunResponse>('POST', '/playground/run', body)
+}
+
+export function listPlaygroundCases(signal?: AbortSignal): Promise<{ items: PgCase[] }> {
+  return get<{ items: PgCase[] }>('/playground/cases', undefined, signal)
+}
+
+export function savePlaygroundCase(body: PgCaseBody): Promise<PgCase> {
+  return send<PgCase>('POST', '/playground/cases', body)
+}
+
+export function deletePlaygroundCase(id: string): Promise<{ id: string; archived: boolean }> {
+  return send<{ id: string; archived: boolean }>('DELETE', `/playground/cases/${seg(id)}`)
+}
+
+export function exportPlaygroundCases(): Promise<unknown> {
+  return get<unknown>('/playground/cases/export')
 }

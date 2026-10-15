@@ -12,7 +12,7 @@ from fastapi import APIRouter
 
 from . import actions, auth, chat, chats, connectors, pro, stt, telegram, tts
 from . import admin_users, reports
-from . import admin, admin_engines, admin_osmap, admin_probe
+from . import admin, admin_engines, admin_osmap, admin_playground, admin_probe
 from . import devices, meetings
 from . import assistant_extras
 
@@ -34,6 +34,9 @@ router.include_router(admin_engines.router)
 # EMAS) va qadamlarni jonli serverda AYNI kod bilan sinash (`admin_probe.py`).
 router.include_router(admin_osmap.router)
 router.include_router(admin_probe.router)
+# "Agent playground": agent bosqichlarining aniq kirishi, tahrirlab qayta ishga tushirish,
+# modellarni solishtirish va regressiya sinovlari (`admin_playground.py`).
+router.include_router(admin_playground.router)
 # Barno xotirasi va platforma kalitlari - yuqoridagi xizmat ustidan proksi
 # (`assistant_extras.py`). `/connectors` dan ALOHIDA: u yerda odamning
 # HRM/CRM login tokenlari.
