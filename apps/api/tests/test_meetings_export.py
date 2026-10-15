@@ -285,7 +285,10 @@ def test_har_format_har_tilda(client, auth, ready, _isolated_meetings, fmt, lang
     elif fmt == "docx":
         paragraphs, tables = docx_text(response.content)
         headings = [text for style, text in paragraphs if style.startswith("Heading")]
-        assert tasks in headings and decisions in headings and mindmap in headings and transcript in headings
+        assert tasks in headings and mindmap in headings and transcript in headings
+        # Qarorlar "Qisqa xulosa" kartasida (har fakt bir marta) - alohida bo'lim emas.
+        # Karta XULOSA tilida (bu yerda o'zbekcha) - yorlig'i "Qarorlar:".
+        assert decisions not in headings and ("Normal", "Qarorlar:") in paragraphs
         assert tables and tables[0][0][2] == owner
     else:
         facts = pdf_facts(response.content)
@@ -316,14 +319,16 @@ def test_docx_tarkibi_tartib_jadval_crm_xarita(client, auth, ready, _isolated_me
     assert meta[2] == "Ishtirokchilar: Aziz, Dilnoza, 3-ishtirokchi"
     assert meta[3] == "Xulosa turi: Umumiy yig'ilish"
     headings = [text for style, text in paragraphs if style == "Heading 1"]
-    # "Qisqa xulosa" BIRINCHI; keyin shablon tartibi (`CORE_LAYOUT`), bo'sh bo'limlar tushib qoladi.
-    # "Qisqacha" va "Asosiy fikrlar" yo'q: "Qisqa xulosa" ularni to'liq takrorlaydi (2 gap, 1 fikr).
-    # "Ochiq savollar" yo'q: yagona savol "Hal qilinmagan masalalar" da sababi bilan bor (takrorlanmaydi);
-    # iqtiboslar va ishtirokchilar faolligi - eksportning o'z nomlari.
-    assert headings == ["Qisqa xulosa", "Vazifalar", "Qarorlar", "Hal qilinmagan masalalar", "Mavzular",
-                        "Xavflar", "Raqamlar", "Sanalar va muddatlar",
-                        "Keyingi qadamlar", "Keyingi yig'ilish", "Iqtiboslar", "Ishtirokchilar faolligi",
-                        "Kalit so'zlar", "Kayfiyat", "Aqliy xarita", "Transkript"]
+    # "Qisqa xulosa" BIRINCHI; keyin "Batafsil" - faqat kartada YO'Q narsa (ega qarori 2026-10-15):
+    # - "Qisqacha" bor: kartada uning faqat 1-gapi; "Asosiy fikrlar" yo'q - yagona fikr kartada;
+    # - qarorlar, ochiq savol, "Hal qilinmagan masalalar" yo'q - kartada o'z holati bilan;
+    # - "Iqtiboslar" yo'q: «Relizni boshqa surmaymiz» - xuddi shu qatordagi "Reliz boshqa surilmaydi"
+    #   fikri (`compact` birlashtirdi);
+    # - 1 daqiqalik yig'ilish: "Mavzular" oxirida; kalit so'z, kayfiyat, faollik - bitta xira qator.
+    assert headings == ["Qisqa xulosa", "Qisqacha", "Vazifalar", "Xavflar", "Raqamlar", "Sanalar va muddatlar",
+                        "Keyingi qadamlar", "Keyingi yig'ilish", "Mavzular", "Aqliy xarita", "Transkript"]
+    assert "Kayfiyat: ijobiy · Kalit so'zlar: reliz, test, byudjet · Faollik: Aziz 45%, Dilnoza 40%, " \
+           "3-ishtirokchi 15%" in [text for _, text in paragraphs]
     table = tables[0]
     assert table[0] == ["№", "Vazifa", "Mas'ul", "Muddat", "Holat", "CRM"]
     body = {row[1]: row for row in table[1:]}
@@ -333,12 +338,14 @@ def test_docx_tarkibi_tartib_jadval_crm_xarita(client, auth, ready, _isolated_me
                                                             "ochiq\n⚠ aniqlashtirish kerak", ""]
     assert body["Buxgalteriyadan byudjetni so'rash"][2:] == ["Javlon", "keyingi hafta", "✓ bajarildi", ""]
     texts = [text for _, text in paragraphs]
-    assert "Reliz 17-oktyabr kuni chiqariladi [yakuniy] (00:14)" in texts
-    assert "Push-bildirishnomalar keyingi versiyaga [taxminiy · ⚠ aniqlashtirish kerak] (00:30)" in texts
+    # Qarorlar va ochiq savol - faqat kartada (holat va "aniqlashtirish kerak" bilan), bir marta.
+    assert "Reliz 17-oktyabr kuni chiqariladi." in texts
+    assert "Push-bildirishnomalar keyingi versiyaga (taxminiy, aniqlashtirish kerak)." in texts
+    summary_part = texts[:texts.index("Aqliy xarita")]      # xarita - alohida ko'rinish, unda ham bor
+    assert sum("Reliz 17-oktyabr kuni chiqariladi" in x for x in summary_part) == 1
+    assert "Reklama byudjeti qancha bo'ladi?" in texts and not any("javob berilmagan" in x for x in texts)
     assert "Apple ko'rigi kechikishi mumkin [o'rta] → Arizani dushanbagacha yuborish (00:40)" in texts
     assert "15 mln so'm — reklama uchun taxminiy byudjet" in texts
-    assert "Aziz — nutq ulushi 45%: Reliz sanasini taklif qildi" in texts
-    assert "Reklama byudjeti qancha bo'ladi? — javob berilmagan (00:50)" in texts
     # Aqliy xarita: ildiz - sarlavha, shoxlar - mavzular (+ natija), qarorlar, vazifalar, savollar.
     at = texts.index("Aqliy xarita")
     tree = paragraphs[at + 1:texts.index("Transkript")]
@@ -403,7 +410,9 @@ def test_md_va_txt_shakli(client, auth, ready, _isolated_meetings):
     assert "- **Mobil ilova relizi bo'yicha haftalik yig'ilish**\n  - **Reliz sanasi (qaror qabul qilindi)**\n" \
            "    - Reliz 17-oktyabr kuni\n" in md
     assert "### Reliz sanasi\n_00:00–00:22 · qaror qabul qilindi_\n" in md
-    assert "> «Relizni boshqa surmaymiz» — Aziz (00:14)" in md
+    # Iqtibos shu qatordagi asosiy fikr bilan bitta fakt - ikkinchi marta chiqmaydi (`compact`).
+    assert "«Relizni boshqa surmaymiz»" not in md
+    assert "Kayfiyat: ijobiy · Kalit so'zlar: reliz, test, byudjet · Faollik: Aziz 45%, Dilnoza 40%" in md
     assert md.rstrip().endswith("_") and "---\n_Barno AI · Yaratildi: " in md
     txt = get_export(client, auth, mid, "txt").text
     assert txt.startswith("Mobil ilova relizi bo'yicha haftalik yig'ilish\n=====")
@@ -764,7 +773,7 @@ def test_boshqaruv_belgili_spiker_nomi_docx(client, auth, ready, _isolated_meeti
     assert docx.status_code == 200, docx.text
     texts = [text for _, text in docx_text(docx.content)[0]]
     assert "Aziz: Testlar yozildi" in texts and "Dilnoza: Server yo'q" in texts
-    assert "«Relizni boshqa surmaymiz» — Aziz (00:14)" in texts
+    assert any("Faollik: Aziz 45%, Dilnoza 40%" in text for text in texts)
     for fmt in ("md", "txt") + (("pdf",) if FONTS else ()):
         assert get_export(client, auth, mid, fmt).status_code == 200, fmt
     # API orqali endi bunday ism saqlanmaydi.
@@ -824,7 +833,7 @@ def test_pdf_xatchop_va_sahifa_raqami(client, auth, ready, _isolated_meetings):
     pages = facts["pages"]
     assert f"1 / {pages}" in facts["text"] and f"{pages} / {pages}" in facts["text"]
     assert "Toshkent vaqti" in facts["text"]
-    assert "⚠ aniqlashtirish kerak" in facts["text"] and "✓ bajarildi" in facts["text"]
+    assert "(taxminiy, aniqlashtirish kerak)" in facts["text"] and "✓ bajarildi" in facts["text"]
 
 
 def test_birlik_transkript_birlashtirish():
@@ -854,8 +863,8 @@ def test_birlik_vaqt_formati_hujjat_boylab_bir_xil():
             template="general", content=content, segments=segments))
 
     short, long = text(600), text(3700)
-    assert "Reliz 17-oktyabr kuni chiqariladi [yakuniy] (00:14)" in short and "[00:14] Salom" in short
-    assert "chiqariladi [yakuniy] (00:00:14)" in long and "[00:00:14] Salom" in long and "(00:14)" not in long
+    assert "Apple ko'rigi kechikishi mumkin" in short and "(00:40)" in short and "[00:14] Salom" in short
+    assert "(00:00:40)" in long and "[00:00:14] Salom" in long and "(00:14)" not in long and "(00:40)" not in long
 
 
 def test_birlik_ochiq_savol_takrorlanmaydi():
@@ -897,7 +906,7 @@ BRIEF_UZ = """**Mobil ilova relizi bo'yicha haftalik yig'ilish**
 
 **Maqsad:** Reliz sanasi va mas'ullarni kelishib olish.
 
-**Qisqacha:** Aziz va Dilnoza mobil ilovaning 1.2 versiyasi relizini muhokama qildi. Reliz 17-oktyabrga belgilandi, testlar seshanbagacha yakunlanadi.
+**Qisqacha:** Aziz va Dilnoza mobil ilovaning 1.2 versiyasi relizini muhokama qildi.
 
 **Asosiy fikr:**
 - Reliz boshqa surilmaydi.
@@ -945,8 +954,7 @@ def test_qisqa_xulosa_yolgiz_docx_va_pdf(client, auth, ready, _isolated_meetings
                               ("Normal", "9-oktabr 2026 (juma), 11:00 · 1 daq 4 s · 3 ishtirokchi"),
                               ("Normal", "Maqsad: Reliz sanasi va mas'ullarni kelishib olish."),
                               ("Normal", "Qisqacha: 1-ishtirokchi va 2-ishtirokchi mobil ilovaning 1.2 versiyasi "
-                                         "relizini muhokama qildi. Reliz 17-oktyabrga belgilandi, testlar "
-                                         "seshanbagacha yakunlanadi.")]
+                                         "relizini muhokama qildi.")]
     at = paragraphs.index(("Normal", "Vazifalar:"))
     # Ismsiz spiker - "2-ishtirokchi" (foydalanuvchi namunasi: "Mas'ul: 2-ishtirokchi").
     assert paragraphs[at + 1] == ("List Bullet", "Test hisobotini tayyorlash. Mas'ul: 2-ishtirokchi. "
@@ -973,7 +981,7 @@ def test_har_eksport_qisqa_xulosa_bilan_boshlanadi(client, auth, ready, _isolate
     if fmt == "docx":
         paragraphs, _ = docx_text(response.content)
         headings = [text for style, text in paragraphs if style == "Heading 1"]
-        assert headings[:2] == ["Qisqa xulosa", "Vazifalar"]
+        assert headings[:3] == ["Qisqa xulosa", "Qisqacha", "Vazifalar"]
         at = paragraphs.index(("Heading 1", "Qisqa xulosa"))
         # Hujjat boshida sarlavha va sana bor - blok ularni takrorlamaydi.
         assert paragraphs[at + 1] == ("Normal", "Maqsad: Reliz sanasi va mas'ullarni kelishib olish.")
@@ -983,13 +991,15 @@ def test_har_eksport_qisqa_xulosa_bilan_boshlanadi(client, auth, ready, _isolate
     assert first < text.index("Maqsad:") < text.index("Vazifalar") < text.index("Aqliy xarita")
     assert text.count("9-oktabr 2026 (juma)") == 0 and "Sana:" in text
     if fmt == "md":
-        assert "## Qisqa xulosa\n\n**Maqsad:** Reliz sanasi" in text and "## Qisqacha" not in text
+        # Kartada "Qisqacha" ning 1-gapi; to'liq matn (3 gap) - "Batafsil" dagi "Qisqacha" bo'limida.
+        assert "## Qisqa xulosa\n\n**Maqsad:** Reliz sanasi" in text and "## Qisqacha" in text
         assert "**Vazifalar:**\n- Test hisobotini tayyorlash. Mas'ul: 2-ishtirokchi. Muddat: 14-oktabr.\n" in text
 
 
 def test_qisqa_xulosa_uzun_xulosani_qisqartiradi_va_bolimni_saqlaydi():
-    """Eski xulosa (umumiy xulosa 3-5 gap, 8 ta fikr): blokda 2 gap va 6 fikr, to'liq matn esa
-    "Qisqacha"/"Asosiy fikrlar" bo'limlarida qoladi (takrorlanmaydigan qismi yo'qolmasin)."""
+    """Eski xulosa (umumiy xulosa 3-5 gap, 8 ta fikr): kartada 1 gap va 3 fikr (1 daqiqalik yig'ilish),
+    to'liq matn "Qisqacha" da, kartaga sig'magan fikrlar (4-8) - "Asosiy fikrlar" da; kartadagi fikr
+    "Batafsil" da qayta chiqmaydi (ega qarori 2026-10-15, har fakt bir marta)."""
     content = rich_content("uz")
     content["overview"] = ("Birinchi gap 15 mln. so'm haqida. [S1] ikkinchi gapni aytdi! Uchinchi gap "
                            "ham bor. To'rtinchisi.")
@@ -998,12 +1008,15 @@ def test_qisqa_xulosa_uzun_xulosani_qisqartiradi_va_bolimni_saqlaydi():
     doc = export.build_document(title="T", recorded_at=0, duration_sec=60, speakers={}, lang="uz", now=0,
                                 parts=["brief", "summary"], template="general", content=content)
     text = export.render_text(doc)
-    assert "Qisqacha: Birinchi gap 15 mln. so'm haqida. 1-ishtirokchi ikkinchi gapni aytdi!\n" in text
+    assert "Qisqacha: Birinchi gap 15 mln. so'm haqida.\n" in text
     assert "\nQisqacha\n--------\nBirinchi gap 15 mln. so'm haqida. 1-ishtirokchi ikkinchi gapni aytdi! " \
            "Uchinchi gap ham bor. To'rtinchisi.\n" in text
     brief = text.split("Qisqa xulosa")[1].split("\nQisqacha\n")[0]
-    assert "- Fikr 6." in brief and "Fikr 7." not in brief
-    assert "\nAsosiy fikrlar\n" in text and "- Fikr 8." in text
+    assert "- Fikr 3." in brief and "Fikr 4." not in brief
+    details = text.split("\nAsosiy fikrlar\n")[1]
+    assert "- Fikr 4." in details and "- Fikr 8." in details and "Fikr 3." not in details
+    # Uzun yig'ilishda kartada ko'proq fikr: 45 daqiqagacha 4 ta, undan uzunida 5 ta.
+    assert [export.brief_points(s) for s in (0, 60, 900, 901, 2700, 2701, 7200)] == [3, 3, 3, 4, 4, 5, 5]
     # Faqat `summary` - avvalgidek, blok va qisqartirish yo'q.
     only = export.render_text(export.build_document(
         title="T", recorded_at=0, duration_sec=60, speakers={}, lang="uz", now=0, parts=["summary"],
@@ -1052,14 +1065,15 @@ def test_birlik_qisqa_xulosa_tillar_va_shakllar():
     assert export.brief_moment(moment, "ru") == "9 октября 2025 (четверг), 13:53"
     assert export.brief_moment(moment, "en") == "October 9, 2025 (Thursday), 13:53"
     assert export.brief_meta(0, 0, 0, "uz") == "" and export.brief_meta(0, 65, 2, "en") == "1 min 5 s · 2 participants"
-    assert export.first_sentences("Bir. Ikki? Uch.") == "Bir. Ikki?"
+    assert export.first_sentences("Bir. Ikki? Uch.") == "Bir."
+    assert export.first_sentences("Bir. Ikki? Uch.", 2) == "Bir. Ikki?"
     assert export.first_sentences("Narx 15 mln. so'm, versiya 1.2 bo'ladi. Keyin.", 1) == \
         "Narx 15 mln. so'm, versiya 1.2 bo'ladi."
 
 
 def test_qisqa_xulosa_ochiq_savollarni_takrorlatmaydi():
-    """Blokda hamma ochiq savol bor - to'liq hujjatdagi "Ochiq savollar" bo'limi faqat vaqt qo'shardi
-    (qisqa qo'ng'iroqda ikki marta so'zma-so'z). Qarorlar bo'limi esa (holat, shart, sabab) qoladi."""
+    """Blokda hamma ochiq savol va qaror bor (qaror sharti ham) - to'liq hujjatda ular qayta chiqmaydi.
+    Faqat bekor qilingan qaror (kartada yo'q) "Qarorlar" bo'limida qoladi."""
     content = {**rich_content("uz"), "followUps": []}
 
     def headings(parts: list[str]) -> list[str]:
@@ -1069,5 +1083,11 @@ def test_qisqa_xulosa_ochiq_savollarni_takrorlatmaydi():
 
     assert "Ochiq savollar" in headings(["summary"])
     with_brief = headings(["brief", "summary"])
-    assert "Ochiq savollar" not in with_brief and "Qarorlar" in with_brief
-    assert export.brief_covers(content, {}, "uz") >= {"openQuestions", "keyPoints"}
+    assert "Ochiq savollar" not in with_brief and "Qarorlar" not in with_brief
+    assert export.brief_covers(content, {}, "uz") == {"openQuestions", "decisions", "followUps"}
+    content["decisions"] = content["decisions"] + [{"id": "D3", "text": "Eski narx", "status": "reversed"}]
+    assert "Qarorlar" in headings(["brief", "summary"])
+    doc = export.build_document(title="T", recorded_at=0, duration_sec=60, speakers={}, lang="uz", now=0,
+                                parts=["brief", "summary"], template="general", content=content)
+    text = export.render_text(doc)
+    assert "- Eski narx [bekor qilingan]" in text and text.count("Reliz 17-oktyabr kuni chiqariladi") == 1

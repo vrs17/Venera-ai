@@ -23,7 +23,12 @@ from . import dates, templates
 
 #: meeting-3 (2026-10-10): "Qisqa xulosa" uchun - 3-6 ta qisqa asosiy fikr HAR shablonda (qisqa
 #: qo'ng'iroqda ham), umumiy xulosa 1-2 gap, maqsad, tabiiy va ixcham til.
-PROMPT_VERSION = "meeting-3"
+#: meeting-4 (2026-10-15, ega qarori "har fakt bir marta"): fakt BITTA ro'yxatda (vazifa > qaror >
+#: savol > fikr > xavf > qadam > shablon), bir narsa haqidagi raqamlar bir-biriga mos, umumiy xulosa
+#: iloji bo'lsa 1 gap - bular faqat bir o'tishda (`BRIEF_RULES`: map bo'lagi v3 da har belgi uchun
+#: transkript joyini yo'qotadi; uzun yo'lda takrorni kod - `Merger` va `compact` - yig'adi). Kompaniya
+#: nomi to'g'ri (BRB-Tech) - hamma yo'lda.
+PROMPT_VERSION = "meeting-4"
 
 LANGUAGE_NAMES = {"uz": "Uzbek (Latin script)", "ru": "Russian", "en": "English"}
 
@@ -125,7 +130,7 @@ SYSTEM_RULES = """You extract a grounded, structured summary from a meeting tran
 11. SECTIONS. "topics" = chapters in time order that together cover the whole transcript without gaps (roughly one per 5-10 minutes); a topic's "summary" may name its decision in a few words. "keyPoints" = 3-6 takeaways someone who missed the meeting must know (required, a short call too), one short sentence each. "nextSteps" = forward steps that are NOT a person's commitment (a process, waiting on an outside party); anything a person or team will do is an action item. Every amount, price, percentage, count and deadline that matters goes to "numbers"/"dates" even if it also appears in a decision or an action item. Do not repeat an item within one list.
 12. PARTICIPANT NAMES. "suggestedName" only from (a) the speaker's own self-introduction (men Azizman, mening ismim ..., меня зовут ..., это Бобур, I'm ...) or (b) a name used to ADDRESS someone ("Aziz aka, ...?"). An addressed name belongs to the speaker who ANSWERS in the next 1-2 lines, never to the speaker who said the name. Cite that line in "nameEvidence". Drop honorifics (aka, opa, -jon, -xon, domla, ustoz) in suggestedName; keep them in owner.name. "role" only when stated (job title, department, mijoz/client), never from seniority or tone. "contribution" = one sentence on that speaker's main position or commitments, from their own lines.
 13. STYLE AND PRIVACY. Write short, plain, natural sentences, no bureaucratic or translated-sounding phrases. No filler ("The meeting discussed..."), no advice, no judgement of people, no guesses about gender or age. Leave out salary, health, family and disciplinary details unless the template emphasis explicitly allows them.
-14. LANGUAGE. Write all values in the output language; Uzbek uses Latin script (o', g', sh, ch) - never Cyrillic and never Turkish letters (ş, ç, ğ, ı). Quotes stay original. Technical terms may stay as spoken.
+14. LANGUAGE. Write all values in the output language; Uzbek uses Latin script (o', g', sh, ch) - never Cyrillic and never Turkish letters (ş, ç, ğ, ı). Quotes stay original. Technical terms may stay as spoken. Spell the company name exactly "BRB-Tech" (speech recognition may give BRVtek, BRB tek, Bi-Ar-Bi tek).
 15. SHAPE. Fill the keys in the given order: the item lists first, "title" and "overview" LAST, written from the items you listed. "overview" is 1-2 short sentences: what was discussed and the main outcome. Empty sections are []. Never write "not mentioned". Return ONLY one JSON object in exactly the given shape, with no markdown fences and no comments. "coverage" echoes the first and last line ids you read.
 
 EXAMPLE (illustration only; never copy its content):
@@ -277,7 +282,8 @@ def running_block(items: list[dict[str, Any]], decisions: list[dict[str, Any]] |
 #: "Qisqa xulosa" qoidalari - FAQAT bir o'tishli xulosada (extract). NEGA `SYSTEM_RULES` da emas:
 #: u map bo'lagi promptida ham bor, v3 da esa har belgi bo'lak transkriptidan joy oladi; map
 #: bo'lagida umumiy xulosa ham, maqsad ham yo'q.
-BRIEF_RULES = """16. SHORT SUMMARY (shared as is, so write it like a sharp human note-taker, in natural word order). "keyPoints": 3-6, each one sentence of at most 20 words with a distinct fact, agreement or idea; a proposal nobody agreed to yet starts with "Idea:" in the output language (Uzbek "G'oya:", Russian "Идея:"). "overview": never more than 2 sentences. "purpose": why the meeting was held, one short phrase (Uzbek: "... muhokama qilish", Russian: "обсудить ..."), as stated or clearly implied; null only if it cannot be told."""
+BRIEF_RULES = """16. SHORT SUMMARY (shared as is, so write it like a sharp human note-taker, in natural word order). "keyPoints": 3-6, each one sentence of at most 20 words with a distinct fact, agreement or idea; a proposal nobody agreed to yet starts with "Idea:" in the output language (Uzbek "G'oya:", Russian "Идея:"). "overview": never more than 2 sentences; prefer one. "purpose": why the meeting was held, one short phrase (Uzbek: "... muhokama qilish", Russian: "обсудить ..."), as stated or clearly implied; null only if it cannot be told.
+17. ONE FACT, ONE PLACE. Write each fact in exactly one list, the most specific one: an action item, else a decision, else an open question, else a key point, else a risk, else a next step, else a template section. Never restate it in another list or in a topic's keyPoints; a section may stay []. Template sections (ideas, pros, cons, ...) hold only what is not already an action item or a decision. When one thing is described with different numbers, state it once with numbers that agree (Uzbek: "46 ta hujjatdan 16 tasi ishlaydi, 30 tasi ishlamaydi")."""
 
 
 def extract_system(template_id: str) -> str:

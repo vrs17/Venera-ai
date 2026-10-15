@@ -367,10 +367,32 @@ _BRIEF_TEAM = {"uz": "Jamoa", "ru": "Команда", "en": "Team"}
 _BRIEF_CHECK = {"uz": "aniqlashtirish kerak", "ru": "требует уточнения", "en": "needs confirmation"}
 #: Qisqa davomiylik ("1 daq 53 s"): bir qatorli sarlavha ostida "1 daqiqa 53 soniya" cho'zilib ketadi.
 _BRIEF_DURATION = {"uz": ("soat", "daq", "s"), "ru": ("ч", "мин", "с"), "en": ("h", "min", "s")}
-#: "Qisqacha" - ko'pi bilan shuncha gap (eski xulosalarda umumiy xulosa 3-5 gap edi).
-BRIEF_SENTENCES = 2
-#: "Asosiy fikrlar" - ko'pi bilan shuncha band (uzun yig'ilishda bo'lak fikrlari 30 tagacha).
-BRIEF_POINTS = 6
+#: "Qisqacha" - BITTA gap (ega qarori 2026-10-15, "30 soniyada" kartasi: maqsad va natija bir jumla).
+BRIEF_SENTENCES = 1
+#: "Asosiy fikrlar" kartada - yig'ilish uzunligiga qarab (ega qarori 2026-10-15): 15 daqiqagacha 3 ta,
+#: 45 daqiqagacha 4 ta, undan uzunida 5 ta. Qolgani "Batafsil" da. Mobil `briefPointCount` bilan bir xil.
+BRIEF_POINTS_BY_MINUTES = ((15, 3), (45, 4))
+BRIEF_POINTS_LONG = 5
+
+
+def brief_points(duration_sec: Any) -> int:
+    """Kartadagi asosiy fikrlar soni. Davomiylik noma'lum - eng qisqasi (3)."""
+    try:
+        minutes = float(duration_sec or 0) / 60
+    except (TypeError, ValueError):
+        minutes = 0.0
+    if minutes <= 0:
+        return BRIEF_POINTS_BY_MINUTES[0][1]
+    for limit, count in BRIEF_POINTS_BY_MINUTES:
+        if minutes <= limit:
+            return count
+    return BRIEF_POINTS_LONG
+
+
+#: Qisqa yig'ilishda (shundan qisqa, daqiqa) "Mavzular" oxirga: 8 daqiqalik suhbatning boblari kerak emas.
+SHORT_MEETING_MIN = 15
+#: "Batafsil" o'rniga bitta xira qator bo'ladigan bo'limlar (alohida karta/bo'lim emas).
+META_SECTIONS = ("participants", "keywords", "sentiment")
 
 _OUTCOME = {
     "uz": {"decided": "qaror qabul qilindi", "open": "ochiq", "info": "ma'lumot"},
@@ -882,7 +904,8 @@ def _sentence(text: str, end: str = ".") -> str:
 
 
 def brief_block(content: dict[str, Any], speakers: dict[str, dict[str, Any]], lang: str,
-                actions: list[dict[str, Any]] | None, *, title: str = "", meta: str = "") -> dict[str, Any]:
+                actions: list[dict[str, Any]] | None, *, title: str = "", meta: str = "",
+                duration_sec: Any = None) -> dict[str, Any]:
     """"Qisqa xulosa" bloki. `lang` - XULOSA tili (yorliqlar ham, "Mas'ul/Muddat" ham, "2-ishtirokchi"
     ham): blok bitta tilda o'qilsin va ulashilsin ("Maqsad: Обсудить..." aralashmasi chiqmasin).
     Bo'sh band tushib qoladi. `actions` - jadval bilan BIR XIL vazifalar (asosiy xulosada jonli: odam
@@ -916,7 +939,7 @@ def brief_block(content: dict[str, Any], speakers: dict[str, dict[str, Any]], la
                   if k.get("text")]
     if not points:
         points = [t(topic.get("summary")) or t(topic.get("title")) for topic in content.get("topics") or []]
-    points = [_sentence(p) for p in points if p][:BRIEF_POINTS]
+    points = [_sentence(p) for p in points if p][:brief_points(_duration(content, duration_sec))]
     if points:
         items.append({"label": name("keyPoints", len(points)), "list": points})
     statuses = _STATUS.get(lang, _STATUS["uz"])
@@ -928,7 +951,11 @@ def brief_block(content: dict[str, Any], speakers: dict[str, dict[str, Any]], la
             continue
         # Taxminiy/shartli yoki tasdiqlanmagan qaror yakuniydek o'qilmasin: belgilar BITTA qavsda,
         # gap ICHIDA, nuqtadan oldin - "Narx 15 mln so'm (taxminiy, aniqlashtirish kerak)."
-        tags = [statuses.get(status, status) if status != "final" else "",
+        # Shart matni ham kartada (vazifadagidek): "Batafsil" da qarorlar endi yo'q - shart yo'qolmasin.
+        # Shart matni bor bo'lsa "shartli" so'zi ortiqcha ("shartli, shart: ...").
+        cond = t(d.get("condition"))
+        word = statuses.get(status, status) if status != "final" and not (status == "conditional" and cond) else ""
+        tags = [word, f"{_CONDITION.get(lang, 'shart')}: {cond}" if cond else "",
                 check_word if d.get("needsConfirmation") or d.get("verified") is False else ""]
         tags = [x for x in tags if x]
         decisions.append(f"{_TRAIL.sub('', text)} ({', '.join(tags)})." if tags else _sentence(text))
@@ -956,22 +983,77 @@ def brief_block(content: dict[str, Any], speakers: dict[str, dict[str, Any]], la
     return {"kind": "brief", "title": one_line(title, TITLE_CHARS), "meta": meta, "items": items}
 
 
+def _duration(content: dict[str, Any], duration_sec: Any = None) -> float:
+    """Yig'ilish davomiyligi (soniya): berilgani, bo'lmasa xulosadagi `meeting.durationSec`."""
+    for value in (duration_sec, (content.get("meeting") or {}).get("durationSec")):
+        try:
+            if value and float(value) > 0:
+                return float(value)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
+
+
 def brief_covers(content: dict[str, Any], speakers: dict[str, dict[str, Any]], lang: str) -> set[str]:
-    """To'liq hujjatdagi qaysi xulosa bo'limlarini "Qisqa xulosa" TO'LIQ takrorlaydi: umumiy xulosa
-    (qisqartirilmagan bo'lsa), asosiy fikrlar (hammasi sig'gan bo'lsa) va ochiq savollar (blokda
-    hammasi bor, bo'lim faqat vaqt qo'shardi - asosiy fikrlardagidek). NEGA: qisqa qo'ng'iroqda hujjat
-    boshidagi blok va undagi "Qisqacha"/"Asosiy fikrlar"/"Ochiq savollar" bo'limlari so'zma-so'z bir
-    xil edi. Qisqartirilgan (eski 3-5 gaplik) xulosa va 6 tadan ko'p fikr - bo'limda to'liq qoladi;
-    qarorlar bo'limi holat, shart va sababni ham ko'rsatadi - u doim qoladi. Mobil `SummaryView`
-    "Batafsil" ham aynan shu qoidani ishlatadi (`briefCovers`)."""
-    covered: set[str] = {"openQuestions"}
+    """To'liq hujjatdagi qaysi bo'limlarni "Qisqa xulosa" kartasi TO'LIQ beradi - ular "Batafsil" da
+    qayta chiqmaydi (ega qarori 2026-10-15, "har fakt bir marta"):
+
+    - umumiy xulosa (bitta gapdan iborat bo'lsa) va maqsad - kartada;
+    - qarorlar, ochiq savollar - kartada hammasi (bekor qilingan qaror - `details_content` da qoladi);
+    - "Hal qilinmagan masalalar" - `compact` vazifa/qaror/savolga tegishlisini olib tashlagan,
+      kartadagi band o'z holati bilan ("Mas'ul: belgilanmagan", "taxminiy") turibdi.
+
+    Asosiy fikrlar bu ro'yxatda YO'Q: kartaga sig'maganlari (`brief_points` dan keyingilari)
+    "Batafsil" da qoladi - `details_content`. Mobil `briefCovers` aynan shu qoida."""
+    covered: set[str] = {"openQuestions", "followUps"}
+    if not any(d.get("status") == "reversed" for d in content.get("decisions") or []):
+        covered.add("decisions")
     overview = one_line(render_tokens(content.get("overview"), speakers, lang))
     if not overview or first_sentences(overview) == overview:
         covered.add("overview")
-    points = [k for k in content.get("keyPoints") or [] if k.get("text")]
-    if points and len(points) <= BRIEF_POINTS:
-        covered.add("keyPoints")
     return covered
+
+
+def details_content(content: dict[str, Any], duration_sec: Any = None) -> dict[str, Any]:
+    """"Batafsil" uchun mazmun: kartadagi asosiy fikrlar olib tashlangan, bekor qilingan qarorlar
+    qoladi (kartada ular yo'q - "Narx 15 mln edi, bekor qilindi" yo'qolmasin)."""
+    points = [k for k in content.get("keyPoints") or [] if k.get("text")]
+    shown = brief_points(_duration(content, duration_sec)) if points else 0
+    reversed_ = [d for d in content.get("decisions") or [] if d.get("status") == "reversed"]
+    # Maqsad kartada - "Qisqacha" bo'limida (to'liq umumiy xulosa) qayta yozilmaydi.
+    return {**content, "keyPoints": points[shown:], "decisions": reversed_, "purpose": None}
+
+
+def details_order(keys: list[str], duration_sec: Any) -> list[str]:
+    """Qisqa yig'ilishda "Mavzular" oxirga (8 daqiqalik suhbatning boblari kam foyda beradi)."""
+    minutes = float(duration_sec or 0) / 60
+    if "topics" in keys and 0 < minutes <= SHORT_MEETING_MIN:
+        keys = [k for k in keys if k != "topics"] + ["topics"]
+    return keys
+
+
+def meta_line(content: dict[str, Any], speakers: dict[str, dict[str, Any]], lang: str) -> str:
+    """Kayfiyat, kalit so'zlar va faollik - BITTA xira qator (alohida bo'lim emas)."""
+    parts = []
+    s = content.get("sentiment") or {}
+    mood = _SENTIMENT.get(lang, _SENTIMENT["uz"]).get(s.get("overall") or "", s.get("overall") or "")
+    if mood:
+        parts.append(f"{SECTION_TITLES['sentiment'].get(lang, 'Kayfiyat')}: {one_line(mood).lower()}")
+    words = [one_line(w) for w in content.get("keywords") or [] if w]
+    if words:
+        parts.append(f"{SECTION_TITLES['keywords'].get(lang, 'Kalit so`zlar')}: {', '.join(words)}")
+    # Birlashtirilgan spiker (`_map_merged`: S3 -> S1) ulushi o'zinikiga qo'shiladi - "Aziz 45%, Aziz 15%" emas.
+    talk: dict[str, float] = {}
+    for p in content.get("participants") or []:
+        if p.get("speaker") and p.get("talkShare"):
+            talk[p["speaker"]] = talk.get(p["speaker"], 0.0) + float(p["talkShare"])
+    shares = [f"{one_line(speaker_name(sid, speakers, lang))} {round(share * 100)}%" for sid, share in talk.items()]
+    if len(shares) > 1:
+        parts.append(f"{_ACTIVITY.get(lang, _ACTIVITY['uz'])}: {', '.join(shares)}")
+    return " · ".join(parts)
+
+
+_ACTIVITY = {"uz": "Faollik", "ru": "Активность", "en": "Talk share"}
 
 
 def brief_meta(recorded_at: float, duration_sec: float, people: int, lang: str) -> str:
@@ -1056,27 +1138,37 @@ def build_document(*, title: str, recorded_at: float, duration_sec: float, speak
             brief_title = own or one_line(render_tokens(content.get("title"), speakers, brief_lang), TITLE_CHARS) \
                 or doc.title
             doc.blocks.append(brief_block(content, speakers, brief_lang, brief_actions, title=brief_title,
-                                          meta=brief_meta(recorded_at, duration_sec, count, brief_lang)))
+                                          meta=brief_meta(recorded_at, duration_sec, count, brief_lang),
+                                          duration_sec=duration_sec))
         else:
             # To'liq hujjatda sarlavha va sana/davomiylik/ishtirokchilar - hujjat boshida bor.
             doc.blocks.append({"kind": "h2", "text": label("brief", lang)})
-            doc.blocks.append(brief_block(content, speakers, brief_lang, brief_actions))
+            doc.blocks.append(brief_block(content, speakers, brief_lang, brief_actions, duration_sec=duration_sec))
 
     table_done = False
     if "summary" in parts and content:
         keys = [entry["key"] for entry in template_layout(template or "general", lang)]
         sections = _without_repeated_questions(content) if "followUps" in keys else content
-        repeated = brief_covers(content, speakers, lang) if "brief" in parts else set()
+        repeated: set[str] = set()
+        if "brief" in parts:
+            # "Batafsil": faqat kartada YO'Q narsa (har fakt bir marta) - ilova bilan bir xil.
+            repeated = brief_covers(content, speakers, lang)
+            sections = details_content(sections, duration_sec)
+            keys = details_order(keys, duration_sec)
         for key in keys:
             if key == "actionItems" and "actions" not in parts:
                 continue
-            if key in repeated:
+            if key in repeated or key in META_SECTIONS:
                 continue
             blocks = _section(key, sections, speakers, lang, actions, stamp)
             if blocks:
                 doc.blocks.append({"kind": "h2", "text": section_title(key, lang)})
                 doc.blocks += blocks
                 table_done = table_done or key == "actionItems"
+        # Kayfiyat, kalit so'zlar, faollik - alohida bo'lim emas, xulosa oxirida bitta xira qator.
+        line = meta_line(content, speakers, lang)
+        if line:
+            doc.blocks.append({"kind": "muted", "text": line})
     if "actions" in parts and not table_done and actions:
         # Shablonda vazifalar bo'limi yo'q (yoki faqat `actions` so'ralgan) - jadval alohida bo'lim.
         doc.blocks.append({"kind": "h2", "text": section_title("actionItems", lang)})

@@ -306,7 +306,7 @@ def test_yozuvchi_takror_qarorlarni_birlashtiradi():
 
 
 def test_prompt_meeting_2_qoidalari():
-    assert prompts.PROMPT_VERSION == "meeting-3"
+    assert prompts.PROMPT_VERSION == "meeting-4"
     system = prompts.extract_system("general")
     for needle in ("6b. COMMITMENT FORMS", "-sin", "-aylik", "6c. NOT ACTION ITEMS", "volunteered", "assignedBy",
                    "PARTICIPANT NAMES", "ANSWERS in the next 1-2 lines", "concluding statement",

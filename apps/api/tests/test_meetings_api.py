@@ -31,7 +31,9 @@ ASK_FIELDS = {"id", "question", "answer", "citations", "followUps", "createdAt"}
 CONTENT_FIELDS = {"schemaVersion", "template", "language", "meeting", "title", "meetingType", "overview",
                   "purpose", "participants", "topics", "keyPoints", "decisions", "actionItems", "openQuestions",
                   "risks", "numbers", "dates", "nextSteps", "nextMeeting", "highlights", "userMarks", "keywords",
-                  "sentiment", "templateSections", "followUpMessage", "followUps", "quality"}
+                  "sentiment", "templateSections", "followUpMessage", "followUps", "quality",
+                  # Javob paytidagi ko'rinish belgisi (`compact`: har fakt bir marta) - bazada yo'q.
+                  "view"}
 
 
 @pytest.fixture
@@ -138,7 +140,7 @@ def test_javob_shakllari(client, auth, ready):
     summary = client.get(f"/api/v1/meetings/{mid}/summaries/{cards[0]['id']}", headers=auth).json()
     assert set(summary) == SUMMARY_FIELDS and set(summary["content"]) == CONTENT_FIELDS
     assert summary["layout"][0] == {"key": "overview", "title": "Qisqacha"}
-    assert summary["promptVersion"] == "meeting-3" and summary["model"] == "gemma4:31b"
+    assert summary["promptVersion"] == "meeting-4" and summary["model"] == "gemma4:31b"
     items = client.get(f"/api/v1/meetings/{mid}/action-items", headers=auth).json()["items"]
     assert set(items[0]) == ACTION_FIELDS and items[0]["summaryItemId"] == "A1"
     assert set(items[0]["owner"]) == {"speaker", "name", "kind"} and set(items[0]["due"]) == {"date", "time", "raw"}

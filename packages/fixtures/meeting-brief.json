@@ -1,5 +1,5 @@
 {
-  "_about": "\"Qisqa xulosa\" (meeting brief) umumiy namunasi. Server (apps/api tests/test_meetings_brief_golden.py: export.build_document parts=brief + render_text/render_markdown) va mobil ilova (apps/mobile __tests__/briefGolden.test.ts: buildBrief + briefToText/briefToMarkdown) AYNAN shu matnni berishi shart - ilovadagi Nusxa/Ulashish va yuklab olingan fayl so'zma-so'z bir xil bo'lsin. Matn o'zgarsa - ikkala tomon birga o'zgaradi.",
+  "_about": "\"Qisqa xulosa\" (meeting brief) umumiy namunasi. Server (apps/api tests/test_meetings_brief_golden.py: export.build_document parts=brief + render_text/render_markdown) va mobil ilova (apps/mobile __tests__/briefGolden.test.ts: buildBrief + briefToText/briefToMarkdown) AYNAN shu matnni berishi shart - ilovadagi Nusxa/Ulashish va yuklab olingan fayl so'zma-so'z bir xil bo'lsin. Matn o'zgarsa - ikkala tomon birga o'zgaradi. 2026-10-15 (ega qarori, \"har fakt bir marta\"): kartada asosiy fikrlar soni yig'ilish uzunligiga qarab (15 daqiqagacha 3, 45 gacha 4, uzunrog'ida 5), \"Qisqacha\" - bitta gap, qaror sharti qavs ichida.",
   "cases": [
     {
       "name": "egasi tasdiqlagan namuna (uz, qisqa qo'ng'iroq)",
@@ -91,8 +91,8 @@
           }
         ]
       },
-      "expectedMarkdown": "**Transkripsiya va CRM integratsiyasi muhokamasi**  \n10-oktabr 2026 (shanba), 12:37 · 1 daq 53 s · 2 ishtirokchi\n\n**Maqsad:** yangi transkripsiya va avtomatik vazifalar tizimining imkoniyatlarini muhokama qilish.\n\n**Qisqacha:** tizim suhbatni yozib, spikerlarga ajratib matnga aylantirishi, mazmunidan CRM'ga vazifa yaratishi va loyihalar bo'yicha kontekst to'plashi muhokama qilindi.\n\n**Asosiy fikrlar:**\n- Transkript spikerlar bo'yicha ajratib chiqariladi.\n- Suhbat mazmunidan CRM'ga vazifa yaratiladi, tizim loyihalar bo'yicha kontekst to'plab boradi.\n- G'oya: chatda yig'ilishdagi kelishuvga zid gap yozilsa, tizim ogohlantiradi va deadline'larni eslatadi.\n- Yozuv paytida \"Muhim\" belgisi bilan kerakli joyni belgilash va izoh qo'shish mumkin.\n- Ma'lumot manbalari (CRM, HRM va boshqalar) alohida yoqib-o'chiriladi.\n\n**Vazifa:**\n- Skriptni yuborish. Mas'ul: 2-ishtirokchi. Muddat belgilanmagan.\n\n**Ochiq savol:**\n- Suhbat paytida matn yozish (typing) imkoniyati qanday ishlaydi?\n",
-      "expectedText": "Transkripsiya va CRM integratsiyasi muhokamasi\n10-oktabr 2026 (shanba), 12:37 · 1 daq 53 s · 2 ishtirokchi\n\nMaqsad: yangi transkripsiya va avtomatik vazifalar tizimining imkoniyatlarini muhokama qilish.\n\nQisqacha: tizim suhbatni yozib, spikerlarga ajratib matnga aylantirishi, mazmunidan CRM'ga vazifa yaratishi va loyihalar bo'yicha kontekst to'plashi muhokama qilindi.\n\nAsosiy fikrlar:\n- Transkript spikerlar bo'yicha ajratib chiqariladi.\n- Suhbat mazmunidan CRM'ga vazifa yaratiladi, tizim loyihalar bo'yicha kontekst to'plab boradi.\n- G'oya: chatda yig'ilishdagi kelishuvga zid gap yozilsa, tizim ogohlantiradi va deadline'larni eslatadi.\n- Yozuv paytida \"Muhim\" belgisi bilan kerakli joyni belgilash va izoh qo'shish mumkin.\n- Ma'lumot manbalari (CRM, HRM va boshqalar) alohida yoqib-o'chiriladi.\n\nVazifa:\n- Skriptni yuborish. Mas'ul: 2-ishtirokchi. Muddat belgilanmagan.\n\nOchiq savol:\n- Suhbat paytida matn yozish (typing) imkoniyati qanday ishlaydi?\n"
+      "expectedMarkdown": "**Transkripsiya va CRM integratsiyasi muhokamasi**  \n10-oktabr 2026 (shanba), 12:37 · 1 daq 53 s · 2 ishtirokchi\n\n**Maqsad:** yangi transkripsiya va avtomatik vazifalar tizimining imkoniyatlarini muhokama qilish.\n\n**Qisqacha:** tizim suhbatni yozib, spikerlarga ajratib matnga aylantirishi, mazmunidan CRM'ga vazifa yaratishi va loyihalar bo'yicha kontekst to'plashi muhokama qilindi.\n\n**Asosiy fikrlar:**\n- Transkript spikerlar bo'yicha ajratib chiqariladi.\n- Suhbat mazmunidan CRM'ga vazifa yaratiladi, tizim loyihalar bo'yicha kontekst to'plab boradi.\n- G'oya: chatda yig'ilishdagi kelishuvga zid gap yozilsa, tizim ogohlantiradi va deadline'larni eslatadi.\n\n**Vazifa:**\n- Skriptni yuborish. Mas'ul: 2-ishtirokchi. Muddat belgilanmagan.\n\n**Ochiq savol:**\n- Suhbat paytida matn yozish (typing) imkoniyati qanday ishlaydi?\n",
+      "expectedText": "Transkripsiya va CRM integratsiyasi muhokamasi\n10-oktabr 2026 (shanba), 12:37 · 1 daq 53 s · 2 ishtirokchi\n\nMaqsad: yangi transkripsiya va avtomatik vazifalar tizimining imkoniyatlarini muhokama qilish.\n\nQisqacha: tizim suhbatni yozib, spikerlarga ajratib matnga aylantirishi, mazmunidan CRM'ga vazifa yaratishi va loyihalar bo'yicha kontekst to'plashi muhokama qilindi.\n\nAsosiy fikrlar:\n- Transkript spikerlar bo'yicha ajratib chiqariladi.\n- Suhbat mazmunidan CRM'ga vazifa yaratiladi, tizim loyihalar bo'yicha kontekst to'plab boradi.\n- G'oya: chatda yig'ilishdagi kelishuvga zid gap yozilsa, tizim ogohlantiradi va deadline'larni eslatadi.\n\nVazifa:\n- Skriptni yuborish. Mas'ul: 2-ishtirokchi. Muddat belgilanmagan.\n\nOchiq savol:\n- Suhbat paytida matn yozish (typing) imkoniyati qanday ishlaydi?\n"
     },
     {
       "name": "ruscha xulosa: qaror holatlari, vazifa shakllari, birlashtirilgan spiker",
@@ -155,7 +155,8 @@
             "status": "tentative",
             "needsConfirmation": true,
             "verified": null,
-            "start": 200.0
+            "start": 200.0,
+            "condition": "пока объём ниже плана"
           },
           {
             "id": "D3",
@@ -163,7 +164,8 @@
             "status": "conditional",
             "needsConfirmation": false,
             "verified": null,
-            "start": 300.0
+            "start": 300.0,
+            "condition": "если клиент подпишет до ноября"
           },
           {
             "id": "D4",
@@ -270,7 +272,7 @@
           }
         ]
       },
-      "expectedText": "Цены и отчёт с Азиз\n14 сентября 2026 (понедельник), 10:00 · 1 ч 5 мин · 2 участника\n\nЦель: Согласовать цены на четвёртый квартал.\n\nКратко: Азиз и Участник 2 обсудили цены. Решили поднять тариф на 5%.\n\nКлючевой момент:\n- Тариф растёт на 5% с ноября.\n\nРешения:\n- Поднять тариф на 5%.\n- Скидок не давать (предварительно, требует уточнения).\n- Перейти на годовой договор (условно).\n- Отчёт раз в месяц (требует уточнения).\n\nЗадачи:\n- Подготовить отчёт для Участник 2. Ответственный: Азиз. Срок: 18 сентября, 15:00.\n- Обновить прайс. Ответственный: Команда. Срок: на следующей неделе.\n- ✓ Позвонить клиенту. Ответственный: Бобур. Срок не указан.\n- Отправить КП (условие: если клиент согласится). Ответственный не назначен. Срок не указан. (требует уточнения)\n\nОткрытые вопросы:\n- Кто согласует бюджет?\n- Нужен ли юрист?\n"
+      "expectedText": "Цены и отчёт с Азиз\n14 сентября 2026 (понедельник), 10:00 · 1 ч 5 мин · 2 участника\n\nЦель: Согласовать цены на четвёртый квартал.\n\nКратко: Азиз и Участник 2 обсудили цены.\n\nКлючевой момент:\n- Тариф растёт на 5% с ноября.\n\nРешения:\n- Поднять тариф на 5%.\n- Скидок не давать (предварительно, условие: пока объём ниже плана, требует уточнения).\n- Перейти на годовой договор (условие: если клиент подпишет до ноября).\n- Отчёт раз в месяц (требует уточнения).\n\nЗадачи:\n- Подготовить отчёт для Участник 2. Ответственный: Азиз. Срок: 18 сентября, 15:00.\n- Обновить прайс. Ответственный: Команда. Срок: на следующей неделе.\n- ✓ Позвонить клиенту. Ответственный: Бобур. Срок не указан.\n- Отправить КП (условие: если клиент согласится). Ответственный не назначен. Срок не указан. (требует уточнения)\n\nОткрытые вопросы:\n- Кто согласует бюджет?\n- Нужен ли юрист?\n"
     },
     {
       "name": "inglizcha: odam qo'ygan nom, jonli vazifalar, ko'p fikr, spikerlar ajratilmagan",
@@ -428,7 +430,7 @@
           "needsConfirmation": false
         }
       ],
-      "expectedText": "Pricing sync\nOctober 12, 2026 (Monday), 00:30 · 25 min\n\nIn short: The team reviewed Q4 prices. Version 1.2 ships on October 17 as planned.\n\nKey points:\n- Point one.\n- Point two.\n- Point three.\n- Point four.\n- Point five.\n- Point six.\n\nAction items:\n- Send the price list to Speaker 2. Owner: Dilnoza. Due: October 14.\n- ✓ Book the venue. Owner: Aziz. Due: 10:00. (needs confirmation)\n- Check the budget. Owner: Team. No due date.\n"
+      "expectedText": "Pricing sync\nOctober 12, 2026 (Monday), 00:30 · 25 min\n\nIn short: The team reviewed Q4 prices.\n\nKey points:\n- Point one.\n- Point two.\n- Point three.\n- Point four.\n\nAction items:\n- Send the price list to Speaker 2. Owner: Dilnoza. Due: October 14.\n- ✓ Book the venue. Owner: Aziz. Due: 10:00. (needs confirmation)\n- Check the budget. Owner: Team. No due date.\n"
     }
   ]
 }

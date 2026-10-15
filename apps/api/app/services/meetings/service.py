@@ -31,7 +31,7 @@ from ..integrations.gapi_stt import MAX_MEETING_SPEAKERS
 from ..reports import RateLimiter
 from ..stt import SttError
 from . import ask as ask_mod
-from . import audio, crm, dates, export, prompts, runtime, templates
+from . import audio, compact, crm, dates, export, prompts, runtime, templates
 from . import llm as llm_mod
 from .errors import RETRYABLE, MeetingProblem, message_for, not_found
 from .store import jdump, jload, new_id, private_file
@@ -758,7 +758,8 @@ def get_summary(user: AuthUser, meeting_id: str, summary_id: str) -> dict[str, A
     s = _summary_or_404(m, summary_id)
     speakers = store.speakers(m["id"])
     content = jload(s.get("content_json")) if s["status"] == "ready" else None
-    content = _map_merged(content, _merged_map(speakers)) if content else content
+    # Ko'rinish: har fakt bir marta (`compact`) - bazadagi xulosa o'zgarmaydi, eski yozuvlar ham.
+    content = compact.compact(_map_merged(content, _merged_map(speakers))) if content else content
     return {**summary_card(s, m), "promptVersion": s["prompt_version"], "model": s.get("model") or "",
             "generatedBy": generated_by(s),
             "layout": templates.layout(s["template"], s["language"]),
@@ -790,7 +791,7 @@ def export_summary(user: AuthUser, meeting_id: str, summary_id: str, fmt: str) -
     if s["status"] != "ready":
         raise MeetingProblem(409, "not_ready", "Xulosa hali tayyor emas")
     speakers = {sp["id"]: sp for sp in store.speakers(m["id"])}
-    content = _map_merged(jload(s["content_json"], {}), _merged_map(list(speakers.values())))
+    content = compact.compact(_map_merged(jload(s["content_json"], {}), _merged_map(list(speakers.values()))))
     text = export.summary_document(content, templates.layout(s["template"], s["language"]), speakers,
                                    s["language"], float(m.get("recorded_at") or 0), markdown=fmt == "md")
     name = export.slug(content.get("title") or m.get("title") or "meeting")
@@ -924,7 +925,9 @@ def _export_render(m: dict[str, Any], s: dict[str, Any] | None, wanted: list[str
     actions: list[dict[str, Any]] | None = None
     brief_actions: list[dict[str, Any]] | None = None
     if s and summary_ready and any(p in export.SUMMARY_PARTS for p in wanted):
-        content = _map_merged(jload(s["content_json"], {}) or {}, _merged_map(list(speakers.values())))
+        # Fayl ham ilovadagi ko'rinishni oladi: har fakt bir marta.
+        content = compact.compact(_map_merged(jload(s["content_json"], {}) or {},
+                                              _merged_map(list(speakers.values()))))
         if "actions" in wanted or "mindmap" in wanted or "brief" in wanted:
             # "Qisqa xulosa" - XULOSA tilida (yorliqlar ham, "2-ishtirokchi" ham), jadval - ilova tilida.
             brief_lang = content.get("language") or lang
