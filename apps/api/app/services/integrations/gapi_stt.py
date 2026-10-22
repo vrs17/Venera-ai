@@ -45,6 +45,10 @@ from ..stt import SttError, Transcript, safe_filename
 
 log = logging.getLogger(__name__)
 
+#: Yig'ilish vazifasi uchun fayl nomi - kontent turidan (GAPI formatni kengaytmadan ham taniydi).
+_MEETING_FILENAMES = {"audio/aac": "meeting.aac", "audio/mp4": "meeting.m4a", "audio/mpeg": "meeting.mp3",
+                      "audio/wav": "meeting.wav"}
+
 #: Har so'rovda yuboriladigan sozlamalar - loyiha sozlamalari USTIDAN.
 #:
 #: `emotion`/`pii` - narx tuzog'i (yuqoridagi izohga qara). `diarization`
@@ -517,11 +521,11 @@ class GapiSttClient:
                    settings: dict[str, Any]) -> dict[str, Any]:
         """Audio faylni (diskdan, oqim bilan) yuboradi -> `{id, state, estimatedSeconds, resultUrl}`.
 
-        Fayl nomi `meeting.aac` / `meeting.m4a` - odamning ismi ham, id si
-        ham GAPI ga ketmaydi (spetsifikatsiya 4.4)."""
+        Fayl nomi `meeting.aac` / `.m4a` / `.mp3` / `.wav` - odamning ismi ham, id si
+        ham GAPI ga ketmaydi (spetsifikatsiya 4.4); kengaytma formatni aytadi."""
         if not self.configured:
             raise SttError("GAPI STT sozlanmagan (GAPI_API_KEY)", status=501)
-        filename = "meeting.m4a" if "mp4" in (content_type or "") else "meeting.aac"
+        filename = _MEETING_FILENAMES.get((content_type or "").split(";", 1)[0].strip().lower(), "meeting.aac")
         body, ctype = _multipart_stream(Path(path), filename, content_type, settings)
         request = urllib.request.Request(
             f"{self.base_url}/jobs", data=body, method="POST",

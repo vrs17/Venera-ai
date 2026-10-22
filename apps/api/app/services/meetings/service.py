@@ -42,7 +42,9 @@ from .worker import delete_meeting
 log = logging.getLogger(__name__)
 
 LANGS = ("uz", "ru", "en")
-ACCEPTED_TYPES = ("audio/aac", "audio/mp4")
+#: mp3 va wav - 2026-10-22 (ega: kompyuterdagi tayyor yozuvlar). Taxalluslar (`audio/mp3`, `audio/x-wav`,
+#: `audio/x-m4a`) `audio.canonical_type` bilan shularga keltiriladi.
+ACCEPTED_TYPES = ("audio/aac", "audio/mp4", "audio/mpeg", "audio/wav")
 MIN_SECONDS = 10
 MAX_MARKS = 200
 #: `recordedAt` kelajakda bo'lolmaydi (telefon soati / qasddan): saqlash muddatini
@@ -254,7 +256,8 @@ def create(user: AuthUser, body: Any, channel: str, now: float | None = None) ->
     existing = store.by_client(user.actorId, client_id)
     if existing is not None:
         return meeting_view(existing, now), False
-    if body.contentType not in ACCEPTED_TYPES:
+    content_type = audio.canonical_type(body.contentType)
+    if content_type not in ACCEPTED_TYPES:
         raise MeetingProblem(415, "unsupported_format")
     _rate("create", user.actorId, 30)
     recorded = min(parse_time(body.recordedAt) or int(now), int(now) + FUTURE_SKEW_SEC)
@@ -266,7 +269,7 @@ def create(user: AuthUser, body: Any, channel: str, now: float | None = None) ->
         "title_source": "user" if title else "auto", "language": body.language, "template": body.template,
         "expected_speakers": body.expectedSpeakers, "source": body.source, "channel": channel,
         "app_version": (body.appVersion or "")[:40] or None, "device": (body.device or "")[:80] or None,
-        "recorded_at": recorded, "content_type": body.contentType, "status": "uploading",
+        "recorded_at": recorded, "content_type": content_type, "status": "uploading",
         "summary_status": "none", "created_at": int(now), "updated_at": int(now)}
     consent_at = parse_time(getattr(body, "consentAt", None)) if body.source == "call" else None
     if consent_at:
@@ -401,7 +404,7 @@ def complete(user: AuthUser, meeting_id: str, body: Any, now: float | None = Non
             with contextlib.suppress(OSError):
                 path.unlink()
             raise MeetingProblem(415, "unsupported_format")
-        suffix = ".m4a" if content_type == "audio/mp4" else ".aac"
+        suffix = audio.EXTENSIONS.get(content_type, ".aac")
         target = store.audio_dir(user.actorId) / f"{m['id']}{suffix}"
         os.replace(path, target)
         with contextlib.suppress(OSError):
@@ -1412,7 +1415,7 @@ def audio_file(user: AuthUser, meeting_id: str, *, download: bool = False) -> tu
     if download:
         recorded_at = float(m.get("recorded_at") or m.get("created_at") or 0)
         ascii_name, real_name = export.file_names(m.get("title") or default_title(recorded_at, "uz"), recorded_at,
-                                                  "m4a" if media == "audio/mp4" else "aac")
+                                                  audio.EXTENSIONS.get(media, ".aac").lstrip("."))
         # Shaxsiy yozuv: oraliq kesh (proksi) saqlab qolmasin - eksport fayli bilan bir xil.
         headers = {**headers, "Content-Disposition": export.content_disposition(ascii_name, real_name),
                    "Cache-Control": "private, no-store"}
@@ -1425,8 +1428,9 @@ def _audio_path(m: dict[str, Any]) -> tuple[Path, str, dict[str, str]]:
     path = Path(m["audio_path"]) if m.get("audio_path") else None
     if m.get("audio_deleted_at") or path is None or not path.exists():
         raise MeetingProblem(410, "audio_expired", "Audio saqlash muddati tugagan")
-    if (m.get("content_type") or "") == "audio/mp4":
-        return path, "audio/mp4", {}
+    if (m.get("content_type") or "") in ("audio/mp4", "audio/mpeg", "audio/wav"):
+        # m4a, mp3, wav - pleyer o'zi tinglaydi va istalgan joyga sakraydi; faqat ADTS m4a ga o'giriladi.
+        return path, m["content_type"], {}
     cache = path.with_suffix(".m4a")
     if not cache.exists():
         with _remux_lock:

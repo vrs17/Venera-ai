@@ -90,7 +90,7 @@ def test_config(client, auth, monkeypatch):
     enable(monkeypatch)
     body = client.get("/api/v1/meetings/config", headers={**auth, "Accept-Language": "ru-RU,ru;q=0.9"}).json()
     assert body["maxMinutes"] == 180 and body["maxUploadBytes"] == 157286400 and body["maxChunkBytes"] == 4194304
-    assert body["acceptedContentTypes"] == ["audio/aac", "audio/mp4"] and body["maxDistinctSpeakers"] == 4
+    assert body["acceptedContentTypes"] == ["audio/aac", "audio/mp4", "audio/mpeg", "audio/wav"] and body["maxDistinctSpeakers"] == 4
     assert body["recording"] == {"format": "aac_adts", "sampleRate": 16000, "bitRate": 48000, "channels": 1,
                                  "audioSource": "voice_recognition"}
     general = next(t for t in body["templates"] if t["id"] == "general")

@@ -55,6 +55,8 @@ MAX_RETRIES = 12
 #: Router uchun bo'lak (s) va m4a chegarasi.
 ROUTER_PIECE_SEC = 540
 ROUTER_M4A_MAX_SEC = 590
+#: mp3/wav bo'lagi baytda ham cheklanadi: Router 25 MB dan kattasini olmaydi (sifatli WAV 540 s da ~95 MB).
+ROUTER_PIECE_BYTES = 20 * 1024 * 1024
 #: O'Z slotimiz band (boshqa ip yuklayapti) - bu urinish EMAS, shuncha soniyadan keyin yana.
 LOCAL_BUSY_WAIT = 5
 #: Tiklash: vazifa yuborilgan paytdan shuncha oldin/keyin yaratilgan bo'lishi mumkin
@@ -474,6 +476,13 @@ class Transcriber:
                          error_stage=None)
             if piece_type == "audio/mp4":
                 pieces = [(path, 0.0, duration)]
+            elif piece_type in ("audio/mpeg", "audio/wav"):
+                # mp3 - kadr, wav - blok chegarasida; bo'lak Router chegarasidan (bayt) ham oshmaydi.
+                pieces, offset = [], 0.0
+                for piece, length in audio.split_plain(source, piece_type, ROUTER_PIECE_SEC, tmp,
+                                                       max_bytes=ROUTER_PIECE_BYTES):
+                    pieces.append((piece, offset, length))
+                    offset += length
             else:
                 pieces, offset = [], 0.0
                 for piece in audio.split_adts(source, ROUTER_PIECE_SEC, tmp):

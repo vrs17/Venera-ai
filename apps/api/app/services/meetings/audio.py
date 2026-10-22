@@ -19,6 +19,8 @@ deploy'ni murakkablashtiradi. Bizga kerak bo'lgan ish esa oddiy:
     (faststart): pleyer butun faylni yuklamay o'ynay boshlaydi.
   * m4a -> ADTS (`mp4_to_adts`): teskari yo'l - Router (ru/en) uzun m4a ni
     olmaydi, ADTS esa kadr chegarasida bo'linadi (telefon qo'ng'irog'i yozuvlari).
+  * MP3 va WAV (2026-10-22): kompyuterdagi tayyor yozuvlar. MP3 - kadr sarlavhalari
+    (`mp3_info`), WAV - `fmt `/`data` (`wav_info`); Router uchun `split_plain`.
 """
 
 from __future__ import annotations
@@ -162,9 +164,16 @@ def adts_info(path: Path | str) -> AdtsInfo | None:
 
 
 def sniff(first: bytes, content_type: str) -> bool:
-    """Birinchi bo'lak e'lon qilingan formatga mosmi (`PUT /audio`, offset 0)."""
+    """Birinchi bo'lak e'lon qilingan formatga mosmi (`PUT /audio`, offset 0). MP3 - ID3 tegi yoki
+    kadr sarlavhasi (haqiqiyligini `complete` dagi o'lchov tekshiradi), WAV - RIFF/WAVE."""
+    content_type = canonical_type(content_type)
+    if content_type == "audio/mpeg":
+        return first[:3] == b"ID3" or mp3_header(first[:4]) is not None
+    if content_type == "audio/wav":
+        return len(first) >= 12 and first[:4] == b"RIFF" and first[8:12] == b"WAVE"
     if content_type == "audio/aac":
-        return len(first) >= 2 and first[0] == 0xFF and (first[1] & 0xF0) == 0xF0
+        # Sinxro 0xFFF VA qatlam bitlari 00 (`_parse_header` kabi): MP3 kadri ham 0xFFF bilan boshlanadi.
+        return len(first) >= 2 and first[0] == 0xFF and (first[1] & 0xF6) == 0xF0
     if content_type == "audio/mp4":
         return len(first) >= 8 and first[4:8] == b"ftyp"
     return False
@@ -351,8 +360,15 @@ def _mvhd_duration(path: Path | str) -> float | None:
 
 def measure(path: Path | str, content_type: str) -> float | None:
     """Server o'lchagan davomiylik - u ilova aytganidan USTUN."""
+    content_type = canonical_type(content_type)
     if content_type == "audio/mp4":
         return mp4_duration(path)
+    if content_type == "audio/mpeg":
+        mp3 = mp3_info(path)
+        return mp3.durationSec if mp3 else None
+    if content_type == "audio/wav":
+        wav = wav_info(path)
+        return wav.durationSec if wav else None
     info = adts_info(path)
     return info.durationSec if info else None
 
@@ -762,3 +778,259 @@ def mp4_to_adts(src: Path | str, dst: Path | str) -> dict:
         raise
     rate = SAMPLE_RATES[sr_index]
     return {"frames": frames, "durationSec": round(frames * 1024 / rate, 2), "sampleRate": rate}
+
+
+# --- MP3 va WAV (2026-10-22) ------------------------------------------------------
+#
+# Ega so'radi: kompyuterdagi tayyor yozuvlar (diktofon, Zoom, Telegram) ko'pincha mp3 yoki
+# wav. ffmpeg'siz, ADTS kabi: MP3 - har kadrning 4 baytli sarlavhasi (versiya, qatlam,
+# bitreyt, chastota -> kadr uzunligi va namunalar soni); WAV - `fmt `/`data` bo'laklari.
+# Kvota qoidasi o'sha: STT ga ketadigan HAMMA audio o'lchanadi (MP3 da buzilgan baytdan
+# keyin keyingi haqiqiy kadr qidiriladi, xuddi dekoder kabi).
+
+#: Kanonik kontent turlari. Brauzer, telefon va boshqa klientlar bir formatni har xil atashadi.
+TYPE_ALIASES = {
+    "audio/mp3": "audio/mpeg", "audio/x-mp3": "audio/mpeg", "audio/x-mpeg": "audio/mpeg",
+    "audio/mpeg3": "audio/mpeg", "audio/x-mpeg-3": "audio/mpeg", "audio/mpg": "audio/mpeg",
+    "audio/x-wav": "audio/wav", "audio/wave": "audio/wav", "audio/vnd.wave": "audio/wav",
+    "audio/x-pn-wav": "audio/wav",
+    "audio/x-m4a": "audio/mp4", "audio/m4a": "audio/mp4", "audio/x-aac": "audio/aac", "audio/aacp": "audio/aac",
+}
+#: Saqlanadigan fayl kengaytmasi (STT va pleyer formatni shundan ham taniydi).
+EXTENSIONS = {"audio/aac": ".aac", "audio/mp4": ".m4a", "audio/mpeg": ".mp3", "audio/wav": ".wav"}
+
+
+def canonical_type(content_type: str | None) -> str:
+    """`Audio/MP3; charset=x` -> `audio/mpeg`. Noma'lum tur o'zgarmaydi (keyin rad etiladi)."""
+    value = (content_type or "").strip().lower().split(";", 1)[0].strip()
+    return TYPE_ALIASES.get(value, value)
+
+
+_MP3_BITRATES = {
+    (1, 1): (0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448),
+    (1, 2): (0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384),
+    (1, 3): (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320),
+    (2, 1): (0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256),
+    (2, 2): (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160),
+    (2, 3): (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160),
+}
+#: MPEG versiyasi (1, 2, 2.5 -> 25) -> chastotalar.
+_MP3_RATES = {1: (44100, 48000, 32000), 2: (22050, 24000, 16000), 25: (11025, 12000, 8000)}
+
+
+def mp3_header(b: bytes) -> tuple[int, int, int, tuple[int, int]] | None:
+    """4 bayt -> (kadr uzunligi, namunalar soni, chastota, (versiya, qatlam)) yoki `None`.
+
+    Qatlam bitlari `00` - bu MP3 emas, ADTS (AAC): ikkalasi ham 0xFFF bilan boshlanadi."""
+    if len(b) < 4 or b[0] != 0xFF or (b[1] & 0xE0) != 0xE0:
+        return None
+    ver_bits, layer_bits = (b[1] >> 3) & 3, (b[1] >> 1) & 3
+    if ver_bits == 1 or layer_bits == 0:
+        return None
+    version = {3: 1, 2: 2, 0: 25}[ver_bits]
+    layer = 4 - layer_bits
+    br_idx, sr_idx, pad = b[2] >> 4, (b[2] >> 2) & 3, (b[2] >> 1) & 1
+    if br_idx in (0, 15) or sr_idx == 3:
+        return None
+    bitrate = _MP3_BITRATES[(1 if version == 1 else 2, layer)][br_idx] * 1000
+    rate = _MP3_RATES[version][sr_idx]
+    if layer == 1:
+        return (12 * bitrate // rate + pad) * 4, 384, rate, (version, layer)
+    if layer == 2:
+        return 144 * bitrate // rate + pad, 1152, rate, (version, layer)
+    coef, samples = (144, 1152) if version == 1 else (72, 576)
+    return coef * bitrate // rate + pad, samples, rate, (version, layer)
+
+
+def _id3_size(head: bytes) -> int:
+    """Boshdagi ID3v2 tegi hajmi (sarlavha bilan) yoki 0."""
+    if len(head) >= 10 and head[:3] == b"ID3" and all(x < 0x80 for x in head[6:10]):
+        size = (head[6] << 21) | (head[7] << 14) | (head[8] << 7) | head[9]
+        return 10 + size + (10 if head[5] & 0x10 else 0)
+    return 0
+
+
+@dataclass(frozen=True)
+class Mp3Frame:
+    offset: int
+    length: int
+    samples: int
+
+
+@dataclass(frozen=True)
+class Mp3Info:
+    durationSec: float
+    frames: int
+    sampleRate: int
+
+
+def iter_mp3_frames(path: Path | str):
+    """MP3 kadrlari (`Mp3Frame`). ID3v2 teglar o'tkazib yuboriladi; birinchi kadr KEYINGISI bilan
+    tasdiqlanadi (tasodifiy 0xFF tasvir ichida ham uchraydi). O'rtadagi axlatdan keyin - qidiruv."""
+    import mmap
+
+    with open(path, "rb") as fh:
+        size = os.fstat(fh.fileno()).st_size
+        if size < 4:
+            return
+        with mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+            pos = 0
+            while pos + 10 <= size:
+                tag = _id3_size(mm[pos:pos + 10])
+                if not tag:
+                    break
+                pos += tag
+            key = None
+            while pos + 4 <= size:
+                hdr = mp3_header(mm[pos:pos + 4])
+                if hdr and pos + hdr[0] <= size and (key is None or (hdr[3], hdr[2]) == key):
+                    if key is None:
+                        after = pos + hdr[0]
+                        nxt = mp3_header(mm[after:after + 4]) if after + 4 <= size else None
+                        confirmed = (nxt is not None and (nxt[3], nxt[2]) == (hdr[3], hdr[2])) or after == size
+                        if not confirmed:
+                            hdr = None
+                    if hdr:
+                        key = (hdr[3], hdr[2])
+                        yield Mp3Frame(pos, hdr[0], hdr[1])
+                        pos += hdr[0]
+                        continue
+                found = mm.find(b"\xff", pos + 1)
+                if found < 0:
+                    return
+                pos = found
+
+
+def mp3_info(path: Path | str) -> Mp3Info | None:
+    """Davomiylik HAMMA kadrdan (VBR ham). Birinchi kadr Xing/Info/VBRI bo'lsa - u ovoz emas."""
+    frames = samples = rate = 0
+    with open(path, "rb") as fh:
+        for frame in iter_mp3_frames(path):
+            if frames == 0:
+                fh.seek(frame.offset)
+                body = fh.read(min(frame.length, 64))
+                rate = mp3_header(body[:4])[2]
+                if b"Xing" in body or b"Info" in body or b"VBRI" in body:
+                    frames = -1
+            frames += 1
+            if frames > 0:
+                samples += frame.samples
+    if frames < 2 or not rate:
+        return None
+    return Mp3Info(durationSec=round(samples / rate, 2), frames=frames, sampleRate=rate)
+
+
+@dataclass(frozen=True)
+class WavInfo:
+    durationSec: float
+    fmt: bytes
+    dataStart: int
+    dataBytes: int
+    byteRate: int
+    blockAlign: int
+    sampleRate: int
+    channels: int
+
+
+def wav_info(path: Path | str) -> WavInfo | None:
+    """RIFF/WAVE: `fmt ` va `data` bo'laklari. Davomiylik = e'lon qilingan `data` hajmi (fayldan
+    oshmasa) / bayt tezligi - STT dekoderi ham aynan shu hajmni o'qiydi."""
+    with open(path, "rb") as fh:
+        size = os.fstat(fh.fileno()).st_size
+        head = fh.read(12)
+        if len(head) < 12 or head[:4] != b"RIFF" or head[8:12] != b"WAVE":
+            return None
+        pos, fmt = 12, None
+        while pos + 8 <= size:
+            fh.seek(pos)
+            cid, csize = struct.unpack("<4sI", fh.read(8))
+            if cid == b"fmt ":
+                fmt = fh.read(min(csize, 256))
+            elif cid == b"data":
+                if fmt is None or len(fmt) < 16:
+                    return None
+                tag, channels, rate, byte_rate, align, bits = struct.unpack("<HHIIHH", fmt[:16])
+                if not channels or not rate:
+                    return None
+                width = max(int(bits), 8) // 8
+                byte_rate = byte_rate or rate * channels * width
+                align = align or channels * width
+                start = pos + 8
+                remaining = size - start
+                data = csize if 0 < csize < 0xFFFFFFFF else remaining
+                data = min(data, remaining)
+                if data <= 0 or byte_rate <= 0:
+                    return None
+                return WavInfo(durationSec=round(data / byte_rate, 2), fmt=bytes(fmt), dataStart=start,
+                               dataBytes=data, byteRate=byte_rate, blockAlign=align, sampleRate=rate,
+                               channels=channels)
+            pos += 8 + csize + (csize & 1)
+    return None
+
+
+def _wav_header(fmt: bytes, data_len: int) -> bytes:
+    fmt_chunk = b"fmt " + struct.pack("<I", len(fmt)) + fmt + (b"\0" if len(fmt) & 1 else b"")
+    return (b"RIFF" + struct.pack("<I", 4 + len(fmt_chunk) + 8 + data_len) + b"WAVE" + fmt_chunk
+            + b"data" + struct.pack("<I", data_len))
+
+
+def split_plain(path: Path | str, content_type: str, max_sec: float, out_dir: Path | str | None = None,
+                *, max_bytes: int = 20 * 1024 * 1024) -> list[tuple[Path, float]]:
+    """MP3 yoki WAV ni Router (ru/en) uchun bo'laklarga bo'ladi -> [(fayl, soniya)].
+
+    Bo'lak `max_sec` dan ham, `max_bytes` dan ham oshmaydi: Router 25 MB dan kattasini olmaydi,
+    sifatli WAV esa (44,1 kHz stereo) 540 s da ~95 MB bo'lardi. MP3 - kadr chegarasida (ID3 tegsiz),
+    WAV - blok chegarasida, har bo'lakka o'z sarlavhasi bilan."""
+    src = Path(path)
+    out = Path(out_dir) if out_dir else src.parent
+    kind = canonical_type(content_type)
+    pieces: list[tuple[Path, float]] = []
+
+    def open_piece(ext: str):
+        piece = out / f"{src.stem}.part{len(pieces) + 1:03d}{ext}"
+        fd = os.open(piece, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+        return piece, os.fdopen(fd, "wb")
+
+    if kind == "audio/wav":
+        info = wav_info(src)
+        if info is None:
+            return []
+        step = int(min(max_sec * info.byteRate, max_bytes - 1024) // info.blockAlign) * info.blockAlign
+        if step <= 0:
+            return []
+        with open(src, "rb") as fh:
+            done = 0
+            while done < info.dataBytes:
+                take = min(step, info.dataBytes - done)
+                fh.seek(info.dataStart + done)
+                piece, handle = open_piece(".wav")
+                with handle:
+                    handle.write(_wav_header(info.fmt, take))
+                    handle.write(fh.read(take))
+                pieces.append((piece, round(take / info.byteRate, 3)))
+                done += take
+        return pieces
+    if kind == "audio/mpeg":
+        current = None
+        samples = written = 0
+        rate = 0
+        with open(src, "rb") as fh:
+            for frame in iter_mp3_frames(src):
+                if not rate:
+                    fh.seek(frame.offset)
+                    rate = mp3_header(fh.read(4))[2]
+                if current is None or samples + frame.samples > max_sec * rate or written + frame.length > max_bytes:
+                    if current is not None:
+                        current[1].close()
+                        pieces.append((current[0], round(samples / rate, 3)))
+                    current = open_piece(".mp3")
+                    samples = written = 0
+                fh.seek(frame.offset)
+                current[1].write(fh.read(frame.length))
+                samples += frame.samples
+                written += frame.length
+        if current is not None:
+            current[1].close()
+            pieces.append((current[0], round(samples / rate, 3)))
+        return pieces
+    raise ValueError(f"split_plain: {content_type}")
