@@ -1,0 +1,23 @@
+# GitLab Runner - prod hostda, ~/Venera egasi nomidan (user unit).
+# Runner ~/.gitlab-runner/config.toml da ro'yxatdan o'tgan ("brb-deploy",
+# shell executor). O'rnatish, bir marta:
+#
+#   mkdir -p ~/.config/systemd/user ~/gitlab-runner-builds
+#   cp deploy/gitlab-runner.user.service ~/.config/systemd/user/gitlab-runner.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now gitlab-runner
+#   systemctl --user status gitlab-runner --no-pager
+#
+# Linger allaqachon yoqilgan (venera-api ham user unit), shuning uchun runner
+# login'siz ham ishlayveradi.
+[Unit]
+Description=GitLab Runner (user mode, shell executor) - Barno deploy
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/gitlab-runner run --config %h/.gitlab-runner/config.toml --working-directory %h/gitlab-runner-builds
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

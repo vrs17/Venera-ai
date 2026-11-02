@@ -1,0 +1,70 @@
+# Barno CI/CD. Tafsilot: docs/ci-cd.md
+#
+# Runner: prod hostning o'zida (10.10.50.8), shell executor, ~/Venera egasi
+# bo'lgan foydalanuvchi nomidan (venera-api va venera-frontend user unitlari
+# shu foydalanuvchiniki). Tag: venera-prod. SSH kerak emas: runner GitLab'ni
+# o'zi so'rab turadi va ishni shu hostda bajaradi.
+#
+#   har qanday branch -> api-tests + web-build
+#   main              -> yana `deploy` tugmasi (qo'lda bosiladi), `rollback` tugmasi
+
+stages: [test, deploy]
+
+variables:
+  GIT_DEPTH: "50"
+
+default:
+  tags: [venera-prod]
+  interruptible: true
+
+api-tests:
+  stage: test
+  cache:
+    key: api-venv-$CI_COMMIT_REF_SLUG
+    paths: [apps/api/.ci-venv]
+  script:
+    - cd apps/api
+    - '[ -x .ci-venv/bin/python ] || python3 -m venv .ci-venv'
+    - .ci-venv/bin/pip install -q -U pip setuptools
+    - .ci-venv/bin/pip install -q -e ".[dev]"
+    # test_docs.py Swagger'ning statik fayllarini prod daraxtidan kutadi;
+    # runner'ning checkout'ida ular yo'q (muhit, regressiya emas).
+    - .ci-venv/bin/python -m pytest -q tests --ignore=tests/test_docs.py
+
+web-build:
+  stage: test
+  cache:
+    key: web-node-$CI_COMMIT_REF_SLUG
+    paths: [apps/web/node_modules]
+  script:
+    - source "$HOME/.nvm/nvm.sh" && nvm use --silent 22
+    - cd apps/web
+    - npm ci --no-audit --no-fund
+    - npm run build
+    - test -f dist/index.html && test -f dist/tg-app.html
+
+deploy:
+  stage: deploy
+  interruptible: false
+  resource_group: production
+  environment:
+    name: production
+    url: http://10.10.50.8:5173/
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+  script:
+    - bash deploy/ci-deploy.sh "$CI_COMMIT_SHA"
+
+rollback:
+  stage: deploy
+  interruptible: false
+  resource_group: production
+  environment:
+    name: production
+    action: prepare
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+  script:
+    - bash deploy/ci-deploy.sh --rollback
