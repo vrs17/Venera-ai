@@ -101,6 +101,7 @@ def _connect() -> None:
             # `App` tokenni shu yerda `auth.test` bilan tekshiradi.
             app = App(client=WebClient(token=settings.slack_bot_token, ssl=SSL))
             app.event("message")(_on_message)
+            app.event("app_home_opened")(_on_home)
             app.action(re.compile(r"^barno_"))(_on_action)
             handler = SocketModeHandler(app, settings.slack_app_token)
             handler.connect()
@@ -129,13 +130,26 @@ def _on_message(event: dict[str, Any], client: Any, context: Any) -> None:
         pool.submit(meeting.on_message, client, event, sleep=_sleep, bot_user=context.get("bot_user_id"))
 
 
+def _on_home(event: dict[str, Any], client: Any) -> None:
+    """Barno AI ochildi - "Home" varag'i (`home.py`)."""
+    from . import home
+
+    pool = _pool
+    if pool is not None:
+        pool.submit(home.on_open, client, event)
+
+
 def _on_action(ack: Any, body: dict[str, Any], client: Any) -> None:
     """Tugma va ro'yxat. Slack javobni 3 s ichida kutadi - `ack` darhol, ish navbatda."""
-    from . import meeting
+    from . import home, meeting
 
     ack()
     pool = _pool
-    if pool is not None:
+    if pool is None:
+        return
+    if home.is_plaud(body):
+        pool.submit(home.on_plaud, client, body)
+    else:
         pool.submit(meeting.on_action, client, body, sleep=_sleep)
 
 

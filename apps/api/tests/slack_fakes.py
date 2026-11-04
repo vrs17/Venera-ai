@@ -25,6 +25,7 @@ class FakeSlack:
         self.posted: list[dict] = []
         self.updated: list[dict] = []
         self.uploaded: list[dict] = []
+        self.published: list[dict] = []
         self.files = files or {}
         self.parents = parents or {}
         self.upload_error = upload_error
@@ -45,6 +46,10 @@ class FakeSlack:
         if self.upload_error is not None:
             raise self.upload_error
         self.uploaded.append(kwargs)
+        return {"ok": True}
+
+    def views_publish(self, **kwargs):
+        self.published.append(kwargs)
         return {"ok": True}
 
     def conversations_replies(self, channel, ts, **kwargs):
