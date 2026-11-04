@@ -3,9 +3,9 @@ node_modules/
 dist/
 .git/
 .gitignore
-.env
+# `.env` stays IN the context: it is the app's single env file and `vite build`
+# reads it (no secrets there). Stray copies (.env.local, .env.bak, ...) stay out.
 .env.*
-!.env.production
 *.local
 .vite/
 .DS_Store

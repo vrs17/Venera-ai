@@ -21,8 +21,6 @@ dist/
 
 # --- Maxfiy sozlamalar ---
 .env
-!.env.example
-!.env.production
 
 # --- Chiqarilgan artefaktlar ---
 # .exe fayllar git'da saqlanmaydi (har biri ~45 MB).
@@ -57,7 +55,6 @@ apps/api/.env
 # SECRET_KEY va TTS sirini saqlaydi, lekin yuqoridagi qator ularni
 # QAMRAMAYDI va ular jimgina commit'ga tushib ketishi mumkin.
 apps/api/.env.*
-!apps/api/.env.example
 apps/api/venv/
 __pycache__/
 *.egg-info/

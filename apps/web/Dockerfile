@@ -19,8 +19,8 @@ ENV npm_config_fund=false npm_config_audit=false CI=true
 COPY package.json package-lock.json ./
 RUN npm ci
 
-# Source, then build. .env.production (committed) sets VITE_API_BASE="" => the
-# bundle calls relative /api; the backend URL is NOT baked into the JS.
+# Source, then build. `.env` (the app's single env file) sets VITE_API_BASE="" =>
+# the bundle calls relative /api; the backend URL is NOT baked into the JS.
 COPY . .
 # tg-app.html - Telegram Mini App sahifasi (nginx /tg-beta/ uni `try_files` bilan
 # beradi): yo'q bo'lsa image yig'ilmaydi, prod'da jim 404 bo'lib chiqmaydi.

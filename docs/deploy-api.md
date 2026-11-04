@@ -40,12 +40,15 @@ venv/bin/pip install -e ".[dev]"
 ```bash
 cd ~/Venera/apps/api
 
-cp .env.example .env
+# `.env` - YAGONA sozlama fayli: namuna (`.env.example`) va nusxalar (`.env.bak-*`)
+# yo'q. Kalitlar izohi shu faylning o'zida; yozilmagan kalit koddagi default'ni
+# oladi (`app/core/config.py`). Yangi serverda fayl bo'sh yaratiladi:
+touch .env
 cp config/users.example.yaml config/users.yaml
 
 # SECRET_KEY ni ALBATTA o'zgartiring (kamida 32 belgi):
 python3 -c "import secrets; print(secrets.token_urlsafe(48))"
-# chiqqan qiymatni .env dagi SECRET_KEY= ga qo'ying
+# chiqqan qiymatni .env ga SECRET_KEY= qatori qilib yozing
 ```
 
 Ikkalasi ham git'ga tushmaydi. Unutilsa `/api/health` `degraded` qaytaradi
