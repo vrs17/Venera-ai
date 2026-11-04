@@ -170,7 +170,7 @@ def test_api_mp3_va_wav_qabul_qilinadi(client, auth, monkeypatch, _isolated_meet
     cfg = client.get("/api/v1/meetings/config", headers=auth).json()
     assert {"audio/mpeg", "audio/wav"} <= set(cfg["acceptedContentTypes"])
     bad = client.post("/api/v1/meetings", headers=auth, json={
-        "clientId": "6f2c1d0e-1b1a-4c55-9a7e-0e8a1b2c3d4e", "recordedAt": "2026-10-22T10:00:00Z", "contentType": "audio/ogg"})
+        "clientId": "6f2c1d0e-1b1a-4c55-9a7e-0e8a1b2c3d4e", "recordedAt": "2026-10-22T10:00:00Z", "contentType": "audio/flac"})
     assert bad.status_code == 415
 
 

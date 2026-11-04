@@ -110,6 +110,10 @@ class Settings(BaseSettings):
     gapi_base_url: str = "https://console.gapi.uz/v1"
     #: Loyihaga bog'langan token. Bo'sh bo'lsa 2-variant O'CHIQ.
     gapi_api_key: str = ""
+    #: IKKINCHI GAPI hisobining tokeni (o'zining kunlik 480 g balansi bilan). Birinchi
+    #: kalitning balansi tugasa (`429 insufficient_balance`, yig'ilishda esa yetmasa) shu
+    #: kalit ishlatiladi; yarim kechada (Toshkent) to'lgach yana birinchisi. Bo'sh - bitta kalit.
+    gapi_api_key2: str = ""
     #: O'lchangan tezlik: mediana 1.2 s, yuklama ostida 3.6 s; 35 s yozuv
     #: 1-3 sekundda.
     #:
@@ -515,6 +519,27 @@ class Settings(BaseSettings):
     #: emaili). `.env` dan JONLI o'qiladi (`telegram_brief_logins_now`).
     telegram_brief_logins: str = ""
 
+    # --- Slack ilovasi "Barno AI" (`app/slack/`, Socket Mode) ---
+    #: Bot tokeni (`xoxb-...`): xabar yozish va fayl o'qish. Ruxsatlar: `im:history`,
+    #: `chat:write`, `files:read`, eksport fayli uchun `files:write`; hodisa: `message.im`;
+    #: tugmalar - Interactivity (Socket Mode orqali keladi). Ikkala token bo'lmasa ilova
+    #: O'CHIQ. SIR - jurnal va javoblarga tushmaydi.
+    slack_bot_token: str = ""
+    #: Ilova tokeni (`xapp-...`, `connections:write`) - Socket Mode ulanishi. Bitta
+    #: token bilan FAQAT BITTA jarayon ulanadi, aks holda Slack hodisalarni ular
+    #: orasida tasodifiy taqsimlaydi (`app/slack/__init__.py`).
+    slack_app_token: str = ""
+    #: Slack'dan kelgan audio QAYSI Venera hisobining yig'ilishi bo'lib saqlanadi
+    #: (`actorId`). Hozircha Slack odami o'z hisobiga bog'lanmaydi: hammasi shu
+    #: hisobda - uning ro'yxatida ko'rinadi, kunlik limit va soatlik chegara umumiy.
+    #: Hisob ADMIN yoki `MEETINGS_LOGINS` da bo'lishi kerak. Bo'sh - sozlanmagan.
+    #:
+    #: NEGA `str`, `int` EMAS. `SLACK_ACTOR_ID=` bo'sh yoki xato yozilsa `int` maydon
+    #: butun `Settings` ni yiqitardi va API restartda umuman ko'tarilmasdi (jonli
+    #: `.env` da aynan shunday bo'ldi). Matn ishlatilgan joyda tekshiriladi
+    #: (`slack/transcribe.py: account`) - xatoni odam Slack'da ko'radi.
+    slack_actor_id: str = ""
+
     # --- Xodimlar ma'lumotnomasi (kontaktlar) ---
     #: F.I.SH, Telegram, telefon, email - `services/contacts.py`. SHAXSIY
     #: MA'LUMOT: `data/` gitignore'da, fayl 600.
@@ -593,12 +618,14 @@ class Settings(BaseSettings):
     #: yozuv RAD ETILMAYDI - navbatda turadi (`waiting_quota`).
     meetings_user_daily_minutes: int = 240
     #: Yig'ilishlar uchun BUTUN xizmatning kunlik ulushi. Balansning
-    #: qolgani chat diktovkasi uchun.
+    #: qolgani chat diktovkasi uchun. HAR GAPI KALITI uchun: `GAPI_API_KEY2`
+    #: ham bo'lsa ikki barobar.
     meetings_gapi_daily_minutes: int = 180
     #: GAPI balansida doim shuncha daqiqa qolsin - chatdagi ovozli savol
     #: yig'ilish tufayli to'xtab qolmasin.
     meetings_gapi_reserve_minutes: int = 60
-    #: Audio shuncha kundan keyin o'chiriladi; matn va xulosa qoladi.
+    #: Audio shuncha kundan keyin o'chiriladi; matn va xulosa qoladi. 0 - saqlanadi
+    #: (2026-11-04 ega qarori: hozircha o'chirilmaydi, ma'lumot ko'paysa qaytariladi).
     meetings_audio_days: int = 30
     #: Butun yig'ilish (matni bilan) shuncha kundan keyin o'chiriladi. 0 - saqlanadi.
     meetings_retention_days: int = 180

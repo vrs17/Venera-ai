@@ -97,6 +97,7 @@ from .briefs import BTN_GROUPS, BriefService
 from .group_actions import ONLY_OWNER, GroupActions
 from .group_admin import GROUP_NOT_ENABLED, GROUP_PAUSED, GroupAdmin
 from .groups import GroupAssistant
+from .plaud import BTN_PLAUD, Plaud
 from .render import esc
 
 log = logging.getLogger(__name__)
@@ -156,6 +157,7 @@ _TURNS_KEPT = 2000
 #: `/yangi` - eski nomlar, ishlayveradi, lekin menyuda yo'q.
 COMMANDS = [
     {"command": "start", "description": "Barnoni ochish"},
+    {"command": "plaud", "description": "Audio -> matn va qisqa xulosa"},
     {"command": "new", "description": "Yangi suhbat"},
     {"command": "help", "description": "Bot nima qila oladi"},
     {"command": "logout", "description": "Hisobni botdan uzish"},
@@ -197,8 +199,10 @@ _HELP = (
     "• Savolni yozing yoki 🎙 ovozli xabar yuboring - qisqa javob va manbalari shu yerda.\n"
     "• HRM/CRM da o'zgartirish kerak bo'lsa, avval taklif ko'rsataman - faqat "
     "<b>Tasdiqlash</b> dan keyin bajariladi.\n"
-    "• Javob noto'g'ri bo'lsa - ostidagi ⚑ tugmasi bilan xabar bering.\n\n"
-    "/new - yangi suhbat · /start - Barnoni ochish · /logout - botdan chiqish"
+    "• Javob noto'g'ri bo'lsa - ostidagi ⚑ tugmasi bilan xabar bering.\n"
+    "• 🎙 <b>Plaud</b> (pastdagi tugma yoki /plaud): audio yuboring - matn, qisqa xulosa, "
+    "vazifalar, eksport; savolni xulosaga javob (Reply) qilib yozing.\n\n"
+    "/new - yangi suhbat · /plaud - audio → matn · /start - Barnoni ochish · /logout - botdan chiqish"
 )
 
 
@@ -494,8 +498,11 @@ class VeneraBot:
         briefs: BriefService | None = None,
         admin: GroupAdmin | None = None,
         group_actions: bool = False,
+        plaud: Plaud | None = None,
     ) -> None:
         self.api = api
+        #: "🎙 Plaud" - audio -> matn va xulosa (`plaud.py`). `None` - bot avvalgidek.
+        self.plaud = plaud
         #: Guruhlarni botda boshqarish (`group_admin.py`). `None` - guruhlar
         #: faqat `.env` dan, bot qo'shilishi/chiqarilishi e'tiborsiz (eski xulq).
         self.admin = admin
@@ -588,6 +595,8 @@ class VeneraBot:
             self.groups.stop()
         if self.briefs is not None:
             self.briefs.stop()
+        if self.plaud is not None:
+            self.plaud.stop()
 
     @property
     def running(self) -> bool:
@@ -981,6 +990,24 @@ class VeneraBot:
         if found is None:
             return
         user, login = found
+        if text == BTN_PLAUD and self.plaud is None:
+            # Klaviaturada tugma qolgan, bo'lim esa o'chiq - HR yordamchisiga ketmasin.
+            self._send(chat_id, "🎙 Plaud hozir o'chiq (yig'ilishlar bo'limi yoqilmagan).")
+            return
+        if self.plaud is not None:
+            # "🎙 Plaud" tugmasi, yozuv (audio fayl, qurollangan yoki uzun ovozli xabar) va
+            # yozuv xabariga javob (savol) - HR yordamchisiga ketmaydi (`plaud.py`).
+            if text == BTN_PLAUD:
+                log.info("Telegram Plaud: tugma (%s)", user.actorId)
+                self.plaud.on_button(chat_id, user)
+                return
+            media = self.plaud.media(msg)
+            if media is not None and self.plaud.wants(chat_id, media):
+                log.info("Telegram Plaud (%s): %s", user.actorId, media["kind"])
+                self.plaud.on_audio(chat_id, user, msg, media)
+                return
+            if text and media is None and self.plaud.on_reply(chat_id, user, msg, text):
+                return
         # "⚙️ Guruhlar" tugmasi (`group_admin.py`) - HR yordamchisiga ketmaydi.
         if (self.admin is not None and text == BTN_GROUPS
                 and self.admin.on_text(chat_id, text, user, login)):
@@ -999,8 +1026,8 @@ class VeneraBot:
             elif text:
                 self._ask(chat_id, tg_id, user, text)
             else:
-                # Rasm, fayl, stiker, audio fayl... - ishlanmaydi.
-                self._note(chat_id, "Faqat matn va 🎙 ovozli xabar qabul qilinadi.")
+                # Rasm, fayl, stiker... - ishlanmaydi (audio fayl - `plaud`, yuqorida).
+                self._note(chat_id, "Faqat matn, 🎙 ovozli xabar va audio fayl qabul qilinadi.")
 
     def _addressed(self, msg: dict[str, Any]) -> bool:
         """Guruhdagi xabar SHU botga qaratilganmi: buyruq (`/help` yoki
@@ -1197,8 +1224,20 @@ class VeneraBot:
                            markup=render.app_button(self.webapp_url))
                 # Rahbarga - ikkinchi xabar: brif tugmalari (bitta xabarda
                 # faqat bitta `reply_markup` - birinchisida ilova tugmasi).
+                # Qolganlarga - "🎙 Plaud" tugmasi (brif klaviaturasida u ham bor).
                 if self.briefs is not None and self.briefs.allowed(user, login):
                     self.briefs.show_keyboard(chat_id)
+                elif self.plaud is not None:
+                    self.plaud.show_keyboard(chat_id)
+        elif name == "plaud":
+            if link is None:
+                self._link_prompt(chat_id, state, force=True)
+            elif self.plaud is None:
+                self._send(chat_id, _UNKNOWN)
+            else:
+                found = self._account(chat_id, link)
+                if found is not None:
+                    self.plaud.on_button(chat_id, found[0])
         elif name == "help":
             # Ulanmagan odamga - BITTA xabar: yordam va ilova tugmasi.
             self._send(chat_id, _HELP,
@@ -1522,6 +1561,14 @@ class VeneraBot:
                 return
             with bind(found[0].actorId, "bot"):
                 self.admin.on_callback(cq_id, chat_id, msg, found[0], found[1], data)
+            return
+        if self.plaud is not None and data.startswith("p:"):
+            user = self._user_for(chat_id, link)
+            if user is None:
+                self._answer_cb(cq_id)
+                return
+            with bind(user.actorId, "bot"):
+                self.plaud.on_callback(cq_id, chat_id, msg, user, data)
             return
         user = self._user_for(chat_id, link)
         if user is None:

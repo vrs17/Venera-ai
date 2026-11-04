@@ -260,6 +260,24 @@ def _stop_telegram_bot() -> None:
 
 
 @app.on_event("startup")
+def _start_slack() -> None:
+    """Slack ilovasi "Barno AI" - FONDA ulanadi (`app/slack/`).
+
+    Tokenlar bo'lmasa hech narsa qilmaydi - qolgan hamma narsa Slack'ga bog'liq emas.
+    """
+    from . import slack
+
+    slack.start()
+
+
+@app.on_event("shutdown")
+def _stop_slack() -> None:
+    from . import slack
+
+    slack.stop()
+
+
+@app.on_event("startup")
 def _start_meetings_worker() -> None:
     """Yig'ilish yozuvchisining fon ishchisi (`services/meetings/worker.py`).
 
@@ -558,7 +576,8 @@ def _diagnostics() -> dict:
     # kaliti rad etilgan bo'lsa (401/403) - yozuvlar jimgina `failed` bo'lmasin.
     meetings = meetings_state()
     if meetings.get("lastAuthFailureAt") and time.time() - float(meetings["lastAuthFailureAt"]) < 86400:
-        warnings.append("Yig'ilishlar: GAPI kaliti rad etildi (401/403) - GAPI_API_KEY ni tekshiring")
+        keys = "GAPI_API_KEY / GAPI_API_KEY2" if settings.gapi_api_key2 else "GAPI_API_KEY"
+        warnings.append(f"Yig'ilishlar: GAPI kaliti rad etildi (401/403) - {keys} ni tekshiring")
     if meetings.get("enabled") and settings.meetings_worker and not meetings.get("worker", {}).get("alive"):
         warnings.append("Yig'ilishlar bo'limi yoqilgan, lekin fon ishchisi ishlamayapti")
 

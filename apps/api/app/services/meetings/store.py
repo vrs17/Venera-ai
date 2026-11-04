@@ -128,8 +128,15 @@ _V3: tuple[str, ...] = (
     "ALTER TABLE meetings ADD COLUMN consent_version TEXT",
 )
 
+#: v4 (2026-11-03): vazifa QAYSI GAPI kaliti bilan yuborilgani (1 - `GAPI_API_KEY`, 2 -
+#: `GAPI_API_KEY2`): vazifa o'sha hisobniki, holati va natijasi ham o'sha kalit bilan
+#: so'raladi. `NULL` - eski yozuvlar, ya'ni 1.
+_V4: tuple[str, ...] = (
+    "ALTER TABLE meetings ADD COLUMN stt_account INTEGER",
+)
+
 #: `MIGRATIONS[i]` fayl `user_version = i` dan `i + 1` ga o'tkazadi. FAQAT OXIRIGA.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 #: Apostrofning hamma ko'rinishi - qidiruvda olib tashlanadi ("o'zbek" = "oʻzbek" = "ozbek").

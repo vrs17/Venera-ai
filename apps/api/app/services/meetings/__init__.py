@@ -101,7 +101,8 @@ def _gapi_meeting_client() -> GapiSttClient:
     ikki slotini hech qachon olmaydi), 120 s har HTTP amal, ichki qayta
     urinishsiz (ishchi o'zi kutadi va holatni diskda saqlaydi)."""
     return GapiSttClient(settings.gapi_base_url, settings.gapi_api_key, timeout=settings.meetings_stt_timeout,
-                         max_concurrent=1, deadline=settings.meetings_stt_deadline, attempts=1)
+                         max_concurrent=1, deadline=settings.meetings_stt_deadline, attempts=1,
+                         api_key2=settings.gapi_api_key2)
 
 
 def _router_client() -> SttClient:

@@ -170,7 +170,7 @@ def carry(fn: F) -> F:
 #: Sozlamadagi sirlar - AYNAN qiymati bilan olib tashlanadi. Bu asosiy to'r:
 #: qiymatni bilib turib o'chirish taxminga bog'liq emas.
 _SECRET_SETTINGS = (
-    "hrm_assistant_client_secret", "tts_client_secret", "gapi_api_key",
+    "hrm_assistant_client_secret", "tts_client_secret", "gapi_api_key", "gapi_api_key2",
     "ollama_api_key", "venera_api_url", "telegram_bot_token", "crm_client_secret",
     "crm_password", "secret_key", "hrm_token", "crm_token",
 )

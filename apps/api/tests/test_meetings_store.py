@@ -136,6 +136,11 @@ def test_tozalash(tmp_path, monkeypatch, _isolated_meetings):
     purge(rt, now)
     assert st.meeting_any(keep["id"]) is not None                     # 0 - saqlanadi
 
+    monkeypatch.setattr(settings, "meetings_audio_days", 0)
+    keep_audio, keep_path = with_audio("keep", recorded_at=int(now - 400 * DAY), created_at=int(now - 400 * DAY))
+    assert purge(rt, now)["audio"] == 0
+    assert keep_path.exists() and st.meeting_any(keep_audio["id"])["audio_deleted_at"] is None   # 0 - audio qoladi
+
 
 def test_ombor_yoq_bolsa_holat_hech_narsa_yaratmaydi(tmp_path, _isolated_meetings):
     assert not _isolated_meetings.store.exists
@@ -180,7 +185,9 @@ def test_migratsiya_v1_dan_v2_ga_malumot_bilan(tmp_path):
     conn.close()
 
     st = MeetingStore(root)
-    assert st.version() == store_mod.SCHEMA_VERSION == 3
+    assert st.version() == store_mod.SCHEMA_VERSION == 4
+    # v4: eski yozuvning GAPI hisobi bo'sh - ya'ni birinchi kalit (`GAPI_API_KEY`).
+    assert st.rows("SELECT stt_account FROM meetings WHERE id='m1'")[0]["stt_account"] is None
     summary = st.summary("m1", "s1")
     assert summary["model"] == "gemma4:31b" and summary["provider"] is None
     item = st.action_item("m1", "a1")

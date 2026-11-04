@@ -652,7 +652,7 @@ def test_rasm_va_fayl_ochirilmaydi_faqat_izoh(world):
     links.link(TG_ID, 1)
     bot.handle_update(media_update("photo", [{"file_id": "p", "width": 1, "height": 1}]))
     assert not [n for n, _ in tg.calls if n == "delete_message"]
-    assert tg.texts() == ["Faqat matn va 🎙 ovozli xabar qabul qilinadi."]
+    assert tg.texts() == ["Faqat matn, 🎙 ovozli xabar va audio fayl qabul qilinadi."]
     assert backend.questions == []
 
 

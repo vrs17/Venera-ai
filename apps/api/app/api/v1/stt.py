@@ -60,6 +60,7 @@ _gapi_client = GapiSttClient(
     max_concurrent=settings.gapi_max_concurrent,
     deadline=settings.stt_deadline,
     attempts=1,
+    api_key2=settings.gapi_api_key2,
 )
 
 #: UYG'OTISH uchun ALOHIDA GAPI klienti - va sababi o'lchangan.
@@ -98,6 +99,7 @@ _gapi_wake_client = GapiSttClient(
     max_concurrent=1,
     deadline=8.0,
     attempts=1,
+    api_key2=settings.gapi_api_key2,
 )
 
 

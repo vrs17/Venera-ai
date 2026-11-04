@@ -21,6 +21,10 @@ deploy'ni murakkablashtiradi. Bizga kerak bo'lgan ish esa oddiy:
     olmaydi, ADTS esa kadr chegarasida bo'linadi (telefon qo'ng'irog'i yozuvlari).
   * MP3 va WAV (2026-10-22): kompyuterdagi tayyor yozuvlar. MP3 - kadr sarlavhalari
     (`mp3_info`), WAV - `fmt `/`data` (`wav_info`); Router uchun `split_plain`.
+  * OGG (2026-11-04): Telegram ovozli xabari (Opus). Davomiylik - oxirgi sahifaning
+    `granule_position` i (`ogg_info`), Router uchun sahifa chegarasida bo'linadi
+    (`split_ogg`): har bo'lak = sarlavha sahifalari (OpusHead, OpusTags) + o'z sahifalari,
+    tartib raqamlari qayta yozilib, CRC qayta hisoblanadi.
 """
 
 from __future__ import annotations
@@ -176,6 +180,8 @@ def sniff(first: bytes, content_type: str) -> bool:
         return len(first) >= 2 and first[0] == 0xFF and (first[1] & 0xF6) == 0xF0
     if content_type == "audio/mp4":
         return len(first) >= 8 and first[4:8] == b"ftyp"
+    if content_type == "audio/ogg":
+        return first[:4] == b"OggS"
     return False
 
 
@@ -369,6 +375,9 @@ def measure(path: Path | str, content_type: str) -> float | None:
     if content_type == "audio/wav":
         wav = wav_info(path)
         return wav.durationSec if wav else None
+    if content_type == "audio/ogg":
+        ogg = ogg_info(path)
+        return ogg.durationSec if ogg else None
     info = adts_info(path)
     return info.durationSec if info else None
 
@@ -795,9 +804,11 @@ TYPE_ALIASES = {
     "audio/x-wav": "audio/wav", "audio/wave": "audio/wav", "audio/vnd.wave": "audio/wav",
     "audio/x-pn-wav": "audio/wav",
     "audio/x-m4a": "audio/mp4", "audio/m4a": "audio/mp4", "audio/x-aac": "audio/aac", "audio/aacp": "audio/aac",
+    "audio/opus": "audio/ogg", "audio/oga": "audio/ogg", "audio/x-ogg": "audio/ogg", "application/ogg": "audio/ogg",
 }
 #: Saqlanadigan fayl kengaytmasi (STT va pleyer formatni shundan ham taniydi).
-EXTENSIONS = {"audio/aac": ".aac", "audio/mp4": ".m4a", "audio/mpeg": ".mp3", "audio/wav": ".wav"}
+EXTENSIONS = {"audio/aac": ".aac", "audio/mp4": ".m4a", "audio/mpeg": ".mp3", "audio/wav": ".wav",
+              "audio/ogg": ".ogg"}
 
 
 def canonical_type(content_type: str | None) -> str:
@@ -1034,3 +1045,187 @@ def split_plain(path: Path | str, content_type: str, max_sec: float, out_dir: Pa
             pieces.append((current[0], round(samples / rate, 3)))
         return pieces
     raise ValueError(f"split_plain: {content_type}")
+
+
+# --- OGG (Opus) -----------------------------------------------------------------
+#
+# Telegram ovozli xabari - Ogg konteynerida Opus. Sahifa: `OggS` + 27 baytli sarlavha
+# (`granule_position` - shu sahifagacha dekodlangan namunalar, Opus uchun HAR DOIM 48 kHz
+# da) + segmentlar jadvali + paketlar. Birinchi paket `OpusHead` (`pre_skip` - boshidagi
+# tashlab yuboriladigan namunalar), ikkinchisi `OpusTags`; audio shundan keyin.
+
+#: Opus granule'lari 48 kHz da (RFC 7845), konteyner chastotasidan qat'i nazar.
+_OPUS_RATE = 48000
+_OGG_HEADER = 27
+
+
+@dataclass(frozen=True)
+class OggPage:
+    offset: int          # fayldagi boshlanishi
+    length: int          # sarlavha + segmentlar jadvali + paketlar
+    granule: int         # -1 - shu sahifada birorta paket tugamaydi
+    flags: int           # 0x01 davom, 0x02 BOS, 0x04 EOS
+    packets_end: int     # shu sahifada TUGAGAN paketlar soni
+
+
+@dataclass(frozen=True)
+class OggInfo:
+    durationSec: float
+    preSkip: int
+    rate: int            # granule chastotasi
+    headerPages: int     # sarlavha paketlari (OpusHead, OpusTags) joylashgan sahifalar
+    pages: int
+
+
+def iter_ogg_pages(path: Path | str):
+    """Fayldagi sahifalar tartib bilan. Buzilgan joyda to'xtaydi (oxiri yarim sahifa)."""
+    with open(path, "rb") as fh:
+        offset = 0
+        while True:
+            fh.seek(offset)
+            head = fh.read(_OGG_HEADER)
+            if len(head) < _OGG_HEADER or head[:4] != b"OggS":
+                return
+            flags = head[5]
+            granule = struct.unpack("<q", head[6:14])[0]
+            count = head[26]
+            table = fh.read(count)
+            if len(table) < count:
+                return
+            body = sum(table)
+            length = _OGG_HEADER + count + body
+            fh.seek(offset + length - 1)
+            if length > 0 and not fh.read(1):
+                return                                   # yarim sahifa
+            yield OggPage(offset=offset, length=length, granule=granule, flags=flags,
+                          packets_end=sum(1 for lace in table if lace < 255))
+            offset += length
+
+
+def _ogg_first_packet(path: Path | str) -> bytes:
+    with open(path, "rb") as fh:
+        head = fh.read(_OGG_HEADER)
+        if len(head) < _OGG_HEADER or head[:4] != b"OggS":
+            return b""
+        table = fh.read(head[26])
+        size = 0
+        for lace in table:
+            size += lace
+            if lace < 255:
+                break
+        return fh.read(size)
+
+
+def ogg_info(path: Path | str) -> OggInfo | None:
+    """Davomiylik = (oxirgi granule - pre_skip) / chastota. Opus bo'lmasa (Vorbis) - sarlavhadagi
+    chastota, pre_skip 0. Sahifasiz yoki audio sahifasiz fayl - `None`."""
+    first = _ogg_first_packet(path)
+    if first.startswith(b"OpusHead") and len(first) >= 12:
+        rate, pre_skip, headers = _OPUS_RATE, struct.unpack("<H", first[10:12])[0], 2
+    elif first.startswith(b"\x01vorbis") and len(first) >= 16:
+        rate, pre_skip, headers = struct.unpack("<I", first[12:16])[0] or _OPUS_RATE, 0, 3
+    else:
+        return None
+    pages = header_pages = 0
+    done = 0
+    last = -1
+    for page in iter_ogg_pages(path):
+        pages += 1
+        if done < headers:
+            header_pages += 1
+            done += page.packets_end
+            continue
+        if page.granule >= 0:
+            last = page.granule
+    if pages <= header_pages or last < 0:
+        return None
+    return OggInfo(durationSec=round(max(0, last - pre_skip) / rate, 2), preSkip=pre_skip, rate=rate,
+                   headerPages=header_pages, pages=pages)
+
+
+def _ogg_crc_table() -> list[int]:
+    table = []
+    for n in range(256):
+        value = n << 24
+        for _ in range(8):
+            value = ((value << 1) ^ 0x04C11DB7) if value & 0x80000000 else (value << 1)
+        table.append(value & 0xFFFFFFFF)
+    return table
+
+
+_OGG_CRC = _ogg_crc_table()
+
+
+def ogg_crc(data: bytes) -> int:
+    """Ogg CRC32: polinom 0x04c11db7, boshlang'ich 0, aks ettirishsiz, yakuniy XOR siz."""
+    crc = 0
+    for byte in data:
+        crc = ((crc << 8) & 0xFFFFFFFF) ^ _OGG_CRC[((crc >> 24) ^ byte) & 0xFF]
+    return crc
+
+
+def _ogg_rewrite(raw: bytes, *, sequence: int, flags: int) -> bytes:
+    """Sahifa nusxasi: yangi tartib raqami va bayroqlar bilan, CRC qayta hisoblangan."""
+    page = bytearray(raw)
+    page[5] = flags
+    page[18:22] = struct.pack("<I", sequence)
+    page[22:26] = b"\0\0\0\0"
+    page[22:26] = struct.pack("<I", ogg_crc(bytes(page)))
+    return bytes(page)
+
+
+def split_ogg(path: Path | str, max_sec: float, out_dir: Path | str | None = None,
+              *, max_bytes: int = 20 * 1024 * 1024) -> list[tuple[Path, float]]:
+    """OGG ni Router (ru/en) uchun bo'laklarga bo'ladi -> [(fayl, soniya)].
+
+    Bo'lak = sarlavha sahifalari + ketma-ket audio sahifalar; tartib raqamlari 0 dan
+    qayta yoziladi (dekoder "sahifa yo'qolgan" demasin), oxirgisiga EOS. Granule'lar
+    ASL holida qoladi - dekoder uchun bu shunchaki boshlang'ich vaqt. Bo'lak `max_sec`
+    dan ham, `max_bytes` dan ham oshmaydi (sahifa ~5 s, ya'ni chegara sahifa aniqligida)."""
+    src = Path(path)
+    out = Path(out_dir) if out_dir else src.parent
+    info = ogg_info(src)
+    if info is None:
+        return []
+    pages = list(iter_ogg_pages(src))
+    with open(src, "rb") as fh:
+        def raw(page: OggPage) -> bytes:
+            fh.seek(page.offset)
+            return fh.read(page.length)
+
+        headers = [_ogg_rewrite(raw(p), sequence=i, flags=p.flags & ~0x04)
+                   for i, p in enumerate(pages[:info.headerPages])]
+        head_bytes = sum(len(h) for h in headers)
+        pieces: list[tuple[Path, float]] = []
+        group: list[OggPage] = []
+        group_bytes = 0
+        start = info.preSkip                     # bo'lak boshidagi granule
+        last = start
+
+        def flush(final: OggPage) -> None:
+            nonlocal group, group_bytes, start, last
+            piece = out / f"{src.stem}.part{len(pieces) + 1:03d}.ogg"
+            fd = os.open(piece, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                for header in headers:
+                    handle.write(header)
+                for n, page in enumerate(group):
+                    flags = (page.flags & ~0x06) | (0x04 if page is final else 0)
+                    handle.write(_ogg_rewrite(raw(page), sequence=len(headers) + n, flags=flags))
+            end = last if last > start else start
+            pieces.append((piece, round(max(0, end - start) / info.rate, 3)))
+            start = end
+            group, group_bytes = [], 0
+
+        for page in pages[info.headerPages:]:
+            if group and page.granule >= 0 and (
+                    (page.granule - start) / info.rate > max_sec
+                    or head_bytes + group_bytes + page.length > max_bytes):
+                flush(group[-1])
+            group.append(page)
+            group_bytes += page.length
+            if page.granule >= 0:
+                last = page.granule
+        if group:
+            flush(group[-1])
+    return pieces

@@ -18,6 +18,9 @@ dependencies = [
     # import qilinadi: o'rnatilmagan serverda faqat shu format 503, ilova ko'tariladi.
     "python-docx==1.2.0",
     "reportlab==4.4.10",
+    # Slack ilovasi "Barno AI" (`app/slack/`, Socket Mode). Funksiya ichida import
+    # qilinadi: o'rnatilmagan serverda faqat Slack ishlamaydi, ilova ko'tariladi.
+    "slack_bolt>=1.30",
 ]
 
 [project.optional-dependencies]

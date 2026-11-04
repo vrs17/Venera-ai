@@ -430,8 +430,8 @@ def test_help_qisqa(world):
     links.link(TG_ID, 1)
     bot.handle_update(text_update("/help"))
     text = tg.sent()[-1]["text"]
-    assert text.count("•") <= 4 and len(text.splitlines()) <= 7
-    assert "/new" in text and "⚑" in text
+    assert text.count("•") <= 4 and len(text.splitlines()) <= 8
+    assert "/new" in text and "⚑" in text and "/plaud" in text
     assert tg.sent()[-1]["reply_markup"] is None, "ulangan odamga ortiqcha tugma yo'q"
 
 
@@ -446,7 +446,7 @@ def test_logout_va_chiqish(world):
 
 
 def test_menyu_buyruqlari():
-    assert [c["command"] for c in COMMANDS] == ["start", "new", "help", "logout"]
+    assert [c["command"] for c in COMMANDS] == ["start", "plaud", "new", "help", "logout"]
     assert all(len(c["description"]) <= 256 for c in COMMANDS)
 
 

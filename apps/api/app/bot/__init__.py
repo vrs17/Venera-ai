@@ -75,7 +75,7 @@ def start() -> None:
                      webhook_url=settings.telegram_webhook_url, webhook_secret=webhook_secret(),
                      beta_url=settings.telegram_webapp_beta_url, sync_commands=True,
                      groups=_groups(store, registry), briefs=briefs, admin=_admin(store, registry),
-                     group_actions=True)
+                     group_actions=True, plaud=_plaud())
     _bot.start()
     # Fonda: guruhlarning kunlik hodisalarini oldindan ajratish - uzun davrli
     # brif soniyalarda ochilsin.
@@ -101,6 +101,19 @@ def _admin(store, registry):
     from .group_admin import GroupAdmin
 
     return GroupAdmin(api, registry, store, days=settings.telegram_group_days)
+
+
+def _plaud():
+    """"🎙 Plaud" (`plaud.py`): audio -> yig'ilish quvuri -> matn, xulosa, tugmalar. O'z iplari -
+    soatlik kutishlar botning navbatini band qilmasin. Yig'ilishlar bo'limi o'chiq bo'lsa
+    (`MEETINGS_ENABLED`) tugma ko'rsatilmaydi."""
+    from ..core import config as _config
+    from .plaud import Plaud
+
+    if not _config.meetings_enabled_now():
+        log.info("Telegram Plaud o'chiq: yig'ilishlar bo'limi yoqilmagan")
+        return None
+    return Plaud(api, workers=max(2, settings.telegram_workers))
 
 
 def _writer():

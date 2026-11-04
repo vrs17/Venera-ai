@@ -38,7 +38,7 @@ from typing import Any
 
 from ...core.config import settings
 from ..analytics import bind, record_call
-from ..integrations.gapi_stt import MeetingTranscript, meeting_settings, parse_meeting_result
+from ..integrations.gapi_stt import MeetingTranscript, meeting_settings, out_of_balance, parse_meeting_result
 from ..stt import SttError
 from . import audio, dates
 from .errors import RETRYABLE
@@ -271,35 +271,39 @@ class Transcriber:
 
     # --- GAPI (o'zbekcha) ---
 
-    def _quota(self, m: dict[str, Any], now: float) -> bool:
-        """`True` - davom etish mumkin; aks holda yig'ilish navbatga qo'yildi.
+    def _quota(self, m: dict[str, Any], now: float) -> int | None:
+        """Qaysi GAPI hisobi bilan yuborish mumkin (1 - `GAPI_API_KEY`, 2 - `GAPI_API_KEY2`);
+        `None` - yig'ilish navbatga qo'yildi.
 
-        Sarf = tugagan vazifalar (`quota_days`) + YUBORILGAN-u natijasi kelmaganlar."""
+        Sarf = tugagan vazifalar (`quota_days`) + YUBORILGAN-u natijasi kelmaganlar. Xizmat
+        ulushi har kalit uchun, hisob esa tartib bilan: birinchisida balans yetmasa - ikkinchisi."""
         minutes = math.ceil(float(m.get("duration_sec") or 0) / 60.0)
         day = dates.day_key(now)
+        service_cap = settings.meetings_gapi_daily_minutes * max(1, len(self.rt.gapi.accounts))
         for code, actor, cap in (("quota_user", m["actor_id"], settings.meetings_user_daily_minutes),
-                                 ("quota_service", None, settings.meetings_gapi_daily_minutes)):
+                                 ("quota_service", None, service_cap)):
             done = self.store.used_sec(day, 0 if actor is None else actor) / 60.0
             if done + minutes > cap:
                 self.park_quota(m, now, code, dates.next_reset(now))
-                return False
+                return None
             if done + self.store.inflight_minutes(actor, exclude=m["id"]) + minutes > cap:
                 # Faqat YO'LDAGI vazifalar tufayli to'lgan - ular tugagach joy qolishi
                 # mumkin (haqiqiy audio qisqaroq): ertagacha emas, 10 daqiqa kutamiz.
                 self.park_quota(m, now, code, now + 600)
-                return False
-        try:
-            usage = self.rt.gapi.usage()
-        except SttError as exc:
-            # Balansni bilib bo'lmadi - TO'XTATMAYMIZ: kunlik ulush yuqorida
-            # tekshirildi, balans so'rovi esa faqat qo'shimcha to'r.
-            log.info("GAPI balansi o'qilmadi: %s", exc)
-            return True
-        available = _num(usage.get("available_g"))
-        if available is not None and available - minutes < settings.meetings_gapi_reserve_minutes:
-            self.park_quota(m, now, "quota_service", now + 30 * 60)
-            return False
-        return True
+                return None
+        for account in self.rt.gapi.usable_accounts():
+            try:
+                usage = self.rt.gapi.usage(account=account)
+            except SttError as exc:
+                # Balansni bilib bo'lmadi - TO'XTATMAYMIZ: kunlik ulush yuqorida
+                # tekshirildi, balans so'rovi esa faqat qo'shimcha to'r.
+                log.info("GAPI balansi o'qilmadi: %s", exc)
+                return account
+            available = _num(usage.get("available_g"))
+            if available is None or available - minutes >= settings.meetings_gapi_reserve_minutes:
+                return account
+        self.park_quota(m, now, "quota_service", now + 30 * 60)
+        return None
 
     def _gapi(self, m: dict[str, Any], now: float, owner: str | None = None) -> None:
         if not self.rt.gapi.configured:
@@ -317,13 +321,14 @@ class Transcriber:
                 self.fail(m, now, "internal")
                 return
         with _SUBMIT_LOCK:
-            if not self._quota(m, now):
+            account = self._quota(m, now)
+            if account is None:
                 return
             # POST DAN OLDIN (va kvota qulfi ostida): yiqilsak, keyingi qadam
             # "yuborilganmi?" deb so'raydi; parallel ip esa buni "yo'lda" deb hisoblaydi.
             self._update(m, now, status="transcribing", stt_engine="gapi", stt_submitted_at=int(now),
-                         attempts=int(m.get("attempts") or 0) + 1, progress=5.0, error_code=None,
-                         error_stage=None)
+                         stt_account=account, attempts=int(m.get("attempts") or 0) + 1, progress=5.0,
+                         error_code=None, error_stage=None)
         self._submit(m, now)
 
     def _adopt(self, m: dict[str, Any], now: float) -> bool:
@@ -335,7 +340,7 @@ class Transcriber:
         bog'lanmagan. Shubha bo'lsa - qayta yuboriladi (eng ko'pi 2 urinish):
         ikki marta to'lash begona odamning transkriptini berishdan yaxshiroq."""
         try:
-            jobs = self.rt.gapi.list_jobs(limit=20)
+            jobs = self.rt.gapi.list_jobs(limit=20, account=int(m.get("stt_account") or 1))
         except SttError as exc:
             log.info("GAPI vazifalari ro'yxati o'qilmadi: %s", exc)
             self.backoff(m, now, exc)
@@ -367,9 +372,10 @@ class Transcriber:
 
     def _submit(self, m: dict[str, Any], now: float) -> None:
         path = Path(m["audio_path"])
+        account = int(m.get("stt_account") or 1)
         try:
             job = self.rt.gapi.submit_job(path, m.get("content_type") or "audio/aac",
-                                          meeting_settings(m.get("expected_speakers")))
+                                          meeting_settings(m.get("expected_speakers")), account=account)
         except SttError as exc:
             if _local(exc):
                 # O'z slotimiz band - so'rov KETMAGAN: belgi va urinish qaytariladi.
@@ -381,6 +387,14 @@ class Transcriber:
             if getattr(exc, "gapi_status", None) is not None:
                 # Javob keldi - vazifa YARATILMAGAN, qayta yuborish xavfsiz.
                 self._update(m, now, stt_submitted_at=None)
+            if out_of_balance(exc):
+                self.rt.gapi.mark_out_of_balance(account)
+                if self.rt.gapi.usable_accounts():
+                    # Boshqa kalitda balans bor - navbatda kutmasdan o'shanga (`_quota` tanlaydi).
+                    # Vazifa yaratilmagan: urinish sanalmaydi.
+                    self._update(m, now, attempts=max(0, int(m.get("attempts") or 1) - 1),
+                                 next_attempt_at=int(now + 2))
+                    return
             self._error(m, now, exc, polling=False)
             return
         # 202 DAN DARHOL KEYIN: vazifa raqami diskda - endi hech qachon qayta yuborilmaydi.
@@ -393,8 +407,9 @@ class Transcriber:
         if now > float(deadline):
             self.fail(m, now, "stt_timeout")
             return
+        account = int(m.get("stt_account") or 1)
         try:
-            job = self.rt.gapi.get_job(m["stt_job_id"])
+            job = self.rt.gapi.get_job(m["stt_job_id"], account=account)
         except SttError as exc:
             self._error(m, now, exc, polling=True)
             return
@@ -413,7 +428,7 @@ class Transcriber:
                          next_attempt_at=int(now + wait))
             return
         try:
-            payload = self.rt.gapi.get_result(m["stt_job_id"], m.get("stt_result_url"))
+            payload = self.rt.gapi.get_result(m["stt_job_id"], m.get("stt_result_url"), account=account)
         except SttError as exc:
             if getattr(exc, "gapi_status", None) == 409 or getattr(exc, "gapi_code", "") == "result_not_ready":
                 self._update(m, now, next_attempt_at=int(now + 2))
@@ -476,11 +491,12 @@ class Transcriber:
                          error_stage=None)
             if piece_type == "audio/mp4":
                 pieces = [(path, 0.0, duration)]
-            elif piece_type in ("audio/mpeg", "audio/wav"):
-                # mp3 - kadr, wav - blok chegarasida; bo'lak Router chegarasidan (bayt) ham oshmaydi.
+            elif piece_type in ("audio/mpeg", "audio/wav", "audio/ogg"):
+                # mp3 - kadr, wav - blok, ogg - sahifa chegarasida; bo'lak Router chegarasidan (bayt) ham oshmaydi.
+                splitter = audio.split_ogg if piece_type == "audio/ogg" else (
+                    lambda *a, **kw: audio.split_plain(a[0], piece_type, *a[1:], **kw))
                 pieces, offset = [], 0.0
-                for piece, length in audio.split_plain(source, piece_type, ROUTER_PIECE_SEC, tmp,
-                                                       max_bytes=ROUTER_PIECE_BYTES):
+                for piece, length in splitter(source, ROUTER_PIECE_SEC, tmp, max_bytes=ROUTER_PIECE_BYTES):
                     pieces.append((piece, offset, length))
                     offset += length
             else:

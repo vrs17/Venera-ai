@@ -30,7 +30,7 @@ def test_yaratish_idempotent_va_default_sarlavha(client, auth, monkeypatch, _iso
 def test_yaratish_tekshiruvlari(client, auth, monkeypatch):
     enable(monkeypatch)
     base = {"clientId": client_uuid(), "recordedAt": "2026-10-09T06:00:00Z"}
-    bad_type = client.post("/api/v1/meetings", json={**base, "contentType": "audio/ogg"}, headers=auth)
+    bad_type = client.post("/api/v1/meetings", json={**base, "contentType": "audio/flac"}, headers=auth)
     assert bad_type.status_code == 415 and bad_type.json()["code"] == "unsupported_format"
     assert client.post("/api/v1/meetings", json={**base, "template": "follow_up"}, headers=auth).status_code == 422
     assert client.post("/api/v1/meetings", json={**base, "clientId": "x"}, headers=auth).status_code == 422

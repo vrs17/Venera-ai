@@ -44,7 +44,8 @@ log = logging.getLogger(__name__)
 LANGS = ("uz", "ru", "en")
 #: mp3 va wav - 2026-10-22 (ega: kompyuterdagi tayyor yozuvlar). Taxalluslar (`audio/mp3`, `audio/x-wav`,
 #: `audio/x-m4a`) `audio.canonical_type` bilan shularga keltiriladi.
-ACCEPTED_TYPES = ("audio/aac", "audio/mp4", "audio/mpeg", "audio/wav")
+#: `audio/ogg` (2026-11-04) - Telegram ovozli xabari (Opus); GAPI uni to'g'ridan-to'g'ri oladi.
+ACCEPTED_TYPES = ("audio/aac", "audio/mp4", "audio/mpeg", "audio/wav", "audio/ogg")
 MIN_SECONDS = 10
 MAX_MARKS = 200
 #: `recordedAt` kelajakda bo'lolmaydi (telefon soati / qasddan): saqlash muddatini
@@ -472,7 +473,7 @@ def delete(user: AuthUser, meeting_id: str) -> dict[str, Any]:
     if m.get("stt_job_id") and m.get("status") == "transcribing" and getattr(rt.gapi, "configured", False):
         # Eng yaxshi urinish: GAPI vazifani faqat yashiradi (30 kun saqlaydi).
         with contextlib.suppress(SttError, Exception):
-            rt.gapi.cancel_job(m["stt_job_id"])
+            rt.gapi.cancel_job(m["stt_job_id"], account=int(m.get("stt_account") or 1))
     delete_meeting(rt, m)
     log.info("Yig'ilish o'chirildi: %s", m["id"])
     return {"id": m["id"], "status": "deleted"}
@@ -1428,8 +1429,8 @@ def _audio_path(m: dict[str, Any]) -> tuple[Path, str, dict[str, str]]:
     path = Path(m["audio_path"]) if m.get("audio_path") else None
     if m.get("audio_deleted_at") or path is None or not path.exists():
         raise MeetingProblem(410, "audio_expired", "Audio saqlash muddati tugagan")
-    if (m.get("content_type") or "") in ("audio/mp4", "audio/mpeg", "audio/wav"):
-        # m4a, mp3, wav - pleyer o'zi tinglaydi va istalgan joyga sakraydi; faqat ADTS m4a ga o'giriladi.
+    if (m.get("content_type") or "") in ("audio/mp4", "audio/mpeg", "audio/wav", "audio/ogg"):
+        # m4a, mp3, wav, ogg - pleyer o'zi tinglaydi va istalgan joyga sakraydi; faqat ADTS m4a ga o'giriladi.
         return path, m["content_type"], {}
     cache = path.with_suffix(".m4a")
     if not cache.exists():

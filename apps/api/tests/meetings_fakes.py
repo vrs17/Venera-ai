@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import struct
 import uuid
 
 from typing import Any, Callable
@@ -68,19 +69,38 @@ class FakeGapiMeeting:
         self.usage_payload: dict[str, Any] = {"available_g": 400.0, "topup_target_g": 480.0}
         self.cancelled: list[str] = []
         self.noted = 0.0
+        #: Hisoblar (1 - `GAPI_API_KEY`, 2 - `GAPI_API_KEY2`): har birining balansi
+        #: (`usage_by_account`, bo'lmasa `usage_payload`), yuborishda balansi yetmaydiganlari
+        #: (`no_balance` - `429 insufficient_balance`) va ishchi "tugadi" deb belgilaganlari.
+        self.accounts: list[int] = [1]
+        self.usage_by_account: dict[int, dict[str, Any]] = {}
+        self.no_balance: set[int] = set()
+        self.empty: set[int] = set()
+        #: Har so'rov qaysi hisob bilan ketgani: `(amal, hisob)`.
+        self.account_calls: list[tuple[str, int]] = []
 
-    def submit_job(self, path, content_type, settings):
+    def usable_accounts(self):
+        return [a for a in self.accounts if a not in self.empty]
+
+    def mark_out_of_balance(self, account):
+        self.empty.add(account)
+
+    def submit_job(self, path, content_type, settings, *, account=1):
+        self.account_calls.append(("submit", account))
         if self.submit_error is not None:
             raise self.submit_error
+        if account in self.no_balance:
+            raise gapi_error(429, "insufficient_balance", retryable=True)
         with open(path, "rb") as fh:
             size = len(fh.read())
         job_id = f"job-{len(self.submits) + 1}"
         self.submits.append({"path": str(path), "contentType": content_type, "settings": dict(settings),
-                             "size": size, "id": job_id})
+                             "size": size, "id": job_id, "account": account})
         return {"id": job_id, "state": "queued", "estimatedSeconds": 64.0,
                 "resultUrl": f"https://gapi.test/v1/jobs/{job_id}/result"}
 
-    def get_job(self, job_id):
+    def get_job(self, job_id, *, account=1):
+        self.account_calls.append(("job", account))
         self.polls += 1
         if self.poll_error is not None:
             raise self.poll_error
@@ -89,20 +109,24 @@ class FakeGapiMeeting:
             return state
         return {"id": job_id, "state": state, "progress_seconds": 32.0, "audio_seconds": 64.0}
 
-    def get_result(self, job_id, result_url=None):
+    def get_result(self, job_id, result_url=None, *, account=1):
+        self.account_calls.append(("result", account))
         if self.result_errors:
             raise self.result_errors.pop(0)
         return self.result
 
-    def list_jobs(self, limit=20):
+    def list_jobs(self, limit=20, *, account=1):
+        self.account_calls.append(("list", account))
         return list(self.jobs_list)
 
-    def cancel_job(self, job_id):
+    def cancel_job(self, job_id, *, account=1):
+        self.account_calls.append(("cancel", account))
         self.cancelled.append(job_id)
         return True
 
-    def usage(self):
-        return dict(self.usage_payload)
+    def usage(self, *, account=1):
+        self.account_calls.append(("usage", account))
+        return dict(self.usage_by_account.get(account, self.usage_payload))
 
     def note_meeting_audio(self, seconds):
         self.noted += seconds
@@ -469,3 +493,45 @@ def completion(content: str, *, finish: str = "stop") -> dict[str, Any]:
     return {"id": "chatcmpl-1", "object": "chat.completion", "model": "gpt-test",
             "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": finish}],
             "usage": {"prompt_tokens": 1200, "completion_tokens": 340, "total_tokens": 1540}}
+
+
+# --- OGG (Opus) sintetik fayl ---------------------------------------------------------
+
+
+def _ogg_page(packets: list[bytes], *, granule: int, serial: int, sequence: int, flags: int = 0) -> bytes:
+    from app.services.meetings.audio import ogg_crc
+
+    table = bytearray()
+    for packet in packets:
+        size = len(packet)
+        while size >= 255:
+            table.append(255)
+            size -= 255
+        table.append(size)
+    head = (b"OggS" + bytes([0, flags]) + struct.pack("<q", granule) + struct.pack("<I", serial)
+            + struct.pack("<I", sequence) + b"\0\0\0\0" + bytes([len(table)]) + bytes(table) + b"".join(packets))
+    page = bytearray(head)
+    page[22:26] = struct.pack("<I", ogg_crc(bytes(page)))
+    return bytes(page)
+
+
+def ogg_opus_bytes(seconds: float, *, pre_skip: int = 312, frame_ms: int = 20, per_page: int = 50) -> bytes:
+    """Ogg Opus: OpusHead + OpusTags + nol uzunlikdagi (sukut) kadrlar - har biri 1 bayt TOC
+    (CELT FB, `frame_ms`, mono). Davomiylik `seconds` ga yaxlitlangan kadrlar soni."""
+    samples = 48000 * frame_ms // 1000
+    toc = bytes([(31 << 3)])                                   # config 31 = CELT fullband 20 ms, code 0
+    head = (b"OpusHead" + bytes([1, 1]) + struct.pack("<H", pre_skip) + struct.pack("<I", 48000)
+            + struct.pack("<h", 0) + bytes([0]))
+    tags = b"OpusTags" + struct.pack("<I", 5) + b"barno" + struct.pack("<I", 0)
+    frames = max(1, int(round(seconds * 1000 / frame_ms)))
+    out = [_ogg_page([head], granule=0, serial=7, sequence=0, flags=0x02),
+           _ogg_page([tags], granule=0, serial=7, sequence=1)]
+    done, sequence = 0, 2
+    while done < frames:
+        take = min(per_page, frames - done)
+        done += take
+        last = done == frames
+        out.append(_ogg_page([toc] * take, granule=pre_skip + done * samples, serial=7, sequence=sequence,
+                             flags=0x04 if last else 0))
+        sequence += 1
+    return b"".join(out)

@@ -47,7 +47,7 @@ log = logging.getLogger(__name__)
 
 #: Yig'ilish vazifasi uchun fayl nomi - kontent turidan (GAPI formatni kengaytmadan ham taniydi).
 _MEETING_FILENAMES = {"audio/aac": "meeting.aac", "audio/mp4": "meeting.m4a", "audio/mpeg": "meeting.mp3",
-                      "audio/wav": "meeting.wav"}
+                      "audio/wav": "meeting.wav", "audio/ogg": "meeting.ogg"}
 
 #: Har so'rovda yuboriladigan sozlamalar - loyiha sozlamalari USTIDAN.
 #:
@@ -80,6 +80,24 @@ _POLL_EVERY = 2.0
 
 #: Kalit jurnalga tushmasligi uchun - `Bearer` dan keyingi hamma narsa.
 _KEY_LIKE = "gapi_"
+
+#: Kalitning balansi tugadi - GAPI `429 insufficient_balance` (`docs/plans/meeting-recorder.md`).
+_NO_BALANCE = "insufficient_balance"
+
+#: Balansi tugagan kalit shuncha vaqt CHETLAB o'tiladi, keyin yana sinaladi - lekin Toshkent
+#: yarim kechasidan (kunlik to'ldirish) kechiktirilmaydi. Oraliq qisqa, chunki balans kun
+#: o'rtasida ham qaytishi mumkin: yo'ldagi vazifalar band qilgan qism bo'shaydi yoki hisob
+#: qo'lda to'ldiriladi. Rad etilgan so'rov esa darhol qaytadi.
+_EMPTY_RECHECK_SEC = 30 * 60
+
+#: Kunlik balans Toshkent vaqti bilan to'ldiriladi. `zoneinfo` emas, QAT'IY +5: O'zbekistonda
+#: yozgi vaqt yo'q, va bu `tzdata` paketiga bog'liq bo'lmaydi.
+_TASHKENT = timezone(timedelta(hours=5))
+
+
+def out_of_balance(exc: BaseException) -> bool:
+    """Xato "shu kalitning balansi yetmaydi" degani (`429 insufficient_balance`)."""
+    return getattr(exc, "gapi_code", "") == _NO_BALANCE
 
 
 def _safe(text: str, key: str = "") -> str:
@@ -269,13 +287,23 @@ def parse_meeting_result(payload: Any) -> MeetingTranscript:
 
 
 class GapiSttClient:
-    """`console.gapi.uz` ustidagi klient. `SttClient` bilan bir xil yuz."""
+    """`console.gapi.uz` ustidagi klient. `SttClient` bilan bir xil yuz.
+
+    IKKI HISOB. Har GAPI hisobining o'z kunlik balansi bor (480 g). `api_key2`
+    (`GAPI_API_KEY2`) berilsa, birinchi kalitning balansi tugaganda so'rov darhol
+    ikkinchisiga ketadi, birinchisi esa `_EMPTY_RECHECK_SEC` davomida chetlab
+    o'tiladi - yarim kechada to'lgach yana birinchisi ishlatiladi. Hisob raqami:
+    1 - `GAPI_API_KEY`, 2 - `GAPI_API_KEY2`. Yig'ilish vazifasi QAYSI hisobda
+    yaratilgan bo'lsa, holati va natijasi ham o'sha kalit bilan so'raladi
+    (`account=`): boshqa hisob uchun u vazifa yo'q.
+    """
 
     def __init__(self, base_url: str, api_key: str, *, timeout: float = 60.0,
                  max_concurrent: int = 2, deadline: float = 100.0,
-                 attempts: int = 2) -> None:
+                 attempts: int = 2, api_key2: str = "") -> None:
         self.base_url = (base_url or "").rstrip("/")
         self._api_key = api_key or ""
+        self._api_key2 = api_key2 or ""
         self.timeout = timeout
         self.max_concurrent = max(1, max_concurrent)
         self.deadline = deadline
@@ -303,16 +331,72 @@ class GapiSttClient:
         # bo'lganda. Bu ikki son orasidagi farq "pul ketdi, natija yo'q"
         # degan signal.
         self._spend_sent = 0
+        # Balansi tugagan hisoblar: raqam -> shu vaqtgacha chetlab o'tiladi. `_warned` - qaysi
+        # kuni jurnalga ogohlantirish yozilgani (har 30 daqiqalik qayta tekshiruvda emas).
+        self._empty_lock = threading.Lock()
+        self._empty: dict[int, float] = {}
+        self._warned: dict[int, str] = {}
 
     @property
     def configured(self) -> bool:
-        return bool(self.base_url and self._api_key)
+        return bool(self.base_url and self.accounts)
+
+    # --- hisoblar (kalitlar) ------------------------------------------------
+
+    def _key_of(self, account: int) -> str:
+        return self._api_key if account == 1 else self._api_key2 if account == 2 else ""
+
+    @staticmethod
+    def _name(account: int) -> str:
+        return "GAPI_API_KEY" if account == 1 else f"GAPI_API_KEY{account}"
+
+    @property
+    def accounts(self) -> list[int]:
+        """Sozlangan hisoblar, ishlatilish tartibida."""
+        return [n for n in (1, 2) if self._key_of(n)]
+
+    def usable_accounts(self) -> list[int]:
+        """Sozlangan va balansi tugagan deb belgilanmagan hisoblar."""
+        now = time.time()
+        with self._empty_lock:
+            return [n for n in self.accounts if self._empty.get(n, 0.0) <= now]
+
+    def mark_out_of_balance(self, account: int) -> None:
+        """Shu hisobning balansi tugadi - keyingi so'rovlar boshqa kalitga."""
+        now, day = time.time(), self._today()
+        midnight = datetime.now(_TASHKENT).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        with self._empty_lock:
+            self._empty[account] = min(midnight.timestamp(), now + _EMPTY_RECHECK_SEC)
+            first = self._warned.get(account) != day
+            self._warned[account] = day
+        rest = [n for n in self.usable_accounts() if n != account]
+        (log.warning if first else log.info)(
+            "GAPI: %s balansi tugadi - %s", self._name(account),
+            f"{self._name(rest[0])} ishlatiladi" if rest else "boshqa kalit yo'q")
+
+    def _key(self, account: int) -> str:
+        key = self._key_of(account)
+        if not key:
+            raise SttError(f"GAPI STT sozlanmagan ({self._name(account)})", status=501)
+        return key
+
+    def _redact(self, text: str) -> str:
+        """`_safe` - ikkala kalit bilan."""
+        if self._api_key2:
+            text = (text or "").replace(self._api_key2, "<key>")
+        return _safe(text, self._api_key)
+
+    def _all_empty(self) -> SttError:
+        error = SttError("GAPI: hamma kalitlarning balansi tugagan", status=429, retryable=True)
+        error.gapi_status = 429
+        error.gapi_code = _NO_BALANCE
+        return error
 
     # --- kunlik sarf ------------------------------------------------------
 
     @staticmethod
     def _today() -> str:
-        return datetime.now(timezone(timedelta(hours=5))).date().isoformat()
+        return datetime.now(_TASHKENT).date().isoformat()
 
     def _account(self, seconds: float) -> None:
         day = self._today()
@@ -364,26 +448,47 @@ class GapiSttClient:
             raise SttError(f"ilova GAPI chegarasida ({self.max_concurrent} parallel)",
                            status=503, retryable=True)
         try:
-            return self._with_retries(audio, content_type, budget)
+            return self._any_account(audio, content_type, budget)
         finally:
             self._slots.release()
 
+    def _any_account(self, audio: bytes, content_type: str,
+                     budget: float | None = None) -> Transcript:
+        """Hisoblar tartib bilan: balansi tugagani belgilanadi va DARHOL keyingisi
+        sinaladi. Boshqa xato avvalgidek yuqoriga ketadi (chatda zahira - Router)."""
+        accounts = self.usable_accounts()
+        if not accounts:
+            raise self._all_empty()
+        started = time.monotonic()
+        for account in accounts:
+            left = None if budget is None else max(0.0, budget - (time.monotonic() - started))
+            try:
+                return self._with_retries(audio, content_type, left, account=account)
+            except SttError as exc:
+                if not out_of_balance(exc):
+                    raise
+                self.mark_out_of_balance(account)
+                if account == accounts[-1]:
+                    raise
+        raise self._all_empty()
+
     def _with_retries(self, audio: bytes, content_type: str,
-                      budget: float | None = None) -> Transcript:
+                      budget: float | None = None, *, account: int = 1) -> Transcript:
         body, ctype = _multipart(audio, safe_filename(content_type), content_type)
         started = time.monotonic()
         deadline = self.deadline if budget is None else min(self.deadline, budget)
 
         for attempt in range(self.attempts):
             try:
-                return self._once(body, ctype, started)
+                return self._once(body, ctype, started, account)
             except SttError as exc:
                 # OXIRGI urinishdan keyin kutish - sof zarar. Avval bu
                 # qo'riqchi yo'q edi va `attempts=1` bo'lgan klient ham
                 # bekorga 1 sekund uxlardi: shu vaqt davomida PULLIK slot va
                 # `def` endpoint'ining threadpool ishchisi band turardi.
                 # (`services/stt.py` da bu qo'riqchi boshidan bor.)
-                if not exc.retryable or attempt == self.attempts - 1:
+                # Balans tugagan bo'lsa kutish ham yordam bermaydi - keyingi kalit kerak.
+                if not exc.retryable or out_of_balance(exc) or attempt == self.attempts - 1:
                     raise
                 # 429 da xizmat `Retry-After` beradi - o'shancha kutamiz.
                 pause = getattr(exc, "retry_after", None) or 1.0
@@ -396,20 +501,20 @@ class GapiSttClient:
                 time.sleep(min(pause, 5.0))
         raise SttError("GAPI javob bermadi", status=502)
 
-    def _once(self, body: bytes, ctype: str, started: float) -> Transcript:
+    def _once(self, body: bytes, ctype: str, started: float, account: int = 1) -> Transcript:
         with self._spend_lock:
             self._spend_sent += 1
-        payload, job_id = self._post("/transcribe", body, ctype)
+        payload, job_id = self._post("/transcribe", body, ctype, account)
         # `202` - natija hali yo'q, faqat `job_id`. Uzun yozuvlar uchun.
         if payload.get("state") and not payload.get("text"):
-            payload = self._await_job(payload.get("id") or job_id, started)
+            payload = self._await_job(payload.get("id") or job_id, started, account)
         result = self._parse(payload, started, job_id)
         self._account(result.duration_sec)
         return result
 
     # --- vazifa yo'li (faqat 202 bo'lganda) -------------------------------
 
-    def _await_job(self, job_id: str, started: float) -> dict[str, Any]:
+    def _await_job(self, job_id: str, started: float, account: int = 1) -> dict[str, Any]:
         """Vazifa tugashini kutadi. Faqat `/transcribe` 202 qaytarganda.
 
         SSE ham, webhook ham ISHLATILMAYDI: ikkalasi ham bizning holatga
@@ -423,10 +528,10 @@ class GapiSttClient:
         while True:
             if time.monotonic() - started > self.deadline:
                 raise SttError("GAPI javobi juda uzoq cho'zildi", status=504)
-            state, _ = self._get(f"/jobs/{job_id}")
+            state, _ = self._get(f"/jobs/{job_id}", account)
             current = str(state.get("state") or "")
             if current == "done":
-                result, _ = self._get(f"/jobs/{job_id}/result")
+                result, _ = self._get(f"/jobs/{job_id}/result", account)
                 return result
             if current in ("failed", "cancelled"):
                 raise SttError(f"GAPI vazifasi {current}", status=502)
@@ -434,18 +539,18 @@ class GapiSttClient:
 
     # --- transport --------------------------------------------------------
 
-    def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._api_key}", "Accept": "application/json"}
+    def _headers(self, account: int = 1) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._key(account)}", "Accept": "application/json"}
 
-    def _post(self, path: str, body: bytes, ctype: str) -> tuple[dict[str, Any], str]:
+    def _post(self, path: str, body: bytes, ctype: str, account: int = 1) -> tuple[dict[str, Any], str]:
         request = urllib.request.Request(
             f"{self.base_url}{path}", data=body, method="POST",
-            headers={**self._headers(), "Content-Type": ctype},
+            headers={**self._headers(account), "Content-Type": ctype},
         )
         return self._send(request)
 
-    def _get(self, path: str) -> tuple[dict[str, Any], str]:
-        request = urllib.request.Request(f"{self.base_url}{path}", headers=self._headers())
+    def _get(self, path: str, account: int = 1) -> tuple[dict[str, Any], str]:
+        request = urllib.request.Request(f"{self.base_url}{path}", headers=self._headers(account))
         return self._send(request)
 
     def _send(self, request: urllib.request.Request) -> tuple[dict[str, Any], str]:
@@ -459,14 +564,14 @@ class GapiSttClient:
         except urllib.error.HTTPError as exc:
             raise self._from_http(exc) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise SttError(f"GAPI ga ulanib bo'lmadi: {_safe(str(exc), self._api_key)}",
+            raise SttError(f"GAPI ga ulanib bo'lmadi: {self._redact(str(exc))}",
                            status=503, retryable=True) from exc
         if not raw:
             return {}, job_id
         try:
             payload = json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError) as exc:
-            raise SttError(f"GAPI javobi o'qilmadi: {_safe(str(exc), self._api_key)}",
+            raise SttError(f"GAPI javobi o'qilmadi: {self._redact(str(exc))}",
                            status=502) from exc
         if not isinstance(payload, dict):
             raise SttError("GAPI javobi obyekt emas", status=502)
@@ -489,7 +594,7 @@ class GapiSttClient:
             pass
         retryable = status in _RETRYABLE
         error = SttError(
-            _safe(f"GAPI {status} {code}: {hint}".strip(), self._api_key),
+            self._redact(f"GAPI {status} {code}: {hint}".strip()),
             # 401 - BIZNING kalitimiz noto'g'ri, ya'ni SOZLAMA xatosi.
             # Brauzerga 401 qaytarish "sessiyangiz tugadi" degan ma'no
             # berardi, holbuki foydalanuvchi sessiyasi mutlaqo joyida.
@@ -518,18 +623,20 @@ class GapiSttClient:
     # xizmat qayta ishga tushsa ham vazifani yo'qotmaydi.
 
     def submit_job(self, path: Path | str, content_type: str,
-                   settings: dict[str, Any]) -> dict[str, Any]:
+                   settings: dict[str, Any], *, account: int = 1) -> dict[str, Any]:
         """Audio faylni (diskdan, oqim bilan) yuboradi -> `{id, state, estimatedSeconds, resultUrl}`.
 
         Fayl nomi `meeting.aac` / `.m4a` / `.mp3` / `.wav` - odamning ismi ham, id si
-        ham GAPI ga ketmaydi (spetsifikatsiya 4.4); kengaytma formatni aytadi."""
+        ham GAPI ga ketmaydi (spetsifikatsiya 4.4); kengaytma formatni aytadi.
+        `account` - qaysi kalit bilan (hisobni ishchi balansga qarab tanlaydi)."""
         if not self.configured:
             raise SttError("GAPI STT sozlanmagan (GAPI_API_KEY)", status=501)
+        headers = self._headers(account)
         filename = _MEETING_FILENAMES.get((content_type or "").split(";", 1)[0].strip().lower(), "meeting.aac")
         body, ctype = _multipart_stream(Path(path), filename, content_type, settings)
         request = urllib.request.Request(
             f"{self.base_url}/jobs", data=body, method="POST",
-            headers={**self._headers(), "Content-Type": ctype,
+            headers={**headers, "Content-Type": ctype,
                      "Content-Length": str(body.length)},
         )
         if not self._slots.acquire(timeout=1.0):
@@ -558,14 +665,14 @@ class GapiSttClient:
             "resultUrl": str(payload.get("result_url") or "") or None,
         }
 
-    def get_job(self, job_id: str) -> dict[str, Any]:
+    def get_job(self, job_id: str, *, account: int = 1) -> dict[str, Any]:
         """Vazifa holati (`state`, `progress_seconds`, `audio_seconds`, ...) - xom."""
-        payload, _ = self._send_any(self._get_request(f"/jobs/{urllib.parse.quote(job_id, safe='')}"))
+        payload, _ = self._send_any(self._get_request(f"/jobs/{urllib.parse.quote(job_id, safe='')}", account))
         return payload if isinstance(payload, dict) else {}
 
-    def list_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
+    def list_jobs(self, limit: int = 20, *, account: int = 1) -> list[dict[str, Any]]:
         """Oxirgi vazifalar - `POST` va `202` orasida uzilgan yuborishni topish uchun."""
-        payload, _ = self._send_any(self._get_request(f"/jobs?limit={int(limit)}"))
+        payload, _ = self._send_any(self._get_request(f"/jobs?limit={int(limit)}", account))
         if isinstance(payload, dict):
             for key in ("jobs", "items", "data", "results"):
                 if isinstance(payload.get(key), list):
@@ -573,42 +680,42 @@ class GapiSttClient:
                     break
         return [j for j in payload if isinstance(j, dict)] if isinstance(payload, list) else []
 
-    def get_result(self, job_id: str, result_url: str | None = None) -> dict[str, Any]:
+    def get_result(self, job_id: str, result_url: str | None = None, *, account: int = 1) -> dict[str, Any]:
         """Natija. `result_url` FAQAT sozlangan GAPI manzili bilan boshlansa
         ishlatiladi: aks holda javobdagi istalgan manzilga KALITIMIZ bilan
         so'rov ketardi (token boshqa hostga oqib chiqadi)."""
         prefix = self.base_url.rstrip("/") + "/"
         if result_url and str(result_url).startswith(prefix):
-            request = urllib.request.Request(str(result_url), headers=self._headers())
+            request = urllib.request.Request(str(result_url), headers=self._headers(account))
         else:
-            request = self._get_request(f"/jobs/{urllib.parse.quote(job_id, safe='')}/result")
+            request = self._get_request(f"/jobs/{urllib.parse.quote(job_id, safe='')}/result", account)
         payload, _ = self._send_any(request)
         return payload if isinstance(payload, dict) else {}
 
-    def cancel_job(self, job_id: str) -> bool:
+    def cancel_job(self, job_id: str, *, account: int = 1) -> bool:
         """`DELETE /jobs/{id}` - eng yaxshi urinish. GAPI ma'lumotni baribir
         30 kun saqlaydi, bu faqat yashiradi. Xato BERMAYDI."""
-        request = urllib.request.Request(
-            f"{self.base_url}/jobs/{urllib.parse.quote(job_id, safe='')}",
-            method="DELETE", headers=self._headers())
         try:
+            request = urllib.request.Request(
+                f"{self.base_url}/jobs/{urllib.parse.quote(job_id, safe='')}",
+                method="DELETE", headers=self._headers(account))
             self._send_any(request)
             return True
         except SttError as exc:
             log.info("GAPI vazifasini o'chirib bo'lmadi: %s", exc)
             return False
 
-    def usage(self) -> dict[str, Any]:
-        """`GET /usage` (bepul) - balans: `available_g`, `topup_target_g`."""
-        payload, _ = self._send_any(self._get_request("/usage"))
+    def usage(self, *, account: int = 1) -> dict[str, Any]:
+        """`GET /usage` (bepul) - shu kalitning balansi: `available_g`, `topup_target_g`."""
+        payload, _ = self._send_any(self._get_request("/usage", account))
         return payload if isinstance(payload, dict) else {}
 
     def note_meeting_audio(self, seconds: float) -> None:
         """Yig'ilish natijasi keldi - kunlik sarfga qo'shiladi (`spend`)."""
         self._account(seconds)
 
-    def _get_request(self, path: str) -> urllib.request.Request:
-        return urllib.request.Request(f"{self.base_url}{path}", headers=self._headers())
+    def _get_request(self, path: str, account: int = 1) -> urllib.request.Request:
+        return urllib.request.Request(f"{self.base_url}{path}", headers=self._headers(account))
 
     def _send_any(self, request: urllib.request.Request) -> tuple[Any, str]:
         """`_send` kabi, lekin javob ro'yxat ham bo'lishi mumkin (`GET /jobs`).
@@ -620,14 +727,14 @@ class GapiSttClient:
         except urllib.error.HTTPError as exc:
             raise self._from_http(exc) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise SttError(f"GAPI ga ulanib bo'lmadi: {_safe(str(exc), self._api_key)}",
+            raise SttError(f"GAPI ga ulanib bo'lmadi: {self._redact(str(exc))}",
                            status=503, retryable=True) from exc
         if not raw:
             return {}, job_id
         try:
             return json.loads(raw.decode("utf-8")), job_id
         except (ValueError, UnicodeDecodeError) as exc:
-            raise SttError(f"GAPI javobi o'qilmadi: {_safe(str(exc), self._api_key)}",
+            raise SttError(f"GAPI javobi o'qilmadi: {self._redact(str(exc))}",
                            status=502) from exc
 
     # --- javobni o'qish ---------------------------------------------------

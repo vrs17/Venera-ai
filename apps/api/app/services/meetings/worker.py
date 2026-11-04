@@ -436,12 +436,13 @@ def purge(rt: Any, now: float) -> dict[str, int]:
     # Muddat yozilgan paytdan, lekin serverga kelgandan ko'pi bilan 7 kun oldindan
     # hisoblanadi: telefon soati noto'g'ri yoki yozuv oflayn navbatda uzoq turgan
     # bo'lsa ham audio yuklangan zahoti o'chib ketmasin. Ishlanayotgani tegilmaydi.
-    audio_cutoff = now - settings.meetings_audio_days * 86400
-    for m in store.rows("SELECT * FROM meetings WHERE audio_path IS NOT NULL AND audio_deleted_at IS NULL "
-                        f"AND status NOT IN ({busy}) AND MAX(COALESCE(recorded_at, created_at), "
-                        "created_at - 7 * 86400) < ?", (int(audio_cutoff),)):
-        drop_audio(rt, m, now)
-        counts["audio"] += 1
+    if settings.meetings_audio_days > 0:
+        audio_cutoff = now - settings.meetings_audio_days * 86400
+        for m in store.rows("SELECT * FROM meetings WHERE audio_path IS NOT NULL AND audio_deleted_at IS NULL "
+                            f"AND status NOT IN ({busy}) AND MAX(COALESCE(recorded_at, created_at), "
+                            "created_at - 7 * 86400) < ?", (int(audio_cutoff),)):
+            drop_audio(rt, m, now)
+            counts["audio"] += 1
     for m in store.rows("SELECT * FROM meetings WHERE status='failed' AND error_code='too_long' "
                         "AND audio_path IS NOT NULL AND audio_deleted_at IS NULL AND COALESCE(completed_at, "
                         "updated_at) < ?", (int(now - 86400),)):

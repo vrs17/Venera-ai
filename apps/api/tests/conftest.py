@@ -148,6 +148,9 @@ _CODE_DEFAULTS = ("hold_enabled", "wake_log_enabled", "local_login_enabled",
                   "admin_logins", "sso_trusted_roles", "hrm_assistant_engine",
                   "hrm_assistant_engine_by_channel", "hrm_assistant_max_stream_seconds",
                   "meetings_enabled", "meetings_logins", "meetings_llm_chain", "meetings_ask_chain",
+                  # Saqlash muddatlari: jonli `.env` da `MEETINGS_AUDIO_DAYS=0` (o'chirilmaydi) -
+                  # tozalash testi esa 30/180 kunlik koddagi xulqni sinaydi.
+                  "meetings_audio_days", "meetings_retention_days",
                   "meetings_openai_model", "openai_api_key", "openai_base_url", "meetings_v3_max_chars",
                   "meetings_ask_platforms", "brief_crm_platforms")
 
@@ -210,6 +213,22 @@ def _stt_provider_pinned(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _gapi_key2_off(monkeypatch):
+    """HAR TESTDA ikkinchi GAPI kaliti (`GAPI_API_KEY2`) bo'sh.
+
+    Modul darajasidagi klientlar (`api/v1/stt.py`) kalitlarni import paytida `.env` dan
+    oladi. Testlar birinchi kalitni o'zi qo'yadi yoki o'chiradi (`_api_key`), ikkinchisi
+    esa jonli qolib ketardi: "sozlanmagan" kutgan test sozlangan klient olardi, va hech
+    bir test pullik xizmatga chiqmasligi kerak. Ikki kalit `test_gapi_two_keys.py` da."""
+    from app.core.config import settings
+    import app.api.v1.stt as stt_module
+
+    monkeypatch.setattr(settings, "gapi_api_key2", "", raising=False)
+    for client in (stt_module._gapi_client, stt_module._gapi_wake_client):
+        monkeypatch.setattr(client, "_api_key2", "", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _telegram_bot_off(tmp_path, monkeypatch):
     """Telegram bot HAR TESTDA o'chiq, ulanishlar ombori esa vaqtinchalik.
 
@@ -226,6 +245,18 @@ def _telegram_bot_off(tmp_path, monkeypatch):
     monkeypatch.setattr(bot_module, "api", TelegramApi(""), raising=False)
     monkeypatch.setattr(bot_module, "links", LinkStore(tmp_path / "telegram" / "links.json"),
                         raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _slack_off(monkeypatch):
+    """Slack ilovasi HAR TESTDA o'chiq - `_telegram_bot_off` bilan bir xil sabab.
+
+    `TestClient` ishga tushishi `.env` dagi JONLI tokenlar bilan Slack'ka ulanardi.
+    Bitta `xapp` - bitta ulanish: test yurishi odamlar yuborgan audioni jonli
+    nusxadan o'ziga olib qolardi.
+    """
+    monkeypatch.setattr(settings, "slack_bot_token", "", raising=False)
+    monkeypatch.setattr(settings, "slack_app_token", "", raising=False)
 
 
 @pytest.fixture(autouse=True)
