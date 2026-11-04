@@ -26,6 +26,8 @@ class FakeSlack:
         self.updated: list[dict] = []
         self.uploaded: list[dict] = []
         self.published: list[dict] = []
+        self.ephemeral: list[dict] = []
+        self.history: dict[str, list[dict]] = {}
         self.files = files or {}
         self.parents = parents or {}
         self.upload_error = upload_error
@@ -51,6 +53,13 @@ class FakeSlack:
     def views_publish(self, **kwargs):
         self.published.append(kwargs)
         return {"ok": True}
+
+    def chat_postEphemeral(self, **kwargs):
+        self.ephemeral.append(kwargs)
+        return {"ok": True}
+
+    def conversations_history(self, channel, **kwargs):
+        return {"messages": list(self.history.get(channel, []))}
 
     def conversations_replies(self, channel, ts, **kwargs):
         return {"messages": [self.parents[ts]] if ts in self.parents else []}

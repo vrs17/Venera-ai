@@ -103,6 +103,7 @@ def _connect() -> None:
             app.event("message")(_on_message)
             app.event("app_home_opened")(_on_home)
             app.action(re.compile(r"^barno_"))(_on_action)
+            app.command("/plaud")(_on_command)
             handler = SocketModeHandler(app, settings.slack_app_token)
             handler.connect()
         except Exception as exc:  # noqa: BLE001 - tarmoq, yaroqsiz token, Slack xatosi
@@ -122,12 +123,27 @@ def _connect() -> None:
 
 
 def _on_message(event: dict[str, Any], client: Any, context: Any) -> None:
-    """Bolt tinglovchisi. Faqat navbatga qo'yadi: o'girish va javob daqiqalab davom etadi."""
-    from . import meeting
+    """Bolt tinglovchisi. Faqat navbatga qo'yadi: o'girish va javob daqiqalab davom etadi.
+    Thread'dan tashqaridagi oddiy matn - «🎙 Plaud» yo'riqnomasi (`home.py`)."""
+    from . import home, meeting
 
     pool = _pool
-    if pool is not None and meeting.wants(event):
+    if pool is None:
+        return
+    if meeting.wants(event):
         pool.submit(meeting.on_message, client, event, sleep=_sleep, bot_user=context.get("bot_user_id"))
+    elif home.is_text(event):
+        pool.submit(home.on_text, client, event)
+
+
+def _on_command(ack: Any, body: dict[str, Any], client: Any) -> None:
+    """`/plaud` (manifestda bo'lsa). `ack` darhol - Slack 3 s kutadi."""
+    from . import home
+
+    ack()
+    pool = _pool
+    if pool is not None:
+        pool.submit(home.on_command, client, body)
 
 
 def _on_home(event: dict[str, Any], client: Any) -> None:
