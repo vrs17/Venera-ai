@@ -47,17 +47,66 @@ def test_audio_transkript_va_qisqa_xulosa_chatning_ozida(slack, _isolated_meetin
     assert total == 1 and rows[0]["title"] == "Slack: ovoz.aac"
     mid = rows[0]["id"]
     assert all("thread_ts" not in m for m in client.posted)
-    first = client.posted[0]
+    # Chatda natija qoladi - transkript va "Qisqa xulosa"; jarayon xabarlari o'chirilgan.
+    first, summary = client.visible()
     assert "Assalomu alaykum, bugun hisobot bo'yicha yig'ildik" in shown(first)
     assert "[00:" not in shown(first)
     assert render.marked(first) == mid
-    summary = card(client)
-    assert summary is client.posted[-1] and render.marked(summary) == mid
+    assert summary is card(client) and render.marked(summary) == mid
     assert shown(summary).startswith("Qisqa xulosa\n*")
     ids = [e["action_id"] for e in elements(summary)]
     assert ids == ["barno_tasks", "barno_minutes", "barno_template", "barno_export", "barno_relang_ru",
                              "barno_relang_en"]
     assert all("confirm" in e for e in elements(summary) if e["action_id"].startswith("barno_relang"))
+
+
+def test_jarayon_xabari_bosqichma_bosqich(slack, _isolated_meetings):
+    """Ega talabi (2026-11-05): odam audio yuborgach nima bo'layotganini ko'rib turadi - "qabul
+    qilindi" va bosqichlar joyida yangilanadi, transkriptdan keyin xulosa bosqichi uning ostida,
+    natija chiqqach jarayon xabarlari o'chadi."""
+    client = FakeSlack()
+    meeting.handle(client, "D1", None, [AUDIO], sleep=drive(_isolated_meetings))
+
+    status, transcript, waiting, summary = client.posted
+    assert status["text"] == ("📎 «ovoz.aac» qabul qilindi.\n\n⏳ Audio yuklanmoqda…\n◻️ Matnga o'girish\n"
+                              "◻️ Qisqa xulosa\n\nNatija shu yerga keladi - odatda 1-3 daqiqada.")
+    [update] = client.updated
+    assert update["ts"] == status["ts"]
+    assert "\n\n✅ Audio yuklandi (1 daq 4 s)\n⏳ Matnga o'girilmoqda…\n◻️ Qisqa xulosa\n\n" in update["text"]
+    assert "Assalomu alaykum" in shown(transcript)
+    assert waiting["text"] == ("📎 «ovoz.aac» qabul qilindi.\n\n✅ Audio yuklandi (1 daq 4 s)\n"
+                               "✅ Matnga o'girildi - matn yuqorida\n⏳ Qisqa xulosa yozilmoqda…\n\n"
+                               "Xulosa tayyor bo'lishi bilan shu yerga keladi.")
+    assert summary is card(client)
+    assert [d["ts"] for d in client.deleted] == [status["ts"], waiting["ts"]]
+
+
+def test_dispetcher_qabul_qilindi_ni_darhol_chiqaradi(slack, _isolated_meetings, monkeypatch):
+    """Jarayon xabari Bolt ipida, navbatdan OLDIN: ishchilar band bo'lsa ham odam audiosi qabul
+    qilinganini ko'radi. Bir xabardagi ikkinchi fayl - "navbatda", o'z navbati kelganda boshlanadi."""
+    from types import SimpleNamespace
+
+    from app import slack as slack_app
+
+    jobs = []
+    monkeypatch.setattr(slack_app, "_pool", SimpleNamespace(submit=lambda fn, *a, **k: jobs.append((fn, a, k))))
+    second = {**AUDIO, "id": "F2", "name": "ikkinchi.m4a"}
+    client = FakeSlack()
+    event = {"channel_type": "im", "subtype": "file_share", "channel": "D1", "user": "U1", "ts": "5.1",
+             "files": [AUDIO, second]}
+    slack_app._on_message(event, client, {"bot_user_id": "UBOT"})
+
+    first_status, second_status = client.posted                    # navbatdagi ish hali boshlanmagan
+    assert "\n\n⏳ Audio yuklanmoqda…\n" in first_status["text"]
+    assert second_status["text"] == ("📎 «ikkinchi.m4a» qabul qilindi.\n\n⏳ Navbatda - oldingi audio tugagach "
+                                     "boshlanadi\n◻️ Matnga o'girish\n◻️ Qisqa xulosa\n\nNatija shu yerga keladi.")
+    [(job, args, kwargs)] = [j for j in jobs if j[0] is meeting.on_message]
+    job(*args, **{**kwargs, "sleep": drive(_isolated_meetings)})
+
+    assert any(u["ts"] == second_status["ts"] and "⏳ Audio yuklanmoqda…" in u["text"] for u in client.updated)
+    assert {first_status["ts"], second_status["ts"]} <= {d["ts"] for d in client.deleted}
+    left = client.visible()
+    assert len(left) == 4 and sum("Assalomu alaykum" in shown(m) for m in left) == 2
 
 
 def test_thread_ichidagi_audio_javobi_osha_threadda(slack, _isolated_meetings):
@@ -86,7 +135,8 @@ def test_slack_ovozli_xabari_aac_nusxasidan_olinadi(slack, _isolated_meetings):
     meeting.handle(client, "D1", None, [clip], sleep=drive(_isolated_meetings))
 
     assert slack == [clip["aac"]]
-    assert "Assalomu alaykum" in shown(client.posted[0])
+    assert client.posted[0]["text"].startswith("🎙 Ovozli xabaringiz qabul qilindi.\n\n⏳ Audio yuklanmoqda…")
+    assert "Assalomu alaykum" in shown(client.visible()[0])
 
 
 def test_toliq_obyekt_files_info_dan(slack, _isolated_meetings):
@@ -95,7 +145,7 @@ def test_toliq_obyekt_files_info_dan(slack, _isolated_meetings):
     meeting.handle(client, "D1", None, [stub], sleep=drive(_isolated_meetings))
 
     assert slack == [AUDIO["url_private_download"]]
-    assert "Assalomu alaykum" in shown(client.posted[0])
+    assert "Assalomu alaykum" in shown(client.visible()[0])
 
 
 def test_mos_kelmaydigan_format_tugmasiz(slack, monkeypatch):
@@ -110,9 +160,10 @@ def test_mos_kelmaydigan_format_tugmasiz(slack, monkeypatch):
     meeting.handle(client, "D1", None, [{"id": "F4", "mimetype": "audio/webm",
                                          "url_private_download": "https://files.slack.com/x"}])
 
-    assert client.posted[0]["text"] == ("Matnga o'girib bo'lmadi: Bu audio formati qo'llab-quvvatlanmaydi "
-                                        "(mp3, m4a, aac, wav).")
-    assert elements(client.posted[0]) == []
+    [failed] = client.visible()
+    assert failed["text"] == "Matnga o'girib bo'lmadi: Bu audio formati qo'llab-quvvatlanmaydi (mp3, m4a, aac, wav)."
+    assert elements(failed) == []
+    assert [d["ts"] for d in client.deleted] == [client.posted[0]["ts"]]      # "⏳" xabari o'chdi
 
 
 def test_yuklab_bolmasa_qayta_urinish_tugmasi(slack, monkeypatch, _isolated_meetings):
@@ -124,13 +175,13 @@ def test_yuklab_bolmasa_qayta_urinish_tugmasi(slack, monkeypatch, _isolated_meet
     monkeypatch.setattr(transcribe, "download", broken)
     client = FakeSlack(files={"F1": AUDIO})
     meeting.handle(client, "D1", None, [AUDIO])
-    [retry] = elements(client.posted[0])
+    [retry] = elements(client.visible()[0])
     assert (retry["action_id"], retry["value"]) == ("barno_retry", "f:F1")
 
     monkeypatch.setattr(transcribe, "download", real)
     meeting.on_action(client, {"actions": [retry], "channel": {"id": "D1"}, "message": {}},
                       sleep=drive(_isolated_meetings))
-    assert "Assalomu alaykum" in shown(client.posted[1])
+    assert "Assalomu alaykum" in shown(client.visible()[1])
     assert render.marked(card(client)) == _meetings(_isolated_meetings)[0][0]["id"]
 
 
@@ -139,8 +190,8 @@ def test_kunlik_limit_tugasa_yozuv_ochiriladi(slack, monkeypatch, _isolated_meet
     client = FakeSlack()
     meeting.handle(client, "D1", None, [AUDIO], sleep=drive(_isolated_meetings))
 
-    assert "limiti tugagan" in client.posted[0]["text"]
-    assert elements(client.posted[0]) == []
+    [failed] = client.visible()
+    assert "limiti tugagan" in failed["text"] and elements(failed) == []
     assert _meetings(_isolated_meetings)[1] == 0
 
 
@@ -152,8 +203,9 @@ def test_hisob_sozlanmagan(slack, monkeypatch):
     meeting.handle(client, "D1", None, [AUDIO])
 
     assert slack == []
-    assert "SLACK_ACTOR_ID" in client.posted[0]["text"]
-    assert "raqam bo'lishi kerak" in client.posted[1]["text"]
+    first, second = client.visible()
+    assert "SLACK_ACTOR_ID" in first["text"]
+    assert "raqam bo'lishi kerak" in second["text"]
 
 
 def test_token_faqat_slack_xostiga():

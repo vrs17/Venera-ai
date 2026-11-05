@@ -101,8 +101,6 @@ def test_ovozli_xabar_transkript_va_qisqa_xulosa(world):
     bot, tg, rt, plaud = world
     bot.handle_update(text_update(BTN_PLAUD))
     bot.handle_update(voice())
-    texts = tg.texts()
-    assert any(t.startswith("⏳ Audio matnga") for t in texts)
     transcript = next(kw for kw in tg.sent() if kw["text"].startswith("🎙 <b>Transkript</b>"))
     assert "Assalomu alaykum" in transcript["text"]
     summary = card(tg)
@@ -115,9 +113,18 @@ def test_ovozli_xabar_transkript_va_qisqa_xulosa(world):
     row = rt.store.meeting_any(mid)
     assert row["actor_id"] == 1 and row["channel"] == "bot" and row["content_type"] == "audio/ogg"
     assert row["title"].startswith("Telegram: ovozli xabar")
-    holder = next(kw for kw in tg.sent() if kw["text"].startswith("⏳ Audio matnga"))
-    assert holder["reply_to"] == 20
-    assert ("delete_message", {"chat_id": TG_ID, "message_id": holder["message_id"]}) in tg.calls
+    # Jarayon xabari (ega talabi, 2026-11-05): ovozli xabarga javob qilib "qabul qilindi", bosqichlar
+    # joyida yangilanadi; transkript ostida - xulosa bosqichi; natija chiqqach ikkalasi o'chadi.
+    status = next(kw for kw in tg.sent() if kw["text"].startswith("🎙 Ovozli xabaringiz qabul qilindi."))
+    assert status["reply_to"] == 20 and "\n\n⏳ Audio yuklanmoqda…\n◻️ Matnga o'girish\n" in status["text"]
+    edits = [kw for n, kw in tg.calls if n == "edit_message_text" and kw["message_id"] == status["message_id"]]
+    assert any("✅ Audio yuklandi (1 daq 4 s)\n⏳ Matnga o'girilmoqda…" in kw["text"] for kw in edits)
+    waiting = next(kw for kw in tg.sent() if "⏳ Qisqa xulosa yozilmoqda…" in kw["text"])
+    assert waiting["reply_to"] is None and "✅ Matnga o'girildi - matn yuqorida" in waiting["text"]
+    order = [kw["message_id"] for kw in tg.sent()]
+    assert order.index(transcript["message_id"]) < order.index(waiting["message_id"]) < order.index(summary["message_id"])
+    deleted = [kw["message_id"] for n, kw in tg.calls if n == "delete_message"]
+    assert deleted == [status["message_id"], waiting["message_id"]]
     # Qurollanmagan qisqa ovozli xabar - avvalgidek HR savoli (chat STT).
     before = len(rt.gapi.submits)
     tg.files["voice/v9.oga"] = b"OggS-fake"
@@ -134,6 +141,9 @@ def test_bir_fayl_bir_yigilish_va_audio_fayl(world):
     rows, total = rt.store.list_meetings(1, limit=10, offset=0)
     assert total == 1 and rows[0]["title"] == "Telegram: yigilish.aac" and rows[0]["content_type"] == "audio/aac"
     assert sum(1 for t in tg.texts() if t.startswith("🎙 <b>Transkript</b>")) == 2
+    # Yuklangan fayl - jarayon xabarida nomi bilan, fayl xabariga javob qilib.
+    status = next(kw for kw in tg.sent() if kw["text"].startswith("📎 «yigilish.aac» qabul qilindi.\n\n⏳ Audio"))
+    assert status["reply_to"] == 21
 
 
 def test_katta_fayl_va_yaroqsiz_format(world):
@@ -155,6 +165,8 @@ def test_yuklab_bolmasa_qayta_urinish_tugmasi(world, monkeypatch):
     bot.handle_update(voice())
     failed = tg.sent()[-1]
     assert failed["text"].startswith("Matnga o'girib bo'lmadi")
+    status = next(kw for kw in tg.sent() if kw["text"].startswith("🎙 Ovozli xabaringiz qabul qilindi."))
+    assert ("delete_message", {"chat_id": TG_ID, "message_id": status["message_id"]}) in tg.calls
     [[retry]] = failed["reply_markup"]["inline_keyboard"]
     assert retry["callback_data"] == "p:r:f:Uv1"
     monkeypatch.setattr(tg, "download", real)
@@ -438,3 +450,48 @@ def test_bayonnoma_haqiqiy_quvur_fakellm_bilan(world, monkeypatch):
     assert len(tg.sent("send_document")) == 4 and len(rt.store.minutes_rows(mid)) == 1
     if calls is not None:
         assert len(rt.llm.calls) == calls
+
+
+def test_jarayon_xabari_foiz_chegara_va_bot_xatosi():
+    """`intake.Progress` (Slack va Telegram uchun umumiy): foiz xizmat holatidan (5-80 -> 0-100),
+    faqat foiz o'zgarsa tahrir 5 s da bir marta, bosqich o'zgarsa darhol; bot xatosi audio ishini
+    to'xtatmaydi."""
+    now = [0.0]
+    shown, dropped = [], []
+
+    def show(ref, text):
+        shown.append((ref, text))
+        return ref or "m1"
+
+    progress = intake.Progress("🎙 Ovozli xabaringiz qabul qilindi.", show=show, drop=dropped.append,
+                               clock=lambda: now[0])
+    progress.show(intake.UPLOAD)
+    progress.view({"status": "transcribing", "progress": 42.5, "durationSec": 754.0})
+    assert shown[-1] == ("m1", "🎙 Ovozli xabaringiz qabul qilindi.\n\n✅ Audio yuklandi (12 daq 34 s)\n"
+                               "⏳ Matnga o'girilmoqda… 50%\n◻️ Qisqa xulosa\n\n"
+                               "Natija shu yerga keladi - odatda 1-3 daqiqada.")
+    progress.view({"status": "transcribing", "progress": 61.25, "durationSec": 754.0})   # 75%, 5 s o'tmagan
+    assert len(shown) == 2
+    now[0] = 6.0
+    progress.view({"status": "transcribing", "progress": 61.25, "durationSec": 754.0})
+    assert len(shown) == 3 and "⏳ Matnga o'girilmoqda… 75%" in shown[-1][1]
+    progress.view({"status": "summarizing", "progress": 80.0, "durationSec": 754.0})     # transkript tayyor
+    assert len(shown) == 3
+    progress.close()
+    assert dropped == ["m1"] and progress.ref is None
+    progress.show(intake.SUMMARY)                                    # transkript ostida - YANGI xabar
+    assert shown[-1][0] is None and "\n⏳ Qisqa xulosa yozilmoqda…\n" in shown[-1][1]
+
+    def flaky(ref, text):
+        if ref is not None:
+            raise TelegramError("tarmoq")
+        return "m2"
+
+    def drop(ref):
+        raise TelegramError("tarmoq")
+
+    quiet = intake.Progress("x", show=flaky, drop=drop, clock=lambda: now[0])
+    quiet.show(intake.UPLOAD)                                        # yangi xabar
+    quiet.show(intake.TRANSCRIBE)                                    # tahrir xatosi - otilmaydi
+    quiet.close()                                                    # o'chirish xatosi - otilmaydi
+    assert quiet.ref is None

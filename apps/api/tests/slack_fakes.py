@@ -18,12 +18,13 @@ BOT_USER = "UBOT"
 
 
 class FakeSlack:
-    """`WebClient` ning ishlatiladigan metodlari: yuborilgan, yangilangan va yuklangan narsalar yoziladi."""
+    """`WebClient` ning ishlatiladigan metodlari: yuborilgan, yangilangan, o'chirilgan va yuklangan narsalar yoziladi."""
 
     def __init__(self, files: dict[str, dict] | None = None, parents: dict[str, dict] | None = None,
                  upload_error: Exception | None = None) -> None:
         self.posted: list[dict] = []
         self.updated: list[dict] = []
+        self.deleted: list[dict] = []
         self.uploaded: list[dict] = []
         self.published: list[dict] = []
         self.ephemeral: list[dict] = []
@@ -40,6 +41,15 @@ class FakeSlack:
     def chat_update(self, **kwargs):
         self.updated.append(kwargs)
         return {"ok": True}
+
+    def chat_delete(self, **kwargs):
+        self.deleted.append(kwargs)
+        return {"ok": True}
+
+    def visible(self) -> list[dict]:
+        """Chatda QOLGAN xabarlar: jarayon xabari (`intake.Progress`) natija chiqqach o'chiriladi."""
+        gone = {d["ts"] for d in self.deleted}
+        return [m for m in self.posted if m["ts"] not in gone]
 
     def files_info(self, file):
         return {"file": self.files[file]}

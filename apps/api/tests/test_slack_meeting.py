@@ -20,6 +20,7 @@ def delivered(users_file, monkeypatch, _isolated_meetings):
     client = FakeSlack(files={"F1": AUDIO})
     meeting.handle(client, "D1", None, [AUDIO], sleep=drive(_isolated_meetings))
     summary = card(client)
+    client.updated.clear()          # jarayon xabarining tahrirlari (`intake.Progress`) - bu testlar mavzusi emas
     return client, render.marked(summary), summary
 
 

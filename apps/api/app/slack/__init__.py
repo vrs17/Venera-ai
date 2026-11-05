@@ -123,9 +123,11 @@ def _connect() -> None:
 
 
 def _on_message(event: dict[str, Any], client: Any, context: Any) -> None:
-    """Bolt tinglovchisi. Faqat navbatga qo'yadi: o'girish va javob daqiqalab davom etadi.
-    Thread'dan tashqaridagi oddiy matn - «🎙 Plaud» yo'riqnomasi (`home.py`). Har xabar
-    (matn, audio bo'lmagan fayl) qo'shimcha ravishda arxivga (`keep.py`)."""
+    """Bolt tinglovchisi. Navbatga qo'yadi: o'girish va javob daqiqalab davom etadi. Faqat
+    audioning jarayon xabari shu yerda, darhol (`meeting.acknowledge`): navbat band bo'lsa ham
+    odam audiosi qabul qilinganini ko'radi. Thread'dan tashqaridagi oddiy matn - «🎙 Plaud»
+    yo'riqnomasi (`home.py`). Har xabar (matn, audio bo'lmagan fayl) qo'shimcha ravishda
+    arxivga (`keep.py`)."""
     from . import home, keep, meeting
 
     pool = _pool
@@ -134,7 +136,9 @@ def _on_message(event: dict[str, Any], client: Any, context: Any) -> None:
     if keep.wants(event):
         pool.submit(keep.record, event)
     if meeting.wants(event):
-        pool.submit(meeting.on_message, client, event, sleep=_sleep, bot_user=context.get("bot_user_id"))
+        shown = meeting.acknowledge(client, event)
+        pool.submit(meeting.on_message, client, event, sleep=_sleep, bot_user=context.get("bot_user_id"),
+                    shown=shown)
     elif home.is_text(event):
         pool.submit(home.on_text, client, event)
 

@@ -9,10 +9,17 @@ Faylni QAYERDAN olish va natijani QAYERGA yozish - har botning o'zida
 BITTA FAYL - BITTA YIG'ILISH. Kalit (`clientId`) bot faylining id'sidan yasaladi: fayl
 qayta kelsa ("Qayta urinish", xabar takror keldi) - o'sha yig'ilish davom ettiriladi va
 GAPI qayta to'lanmaydi.
+
+JARAYON XABARI (`Progress`, ega talabi 2026-11-05: audio yozgan yoki yuklagan odam "vazifam
+bajarilyaptimi o'zi" deb bilmay qolardi). Audio kelishi bilan bitta xabar: nima qabul qilindi
+va uch bosqich - audio yuklash, matnga o'girish (foizi bilan), qisqa xulosa. Xabar joyida
+yangilanadi; transkript chiqqach uning OSTIGA ko'chadi, natija (yoki xato) chiqqach o'chiriladi.
+Matn ikkala botda bir xil (`steps`), xabarni yuborish va tahrirlash - botning o'zida.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 import urllib.parse
@@ -25,7 +32,9 @@ from typing import Any, Callable
 from ...core.config import settings
 from ...schemas import meetings as schemas
 from ...schemas.auth import AuthUser
-from . import service
+from . import export, service
+
+log = logging.getLogger(__name__)
 
 Sleep = Callable[[float], None]
 
@@ -36,6 +45,13 @@ WAIT_SEC = 3600
 SUMMARY_WAIT_SEC = 600
 #: Til - yig'ilishlar default'i. Boshqa til - "qayta o'girish" tugmasi.
 LANGUAGE = "uz"
+#: Jarayon xabarining bosqichlari (`steps`). `QUEUED` - bir xabardagi keyingi fayl: oldingisi
+#: tugashini kutadi (fayllar ketma-ket o'giriladi).
+QUEUED, UPLOAD, TRANSCRIBE, SUMMARY = "queued", "upload", "transcribe", "summary"
+#: Faqat foiz o'zgarsa jarayon xabari shundan tez-tez tahrirlanmaydi (Slack va Telegram chegaralari).
+PROGRESS_EVERY = 5.0
+#: Xizmatda o'girish foizi 5 dan 80 gacha boradi (`transcribe.py`: 5 + 75 * tayyor ulush).
+_STT_FROM, _STT_SPAN = 5.0, 75.0
 
 
 class Problem(Exception):
@@ -88,12 +104,16 @@ def upload(user: AuthUser, client: str, path: Path, size: int, sha: str, kind: s
     return meeting_id
 
 
-def wait_transcript(user: AuthUser, meeting_id: str, *, sleep: Sleep = time.sleep) -> str:
+def wait_transcript(user: AuthUser, meeting_id: str, *, sleep: Sleep = time.sleep,
+                    progress: Callable[[dict[str, Any]], None] | None = None) -> str:
     """Transkript tayyor bo'lguncha kutadi va matnini qaytaradi: txt eksport, vaqt
-    belgilarisiz, spiker nomlari faqat bir nechta spiker bo'lsa."""
+    belgilarisiz, spiker nomlari faqat bir nechta spiker bo'lsa. `progress` - har so'rovdagi
+    holat (jarayon xabari, `Progress.view`)."""
     deadline = time.monotonic() + WAIT_SEC
     while True:
         view = service.detail(user, meeting_id)
+        if progress is not None:
+            progress(view)
         if view["transcript"]["available"]:
             break
         if view["status"] == "waiting_quota":
@@ -168,3 +188,88 @@ def filename(disposition: str | None) -> str | None:
         return urllib.parse.unquote(found.group(1).strip())
     found = re.search(r'filename="([^"]+)"', value)
     return found.group(1) if found else None
+
+
+# --- jarayon xabari ---------------------------------------------------------------------------
+
+
+def steps(stage: str, *, duration: float | None = None, percent: int | None = None) -> str:
+    """Jarayon xabarining tanasi: bosqichlar va oxirgi qator. Belgilashsiz sodda matn - Slack
+    mrkdwn va Telegram HTML uchun bir xil (fayl nomi kabi qochiriladigan narsa yo'q)."""
+    if stage == QUEUED:
+        upload_line = "⏳ Navbatda - oldingi audio tugagach boshlanadi"
+    elif stage == UPLOAD:
+        upload_line = "⏳ Audio yuklanmoqda…"
+    else:
+        upload_line = "✅ Audio yuklandi" + (f" ({export.brief_duration(duration, 'uz')})" if duration else "")
+    if stage == TRANSCRIBE:
+        text_line = "⏳ Matnga o'girilmoqda…" + (f" {percent}%" if percent else "")
+    elif stage == SUMMARY:
+        text_line = "✅ Matnga o'girildi - matn yuqorida"
+    else:
+        text_line = "◻️ Matnga o'girish"
+    summary_line = "⏳ Qisqa xulosa yozilmoqda…" if stage == SUMMARY else "◻️ Qisqa xulosa"
+    if stage == SUMMARY:
+        tail = "Xulosa tayyor bo'lishi bilan shu yerga keladi."
+    elif stage == QUEUED:
+        tail = "Natija shu yerga keladi."
+    else:
+        tail = "Natija shu yerga keladi - odatda 1-3 daqiqada."
+    return f"{upload_line}\n{text_line}\n{summary_line}\n\n{tail}"
+
+
+def percent_of(view: dict[str, Any]) -> int | None:
+    """O'girish bosqichining foizi (1-99); xizmat hali aytmagan bo'lsa `None`."""
+    value = view.get("progress")
+    if view.get("status") != "transcribing" or value is None:
+        return None
+    done = int((float(value) - _STT_FROM) / _STT_SPAN * 100)
+    return done if 0 < done < 100 else None
+
+
+class Progress:
+    """Bitta audioning jarayon xabari: sarlavha (nima qabul qilindi - bot formatida, qochirilgan)
+    va `steps`.
+
+    `show(ref, text)` - botning o'zi: `ref` yo'q bo'lsa yangi xabar yuboradi va uning id'sini
+    qaytaradi (yuborilmasa `None`), bor bo'lsa tahrirlaydi; `drop(ref)` - o'chiradi. Bot xatosi
+    (tarmoq, chegara) audio ishini TO'XTATMAYDI - jurnalda ogohlantirish, xolos."""
+
+    def __init__(self, head: str, *, show: Callable[[Any, str], Any], drop: Callable[[Any], None],
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self.head = head
+        self._show, self._drop, self._clock = show, drop, clock
+        self.ref: Any = None
+        self.duration: float | None = None
+        self._text = self._stage = ""
+        self._at = 0.0
+
+    def show(self, stage: str, percent: int | None = None) -> None:
+        text = f"{self.head}\n\n{steps(stage, duration=self.duration, percent=percent)}"
+        now = self._clock()
+        if text == self._text or (stage == self._stage and now - self._at < PROGRESS_EVERY):
+            return
+        try:
+            ref = self._show(self.ref, text)
+        except Exception as exc:  # noqa: BLE001 - xabar yangilanmasa ham audio ishi davom etadi
+            log.warning("Jarayon xabari yangilanmadi (%s)", type(exc).__name__)
+            return
+        if ref is not None:
+            self.ref, self._text, self._stage, self._at = ref, text, stage, now
+
+    def view(self, view: dict[str, Any]) -> None:
+        """`wait_transcript` ning har so'rovi: davomiylik, bosqich va foiz - xizmat holatidan."""
+        if view.get("durationSec"):
+            self.duration = float(view["durationSec"])
+        if view.get("status") in ("uploaded", "transcribing"):
+            self.show(TRANSCRIBE, percent_of(view))
+
+    def close(self) -> None:
+        """Xabarni o'chiradi (natija yoki xato chiqdi). Keyingi `show` - yangi xabar."""
+        ref, self.ref, self._text, self._stage = self.ref, None, "", ""
+        if ref is None:
+            return
+        try:
+            self._drop(ref)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Jarayon xabari o'chirilmadi (%s)", type(exc).__name__)

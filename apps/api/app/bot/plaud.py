@@ -7,6 +7,10 @@ Slack'dagi Barno AI (`app/slack/meeting.py`) bilan AYNI imkoniyatlar, Telegram k
     HR savoli emas, yozuv deb olinadi. Audio FAYL (mp3, m4a, aac, wav, ogg) va
     `telegram_voice_max_sec` dan uzun ovozli xabar esa har doim yozuv - ular chat savoli
     bo'la olmaydi (bot ularni oldin rad etardi);
+  * jarayon xabari (`intake.Progress`, ega talabi 2026-11-05) - audio kelishi bilan DARHOL
+    (navbatdan oldin), odamning audio xabariga javob qilib: "qabul qilindi" va bosqichlar - audio
+    yuklash, matnga o'girish (foizi bilan), qisqa xulosa. Joyida yangilanadi, transkript chiqqach
+    uning ostiga ko'chadi, xulosa (yoki xato) chiqqach o'chiriladi;
   * transkript (xabarlar 4000 belgidan), keyin "📋 Qisqa xulosa" - mobil kartadagi bilan
     AYNI matn (`intake.brief_markdown`) va tugmalar: vazifalar, boshqa shablon, eksport
     (fayl), boshqa tilda qayta o'girish (tasdiq bilan - GAPI qayta sarflanadi);
@@ -164,8 +168,12 @@ class Plaud:
                    markup=KEYBOARD)
 
     def on_audio(self, chat_id: int, user: AuthUser, msg: dict[str, Any], media: dict[str, Any]) -> None:
-        self._submit(user, lambda: self._handle(chat_id, user, media, reply_to=msg.get("message_id"),
-                                                recorded_at=float(msg.get("date") or time.time())))
+        # Jarayon xabari shu yerda, navbatdan oldin: ishchilar band bo'lsa ham odam audiosi qabul
+        # qilinganini darhol ko'radi.
+        progress = self._progress(chat_id, media, reply_to=msg.get("message_id"))
+        progress.show(intake.UPLOAD)
+        recorded_at = float(msg.get("date") or time.time())
+        self._submit(user, lambda: self._handle(chat_id, user, media, recorded_at=recorded_at, progress=progress))
 
     def on_reply(self, chat_id: int, user: AuthUser, msg: dict[str, Any], text: str) -> bool:
         """Javob (Reply) yozuv xabariga bo'lsa - yig'ilish bo'yicha savol. `False` - oddiy savol."""
@@ -239,30 +247,30 @@ class Plaud:
 
     # --- audio -> transkript -> xulosa ----------------------------------------------------
 
-    def _handle(self, chat_id: int, user: AuthUser, media: dict[str, Any], *, reply_to: Any,
-                recorded_at: float) -> None:
+    def _handle(self, chat_id: int, user: AuthUser, media: dict[str, Any], *, recorded_at: float,
+                progress: intake.Progress | None = None) -> None:
         unique = str(media.get("file_unique_id") or media.get("file_id") or "")
         with self._lock:
             self._files[unique] = media
             while len(self._files) > _REMEMBER:
                 self._files.popitem(last=False)
-        holder = self._send(chat_id, "⏳ Audio matnga o'girilmoqda… Uzun yozuvda bir necha daqiqa oladi.",
-                            reply_to=reply_to)
+        if progress is None:
+            progress = self._progress(chat_id, media)
+            progress.show(intake.UPLOAD)
         try:
             meeting_id = self._ingest(user, media, unique, recorded_at)
-            text = intake.wait_transcript(user, meeting_id, sleep=self._sleep)
+            text = intake.wait_transcript(user, meeting_id, sleep=self._sleep, progress=progress.view)
         except intake.Problem as exc:
-            self._fail(chat_id, holder, str(exc), f"p:r:f:{unique}" if exc.retry else None)
+            self._fail(chat_id, progress, str(exc), f"p:r:f:{unique}" if exc.retry else None)
             return
         except MeetingProblem as exc:
-            self._fail(chat_id, holder, str(exc.detail), None if exc.status_code in _FINAL else f"p:r:f:{unique}")
+            self._fail(chat_id, progress, str(exc.detail), None if exc.status_code in _FINAL else f"p:r:f:{unique}")
             return
         except Exception:  # noqa: BLE001 - odam javobsiz qolmasin
             log.exception("Telegram Plaud (%s): kutilmagan xato", user.actorId)
-            self._fail(chat_id, holder, "ichki xato.", f"p:r:f:{unique}")
+            self._fail(chat_id, progress, "ichki xato.", f"p:r:f:{unique}")
             return
-        self._delete(chat_id, holder)
-        self._deliver(chat_id, user, meeting_id, text)
+        self._deliver(chat_id, user, meeting_id, text, progress=progress)
 
     def _ingest(self, user: AuthUser, media: dict[str, Any], unique: str, recorded_at: float) -> str:
         """Telegram fayli -> yig'ilish id. Oldin kelgan bo'lsa davom ettiriladi."""
@@ -293,14 +301,23 @@ class Plaud:
             return intake.upload(user, client, path, len(data), hashlib.sha256(data).hexdigest(), kind,
                                  title=title_of(media, recorded_at), recorded_at=recorded_at, channel="bot")
 
-    def _deliver(self, chat_id: int, user: AuthUser, meeting_id: str, text: str) -> None:
-        """Transkript (xabarlar 4000 belgidan), keyin (yozilishini kutib) "Qisqa xulosa" va tugmalar."""
+    def _deliver(self, chat_id: int, user: AuthUser, meeting_id: str, text: str, *,
+                 progress: intake.Progress | None = None) -> None:
+        """Transkript (xabarlar 4000 belgidan), keyin (yozilishini kutib) "Qisqa xulosa" va tugmalar.
+        `progress` (audio yo'li) - jarayon xabari transkript OSTIGA ko'chadi va xulosa chiqqach o'chiriladi."""
         pages = render.pack(["🎙 <b>Transkript</b>\n" + esc(text or "Audioda nutq topilmadi.")])
         for n, page in enumerate(pages, 1):
             head = f"🎙 <b>Transkript ({n}/{len(pages)})</b>\n" if len(pages) > 1 and n > 1 else ""
             self._remember(chat_id, self._send(chat_id, head + page), meeting_id)
-        view = intake.wait_summary(user, meeting_id, sleep=self._sleep)
-        self._card(chat_id, user, meeting_id, view)
+        if progress is not None:
+            progress.close()
+            progress.show(intake.SUMMARY)
+        try:
+            view = intake.wait_summary(user, meeting_id, sleep=self._sleep)
+            self._card(chat_id, user, meeting_id, view)
+        finally:
+            if progress is not None:
+                progress.close()
 
     def _card(self, chat_id: int, user: AuthUser, meeting_id: str, view: dict[str, Any]) -> None:
         """"📋 Qisqa xulosa" (yoki nega yo'qligi) va tugmalar - oxirgi xabar ostida."""
@@ -322,11 +339,29 @@ class Plaud:
             sent = self._send(chat_id, page, markup=markup if n == len(pages) else None)
             self._remember(chat_id, sent, meeting_id)
 
-    def _fail(self, chat_id: int, holder: int | None, reason: str, retry: str | None) -> None:
+    def _fail(self, chat_id: int, progress: intake.Progress, reason: str, retry: str | None) -> None:
         text = esc(f"Matnga o'girib bo'lmadi: {reason}")
         markup = render.keyboard([[{"text": "🔁 Qayta urinish", "callback_data": retry}]]) if retry else None
-        self._delete(chat_id, holder)
+        progress.close()
         self._send(chat_id, text, markup=markup)
+
+    def _progress(self, chat_id: int, media: dict[str, Any], *, reply_to: Any = None) -> intake.Progress:
+        """Shu audioning jarayon xabari: ovozli xabar yoki fayl (nomi bilan). Birinchi xabar odamning
+        audio xabariga javob (`reply_to`), transkript ostidagisi - oddiy."""
+        if media["kind"] == "voice":
+            head = "🎙 Ovozli xabaringiz qabul qilindi."
+        else:
+            name = export.one_line(media.get("file_name") or media.get("title")) or "audio"
+            head = f"📎 «{esc(name[:80])}» qabul qilindi."
+        first = [reply_to]
+
+        def show(ref: int | None, text: str) -> int | None:
+            if ref is None:
+                return self._send(chat_id, text, reply_to=first.pop() if first else None)
+            self.api.edit_message_text(chat_id, ref, text)
+            return ref
+
+        return intake.Progress(head, show=show, drop=lambda ref: self._delete(chat_id, ref))
 
     # --- savol (Reply) -----------------------------------------------------------------------
 
@@ -379,7 +414,7 @@ class Plaud:
                 return
             self._answer(cq_id, "Qayta urinilmoqda…")
             self._clear(chat_id, message_id)
-            self._submit(user, lambda: self._handle(chat_id, user, media, reply_to=None, recorded_at=time.time()))
+            self._submit(user, lambda: self._handle(chat_id, user, media, recorded_at=time.time()))
         elif kind == "m" and _ID.fullmatch(ident):
             self._answer(cq_id, "Xulosa qayta yozilmoqda…")
             self._clear(chat_id, message_id)

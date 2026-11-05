@@ -1,6 +1,10 @@
 """Slack'dagi Barno AI: audio -> transkript -> "Qisqa xulosa" va tugmalar; thread'dagi savol.
 
 XABARLAR - chatning o'zida (audio thread ichida yuborilgan bo'lsa - o'sha thread'da):
+  0. jarayon xabari (`intake.Progress`, ega talabi 2026-11-05): audio kelishi bilan DARHOL
+     (`acknowledge`, navbatdan oldin) - "qabul qilindi" va bosqichlar: audio yuklash, matnga
+     o'girish (foizi bilan), qisqa xulosa. Joyida yangilanadi, transkript chiqqach uning ostiga
+     ko'chadi, xulosa (yoki xato) chiqqach o'chiriladi;
   1. transkript;
   2. "Qisqa xulosa" - mobil kartadagi bilan AYNI matn (`export_meeting(parts="brief")`,
      mobil `brief.ts` bilan umumiy namunada tekshiriladi) va tugmalar: vazifalar, bayonnoma
@@ -31,7 +35,7 @@ from typing import Any
 from ..schemas import meetings as schemas
 from ..schemas.auth import AuthUser
 from ..services import archive
-from ..services.meetings import minutes, service, templates
+from ..services.meetings import intake, minutes, service, templates
 from ..services.meetings.errors import MeetingProblem
 from ..services.meetings.intake import (  # noqa: F401 - umumiy qadamlar (`intake.py`)
     SUMMARY_WAIT_SEC, Sleep, filename, summary_error, wait_summary, wait_summary_card)
@@ -54,12 +58,41 @@ def wants(event: dict[str, Any]) -> bool:
 
 
 def on_message(client: Any, event: dict[str, Any], *, sleep: Sleep = time.sleep,
-               bot_user: str | None = None) -> None:
+               bot_user: str | None = None, shown: dict[str, intake.Progress] | None = None) -> None:
     files = transcribe.audio_files(event)
     if files:
-        handle(client, event["channel"], event.get("thread_ts"), files, sleep=sleep)
+        handle(client, event["channel"], event.get("thread_ts"), files, sleep=sleep, shown=shown)
     elif is_question(event):
         question(client, event, bot_user=bot_user)
+
+
+def acknowledge(client: Any, event: dict[str, Any]) -> dict[str, intake.Progress]:
+    """Audio kelishi bilan har fayl uchun jarayon xabari - DARHOL, Bolt ipida (navbatdan oldin):
+    navbat band bo'lsa ham odam audiosi qabul qilinganini ko'radi. Bir xabardagi fayllar ketma-ket
+    o'giriladi - ikkinchisidan boshlab "navbatda". Qaytaradi: fayl id -> xabar (`handle` uchun)."""
+    shown: dict[str, intake.Progress] = {}
+    for n, file in enumerate(transcribe.audio_files(event)):
+        progress = status(client, event["channel"], event.get("thread_ts"), file)
+        progress.show(intake.UPLOAD if n == 0 else intake.QUEUED)
+        shown[file["id"]] = progress
+    return shown
+
+
+def status(client: Any, channel: str, thread: str | None, file: dict[str, Any]) -> intake.Progress:
+    """Shu audioning jarayon xabari: Slack'da yozilgan ovozli xabar yoki yuklangan fayl (nomi bilan)."""
+    if file.get("subtype") == "slack_audio":
+        head = "🎙 Ovozli xabaringiz qabul qilindi."
+    else:
+        name = " ".join(str(file.get("name") or file.get("title") or "audio").split())[:80]
+        head = f"📎 «{render.escape(name)}» qabul qilindi."
+
+    def show(ts: str | None, text: str) -> str | None:
+        if ts is None:
+            return post(client, channel, thread, text)
+        client.chat_update(channel=channel, ts=ts, text=text, blocks=render.sections(text))
+        return ts
+
+    return intake.Progress(head, show=show, drop=lambda ts: client.chat_delete(channel=channel, ts=ts))
 
 
 def is_question(event: dict[str, Any]) -> bool:
@@ -74,39 +107,51 @@ def is_question(event: dict[str, Any]) -> bool:
 
 
 def handle(client: Any, channel: str, thread: str | None, files: list[dict[str, Any]], *,
-           sleep: Sleep = time.sleep) -> None:
-    """Navbatdagi vazifa: har audio uchun transkript va xulosa, xato bo'lsa sabab (va foyda
-    beradigan bo'lsa "Qayta urinish")."""
+           sleep: Sleep = time.sleep, shown: dict[str, intake.Progress] | None = None) -> None:
+    """Navbatdagi vazifa: har audio uchun jarayon xabari (`acknowledge` chiqargani yoki yangisi),
+    transkript va xulosa, xato bo'lsa sabab (va foyda beradigan bo'lsa "Qayta urinish")."""
     for file in files:
+        progress = (shown or {}).get(file.get("id")) or status(client, channel, thread, file)
+        progress.show(intake.UPLOAD)
         retry = f"f:{file['id']}"
         try:
             user = transcribe.account()
             meeting_id = transcribe.ingest(client, user, file)
-            text = transcribe.wait_transcript(user, meeting_id, sleep=sleep)
+            text = transcribe.wait_transcript(user, meeting_id, sleep=sleep, progress=progress.view)
         except transcribe.Problem as exc:
-            fail(client, channel, thread, str(exc), retry if exc.retry else None)
+            fail(client, channel, thread, str(exc), retry if exc.retry else None, progress=progress)
             continue
         except MeetingProblem as exc:
-            fail(client, channel, thread, str(exc.detail), None if exc.status_code in _FINAL else retry)
+            fail(client, channel, thread, str(exc.detail), None if exc.status_code in _FINAL else retry,
+                 progress=progress)
             continue
         except Exception:  # noqa: BLE001 - odam javobsiz qolmasin
             log.exception("Slack audio (%s): kutilmagan xato", file.get("id"))
-            fail(client, channel, thread, "ichki xato.", retry)
+            fail(client, channel, thread, "ichki xato.", retry, progress=progress)
             continue
-        deliver(client, channel, thread, user, meeting_id, text, sleep=sleep)
+        deliver(client, channel, thread, user, meeting_id, text, sleep=sleep, progress=progress)
 
 
 def deliver(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str, text: str, *,
-            sleep: Sleep = time.sleep) -> None:
-    """Transkript, keyin (yozilishini kutib) "Qisqa xulosa" va tugmalar."""
+            sleep: Sleep = time.sleep, progress: intake.Progress | None = None) -> None:
+    """Transkript, keyin (yozilishini kutib) "Qisqa xulosa" va tugmalar. `progress` (audio yo'li) -
+    jarayon xabari transkript OSTIGA ko'chadi va xulosa chiqqach o'chiriladi."""
     parts = render.split(text or "Audioda nutq topilmadi.")
     for n, part in enumerate(parts, 1):
         note = "🎙 Transkript" + (f" ({n}/{len(parts)})" if len(parts) > 1 else "")
         post(client, channel, thread, render.escape(part), [
             {"type": "section", "text": {"type": "plain_text", "text": part}},
             render.context(note, block_id=render.mark(meeting_id, str(n)))])
-    view = wait_summary(user, meeting_id, sleep=sleep)
-    post(client, channel, thread, "Qisqa xulosa", summary_card(user, meeting_id, view))
+    if progress is not None:
+        progress.close()
+        progress.show(intake.SUMMARY)
+    try:
+        view = wait_summary(user, meeting_id, sleep=sleep)
+        post(client, channel, thread, "Qisqa xulosa", summary_card(user, meeting_id, view))
+    finally:
+        # Kutish uzilsa ham (server to'xtayapti) "⏳" xabari osilib qolmasin.
+        if progress is not None:
+            progress.close()
 
 
 def summary_card(user: AuthUser, meeting_id: str, view: dict[str, Any]) -> list[dict[str, Any]]:
@@ -131,12 +176,14 @@ def summary_card(user: AuthUser, meeting_id: str, view: dict[str, Any]) -> list[
 
 
 def brief(user: AuthUser, meeting_id: str, *, summary_id: str | None = None, parts: str = "brief") -> str:
-    from ..services.meetings import intake
-
     return render.mrkdwn(intake.brief_markdown(user, meeting_id, summary_id=summary_id, parts=parts))
 
 
-def fail(client: Any, channel: str, thread: str | None, reason: str, retry: str | None = None) -> None:
+def fail(client: Any, channel: str, thread: str | None, reason: str, retry: str | None = None, *,
+         progress: intake.Progress | None = None) -> None:
+    """Sabab - YANGI xabarda (odamga bildirishnoma boradi), jarayon xabari o'chiriladi."""
+    if progress is not None:
+        progress.close()
     text = render.escape(f"Matnga o'girib bo'lmadi: {reason}")
     blocks = render.sections(text) + ([render.retry_button(retry)] if retry else [])
     post(client, channel, thread, text, blocks)
