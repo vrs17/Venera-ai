@@ -185,7 +185,7 @@ def test_migratsiya_v1_dan_v2_ga_malumot_bilan(tmp_path):
     conn.close()
 
     st = MeetingStore(root)
-    assert st.version() == store_mod.SCHEMA_VERSION == 4
+    assert st.version() == store_mod.SCHEMA_VERSION == 5
     # v4: eski yozuvning GAPI hisobi bo'sh - ya'ni birinchi kalit (`GAPI_API_KEY`).
     assert st.rows("SELECT stt_account FROM meetings WHERE id='m1'")[0]["stt_account"] is None
     summary = st.summary("m1", "s1")
@@ -193,7 +193,14 @@ def test_migratsiya_v1_dan_v2_ga_malumot_bilan(tmp_path):
     item = st.action_item("m1", "a1")
     assert item["task"] == "Hisobot yuborish" and item["crm_token"] is None and item["crm_status"] is None
     indexes = {r["name"] for r in st.rows("SELECT name FROM sqlite_master WHERE type='index'")}
-    assert "action_items_crm" in indexes
+    assert "action_items_crm" in indexes and "minutes_meeting" in indexes
+    # v5: bayonnoma jadvali bo'sh, yig'ilish o'chsa qatorlari ham ketadi (kaskad).
+    assert st.minutes_rows("m1") == []
+    st.insert_minutes({"id": "d1", "meeting_id": "m1", "language": "uz-cyrl", "transcript_rev": 1,
+                       "prompt_version": "minutes-1", "status": "ready", "created_at": now})
+    assert st.minutes_row("m1", "d1")["language"] == "uz-cyrl"
+    st.update_minutes("d1", status="failed", error_code="llm_failed")
+    assert st.minutes_row("m1", "d1")["status"] == "failed"
     # Bajarilgan CRM holati 404/410 dan keyin `expired` ga TUSHMAYDI.
     st.update_action_item("a1", crm_token="tok", crm_status="executed")
     assert st.set_crm_status(7, "tok", "expired") == 0

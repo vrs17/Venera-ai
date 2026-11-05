@@ -151,8 +151,14 @@ _CODE_DEFAULTS = ("hold_enabled", "wake_log_enabled", "local_login_enabled",
                   # Saqlash muddatlari: jonli `.env` da `MEETINGS_AUDIO_DAYS=0` (o'chirilmaydi) -
                   # tozalash testi esa 30/180 kunlik koddagi xulqni sinaydi.
                   "meetings_audio_days", "meetings_retention_days",
+                  # Bo'lak hajmi: jonli `.env` da kichikroq (nginx) - testlar koddagi 4 MiB ni kutadi.
+                  "meetings_chunk_bytes",
                   "meetings_openai_model", "openai_api_key", "openai_base_url", "meetings_v3_max_chars",
-                  "meetings_ask_platforms", "brief_crm_platforms")
+                  "meetings_ask_platforms", "brief_crm_platforms",
+                  # Claude: jonli `.env` dagi kalit, manzil, model, effort va bayonnoma zanjiri testga tushmasin.
+                  "claude_api_key", "claude_base_url", "claude_workspace_id", "meetings_claude_model",
+                  "meetings_claude_effort",
+                  "meetings_minutes_chain")
 
 
 @pytest.fixture(autouse=True)
@@ -162,6 +168,20 @@ def _code_defaults(monkeypatch):
     fields = type(settings).model_fields
     for name in _CODE_DEFAULTS:
         monkeypatch.setattr(settings, name, fields[name].default, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _claude_key_off(monkeypatch):
+    """HAR TESTDA Claude kaliti BO'SH: `claude_key_now` `.env` dagi JONLI `CLAUDE_API_KEY` ni o'qiydi -
+    hech bir test pullik Anthropic xizmatiga chiqmasin va kalitni ko'rmasin (jurnalga ham tushmasin).
+    Ikki nom: `config.claude_key_now` va `meetings` paketi import qilgan nusxasi (`_claude` zavodi).
+    Claude klientining o'zi `tests/meetings_fakes.py` dagi `FakeAnthropic` bilan sinaladi
+    (`ClaudeChat(client_factory=...)`), kalit - testning o'z soxta satri."""
+    from app.core import config as config_module
+    from app.services import meetings as meetings_module
+
+    monkeypatch.setattr(config_module, "claude_key_now", lambda: "")
+    monkeypatch.setattr(meetings_module, "claude_key_now", lambda: "", raising=False)
 
 
 @pytest.fixture(autouse=True)

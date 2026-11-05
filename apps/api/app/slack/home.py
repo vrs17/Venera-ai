@@ -47,6 +47,8 @@ FEATURES = (
     "*✅ Vazifalar* — bitta tugma: kim, nima, qachongacha.\n"
     "*🗂 Boshqa shablon* — bayonnoma, standup, 1:1, savdo qo'ng'irog'i, intervyu, ma'ruza va boshqalar.\n"
     "*📎 Eksport* — transkript (TXT/SRT), xulosa (MD) yoki to'liq hisobot (Word/PDF) fayli.\n"
+    "*📄 Bayonnoma* — rasmiy bayonnoma loyihasi (Word + PDF): kun tartibi, bayon, raqamlangan qaror bandlari; "
+    "til tanlanadi (o'zbek lotin/kirill, rus, ingliz), «________» joylari qo'lda to'ldiriladi.\n"
     "*🌐 Boshqa til* — audio rus yoki ingliz tilida bo'lsa, bitta tugma bilan qayta o'giring."
 )
 NOTES = (
@@ -57,8 +59,8 @@ PROMPT = (
     "🎙 *Plaud* — audio yuboring, matnga o'girib, qisqa xulosa beraman.\n"
     "• mikrofon tugmasi bilan ovozli xabar yozing, yoki\n"
     "• audio fayl yuklang: mp3, m4a, aac, wav, ogg — 3 soat yoki 150 MB gacha.\n"
-    "Xulosa ostida: vazifalar, boshqa shablon, eksport, boshqa til. Savol bo'lsa — xulosa xabarining "
-    "thread'ida yozing."
+    "Xulosa ostida: vazifalar, boshqa shablon, eksport, boshqa til va 📄 Bayonnoma (rasmiy hujjat, Word/PDF). "
+    "Savol bo'lsa — xulosa xabarining thread'ida yozing."
 )
 
 

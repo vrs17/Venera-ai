@@ -228,11 +228,69 @@ def auto_reply(op: str, system: str, user: str) -> str:
         refs = re.findall(r"^([AD]\d+) \|", user, flags=re.MULTILINE)
         return json.dumps({"results": [{"id": r, "supported": True, "ownerCorrect": True, "dueCorrect": True,
                                         "note": None} for r in refs]})
+    if op == "meeting_minutes":
+        return json.dumps(minutes_reply(lines, user), ensure_ascii=False)
     if op == "meeting_ask":
         first = lines[0]["id"] if lines else 1
         return json.dumps({"answer": "[S1] hisobotni ertaga yuboradi.", "citations": [first, 99999],
                            "followUps": ["Kim?", "Qachon?", "Nima?"]}, ensure_ascii=False)
     return "{}"
+
+
+def minutes_reply(lines: list[dict[str, Any]], user: str) -> dict[str, Any]:
+    """Bayonnoma JSON i (`shapes.minutes` shakli) - promptdagi chiqish tiliga mos yozuvda. Ikki
+    kun tartibi bandi, ikki bo'lim, [S#] tokenli mas'ullar, bitta kichik bandli va "Bunda" li band."""
+    own = [x for x in lines if not x["context"]] or [{"id": 1, "speaker": "S1", "text": ""}]
+    first, last = own[0], own[-1]
+    mid = own[len(own) // 2]
+    spk = [x["speaker"] for x in own if x["speaker"]] or ["S1"]
+    cyr = "Output language: Uzbek (Cyrillic" in user
+    ru = "Output language: Russian" in user
+    en = "Output language: English" in user
+    if ru:
+        t = {"a1": "О ходе исполнения плана", "a2": "О текущих вопросах", "r1": "Был заслушан отчёт [S1] о ходе работ.",
+             "r2": "Обсуждены текущие вопросы.", "ack": "Отчёт принять к сведению.", "dl": "В течение двух дней",
+             "task": "обеспечить подготовку отчёта.", "sub": "- уточнить сроки;", "fu": "При этом учесть замечания.",
+             "ctl": "[S1]", "pre": "Принимая во внимание вышеизложенное, Совещание", "title": "Совещание по отчёту"}
+    elif en:
+        t = {"a1": "On the progress of the plan", "a2": "On current matters", "r1": "The report of [S1] was heard.",
+             "r2": "Current matters were discussed.", "ack": "Take the report into account.", "dl": "Within two days",
+             "task": "ensure the report is prepared.", "sub": "- clarify the deadlines;", "fu": "The remarks shall be considered.",
+             "ctl": "[S1]", "pre": "Having considered the above, the Meeting", "title": "Report meeting"}
+    elif cyr:
+        t = {"a1": "Режа ижроси тўғрисида", "a2": "Жорий масалалар тўғрисида",
+             "r1": "Кун тартибидаги биринчи масала юзасидан [S1] ҳисоботи эшитилди.",
+             "r2": "Жорий масалалар муҳокама қилинди.", "ack": "ҳисоботи маълумот учун қабул қилинсин.",
+             "dl": "Икки кун муддатда", "task": "ҳисобот тайёрлаш вазифаси юклатилсин.",
+             "sub": "- муддатлар аниқлаштирилсин;", "fu": "Бунда, билдирилган эътирозлар инобатга олинсин.",
+             "ctl": "[S1]", "pre": "Юқоридагиларни инобатга олиб, Йиғилиш", "title": "Ҳисобот йиғилиши"}
+    else:
+        t = {"a1": "Reja ijrosi to'g'risida", "a2": "Joriy masalalar to'g'risida",
+             "r1": "Kun tartibidagi birinchi masala yuzasidan [S1] hisoboti eshitildi.",
+             "r2": "Joriy masalalar muhokama qilindi.", "ack": "hisoboti ma'lumot uchun qabul qilinsin.",
+             "dl": "Ikki kun muddatda", "task": "hisobot tayyorlash vazifasi yuklatilsin.",
+             "sub": "- muddatlar aniqlashtirilsin;", "fu": "Bunda, bildirilgan e'tirozlar inobatga olinsin.",
+             "ctl": "[S1]", "pre": "Yuqoridagilarni inobatga olib, Yig'ilish", "title": "Hisobot yig'ilishi"}
+    item = lambda kind, text, **kw: {"kind": kind, "deadline": None, "deadlineDate": None, "responsible": [],  # noqa: E731
+                                     "text": text, "subpoints": [], "followUp": None,
+                                     "sourceSegmentIds": [first["id"]], "confidence": 0.9, **kw}
+    return {
+        "coverage": {"firstId": first["id"], "lastId": last["id"]},
+        "title": t["title"],
+        "agenda": [{"title": t["a1"], "speakers": spk[:1], "report": t["r1"], "sourceSegmentIds": [first["id"]]},
+                   {"title": t["a2"], "speakers": spk[-1:], "report": t["r2"], "sourceSegmentIds": [mid["id"]]}],
+        "preamble": t["pre"],
+        "sections": [
+            {"agendaIndex": 1, "items": [
+                item("acknowledge", f"[{spk[0]}] {t['ack']}"),
+                item("task", f"[{spk[-1]}] {t['task']}", deadline=t["dl"], responsible=[f"[{spk[-1]}]"],
+                     subpoints=[t["sub"]], followUp=t["fu"], sourceSegmentIds=[mid["id"], last["id"]]),
+            ]},
+            {"agendaIndex": 2, "items": [item("task", t["task"], responsible=[], sourceSegmentIds=[last["id"]])]},
+        ],
+        "controller": t["ctl"],
+        "notes": [],
+    }
 
 
 class FakeLLM:
@@ -535,3 +593,129 @@ def ogg_opus_bytes(seconds: float, *, pre_skip: int = 312, frame_ms: int = 20, p
                              flags=0x04 if last else 0))
         sequence += 1
     return b"".join(out)
+
+
+# --- Claude (Anthropic SDK) soxtasi -------------------------------------------------------------------
+
+
+CLAUDE_MODEL = "claude-sonnet-5-5"
+
+
+def claude_message(text: str, *, stop_reason: str = "end_turn", thinking: bool = True, tokens_in: int = 1200,
+                   tokens_out: int = 340, model: str = CLAUDE_MODEL) -> Any:
+    """`anthropic.types.Message`: (default bo'sh "o'ylash" bloki +) matn bloki va `usage` - klient
+    o'ylash blokini tashlab, faqat matnni olishi sinaladi. `stop_reason="refusal"` - rad,
+    `"max_tokens"` - kesilgan javob."""
+    from anthropic.types import Message, TextBlock, ThinkingBlock, Usage
+
+    blocks: list[Any] = []
+    if thinking:
+        blocks.append(ThinkingBlock(type="thinking", thinking="", signature="sig"))
+    blocks.append(TextBlock(type="text", text=text))
+    return Message(id="msg_test", type="message", role="assistant", model=model, content=blocks,
+                   stop_reason=stop_reason, stop_sequence=None,
+                   usage=Usage(input_tokens=tokens_in, output_tokens=tokens_out))
+
+
+def claude_error(kind: Any, status: int | None = None, message: str = "xato") -> Exception:
+    """Anthropic SDK istisnosi: status xatolari (`anthropic.RateLimitError`, `BadRequestError`, ...) -
+    `httpx2.Response` bilan, xabari SDK dagidek (`Error code: <status> - <tana>`); `APIConnectionError` /
+    `APITimeoutError` - faqat `httpx2.Request` bilan (javob yo'q)."""
+    import anthropic
+    import httpx2
+
+    request = httpx2.Request("POST", "https://api.anthropic.test/v1/messages")
+    if issubclass(kind, anthropic.APIConnectionError):
+        return kind(request=request) if kind is anthropic.APITimeoutError else kind(message=message, request=request)
+    body = {"type": "error", "error": {"type": "api_error", "message": message}}
+    response = httpx2.Response(status or 500, request=request, json=body)
+    return kind(f"Error code: {status or 500} - {body}", response=response, body=body)
+
+
+class FakeAnthropic:
+    """`anthropic.Anthropic` o'rnida - `ClaudeChat(client_factory=fake)`.
+
+    Klient ZAVODI sifatida chaqiriladi (`fake(api_key=..., base_url=..., timeout=..., max_retries=...)`
+    -> o'zi; argumentlar `inits` da) va `messages.stream(**kwargs)` ni beradi: har so'rov `requests` da
+    (kwargs aynan), natija - `with ... as stream: stream.get_final_message()`.
+
+    `script` - navbat: matn (-> `claude_message`), tayyor `Message`, istisno (`claude_error`) yoki
+    `fn(kwargs) -> shulardan biri`; bo'sh bo'lsa so'rovdagi JSON sxemadan aniqlangan `op` bo'yicha
+    `auto_reply` (`shapes.*` bilan solishtirib - `op_of`). Istisno real SDK dagidek `with` ga kirishda
+    (`__enter__`) otiladi - so'rov o'shanda ketadi."""
+
+    def __init__(self) -> None:
+        self.inits: list[dict[str, Any]] = []
+        self.requests: list[dict[str, Any]] = []
+        self.script: list[Any] = []
+        self.reply: Callable[[str, str, str], str] = auto_reply
+        self.messages = _FakeClaudeMessages(self)
+
+    def __call__(self, **kwargs: Any) -> FakeAnthropic:
+        self.inits.append(dict(kwargs))
+        return self
+
+    @staticmethod
+    def op_of(request: dict[str, Any]) -> str:
+        """So'rovdagi `output_config.format.schema` -> amal (`shapes.for_op` ning teskarisi);
+        sxemasiz so'rov - `meeting_extract` (`FakeOpenAI` kabi); noma'lum sxema - `?`."""
+        from app.services.meetings import shapes
+
+        schema = ((request.get("output_config") or {}).get("format") or {}).get("schema")
+        if schema is None:
+            return "meeting_extract"
+        known = (("meeting_extract", shapes.extract()), ("meeting_extract", shapes.extract(follow_up=True)),
+                 ("meeting_map", shapes.map_part()), ("meeting_write", shapes.writer()),
+                 ("meeting_verify", shapes.verify()), ("meeting_classify", shapes.classify()),
+                 ("meeting_ask", shapes.ask()), ("meeting_minutes", shapes.minutes()))
+        return next((op for op, candidate in known if schema == candidate), "?")
+
+    def ops(self) -> list[str]:
+        return [self.op_of(r) for r in self.requests]
+
+    def final_message(self, request: dict[str, Any]) -> Any:
+        """Navbatdagi javob yoki `auto_reply` -> `Message`; istisno otiladi."""
+        item = self.script.pop(0) if self.script else None
+        if callable(item) and not isinstance(item, BaseException):
+            item = item(request)
+        if isinstance(item, BaseException):
+            raise item
+        if item is None:
+            system = request.get("system") or ""
+            user = "".join(str(m.get("content") or "") for m in request.get("messages") or []
+                           if m.get("role") == "user")
+            item = self.reply(self.op_of(request), system if isinstance(system, str) else "", user)
+        if isinstance(item, str):
+            item = claude_message(item, model=str(request.get("model") or CLAUDE_MODEL))
+        return item
+
+
+class _FakeClaudeMessages:
+    """`client.messages` - faqat `stream`."""
+
+    def __init__(self, fake: FakeAnthropic) -> None:
+        self._fake = fake
+
+    def stream(self, **kwargs: Any) -> _FakeClaudeStream:
+        self._fake.requests.append(dict(kwargs))
+        return _FakeClaudeStream(self._fake, kwargs)
+
+
+class _FakeClaudeStream:
+    """`MessageStreamManager` + `MessageStream`: `with` ga kirishda so'rov "ketadi" (istisno shu
+    yerda), `get_final_message()` - yakuniy xabar."""
+
+    def __init__(self, fake: FakeAnthropic, request: dict[str, Any]) -> None:
+        self._fake = fake
+        self._request = request
+        self._message: Any = None
+
+    def __enter__(self) -> _FakeClaudeStream:
+        self._message = self._fake.final_message(self._request)
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        return None
+
+    def get_final_message(self) -> Any:
+        return self._message

@@ -3,8 +3,10 @@
 XABARLAR - chatning o'zida (audio thread ichida yuborilgan bo'lsa - o'sha thread'da):
   1. transkript;
   2. "Qisqa xulosa" - mobil kartadagi bilan AYNI matn (`export_meeting(parts="brief")`,
-     mobil `brief.ts` bilan umumiy namunada tekshiriladi) va tugmalar: vazifalar, boshqa
-     shablon bilan xulosa, eksport (fayl), boshqa tilda qayta o'girish.
+     mobil `brief.ts` bilan umumiy namunada tekshiriladi) va tugmalar: vazifalar, bayonnoma
+     (rasmiy hujjat), boshqa shablon bilan xulosa, eksport (fayl), boshqa tilda qayta o'girish.
+  3. "📄 Bayonnoma" - til menyusi (lotin/kirill/rus/ingliz), tanlovdan keyin Word va PDF fayl
+     (`services.meetings.minutes`): hujjat 1-3 daqiqada yoziladi, odam "⏳" xabarini ko'radi.
 Ikkala xabar bloki `block_id` da yig'ilish id'sini olib yuradi (`render.mark`): xabar ostidagi
 thread'dagi savol yig'ilishni shundan topadi - lokal ombor kerak emas. Odamning o'z audio
 xabari ostidagi savol - fayl kaliti orqali (`transcribe.meeting_of_file`).
@@ -14,7 +16,8 @@ ko'rsatish qo'shimcha LLM chaqiruvi emas.
 
 CHEGARALAR hisob bo'yicha, ya'ni hamma Slack xodimlariga UMUMIY: savol soatiga
 `MEETINGS_ASK_PER_HOUR`, boshqa shablon `MEETINGS_SUMMARY_PER_HOUR`, eksport (qisqa xulosa
-ham) `MEETINGS_EXPORT_PER_HOUR`. Oshsa xizmatning o'z xabari ko'rsatiladi.
+ham) `MEETINGS_EXPORT_PER_HOUR`, bayonnoma `MEETINGS_MINUTES_PER_HOUR` (har hujjat pullik
+Claude chaqiruvi). Oshsa xizmatning o'z xabari ko'rsatiladi.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ from typing import Any
 
 from ..schemas import meetings as schemas
 from ..schemas.auth import AuthUser
-from ..services.meetings import service, templates
+from ..services.meetings import minutes, service, templates
 from ..services.meetings.errors import MeetingProblem
 from ..services.meetings.intake import (  # noqa: F401 - umumiy qadamlar (`intake.py`)
     SUMMARY_WAIT_SEC, Sleep, filename, summary_error, wait_summary, wait_summary_card)
@@ -214,6 +217,10 @@ def on_action(client: Any, body: dict[str, Any], *, sleep: Sleep = time.sleep) -
             return
         if kind == "barno_tasks":
             tasks(client, channel, thread, user, meeting_id)
+        elif kind == "barno_minutes":
+            minutes_menu(client, channel, thread, user, meeting_id)
+        elif kind.startswith("barno_minutes_lang"):
+            minutes_doc(client, channel, thread, user, meeting_id, arg)
         elif kind == "barno_template":
             template(client, channel, thread, user, meeting_id, arg, sleep=sleep)
         elif kind == "barno_export":
@@ -279,6 +286,12 @@ def export_file(client: Any, channel: str, thread: str | None, user: AuthUser, m
         name = filename(disposition) or f"barno.{_REPORTS[kind]}"
     else:
         return
+    upload(client, channel, thread, data, name)
+
+
+def upload(client: Any, channel: str, thread: str | None, data: bytes, name: str) -> None:
+    """Fayl shu chatga (thread ichida bo'lsa - thread'ga). `files:write` ruxsati yo'q bo'lsa -
+    `transcribe.Problem` odam tushunadigan yo'riqnoma bilan (eksport va bayonnoma uchun umumiy)."""
     from slack_sdk.errors import SlackApiError
 
     where = {"thread_ts": thread} if thread else {}
@@ -289,6 +302,62 @@ def export_file(client: Any, channel: str, thread: str | None, user: AuthUser, m
             raise transcribe.Problem("Faylni yuborib bo'lmadi: ilovaga `files:write` ruxsati kerak "
                                      "(OAuth & Permissions -> Bot Token Scopes, keyin Reinstall).") from None
         raise
+
+
+# --- bayonnoma -------------------------------------------------------------------------------
+
+
+def minutes_menu(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str) -> None:
+    """"📄 Bayonnoma" -> hujjat tili menyusi. Tavsiya - yig'ilish tilidan (`minutes.default_lang`:
+    o'zbek -> kirill), lekin tanlov odamniki (ega qarori: lotin/kirill/rus/ingliz)."""
+    view = service.detail(user, meeting_id)
+    post(client, channel, thread, render.MINUTES_PROMPT,
+         render.minutes_menu(meeting_id, minutes.default_lang(view.get("language"))))
+
+
+def minutes_doc(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str,
+                lang: str) -> None:
+    """Tanlangan tilda bayonnoma: "⏳" xabari, model (1-3 daqiqa, shu ipda), so'ng Word va PDF
+    fayllar, "⏳" o'rniga natija (bo'lim/band soni, izohlar, ogohlantirishlar).
+
+    NEGA WORD HAM, PDF HAM. Ega qarori: asosiy natija Word (kotib «________» joylarini
+    to'ldiradi), PDF - ko'rish uchun nusxa. Avval Word yuklanadi - ruxsat yo'q bo'lsa odam
+    yo'riqnomani birinchi fayldan keyin oladi, hujjatning o'zi omborda qoladi (qayta bosilsa
+    model chaqirilmaydi - `minutes.generate` tayyorini qaytaradi)."""
+    code = minutes.normalize(lang)
+    if code is None:
+        return
+    title = minutes.LANG_TITLES[code]
+    ts = post(client, channel, thread, f"⏳ Bayonnoma ({title}) tayyorlanmoqda… 1-3 daqiqa.")
+    try:
+        view = minutes.generate(user, meeting_id, code)
+    except MeetingProblem as exc:
+        replace(client, channel, ts, thread, render.escape(f"Bayonnoma yozilmadi: {exc.detail}"))
+        return
+    except Exception:  # noqa: BLE001 - "⏳" abadiy qolmasin
+        log.exception("Slack bayonnomasi (%s): kutilmagan xato", meeting_id)
+        replace(client, channel, ts, thread, "Bayonnoma yozilmadi: ichki xato.")
+        return
+    # Fayllar ALOHIDA: hujjat yozilgan va saqlangan - PDF chizilmasa (shrift, navbat) yoki fayl
+    # yuborilmasa Word va natija baribir yetib boradi, sabab esa natija ostida.
+    notes: list[str] = []
+    for fmt in ("docx", "pdf"):
+        try:
+            data, _, disposition = minutes.export_file(user, meeting_id, view["id"], fmt)
+            upload(client, channel, thread, data, filename(disposition) or f"bayonnoma.{fmt}")
+        except transcribe.Problem as exc:
+            # `files:write` yo'q - ikkinchi fayl ham yuborilmaydi; yo'riqnoma natija ostida.
+            notes.append(render.escape(str(exc)))
+            break
+        except MeetingProblem as exc:
+            notes.append(render.escape(f"{fmt.upper()} fayli tayyorlanmadi: {exc.detail}"))
+        except Exception:  # noqa: BLE001
+            log.exception("Slack bayonnomasi (%s): %s fayli", meeting_id, fmt)
+            notes.append(f"{fmt.upper()} fayli tayyorlanmadi: ichki xato.")
+    text = render.minutes_result(view, code)
+    if notes:
+        text += "\n" + "\n".join(f"⚠ {note}" for note in notes)
+    replace(client, channel, ts, thread, text)
 
 
 def relang(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str, lang: str, *,

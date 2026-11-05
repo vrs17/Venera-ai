@@ -21,6 +21,10 @@ dependencies = [
     # Slack ilovasi "Barno AI" (`app/slack/`, Socket Mode). Funksiya ichida import
     # qilinadi: o'rnatilmagan serverda faqat Slack ishlamaydi, ilova ko'tariladi.
     "slack_bolt>=1.30",
+    # Claude (Anthropic) - yig'ilish xulosasi va bayonnoma modeli (ega qarori 2026-11-04: Sonnet 5.5
+    # gemma4:31b o'rniga). Funksiya ichida import qilinadi: o'rnatilmagan serverda faqat shu
+    # provayder "sozlanmagan" bo'ladi, ilova ko'tariladi. 2.x `httpx2` ga tayanadi (`httpx` emas).
+    "anthropic>=2.4",
 ]
 
 [project.optional-dependencies]

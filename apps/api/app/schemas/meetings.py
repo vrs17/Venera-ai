@@ -317,9 +317,10 @@ class LayoutEntry(BaseModel):
 
 
 class GeneratedBy(BaseModel):
-    """Xulosani yozgan model: `v3` (Venera Core) | `openai` | `ollama` va model nomi."""
+    """Xulosani yozgan model: `v3` (Venera Core) | `openai` | `claude` (Sonnet 5.5, 2026-11-04 dan) |
+    `ollama` va model nomi."""
 
-    provider: Literal["v3", "openai", "ollama"]
+    provider: Literal["v3", "openai", "claude", "ollama"]
     model: str | None = None
 
 

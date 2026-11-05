@@ -55,7 +55,8 @@ def test_audio_transkript_va_qisqa_xulosa_chatning_ozida(slack, _isolated_meetin
     assert summary is client.posted[-1] and render.marked(summary) == mid
     assert shown(summary).startswith("Qisqa xulosa\n*")
     ids = [e["action_id"] for e in elements(summary)]
-    assert ids == ["barno_tasks", "barno_template", "barno_export", "barno_relang_ru", "barno_relang_en"]
+    assert ids == ["barno_tasks", "barno_minutes", "barno_template", "barno_export", "barno_relang_ru",
+                             "barno_relang_en"]
     assert all("confirm" in e for e in elements(summary) if e["action_id"].startswith("barno_relang"))
 
 

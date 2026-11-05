@@ -352,18 +352,28 @@ def _attempt(rt: Any, m: dict[str, Any], s: dict[str, Any], provider: Any, stric
 def _pipeline(rt: Any, m: dict[str, Any], s: dict[str, Any], provider: Any, strict: bool,
               progress: Any) -> Pipeline:
     """Shu provayder uchun quvur. Ollama - AYNAN avvalgi sozlamalar bilan; OpenAI - katta
-    bir o'tish; v3 - prompt chegarasi bo'yicha (`max_prompt_chars`) bo'laklanadi.
+    bir o'tish; Claude - undan ham katta (1M kontekst: 3 soatlik yig'ilish bitta o'tishda,
+    `MEETINGS_CLAUDE_SINGLE_PASS_CHARS`); v3 - prompt chegarasi bo'yicha (`max_prompt_chars`)
+    bo'laklanadi.
 
     Map keshi PROVAYDER bo'yicha ajratilgan: v3 yiqilib, xulosa OpenAI bilan boshidan
-    yozilganda v3 ning tayyor bo'laklari olinmasin (bitta xulosa - bitta model). Ollama
+    yozilganda v3 ning tayyor bo'laklari olinmasin (bitta xulosa - bitta model). OpenAI va
+    Claude kalitida model nomi ham bor (model almashsa eski bo'laklar olinmasin). Ollama
     kaliti avvalgidek (shablon nomi) - mavjud kesh o'z joyida."""
     store = rt.store
     name = provider.name
-    space = "" if name == "ollama" else (f"openai/{provider.model}:" if name == "openai" else f"{name}:")
+    if name == "ollama":
+        space = ""
+    elif name in ("openai", "claude"):
+        space = f"{name}/{provider.model}:"
+    else:
+        space = f"{name}:"
     key = lambda template: (int(m["transcript_rev"] or 0), PROMPT_VERSION, space + template,  # noqa: E731
                             s["language"])
     if name == "openai":
         single, size = settings.meetings_openai_single_pass_chars, settings.meetings_openai_map_chars
+    elif name == "claude":
+        single, size = settings.meetings_claude_single_pass_chars, settings.meetings_claude_map_chars
     else:
         single, size = settings.meetings_single_pass_chars, settings.meetings_map_chars
     ollama = name == "ollama"

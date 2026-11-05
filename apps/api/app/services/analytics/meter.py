@@ -171,7 +171,8 @@ def carry(fn: F) -> F:
 #: qiymatni bilib turib o'chirish taxminga bog'liq emas.
 _SECRET_SETTINGS = (
     "hrm_assistant_client_secret", "tts_client_secret", "gapi_api_key", "gapi_api_key2",
-    "ollama_api_key", "venera_api_url", "telegram_bot_token", "crm_client_secret",
+    "ollama_api_key", "openai_api_key", "claude_api_key", "venera_api_url", "telegram_bot_token",
+    "crm_client_secret",
     "crm_password", "secret_key", "hrm_token", "crm_token",
 )
 

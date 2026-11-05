@@ -122,11 +122,24 @@ def ask() -> dict[str, Any]:
     return obj({"answer": STR, "citations": IDS, "followUps": arr(STR)})
 
 
+def minutes() -> dict[str, Any]:
+    """Bayonnoma (rasmiy hujjat, `minutes/prompt.py` dagi shakl bilan BIR XIL): kun tartibi bandlari,
+    har band bo'yicha bayon, qaror bo'limlari (band = tur, muddat, mas'ullar, matn, kichik bandlar,
+    "Bunda" davomi, manba qatorlar), nazoratchi, izohlar, qamrov. Sarlavhalar, raqamlash va bo'sh
+    joylar ("________") - KOD (`minutes/compose.py`), model emas."""
+    item = obj({"kind": STR, "deadline": NSTR, "deadlineDate": NSTR, "responsible": arr(STR), "text": STR,
+                "subpoints": arr(STR), "followUp": NSTR, "sourceSegmentIds": IDS, "confidence": NUM})
+    agenda = obj({"title": STR, "speakers": arr(STR), "report": STR, "sourceSegmentIds": IDS})
+    section = obj({"agendaIndex": INT, "items": arr(item)})
+    return obj({"coverage": _COVERAGE, "title": STR, "agenda": arr(agenda), "preamble": NSTR,
+                "sections": arr(section), "controller": NSTR, "notes": arr(STR)})
+
+
 def for_op(op: str, system: str = "") -> dict[str, Any] | None:
     """Amal (`op`) -> sxema; noma'lum amal - `None` (oddiy JSON rejimi)."""
     if op == "meeting_extract":
         return extract(follow_up='"followUpMessage"' in system)
     builders = {"meeting_map": map_part, "meeting_write": writer, "meeting_verify": verify,
-                "meeting_classify": classify, "meeting_ask": ask}
+                "meeting_classify": classify, "meeting_ask": ask, "meeting_minutes": minutes}
     build = builders.get(op)
     return build() if build else None

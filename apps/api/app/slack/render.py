@@ -12,6 +12,7 @@ import re
 from typing import Any
 
 from ..services.meetings import export
+from ..services.meetings.minutes import text as minutes_text
 
 #: Bitta section matni (Slack: 3000) - zaxira bilan.
 SECTION_CHARS = 2900
@@ -125,6 +126,8 @@ def controls(meeting_id: str, language: str, templates: list[dict[str, Any]]) ->
     """Xulosa ostidagi tugmalar va savol haqida eslatma. Qiymatlarda yig'ilish id'si bor."""
     elements = [
         button("Vazifalar", "barno_tasks", meeting_id),
+        # Rasmiy hujjat: til menyusi alohida xabarda (`minutes_menu`) - tugma faqat uni chaqiradi.
+        button("📄 Bayonnoma", "barno_minutes", meeting_id),
         {"type": "static_select", "action_id": "barno_template",
          "placeholder": {"type": "plain_text", "text": "Boshqa shablon bilan xulosa"},
          "options": [option(t["title"], f"{meeting_id}|{t['id']}") for t in templates if t["id"] != "auto"]},
@@ -151,6 +154,48 @@ def controls(meeting_id: str, language: str, templates: list[dict[str, Any]]) ->
 
 def retry_button(value: str) -> dict[str, Any]:
     return {"type": "actions", "elements": [button("Qayta urinish", "barno_retry", value)]}
+
+
+#: Bayonnoma til menyusi xabarining matni (bildirishnoma uchun ham).
+MINUTES_PROMPT = "📄 *Bayonnoma* - hujjat tilini tanlang:"
+
+
+def minutes_menu(meeting_id: str, default: str) -> list[dict[str, Any]]:
+    """Bayonnoma tili tugmalari (`minutes.text.LANGS`): tavsiya etilgani (yig'ilish tilidan
+    `default_lang`) BIRINCHI va `primary` - bank hujjati odatda kirillda, lekin tanlov odamniki.
+    Qiymat `yig'ilish|til`; `block_id` yig'ilish belgisini olib yuradi (`mark`)."""
+    order = [default] + [lang for lang in minutes_text.LANGS if lang != default]
+    buttons = []
+    for lang in order:
+        # Har tugmaning O'Z `action_id` si (`barno_minutes_lang_<til>`): Slack bitta `actions` blokida
+        # takror id ni `invalid_blocks` bilan rad etadi (`barno_relang_<til>` kabi).
+        element = button(minutes_text.LANG_TITLES[lang], f"barno_minutes_lang_{lang}", f"{meeting_id}|{lang}")
+        if lang == default:
+            element["style"] = "primary"
+        buttons.append(element)
+    return [{"type": "section", "text": {"type": "mrkdwn", "text": MINUTES_PROMPT}},
+            {"type": "actions", "block_id": mark(meeting_id, "minutes"), "elements": buttons}]
+
+
+def minutes_result(view: dict[str, Any], lang: str) -> str:
+    """Tayyor bayonnoma haqida xabar: bo'lim/band soni, loyiha eslatmasi, modelning izohlari
+    (aniqlashtirish kerak) va sifat ogohlantirishlari - `ungrounded_name:<ism>` (transkriptda
+    bo'lmagan ism `BLANK` bo'ldi), `script_mismatch` (yozuv tanlangan tilga mos emas)."""
+    title = minutes_text.LANG_TITLES.get(lang, lang)
+    parts = [f"✅ *Bayonnoma tayyor* ({title}): {int(view.get('sectionCount') or 0)} bo'lim, "
+             f"{int(view.get('itemCount') or 0)} band. Loyiha - Word faylidagi «{minutes_text.BLANK}» "
+             "joylarini to'ldiring (bank nomi, rais, qatnashuvchilar, №, sana)."]
+    notes = [escape(export.one_line(n)) for n in view.get("notes") or [] if export.one_line(n)]
+    if notes:
+        parts.append("*Aniqlashtirish kerak:*\n" + "\n".join(f"• {n}" for n in notes))
+    warnings = [str(w) for w in view.get("warnings") or []]
+    names = [escape(w.split(":", 1)[1].strip()) for w in warnings if w.startswith("ungrounded_name:")]
+    if names:
+        parts.append(f"Transkriptda bo'lmagan ismlar «{minutes_text.BLANK}» bilan almashtirildi: "
+                     + ", ".join(dict.fromkeys(n for n in names if n)))
+    if "script_mismatch" in warnings:
+        parts.append("Hujjat yozuvi (kirill/lotin) tanlangan tilga to'liq mos kelmadi - matnni ko'zdan kechiring.")
+    return "\n\n".join(parts)
 
 
 def speakers(view_speakers: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

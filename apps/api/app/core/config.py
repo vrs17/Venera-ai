@@ -727,6 +727,44 @@ class Settings(BaseSettings):
     meetings_openai_temperature: str = ""
     #: OpenAI 5xx / tarmoq xatosida xulosa chaqiruvi necha marta qayta (3 s dan keyin).
     meetings_openai_retries: int = 1
+    #: Claude (Anthropic) kaliti - `apps/api/.env` dagi `CLAUDE_API_KEY`, JONLI o'qiladi
+    #: (`claude_key_now`); jurnalga va health'ga chiqmaydi.
+    claude_api_key: str = ""
+    #: Anthropic API manzili. Bo'sh - SDK default'i (api.anthropic.com).
+    claude_base_url: str = ""
+    #: Anthropic workspace id (`wrkspc_...`). Tashkilot darajasidagi kalit (workspace'ga bog'lanmagan)
+    #: har so'rovda `anthropic-workspace-id` sarlavhasini talab qiladi (400 "not scoped to a
+    #: workspace") - Console -> Settings -> Workspaces dagi id. Workspace'ga bog'langan kalitda shart
+    #: emas. `.env` dan JONLI (`claude_workspace_now`).
+    claude_workspace_id: str = ""
+    #: Claude modeli. EGA QARORI (2026-11-04): yig'ilish xulosasi va bayonnoma gemma4:31b o'rniga
+    #: Claude Sonnet 5.5 bilan. Default bor (OpenAI dan farqli): modelni ega o'zi tanladi; kalit
+    #: bo'lmasa provayder o'chiq. Zanjirga `claude` bo'g'ini bilan kiradi: `MEETINGS_LLM_CHAIN=claude,ollama`.
+    meetings_claude_model: str = "claude-sonnet-5-5"
+    #: Bitta Claude chaqiruvi chegarasi (soniya). Javob OQIM bilan olinadi (uzun javobda HTTP
+    #: kutish tugamasin), chegara oqimning umumiy umri.
+    meetings_claude_timeout: float = 600.0
+    #: Bitta javobning eng ko'p tokeni (`max_tokens`): modelning "o'ylash" tokenlari ham shu ichida.
+    meetings_claude_max_output_tokens: int = 16000
+    #: `output_config.effort` (low | medium | high | xhigh | max): o'ylash chuqurligi va narx.
+    #: Xulosa - `medium` (grounded ro'yxatlar uchun yetarli); bayonnoma - `MEETINGS_MINUTES_EFFORT`.
+    meetings_claude_effort: str = "medium"
+    #: SDK qayta urinishlari (429, 5xx, tarmoq) - eksponensial kutish bilan.
+    meetings_claude_retries: int = 2
+    #: Claude konteksti katta (1M token): 3 soatlik yig'ilish (~200 ming belgi) BITTA chaqiruvda -
+    #: butun yig'ilishni bir ko'rishda yozilgan xulosa bo'laklardan yig'ilganidan yaxshiroq.
+    meetings_claude_single_pass_chars: int = 200000
+    meetings_claude_map_chars: int = 100000
+    #: --- Bayonnoma (rasmiy hujjat, `services/meetings/minutes/`) ---
+    #: Hujjatni yozadigan model zanjiri. Default FAQAT `claude`: gemma rasmiy kirill matnini
+    #: yozmagan, zahira hujjatni buzardi. Sozlanmagan bo'lsa - 503 `llm_not_configured`.
+    meetings_minutes_chain: str = "claude"
+    #: Bayonnoma uchun `effort` - uzun rasmiy matn, bandlar va asoslash: `high`.
+    meetings_minutes_effort: str = "high"
+    #: Bayonnoma javobi (39 band ~ 2,700 so'z ~ 10-12 ming token + o'ylash).
+    meetings_minutes_max_output_tokens: int = 32000
+    #: Bitta odamga soatiga shuncha bayonnoma (har biri pullik Claude chaqiruvi).
+    meetings_minutes_per_hour: int = 6
     #: Vazifani CRM ga yuborish (v3 taklifi): odamga soatiga shuncha so'rov va bitta
     #: so'rovning eng uzun kutishi (agent CRM dan loyiha va odamni qidiradi).
     meetings_crm_per_hour: int = 20
@@ -924,6 +962,17 @@ def openai_key_now() -> str:
     `.env` da kalit yo'q bo'lsa - ishga tushishdagi qiymat: systemd `Environment=` bilan
     berilgan kalit jim e'tiborsiz qolmasin. Qiymat hech qayerga (jurnal, health) chiqmaydi."""
     return _env_token("openai_api_key", settings.openai_api_key) or settings.openai_api_key
+
+
+def claude_key_now() -> str:
+    """Claude (Anthropic) kaliti - `apps/api/.env` dagi `CLAUDE_API_KEY`, JONLI (`openai_key_now`
+    kabi): kalit almashsa restart shart emas. Qiymat hech qayerga chiqmaydi."""
+    return _env_token("claude_api_key", settings.claude_api_key) or settings.claude_api_key
+
+
+def claude_workspace_now() -> str:
+    """Anthropic workspace id - `.env` dagi `CLAUDE_WORKSPACE_ID`, JONLI: id qo'yilgach restartsiz."""
+    return _env_token("claude_workspace_id", settings.claude_workspace_id) or settings.claude_workspace_id
 
 
 def hrm_token_now() -> str:

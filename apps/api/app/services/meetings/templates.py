@@ -81,8 +81,10 @@ TEMPLATES: dict[str, Template] = {t.id: t for t in (
     ),
     Template(
         "minutes", "minutes-1",
-        _t("Bayonnoma", "Протокол", "Minutes"),
-        _t("Rasmiy bayonnoma: kun tartibi, muhokama, qaror, ovoz berish",
+        # 2026-11-04: "Bayonnoma" -> "Protokol": rasmiy hujjat (`minutes/`, Word/PDF) endi
+        # "Bayonnoma" deb ataladi; bu shablon - xulosa KARTASI, ikkalasi bir menyuda chalkashmasin.
+        _t("Protokol", "Протокол", "Minutes"),
+        _t("Rasmiy protokol ko'rinishidagi xulosa: kun tartibi, muhokama, qaror, ovoz berish",
            "Официальный протокол: повестка, обсуждение, решение, голосование",
            "Formal minutes: agenda, discussion, decision, votes"),
         auto=True, extra_tab=False,

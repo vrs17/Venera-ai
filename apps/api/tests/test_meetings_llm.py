@@ -1,7 +1,7 @@
-"""Yig'ilish model zanjiri: v3 -> OpenAI -> Ollama (xulosa, savol-javob) va vazifani CRM ga (v3 taklifi).
+"""Yig'ilish model zanjiri: v3 -> OpenAI -> Claude -> Ollama (xulosa, savol-javob) va vazifani CRM ga (v3 taklifi).
 
 Hech bir test tarmoqqa chiqmaydi: v3 - `FakeAssistant` (kadrlar), OpenAI - mahalliy HTTP
-server (`FakeOpenAI`), Ollama - `FakeLLM`.
+server (`FakeOpenAI`), Claude - soxta SDK klienti (`FakeAnthropic`, `client_factory`), Ollama - `FakeLLM`.
 """
 
 from __future__ import annotations
@@ -10,7 +10,9 @@ import json
 import re
 import threading
 import time
+import types
 
+import anthropic
 import pytest
 
 from app.api.v1 import chat as chat_api
@@ -21,8 +23,8 @@ from app.services.integrations.ollama import OllamaError
 from app.services.meetings import crm, llm, prompts, shapes
 from app.services.meetings.summarize import (BudgetExceeded, LlmBusy, LlmFailed, LlmRateLimited, LlmUnavailable,
                                              Pipeline, PromptTooLong, parse_json)
-from meetings_fakes import (FakeAssistant, FakeLLM, FakeOpenAI, auto_reply, completion, enable, recorded, run_all,
-                            v3_auto, v3_frames)
+from meetings_fakes import (FakeAnthropic, FakeAssistant, FakeLLM, FakeOpenAI, auto_reply, claude_error,
+                            claude_message, completion, enable, recorded, run_all, v3_auto, v3_frames)
 from test_meetings_summary import make_input
 
 TOKEN = "prop-7Qx2"
@@ -1050,3 +1052,279 @@ def test_openai_5xx_bir_marta_qayta(openai_server, openai_client):
     with pytest.raises(LlmFailed):
         client.complete_meta("s", "u", op="meeting_classify", format="json")
     assert slept == []
+
+
+# --- Claude (Anthropic) ---------------------------------------------------------------------------
+
+
+CLAUDE_KEY = "sk-ant-test-SECRET"
+
+
+@pytest.fixture
+def claude_fake(_isolated_meetings):
+    """Claude klienti soxta SDK bilan (`client_factory`): xulosa va savol-javob - o'sha klient."""
+    fake = FakeAnthropic()
+    chat = llm.ClaudeChat(lambda: CLAUDE_KEY, "claude-sonnet-5-5", timeout=10, client_factory=fake)
+    _isolated_meetings.claude = chat
+    _isolated_meetings.ask_claude = chat
+    return fake
+
+
+def test_claude_oqim_sxema_va_hisob(client, auth, monkeypatch, chain, _isolated_meetings, claude_fake,
+                                    _isolated_analytics, caplog):
+    rt = _isolated_meetings
+    chain("claude,ollama")
+    row = _ready(client, auth, monkeypatch, rt)
+    assert row["summary_status"] == "ready" and rt.llm.calls == []
+    assert claude_fake.ops() == ["meeting_extract", "meeting_verify"]
+    # SDK klienti BIR marta: kalit, manzil (bo'sh -> SDK default'i), kutish, SDK qayta urinishlari.
+    assert claude_fake.inits == [{"api_key": CLAUDE_KEY, "base_url": None,
+                                  "timeout": anthropic.Timeout(10.0, connect=10.0), "max_retries": 2}]
+    first = claude_fake.requests[0]
+    assert first["model"] == "claude-sonnet-5-5" and isinstance(first["system"], str) and first["system"]
+    assert [m["role"] for m in first["messages"]] == ["user"]
+    assert "Assalomu alaykum" in first["messages"][0]["content"]       # transkript - user xabarida
+    assert first["max_tokens"] >= 8192
+    assert first["output_config"]["effort"] == "medium"
+    assert first["output_config"]["format"] == {"type": "json_schema", "schema": shapes.extract()}
+    assert not {"temperature", "top_p", "top_k", "thinking"} & set(first)
+    assert claude_fake.requests[1]["output_config"]["format"]["schema"] == shapes.verify()
+    # API javobi (`schemas.GeneratedBy.provider` Literal `claude` ni biladi) va ombor - bir xil.
+    assert _summary(client, auth, row["id"])["generatedBy"] == {"provider": "claude", "model": "claude-sonnet-5-5"}
+    stored = rt.store.summary(row["id"], row["primary_summary_id"])
+    assert (stored["status"], stored["provider"], stored["model"]) == ("ready", "claude", "claude-sonnet-5-5")
+    content = json.loads(stored["content_json"])
+    assert content["title"] == "Hisobot yig'ilishi" and content["actionItems"]
+    assert not any(w.startswith("provider_failed") for w in content["quality"]["warnings"])
+    assert analytics.flush()
+    calls = _isolated_analytics.rows("SELECT service, op, status, units, actor_id, channel FROM api_calls "
+                                     "WHERE service='claude'")
+    assert [c["op"] for c in calls] == ["meeting_extract", "meeting_verify"]
+    units = json.loads(calls[0]["units"])
+    assert calls[0]["status"] == "ok" and (units["tokens_in"], units["tokens_out"]) == (1200, 340)
+    assert units["chars"] > 0 and calls[0]["actor_id"] == row["actor_id"] and calls[0]["channel"] == "mobile"
+    assert CLAUDE_KEY not in caplog.text
+
+
+@pytest.mark.parametrize("failure, kind, status", [
+    (lambda: claude_error(anthropic.RateLimitError, 429, "rate limited"), LlmRateLimited, 429),
+    (lambda: claude_error(anthropic.AuthenticationError, 401, f"invalid x-api-key {CLAUDE_KEY}"), LlmUnavailable, 401),
+    (lambda: claude_error(anthropic.PermissionDeniedError, 403, "forbidden"), LlmUnavailable, 403),
+    (lambda: claude_error(anthropic.NotFoundError, 404, "model: claude-x"), LlmUnavailable, 404),
+    (lambda: claude_error(anthropic.BadRequestError, 400, f"prompt is too long {CLAUDE_KEY}"), LlmFailed, 400),
+    (lambda: claude_error(anthropic.InternalServerError, 529, "overloaded"), LlmFailed, 529),
+    (lambda: claude_error(anthropic.APIStatusError, 200, "overloaded"), LlmFailed, 200),   # oqim ichidagi xato kadri
+    (lambda: claude_error(anthropic.APIConnectionError), LlmFailed, None),
+    (lambda: claude_error(anthropic.APITimeoutError), LlmFailed, None),
+    (lambda: claude_message("", stop_reason="refusal"), LlmFailed, 200),
+    (lambda: claude_message("   "), LlmFailed, 200),                                        # bo'sh javob
+])
+def test_claude_xato_turlari(claude_fake, _isolated_meetings, _isolated_analytics, caplog, failure, kind, status):
+    claude_fake.script = [failure()]
+    with pytest.raises(kind):
+        _isolated_meetings.claude.complete_meta("s", "u", op="meeting_map", format="json")
+    assert len(claude_fake.requests) == 1                             # bekor qayta so'rov yo'q
+    assert analytics.flush()
+    rows = _isolated_analytics.rows("SELECT status, http_status, error FROM api_calls WHERE service='claude'")
+    assert len(rows) == 1 and rows[0]["status"] == "error" and rows[0]["http_status"] == status
+    assert CLAUDE_KEY not in caplog.text and CLAUDE_KEY not in json.dumps(rows)
+
+
+@pytest.mark.parametrize("failure", [
+    lambda: claude_error(anthropic.RateLimitError, 429, f"{CLAUDE_KEY} limited"),
+    lambda: claude_message("", stop_reason="refusal"),
+])
+def test_claude_yiqilsa_keyingi_model(client, auth, monkeypatch, chain, _isolated_meetings, claude_fake, caplog,
+                                      failure):
+    rt = _isolated_meetings
+    chain("claude,ollama")
+    claude_fake.script = [failure()]
+    row = _ready(client, auth, monkeypatch, rt)
+    summary = _summary(client, auth, row["id"])
+    assert summary["generatedBy"]["provider"] == "ollama"
+    assert "provider_failed:claude" in summary["content"]["quality"]["warnings"]
+    # BITTA xulosa - BITTA model: Ollama boshidan yozadi, Claude qayta chaqirilmaydi.
+    assert claude_fake.ops() == ["meeting_extract"] and rt.llm.ops() == ["meeting_extract", "meeting_verify"]
+    assert CLAUDE_KEY not in caplog.text
+
+
+def test_claude_sxema_rad_etilsa_formatsiz_bir_marta(claude_fake, _isolated_meetings):
+    chat = _isolated_meetings.claude
+    claude_fake.script = [claude_error(anthropic.BadRequestError, 400, "output_config.format.schema: unsupported"),
+                          '{"template": "standup", "confidence": 0.8}']
+    text, meta = chat.complete_meta("Return JSON", "matn", op="meeting_classify", format="json")
+    assert json.loads(text)["template"] == "standup"
+    assert meta == {"doneReason": "end_turn", "tokensIn": None, "tokensOut": 340}
+    first, second = claude_fake.requests
+    assert first["output_config"] == {"effort": "medium",
+                                      "format": {"type": "json_schema", "schema": shapes.classify()}}
+    assert second["output_config"] == {"effort": "medium"}            # formatsiz, qolgani aynan
+    assert ({k: v for k, v in second.items() if k != "output_config"}
+            == {k: v for k, v in first.items() if k != "output_config"})
+    # Rad etilgan amal ESLAB QOLINADI: keyingi chaqiruv darhol formatsiz (har safar 400 bilan
+    # aylanish yo'q); formatsiz 400 - qayta urinish yo'q, shu model yiqildi.
+    claude_fake.requests.clear()
+    claude_fake.script = [claude_error(anthropic.BadRequestError, 400, "schema: still bad")]
+    with pytest.raises(LlmFailed):
+        chat.complete_meta("s", "u", op="meeting_classify", format="json")
+    assert len(claude_fake.requests) == 1 and claude_fake.requests[0]["output_config"] == {"effort": "medium"}
+    # Boshqa amal (xotirada yo'q) hali sxema bilan ketadi; yangi klientda ikkita 400 - bir chaqiruvda
+    # ikki so'rov (formatli, keyin formatsiz), uchinchisi yo'q.
+    fresh = llm.ClaudeChat(lambda: CLAUDE_KEY, "claude-sonnet-5-5", timeout=10, client_factory=claude_fake)
+    claude_fake.requests.clear()
+    claude_fake.script = [claude_error(anthropic.BadRequestError, 400, "schema: bad"),
+                          claude_error(anthropic.BadRequestError, 400, "schema: still bad")]
+    with pytest.raises(LlmFailed):
+        fresh.complete_meta("s", "u", op="meeting_classify", format="json")
+    assert len(claude_fake.requests) == 2 and "format" in claude_fake.requests[0]["output_config"]
+    # Formatsiz so'rovda (sxema yo'q) sxema xabari ham tuzatilmaydi.
+    claude_fake.requests.clear()
+    claude_fake.script = [claude_error(anthropic.BadRequestError, 400, "output_config: invalid")]
+    with pytest.raises(LlmFailed):
+        chat.complete_meta("s", "u", op="meeting_classify")
+    assert len(claude_fake.requests) == 1
+
+
+def test_claude_kalit_yoki_model_bolmasa_ochiq():
+    fake = FakeAnthropic()
+    assert not llm.ClaudeChat(lambda: "", "claude-sonnet-5-5", client_factory=fake).configured
+    assert not llm.ClaudeChat(lambda: "k", "", client_factory=fake).configured
+    assert llm.ClaudeChat(lambda: "k", "claude-sonnet-5-5", client_factory=fake).configured
+    # conftest: koddagi default'lar, jonli kalit testga tushmaydi.
+    assert settings.claude_api_key == "" and settings.meetings_claude_model == "claude-sonnet-5-5"
+    from app.core import config
+
+    assert config.claude_key_now() == ""
+    for chat in (llm.ClaudeChat(lambda: "", "claude-sonnet-5-5", client_factory=fake),
+                 llm.ClaudeChat(lambda: "k", "", client_factory=fake)):
+        with pytest.raises(LlmUnavailable):
+            chat.complete_meta("s", "u")
+    assert fake.requests == [] and fake.inits == []                   # so'rov ham, klient ham yo'q
+
+
+def test_claude_sozlamalar_meta_va_kalit_keshi(claude_fake):
+    chat = llm.ClaudeChat(lambda: CLAUDE_KEY, "claude-sonnet-5-5", base_url="https://proxy.test/", timeout=7,
+                          max_output_tokens=4000, effort="high", retries=0, client_factory=claude_fake)
+    claude_fake.script = [claude_message('{"a": 1', stop_reason="max_tokens", tokens_out=4000)]
+    text, meta = chat.complete_meta("s", "u", num_predict=1200, op="meeting_minutes", format="json",
+                                    options={"effort": "max", "max_tokens": 32000})
+    assert text == '{"a": 1' and meta == {"doneReason": "length", "tokensIn": None, "tokensOut": 4000}
+    first = claude_fake.requests[0]
+    assert first["max_tokens"] == 32000 and first["output_config"]["effort"] == "max"
+    assert first["output_config"]["format"]["schema"] == shapes.minutes()
+    assert claude_fake.inits == [{"api_key": CLAUDE_KEY, "base_url": "https://proxy.test",
+                                  "timeout": anthropic.Timeout(7.0, connect=7.0), "max_retries": 0}]
+    # `num_predict` kichik - sozlamadagi chegara; `format` yo'q - sxema yo'q, `output_config` faqat effort.
+    chat.complete_meta("s", "u", num_predict=1200, op="meeting_map")
+    second = claude_fake.requests[1]
+    assert second["max_tokens"] == 4000 and second["output_config"] == {"effort": "high"}
+    assert len(claude_fake.inits) == 1                                # klient keshlangan
+    # Noma'lum effort yuborilmaydi (xizmat default'i), ma'lum bo'lgani qoladi.
+    odd = llm.ClaudeChat(lambda: CLAUDE_KEY, "claude-sonnet-5-5", effort="ultra", client_factory=claude_fake)
+    odd.complete_meta("s", "u", op="meeting_map")
+    assert "output_config" not in claude_fake.requests[2]
+    odd.complete_meta("s", "u", op="meeting_map", options={"effort": "low"})
+    assert claude_fake.requests[3]["output_config"] == {"effort": "low"}
+    # Klient kalit QIYMATI bo'yicha keshlanadi: kalit almashsa (`.env`) - yangi klient, restartsiz.
+    key = {"v": "k1"}
+    rotating = llm.ClaudeChat(lambda: key["v"], "claude-sonnet-5-5", client_factory=claude_fake)
+    rotating.complete_meta("s", "u", op="meeting_classify")
+    key["v"] = "k2"
+    rotating.complete_meta("s", "u", op="meeting_classify")
+    rotating.complete_meta("s", "u", op="meeting_classify")
+    assert [i["api_key"] for i in claude_fake.inits] == [CLAUDE_KEY, CLAUDE_KEY, "k1", "k2"]
+
+
+def test_claude_navbat_band(claude_fake):
+    chat = llm.ClaudeChat(lambda: CLAUDE_KEY, "claude-sonnet-5-5", timeout=0.05, client_factory=claude_fake)
+    assert chat._slots.acquire(blocking=False)                        # boshqa ip slotni olgan
+    try:
+        with pytest.raises(LlmBusy):
+            chat.complete_meta("s", "u", op="meeting_map")
+    finally:
+        chat._slots.release()
+    assert claude_fake.requests == []
+    text, _ = chat.complete_meta("s", "u", op="meeting_classify", format="json")
+    assert json.loads(text)["template"] == "general"                 # slot qaytdi
+
+
+def test_claude_quvuri_katta_bir_otish_va_kesh_maydoni(_isolated_meetings, claude_fake):
+    from app.services.meetings import worker as worker_mod
+
+    class Parts:
+        def __init__(self):
+            self.keys: list[tuple] = []
+
+        def part(self, meeting_id, key, first_id, last_id):
+            self.keys.append(key)
+            return None
+
+        def put_part(self, meeting_id, key, first_id, last_id, content):
+            self.keys.append(key)
+
+    parts = Parts()
+    rt = types.SimpleNamespace(store=parts)
+    m, s = {"id": "m-1", "transcript_rev": 2}, {"language": "uz"}
+    pipeline = worker_mod._pipeline(rt, m, s, llm.Provider("claude", _isolated_meetings.claude), True,
+                                    lambda done, total: None)
+    assert isinstance(pipeline, Pipeline) and pipeline.llm is _isolated_meetings.claude and pipeline.strict
+    assert (pipeline.single_pass_chars, pipeline.map_chars) == (200000, 100000)
+    assert pipeline.num_ctx == 0 and pipeline.think is None and pipeline.call_budget == 0 and pipeline.time_budget == 0
+    pipeline.cache_get("general", 1, 7)
+    assert parts.keys == [(2, prompts.PROMPT_VERSION, "claude/claude-sonnet-5-5:general", "uz")]
+    # OpenAI va Ollama kesh kalitlari avvalgidek.
+    parts.keys.clear()
+    gpt = llm.Provider("openai", types.SimpleNamespace(configured=True, model="gpt-test"))
+    worker_mod._pipeline(rt, m, s, gpt, True, lambda done, total: None).cache_get("general", 1, 7)
+    worker_mod._pipeline(rt, m, s, llm.Provider("ollama", FakeLLM()), False,
+                         lambda done, total: None).cache_get("general", 1, 7)
+    assert [k[2] for k in parts.keys] == ["openai/gpt-test:general", "general"]
+
+
+def test_claude_zanjir_nomlari_va_provayderlar(_isolated_meetings, chain, claude_fake):
+    rt = _isolated_meetings
+    assert llm.parse_chain("claude,ollama") == ["claude", "ollama"] and "claude" in llm.PROVIDERS
+    assert settings.meetings_minutes_chain == "claude"                 # koddagi default (conftest)
+    minutes = llm.minutes_providers(rt, 0)
+    assert [p.name for p in minutes] == ["claude"] and minutes[0].client is rt.claude and minutes[0].configured
+    assert minutes[0].model == "claude-sonnet-5-5"
+    chain("claude,ollama", ask="claude,ollama")
+    summary = llm.summary_providers(rt, 1)
+    assert [p.name for p in summary] == ["claude", "ollama"] and summary[0].client is rt.claude
+    asked = llm.ask_providers(rt, user_id="u", tokens={}, live_assistant=None)
+    assert [p.name for p in asked] == ["claude", "ollama"] and asked[0].client is rt.ask_claude
+    state = llm.chain_state(rt)
+    assert state == [{"provider": "claude", "configured": True, "model": "claude-sonnet-5-5"},
+                     {"provider": "ollama", "configured": True, "model": "gemma4:31b"}]
+    assert CLAUDE_KEY not in json.dumps(state)
+    # Claude klienti yo'q (`rt.claude is None`) - bo'g'in sozlanmagan, zanjir o'tkazib yuboradi.
+    rt.claude = None
+    assert not llm.summary_providers(rt, 1)[0].configured
+
+
+def test_claude_savol_javob(client, auth, monkeypatch, chain, _isolated_meetings, claude_fake):
+    rt = _isolated_meetings
+    row = _ready(client, auth, monkeypatch, rt)                       # xulosa - Ollama (default zanjir)
+    chain("ollama", ask="claude,ollama")
+    rt.llm.calls.clear()
+    response = client.post(f"/api/v1/meetings/{row['id']}/ask", headers=auth, json={"question": "Kim yuboradi?"})
+    assert response.status_code == 200, response.text
+    assert response.json()["answer"] == "[S1] hisobotni ertaga yuboradi." and rt.llm.calls == []
+    assert claude_fake.ops() == ["meeting_ask"]
+    assert claude_fake.requests[0]["output_config"]["format"]["schema"] == shapes.ask()
+
+
+def test_claude_workspace_sarlavhasi(_isolated_meetings):
+    """Tashkilot darajasidagi kalit: `CLAUDE_WORKSPACE_ID` berilsa klient `anthropic-workspace-id`
+    sarlavhasi bilan yaratiladi (va id almashsa - yangi klient); berilmasa sarlavha yo'q."""
+    fake = FakeAnthropic()
+    box = {"ws": ""}
+    chat = llm.ClaudeChat(lambda: "sk-ant-test-X", "claude-sonnet-5-5", timeout=10, client_factory=fake,
+                          workspace_id=lambda: box["ws"])
+    chat.complete_meta("s", "u", op="meeting_classify", format="json")
+    assert "default_headers" not in fake.inits[0]
+    box["ws"] = "wrkspc_01ABC"
+    chat.complete_meta("s", "u", op="meeting_classify", format="json")
+    assert len(fake.inits) == 2 and fake.inits[1]["default_headers"] == {"anthropic-workspace-id": "wrkspc_01ABC"}
+    chat.complete_meta("s", "u", op="meeting_classify", format="json")
+    assert len(fake.inits) == 2                                   # o'sha kalit va workspace - o'sha klient

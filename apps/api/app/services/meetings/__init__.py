@@ -14,11 +14,12 @@
     errors.py      xato kodlari va o'zbekcha xabarlar
 
 Bu modul - YAGONA "ish vaqti" (`Runtime`): ombor, GAPI klienti, Router
-klienti, model klientlari (Ollama, OpenAI) va yordamchining v3 klienti. Testlar
+klienti, model klientlari (Ollama, OpenAI, Claude) va yordamchining v3 klienti. Testlar
 uni `reset_for_tests` bilan soxtalariga almashtiradi - hech bir test tarmoqqa chiqmaydi.
 
-    llm.py         model zanjiri: v3 -> OpenAI -> Ollama (xulosa va savol-javob)
-    shapes.py      OpenAI `strict` JSON sxemalari
+    llm.py         model zanjiri: v3 -> OpenAI -> Claude -> Ollama (xulosa va savol-javob);
+                   bayonnoma zanjiri (`MEETINGS_MINUTES_CHAIN`, default Claude)
+    shapes.py      JSON sxemalari: OpenAI `strict`, Claude `output_config.format`
     crm.py         vazifani CRM ga: v3 taklifi (`proposal`), tasdiqlash - `/actions`
 """
 
@@ -32,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from ...core.config import ollama_key_now, openai_key_now, settings
+from ...core.config import claude_key_now, claude_workspace_now, ollama_key_now, openai_key_now, settings
 from ..integrations.assistant import AssistantClient
 from ..integrations.gapi_stt import GapiSttClient
 from ..integrations.ollama import OllamaChat
@@ -57,6 +58,9 @@ class Runtime:
     #: OpenAI: xulosa (1 slot) va savol-javob (2 slot, qisqa kutish) - Ollama kabi alohida.
     openai: Any = None
     ask_openai: Any = None
+    #: Claude (Anthropic): xulosa va bayonnoma (1 slot) va savol-javob (2 slot) - alohida klientlar.
+    claude: Any = None
+    ask_claude: Any = None
     #: Savol-javob va CRM uchun v3 klienti. `None` - chatning o'zi (`chat._assistant`):
     #: odam kutib turgan so'rov chat bilan bir navbatda, taklif ham o'sha klientda tasdiqlanadi.
     live_assistant: Any = None
@@ -145,6 +149,21 @@ def _temperature(raw: Any) -> float | None:
         return None
 
 
+def _claude(max_concurrent: int, timeout: float, retries: int = 0) -> Any:
+    """Claude (Anthropic SDK). EGA QARORI (2026-11-04): xulosa va bayonnoma gemma4:31b o'rniga
+    Claude Sonnet 5.5. Kalit `claude_key_now` bilan JONLI (`.env` dagi `CLAUDE_API_KEY` - kalit
+    qo'yilgach restartsiz ishlaydi), model, manzil, javob chegarasi va `effort` - sozlamadan.
+    Xulosa klienti (1 slot, uzun kutish, SDK qayta urinishlari) va savol-javob klienti (2 slot,
+    qisqa kutish, qayta urinishsiz - odam kutib turibdi) alohida, OpenAI/Ollama kabi."""
+    from .llm import ClaudeChat
+
+    return ClaudeChat(claude_key_now, settings.meetings_claude_model, base_url=settings.claude_base_url,
+                      timeout=timeout, max_concurrent=max_concurrent,
+                      max_output_tokens=settings.meetings_claude_max_output_tokens,
+                      effort=settings.meetings_claude_effort, retries=retries,
+                      workspace_id=claude_workspace_now)
+
+
 def _devices():
     from ..devices import DeviceStore
 
@@ -176,14 +195,21 @@ def runtime() -> Runtime:
                 # Xulosa: 5xx/tarmoqda bir marta qayta; savol: odam kutib turibdi - qayta urinish yo'q.
                 openai=_openai(1, settings.meetings_openai_timeout, settings.meetings_openai_retries),
                 ask_openai=_openai(2, 120.0),
+                # Claude (ega qarori 2026-11-04): xulosa va bayonnoma - uzun kutish, SDK qayta
+                # urinishlari; savol - 2 slot, qisqa, qayta urinishsiz (odam kutib turibdi).
+                claude=_claude(1, settings.meetings_claude_timeout, settings.meetings_claude_retries),
+                ask_claude=_claude(2, 120.0, 0),
             )
         return _runtime
 
 
 def reset_for_tests(root: Path | str, *, gapi: Any = None, router: Any = None, llm: Any = None,
                     ask_llm: Any = None, devices: Any = None, assistant: Any = None, openai: Any = None,
-                    ask_openai: Any = None, live_assistant: Any = None) -> Runtime:
-    """Ish vaqtini vaqtinchalik papka va soxta klientlarga almashtiradi."""
+                    ask_openai: Any = None, live_assistant: Any = None, claude: Any = None,
+                    ask_claude: Any = None) -> Runtime:
+    """Ish vaqtini vaqtinchalik papka va soxta klientlarga almashtiradi. `ask_*` berilmasa -
+    o'sha xulosa klienti (test bitta soxtani kuzatadi). Claude default `None` (sozlanmagan):
+    testlar `FakeAnthropic` li `ClaudeChat` ni o'zi qo'yadi (`rt.claude`, `rt.ask_claude`)."""
     global _runtime
     with _runtime_lock:
         old = _runtime
@@ -191,6 +217,7 @@ def reset_for_tests(root: Path | str, *, gapi: Any = None, router: Any = None, l
                            ask_llm=ask_llm if ask_llm is not None else llm, devices=devices,
                            assistant=assistant, openai=openai,
                            ask_openai=ask_openai if ask_openai is not None else openai,
+                           claude=claude, ask_claude=ask_claude if ask_claude is not None else claude,
                            live_assistant=live_assistant,
                            # Testlar haqiqatan uxlamaydi (v3 slotini kutish, qayta urinish).
                            sleep=lambda seconds: None)

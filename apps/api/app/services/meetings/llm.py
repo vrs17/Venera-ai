@@ -1,4 +1,4 @@
-"""Yig'ilish uchun model ZANJIRI: v3 ("Venera Core") -> OpenAI GPT -> Ollama (gemma4:31b).
+"""Yig'ilish uchun model ZANJIRI: v3 ("Venera Core") -> OpenAI GPT -> Claude -> Ollama (gemma4:31b).
 
 FOYDALANUVCHI QARORI (2026-10-09): yig'ilish ilovasi HAMMA joyda yordamchining v3
 dvigatelidan foydalanadi - xulosa, savol-javob (Ask) va vazifani CRM ga yuborish.
@@ -7,6 +7,7 @@ bo'lsagina), oxirgi zahira - mavjud gemma4:31b.
 
     MEETINGS_LLM_CHAIN=ollama              default: sozlanmaguncha hech narsa o'zgarmaydi
     MEETINGS_LLM_CHAIN=v3,openai,ollama    namoyish
+    MEETINGS_LLM_CHAIN=claude,ollama       ega qarori (2026-11-04): Claude Sonnet 5.5, zahira gemma
 
 BITTA XULOSA - BITTA MODEL. Biror qadam (bir o'tish yoki map-reduce, yozuvchi,
 tekshiruvchi) yiqilsa yoki JSON bitta tuzatish urinishidan keyin ham tekshiruvdan
@@ -38,8 +39,19 @@ ni rad etsa - bir marta usiz; boshqa 400 - darhol yiqilish. Kalit `apps/api/.env
 jonli o'qiladi (u yerda bo'lmasa - ishga tushishdagi qiymat) va hech qayerga yozilmaydi.
 Hisob: `openai / <op>` (analitika).
 
+CLAUDE (Anthropic SDK, `ClaudeChat`) - EGA QARORI (2026-11-04): yig'ilish xulosasi va bayonnoma
+gemma4:31b o'rniga Claude Sonnet 5.5 (`MEETINGS_CLAUDE_MODEL`; kalit `CLAUDE_API_KEY` `.env` dan
+jonli, `claude_key_now`). Javob OQIM bilan olinadi (`messages.stream` - uzun javobda HTTP kutish
+tugamasin), JSON sxema `output_config.format` (`shapes.py`); xizmat sxemani rad etsa (400, xabarda
+`output_config` / `format` / `schema`) - bir marta formatsiz. Harorat va `thinking` YUBORILMAYDI
+(bu API versiyasida 400; Sonnet 5.5 da moslashuvchan o'ylash default, chuqurlik va narx -
+`output_config.effort`). Hisob: `claude / <op>`. Zanjirga `claude` bo'g'ini bilan kiradi
+(`MEETINGS_LLM_CHAIN=claude,ollama`); bayonnoma zanjiri (`MEETINGS_MINUTES_CHAIN`, default faqat
+`claude`) - `minutes_providers`.
+
 VAQTINCHALIK XATO butun xulosani past modelga tushirmasin: v3 ning 503/uzilish/jimlik
-xatosi - shu chaqiruv 2 martagacha qayta (5 s, 15 s), OpenAI 5xx/tarmoq - 1 marta (3 s).
+xatosi - shu chaqiruv 2 martagacha qayta (5 s, 15 s), OpenAI 5xx/tarmoq - 1 marta (3 s), Claude
+429/5xx/tarmoq - SDK ning o'zida (`MEETINGS_CLAUDE_RETRIES`, eksponensial kutish).
 O'z navbatimiz (`queue_full`) va 4xx qayta urinilmaydi.
 """
 
@@ -64,7 +76,7 @@ from .summarize import LlmBusy, LlmFailed, LlmRateLimited, LlmUnavailable, Promp
 log = logging.getLogger(__name__)
 
 #: Ma'lum provayderlar - zanjirda shu nomlar.
-PROVIDERS = ("v3", "openai", "ollama")
+PROVIDERS = ("v3", "openai", "claude", "ollama")
 
 #: v3 ga xulosa so'rovi sarlavhasi: bu odamning savoli emas, ichki matn vazifasi. Til
 #: qoidasi ATAYLAB shu yerda: v3 ning o'z tizim prompti "foydalanuvchi tilida javob ber"
@@ -545,6 +557,259 @@ def _error_text(exc: urllib.error.HTTPError, key: str) -> str:
     return _error_info(exc, key)[0]
 
 
+# --- Claude (Anthropic) ------------------------------------------------------------------------
+
+
+#: `output_config.effort` darajalari - boshqa qiymat xizmatda 400 (har chaqiruv yiqilardi).
+CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+
+class ClaudeChat:
+    """Claude (Anthropic SDK, Messages API) - `complete_meta` Ollama/OpenAI klientidek.
+
+    EGA QARORI (2026-11-04): yig'ilish xulosasi va bayonnoma gemma4:31b o'rniga Claude Sonnet 5.5.
+
+    OQIM. `messages.stream(...)` + `get_final_message()`: bayonnoma javobi 30 ming tokengacha -
+    oddiy so'rovda HTTP kutish tugardi, oqimda esa ulanish har bo'lakda tirik. Oqim hodisalari
+    o'qilmaydi, faqat yakuniy xabar: matn bloklari birlashtiriladi, "o'ylash" bloklari tashlanadi.
+
+    JSON SXEMA. `format="json"` va amal uchun sxema bo'lsa (`shapes.for_op`) - `output_config.format`
+    (`json_schema`): javob aynan bizning shaklda. Xizmat SXEMANI rad etsa (400, xabarda
+    `output_config` / `format` / `schema`) - BIR marta formatsiz (promptda shakl baribir bor,
+    tekshiruvchi hammasini tekshiradi); boshqa 400 - darhol yiqilish (keyingi model).
+
+    YUBORILMAYDI: `temperature` / `top_p` / `top_k` (bu API versiyasida 400) va `thinking` (Sonnet
+    5.5 da moslashuvchan o'ylash default; chuqurlik va narx - `output_config.effort`). `max_tokens`
+    o'ylash tokenlarini ham o'z ichiga oladi, shuning uchun kam emas: `max(num_predict,
+    max_output_tokens)`, `options["max_tokens"]` (bayonnoma) ustun.
+
+    KLIENT kalit QIYMATI bo'yicha keshlanadi: kalit `.env` da almashsa (`claude_key_now`) - yangi
+    klient, restart shart emas. 429 / 5xx / tarmoq qayta urinishlari - SDK ning o'zida
+    (`max_retries`, eksponensial kutish). Kalit va javob matni jurnalga ham, hisobga ham tushmaydi.
+    """
+
+    name = "claude"
+
+    def __init__(self, key: Callable[[], str], model: str, *, base_url: str = "", timeout: float = 600.0,
+                 max_concurrent: int = 1, max_output_tokens: int = 16000, effort: str = "medium",
+                 retries: int = 2, client_factory: Callable[..., Any] | None = None,
+                 workspace_id: Callable[[], str] | str = "") -> None:
+        self._key = key
+        self._model = (model or "").strip()
+        #: Anthropic workspace id (`anthropic-workspace-id` sarlavhasi): tashkilot darajasidagi kalit
+        #: usiz 400 beradi ("not scoped to a workspace"). Funksiya (`.env` dan jonli) yoki matn; bo'sh -
+        #: sarlavha yuborilmaydi (workspace'ga bog'langan kalit).
+        self._workspace = workspace_id
+        self.base_url = (base_url or "").strip().rstrip("/")
+        self.timeout = float(timeout)
+        #: Javob chegarasi (token); 0 - faqat `num_predict`.
+        self.max_output_tokens = max(0, int(max_output_tokens or 0))
+        self.effort = (effort or "").strip().lower()
+        #: SDK qayta urinishlari (429, 5xx, tarmoq): xulosa - sozlamadan; savol - 0 (odam kutib turibdi).
+        self.retries = max(0, int(retries or 0))
+        #: `anthropic.Anthropic` o'rnida (testlar - `FakeAnthropic`), o'sha nomli argumentlar bilan.
+        self._client_factory = client_factory
+        self._client: Any = None
+        self._client_key: str | None = None
+        self._client_lock = threading.Lock()
+        self._slots = threading.BoundedSemaphore(max(1, int(max_concurrent)))
+        #: Xizmat SXEMASINI rad etgan amallar (`op`): keyingi chaqiruvlar darhol formatsiz - har safar
+        #: 400 bilan bir aylanish bo'lmasin (katta `extract` sxemasi strukturali chiqish chegarasidan
+        #: oshishi mumkin; promptda shakl baribir bor, tekshiruvchi hammasini tekshiradi).
+        self._formatless: set[str] = set()
+
+    @property
+    def configured(self) -> bool:
+        return bool(self._model and (self._key() or ""))
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    def workspace_id(self) -> str:
+        value = self._workspace() if callable(self._workspace) else self._workspace
+        return str(value or "").strip()
+
+    def _client_for(self, key: str, sdk: Any) -> Any:
+        """Kalit (va workspace) qiymati bo'yicha keshlangan SDK klienti; qiymat almashsa - yangisi
+        (eskisi GC ga: boshqa ipdagi tugallanmagan so'rov buzilmasin)."""
+        workspace = self.workspace_id()
+        cache_key = f"{key}\x00{workspace}"
+        with self._client_lock:
+            if self._client is None or self._client_key != cache_key:
+                factory = self._client_factory or sdk.Anthropic
+                extra: dict[str, Any] = {}
+                if workspace:
+                    extra["default_headers"] = {"anthropic-workspace-id": workspace}
+                # `timeout` - har bitta soket amali (o'qish/yozish) uchun, butun chaqiruv uchun emas:
+                # oqimda har bo'lak orasidagi jimlik shundan oshmasin; ULANISH esa 10 s - o'lik tarmoq
+                # ishchi ipini 600 s ushlab turmasin.
+                self._client = factory(api_key=key, base_url=self.base_url or None,
+                                       timeout=sdk.Timeout(self.timeout, connect=min(10.0, self.timeout)),
+                                       max_retries=self.retries, **extra)
+                self._client_key = cache_key
+            return self._client
+
+    def _effort(self, options: dict[str, Any]) -> str | None:
+        """`options["effort"]` (bayonnoma - `MEETINGS_MINUTES_EFFORT`), bo'lmasa sozlama. Noma'lum
+        daraja YUBORILMAYDI (400 har chaqiruvni yiqitardi) - bir marta jurnalga, keyingisi yoki
+        xizmat default'i."""
+        for raw in (options.get("effort"), self.effort):
+            value = str(raw or "").strip().lower()
+            if not value:
+                continue
+            if value in CLAUDE_EFFORTS:
+                return value
+            _warn_once(f"Claude effort {value!r} tanilmadi ({' | '.join(CLAUDE_EFFORTS)}) - e'tiborsiz")
+        return None
+
+    def _request(self, system: str, user: str, num_predict: int, options: dict[str, Any] | None,
+                 schema: dict[str, Any] | None) -> dict[str, Any]:
+        opts = dict(options or {})
+        max_tokens = max(int(num_predict or 0), self.max_output_tokens)
+        if opts.get("max_tokens"):
+            max_tokens = int(opts["max_tokens"])
+        request: dict[str, Any] = {"model": self._model, "max_tokens": max(1, max_tokens), "system": system,
+                                   "messages": [{"role": "user", "content": user}]}
+        output_config: dict[str, Any] = {}
+        effort = self._effort(opts)
+        if effort:
+            output_config["effort"] = effort
+        if schema is not None:
+            output_config["format"] = {"type": "json_schema", "schema": schema}
+        if output_config:
+            request["output_config"] = output_config
+        return request
+
+    @staticmethod
+    def _stream(client: Any, request: dict[str, Any]) -> Any:
+        """Bitta oqimli so'rov -> yakuniy xabar. SDK xatolari `with` ga kirishda (HTTP) yoki oqim
+        o'qilayotganda (`error` kadri) otiladi - ikkalasi ham chaqiruvchining `try` sida."""
+        with client.messages.stream(**request) as stream:
+            return stream.get_final_message()
+
+    def _exchange(self, client: Any, request: dict[str, Any], op: str, sdk: Any, key: str) -> Any:
+        """400 ni FAQAT sabab sxema bo'lsa bir marta tuzatib qayta (formatsiz); qolgan xatolar
+        chaqiruvchiga (`complete_meta` turini aniqlaydi)."""
+        try:
+            return self._stream(client, request)
+        except sdk.BadRequestError as exc:
+            config = request.get("output_config") or {}
+            message = _claude_message(exc, key)
+            low = message.lower()
+            if "format" in config and any(word in low for word in ("output_config", "format", "schema")):
+                log.warning("Claude (%s): sxema rad etildi (400: %s) - formatsiz qayta (keyingilari ham)", op,
+                            message)
+                self._formatless.add(op)
+                retry = {k: v for k, v in request.items() if k != "output_config"}
+                trimmed = {k: v for k, v in config.items() if k != "format"}
+                if trimmed:
+                    retry["output_config"] = trimmed
+                return self._stream(client, retry)
+            raise
+
+    def complete_meta(self, system: str, user: str, *, num_predict: int = 1200, temperature: float = 0.2,
+                      op: str = "meeting", format: str | None = None, options: dict[str, Any] | None = None,
+                      think: bool | None = None) -> tuple[str, dict[str, Any]]:
+        key = self._key() or ""
+        if not (self._model and key):
+            raise LlmUnavailable("Claude sozlanmagan")
+        try:
+            # Ixtiyoriy bog'liqlik - import shu yerda: paket bo'lmasa provayder "sozlanmagan", ilova ishlaydi.
+            import anthropic as sdk
+        except ImportError:
+            raise LlmUnavailable("anthropic o'rnatilmagan") from None
+        schema = shapes.for_op(op, system) if format == "json" and op not in self._formatless else None
+        request = self._request(system, user, num_predict, options, schema)
+        if not self._slots.acquire(timeout=self.timeout):
+            raise LlmBusy("navbat to'la")
+        chars = len(system) + len(user)
+        call = begin("claude", op, units={"chars": chars})
+        try:
+            message = self._exchange(self._client_for(key, sdk), request, op, sdk, key)
+        except sdk.RateLimitError:
+            log.warning("Claude (%s): HTTP 429 - kutish", op)
+            call.end("error", http_status=429, error="Claude HTTP 429")
+            raise LlmRateLimited("Claude 429") from None
+        except (sdk.AuthenticationError, sdk.PermissionDeniedError) as exc:
+            log.warning("Claude (%s): HTTP %s - kalit yaroqsiz yoki ruxsat yo'q", op, exc.status_code)
+            call.end("error", http_status=exc.status_code, error=f"Claude HTTP {exc.status_code}")
+            raise LlmUnavailable(f"Claude HTTP {exc.status_code} (kalit)") from None
+        except sdk.NotFoundError:
+            log.warning("Claude (%s): HTTP 404 - model %r topilmadi", op, self._model)
+            call.end("error", http_status=404, error="Claude HTTP 404")
+            raise LlmUnavailable("Claude: model topilmadi") from None
+        except sdk.APIStatusError as exc:
+            # 400 (sxema tuzatilgandan keyin ham), 5xx, 529 (xizmat band) yoki oqim ICHIDAGI xato kadri
+            # (HTTP 200, `error.type`, masalan `overloaded_error`) - shu model yiqildi, zanjir
+            # keyingisiga. Jurnalga xabar kalitsiz va qisqa; javob matni YO'Q.
+            label = _claude_label(exc)
+            log.warning("Claude (%s): %s: %s", op, label, _claude_message(exc, key))
+            call.end("error", http_status=exc.status_code, error=label)
+            raise LlmFailed(label) from None
+        except sdk.APIConnectionError as exc:
+            # Ulanish, tarmoq, kutish (`APITimeoutError`) - SDK qayta urinishlaridan keyin ham.
+            log.warning("Claude (%s): %s", op, type(exc).__name__)
+            call.end("error", error=f"Claude {type(exc).__name__}")
+            raise LlmFailed(f"Claude {type(exc).__name__}") from None
+        except Exception as exc:                                     # noqa: BLE001
+            # Kutilmagan narsa (oqim o'rtada buzildi, buzuq soxta) - shu model yiqildi, ishchi
+            # butunlay to'xtamasin. Xabar matni ATAYLAB yozilmaydi.
+            log.warning("Claude (%s): %s", op, type(exc).__name__)
+            call.end("error", error=f"Claude {type(exc).__name__}")
+            raise LlmFailed(f"Claude {type(exc).__name__}") from None
+        finally:
+            self._slots.release()
+        return self._read(message, call, chars)
+
+    @staticmethod
+    def _read(message: Any, call: Any, chars: int) -> tuple[str, dict[str, Any]]:
+        """Yakuniy xabar -> (matn, meta); hisob yakunlanadi (tokenlar bilan)."""
+        stop = getattr(message, "stop_reason", None)
+        usage = getattr(message, "usage", None)
+        tokens_out = getattr(usage, "output_tokens", None)
+        units: dict[str, Any] = {"chars": chars}
+        for name, value in (("tokens_in", getattr(usage, "input_tokens", None)), ("tokens_out", tokens_out)):
+            if isinstance(value, int):
+                units[name] = value
+        if stop == "refusal":
+            call.end("error", http_status=200, units=units, error="refusal")
+            raise LlmFailed("Claude: rad etdi (refusal)")
+        blocks = getattr(message, "content", None) or []
+        text = "".join(str(getattr(block, "text", "") or "") for block in blocks
+                       if getattr(block, "type", None) == "text").strip()
+        call.end("ok" if text else "error", http_status=200, units=units, error=None if text else "bo'sh javob")
+        if not text:
+            raise LlmFailed("Claude: bo'sh javob")
+        # Kesilgan javob - `max_tokens` yoki kontekst oynasi tugadi: quvur uchun ikkalasi "length"
+        # (map yo'li yoki keyingi model). `tokensIn` ATAYLAB yo'q (OpenAI kabi): Claude promptni jim
+        # qisqartirmaydi, Ollama uchun yozilgan "prompt kesildi" taxmini faqat xato signal berardi.
+        cut = stop in ("max_tokens", "model_context_window_exceeded")
+        return text, {"doneReason": "length" if cut else (str(stop) if stop else None), "tokensIn": None,
+                      "tokensOut": tokens_out if isinstance(tokens_out, int) else None}
+
+
+def _claude_label(exc: Any) -> str:
+    """Hisob va xato matni uchun yorliq: `Claude HTTP <status>`; oqim ichidagi xato kadri HTTP 200
+    bilan keladi - u holda xizmatning xato turi (`overloaded_error`)."""
+    status = getattr(exc, "status_code", None)
+    if status == 200:
+        body = getattr(exc, "body", None)
+        error = body.get("error") if isinstance(body, dict) else None
+        kind = error.get("type") if isinstance(error, dict) else None
+        return f"Claude oqim xatosi: {str(kind or '?')[:40]}"
+    return f"Claude HTTP {status}"
+
+
+def _claude_message(exc: BaseException, key: str) -> str:
+    """SDK xatosining xabari jurnal uchun: kalit yashirilgan (sarlavhada ketadi, xabarga tushmasligi
+    kerak - ehtiyot shart), bir qatorda, 300 belgigacha."""
+    message = str(getattr(exc, "message", None) or exc)
+    if key:
+        message = message.replace(key, "***")
+    return " ".join(message.split())[:300] or "-"
+
+
 # --- zanjir ------------------------------------------------------------------------------------
 
 
@@ -570,7 +835,8 @@ class Provider:
 
 def summary_providers(rt: Any, actor_id: Any) -> list[Provider]:
     """Xulosa zanjiri (`MEETINGS_LLM_CHAIN`). v3 - tokensiz va alohida kimlik bilan; slot
-    bo'shashini qisqa kutadi va vaqtinchalik xatoda shu chaqiruvni qayta yuboradi."""
+    bo'shashini qisqa kutadi va vaqtinchalik xatoda shu chaqiruvni qayta yuboradi. OpenAI va
+    Claude - ish vaqtidagi xulosa klientlari (1 slot; savol-javobniki alohida, `ask_providers`)."""
     out: list[Provider] = []
     for name in parse_chain(settings.meetings_llm_chain):
         if name == "v3":
@@ -581,7 +847,23 @@ def summary_providers(rt: Any, actor_id: Any) -> list[Provider]:
                                              sleep=getattr(rt, "sleep", None) or time.sleep)))
         elif name == "openai":
             out.append(Provider("openai", getattr(rt, "openai", None)))
+        elif name == "claude":
+            out.append(Provider("claude", getattr(rt, "claude", None)))
         else:
+            out.append(Provider("ollama", rt.llm))
+    return out
+
+
+def minutes_providers(rt: Any, actor_id: Any) -> list[Provider]:
+    """Bayonnoma zanjiri (`MEETINGS_MINUTES_CHAIN`, default faqat `claude`): rasmiy hujjatni
+    gemma yozmasin. v3 bu yerda yo'q (chat xizmati, uzun hujjat uchun mos emas) - nomi kelsa tashlanadi."""
+    out: list[Provider] = []
+    for name in parse_chain(settings.meetings_minutes_chain):
+        if name == "claude":
+            out.append(Provider("claude", getattr(rt, "claude", None)))
+        elif name == "openai":
+            out.append(Provider("openai", getattr(rt, "openai", None)))
+        elif name == "ollama":
             out.append(Provider("ollama", rt.llm))
     return out
 
@@ -602,6 +884,8 @@ def ask_providers(rt: Any, *, user_id: str, tokens: dict[str, str] | None, live_
                                              deadline=settings.meetings_ask_deadline or None)))
         elif name == "openai":
             out.append(Provider("openai", getattr(rt, "ask_openai", None)))
+        elif name == "claude":
+            out.append(Provider("claude", getattr(rt, "ask_claude", None)))
         else:
             out.append(Provider("ollama", rt.ask_llm))
     return out

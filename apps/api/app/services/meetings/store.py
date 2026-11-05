@@ -135,8 +135,22 @@ _V4: tuple[str, ...] = (
     "ALTER TABLE meetings ADD COLUMN stt_account INTEGER",
 )
 
+#: v5 (2026-11-04): BAYONNOMA - rasmiy hujjat (`services/meetings/minutes/`): yig'ilish uchun
+#: tanlangan tilda (`uz-latn` | `uz-cyrl` | `ru` | `en`) model yozgan hujjat mazmuni (JSON), kim
+#: yozgani va holati. Xulosalardan ALOHIDA jadval: mobil ilova `summaries` ro'yxatini tab sifatida
+#: ko'rsatadi va bu shaklni chiza olmaydi; dedupe kaliti - til + transkript versiyasi + prompt versiyasi.
+_V5: tuple[str, ...] = (
+    """CREATE TABLE minutes (
+  id TEXT PRIMARY KEY,
+  meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+  language TEXT NOT NULL, transcript_rev INTEGER NOT NULL, prompt_version TEXT NOT NULL,
+  status TEXT NOT NULL, provider TEXT, model TEXT, content_json TEXT, error_code TEXT, error TEXT,
+  created_at INTEGER NOT NULL, finished_at INTEGER)""",
+    "CREATE INDEX minutes_meeting ON minutes(meeting_id, created_at)",
+)
+
 #: `MIGRATIONS[i]` fayl `user_version = i` dan `i + 1` ga o'tkazadi. FAQAT OXIRIGA.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4, _V5)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 #: Apostrofning hamma ko'rinishi - qidiruvda olib tashlanadi ("o'zbek" = "oʻzbek" = "ozbek").
@@ -491,6 +505,23 @@ class MeetingStore:
                 "part, first_id, last_id, content_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (meeting_id, rev, version, template, language, int(nxt), first_id, last_id,
                  jdump(content), int(time.time())))
+
+    # --- bayonnoma (rasmiy hujjat) ------------------------------------------------------
+
+    def minutes_rows(self, meeting_id: str) -> list[dict[str, Any]]:
+        return self.rows("SELECT * FROM minutes WHERE meeting_id=? ORDER BY created_at, rowid", (meeting_id,))
+
+    def minutes_row(self, meeting_id: str, minutes_id: str) -> dict[str, Any] | None:
+        return self.row("SELECT * FROM minutes WHERE id=? AND meeting_id=?", (minutes_id, meeting_id))
+
+    def insert_minutes(self, fields: dict[str, Any]) -> None:
+        cols = ", ".join(fields)
+        marks = ", ".join("?" for _ in fields)
+        self.execute(f"INSERT INTO minutes ({cols}) VALUES ({marks})", tuple(fields.values()))
+
+    def update_minutes(self, minutes_id: str, **fields: Any) -> None:
+        sets = ", ".join(f"{name}=?" for name in fields)
+        self.execute(f"UPDATE minutes SET {sets} WHERE id=?", list(fields.values()) + [minutes_id])
 
     # --- vazifalar ----------------------------------------------------------------
 

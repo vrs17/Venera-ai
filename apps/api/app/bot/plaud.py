@@ -10,6 +10,9 @@ Slack'dagi Barno AI (`app/slack/meeting.py`) bilan AYNI imkoniyatlar, Telegram k
   * transkript (xabarlar 4000 belgidan), keyin "📋 Qisqa xulosa" - mobil kartadagi bilan
     AYNI matn (`intake.brief_markdown`) va tugmalar: vazifalar, boshqa shablon, eksport
     (fayl), boshqa tilda qayta o'girish (tasdiq bilan - GAPI qayta sarflanadi);
+  * "📄 Bayonnoma" (ega qarori, 2026-11-04) - rasmiy hujjat loyihasi: til menyusi (lotin /
+    kirill / rus / ingliz, tavsiya - yig'ilish tilidan), tanlovdan keyin Word (asosiy) va PDF
+    (nusxa) fayl shu chatga (`services.meetings.minutes`); «________» joylari qo'lda to'ldiriladi;
   * savol - xulosa (yoki transkript, yoki o'z audio) xabariga JAVOB (Reply) qilib yoziladi:
     Telegram'da thread yo'q, javob shu vazifani bajaradi. Yig'ilish qaysi xabarga javob
     berilganidan topiladi: xotiradagi xarita (shu jarayon yuborganlari), xabar tugmalaridagi
@@ -30,15 +33,16 @@ TUGMALAR (`callback_data`, 64 baytgacha; yig'ilish id'si 32 belgi):
     p:s:<id>[:<shablon>] boshqa shablon: menyu / tanlangan shablon bilan xulosa
     p:e:<id>[:<tur>]    eksport: menyu / fayl (txt, srt, md, docx, pdf)
     p:l:<id>[:<til>[:y]] boshqa til: menyu / tasdiq / qayta o'girish
+    p:d:<id>[:<til>]    bayonnoma: hujjat tili menyusi / tanlangan tilda Word + PDF (`minutes.LANGS`)
     p:b:<id>            asosiy tugmalarga qaytish
     p:r:f:<fayl>        "Qayta urinish" - audio butun yo'ldan (fayl xotirada bo'lsa)
     p:r:m:<id>          "Qayta urinish" - xulosa
 Tugma ma'lumotiga ishonilmaydi: yig'ilish har safar `service` orqali EGASI bilan olinadi
 (begona id - 404, "Bajarib bo'lmadi").
 
-UZUN ISHLAR (transkript soatgacha, xulosa 10 daqiqagacha) botning navbatida EMAS - o'z
-iplarida (`workers`): odam shu paytda HR savolini beraverishi mumkin, bot ishchilari ham
-band bo'lib qolmaydi.
+UZUN ISHLAR (transkript soatgacha, xulosa 10 daqiqagacha, bayonnoma 1-3 daqiqa) botning
+navbatida EMAS - o'z iplarida (`workers`): odam shu paytda HR savolini beraverishi mumkin, bot
+ishchilari ham band bo'lib qolmaydi.
 """
 
 from __future__ import annotations
@@ -61,7 +65,7 @@ from ..schemas import meetings as schemas
 from ..schemas.auth import AuthUser
 from ..services.analytics import bind
 from ..services.integrations.telegram import TelegramApi, TelegramError
-from ..services.meetings import audio, export, intake, service, templates
+from ..services.meetings import audio, export, intake, minutes, service, templates
 from ..services.meetings.errors import MeetingProblem
 from . import render
 from .render import esc
@@ -81,6 +85,8 @@ LANG_FLAGS = {"uz": "🇺🇿", "ru": "🇷🇺", "en": "🇬🇧"}
 #: Eksport turlari: tugma yorlig'i -> xizmat formati.
 EXPORTS = (("txt", "📝 Transkript (TXT)"), ("srt", "🎬 Transkript (SRT)"), ("md", "📋 Xulosa (MD)"),
            ("docx", "📄 Hisobot (Word)"), ("pdf", "📄 Hisobot (PDF)"))
+#: Bayonnoma Word faylining izohi: hujjat LOYIHA, bo'sh joylar kotib/hujjat tizimi uchun (ega qarori).
+MINUTES_CAPTION = f"📄 Bayonnoma - loyiha: Word faylidagi «{minutes.BLANK}» joylarini to'ldiring."
 #: "Qayta urinish" foyda bermaydigan xatolar: so'rovning o'zi noto'g'ri, fayl katta/uzun/yaroqsiz.
 _FINAL = {400, 403, 404, 413, 415, 422}
 _ID = re.compile(r"[0-9a-f]{32}")
@@ -96,8 +102,8 @@ PROMPT = (
     "• <b>audio fayl</b> yuboring: mp3, m4a, aac, wav, ogg - 20 MB gacha (Telegram chegarasi), "
     "3 soatgacha.\n\n"
     "Keyingi 15 daqiqada kelgan ovozli xabar Plaud'ga ketadi; audio fayllar - har doim. "
-    "Xulosa ostida: vazifalar, boshqa shablon, eksport, boshqa til. Savol bo'lsa - xulosa "
-    "xabariga javob (Reply) qilib yozing."
+    "Xulosa ostida: vazifalar, boshqa shablon, eksport, boshqa til va 📄 <b>Bayonnoma</b> - rasmiy "
+    "hujjat (Word/PDF) tanlangan tilda. Savol bo'lsa - xulosa xabariga javob (Reply) qilib yozing."
 )
 _HINT = "💬 Savol bo'lsa - shu xabarga javob (Reply) qilib yozing."
 
@@ -215,6 +221,13 @@ class Plaud:
                 self._answer(cq_id, "Qayta o'girilmoqda…")
                 self._menu(chat_id, message_id, controls(meeting_id, arg))
                 self._submit(user, lambda: self._relang(chat_id, user, meeting_id, arg))
+            elif op == "d" and not arg:
+                self._answer(cq_id)
+                self._menu(chat_id, message_id, minutes_menu(meeting_id, language))
+            elif op == "d" and arg in minutes.LANGS:
+                self._answer(cq_id, "Bayonnoma tayyorlanmoqda…")
+                self._menu(chat_id, message_id, controls(meeting_id, language))
+                self._submit(user, lambda: self._minutes(chat_id, user, meeting_id, arg))
             elif op == "b":
                 self._answer(cq_id)
                 self._menu(chat_id, message_id, controls(meeting_id, language))
@@ -452,6 +465,48 @@ class Plaud:
         self._replace(chat_id, holder, f"✅ Audio {name} tilida qayta o'girildi.")
         self._deliver(chat_id, user, meeting_id, text)
 
+    def _minutes(self, chat_id: int, user: AuthUser, meeting_id: str, lang: str) -> None:
+        """Tanlangan tilda bayonnoma: "⏳" xabari, model (1-3 daqiqa, shu ipda), so'ng Word (asosiy,
+        izoh bilan) va PDF (nusxa) fayl, oxirida "⏳" o'rniga natija: bo'lim/band soni, modelning
+        izohlari va sifat ogohlantirishlari (Slack'dagi `render.minutes_result` bilan bir xil mazmun).
+        Tayyor hujjat bo'lsa `generate` modelni qayta chaqirmaydi - fayllar shunchaki qayta yuboriladi."""
+        title = minutes.LANG_TITLES.get(lang, lang)
+        holder = self._send(chat_id, esc(f"⏳ Bayonnoma ({title}) tayyorlanmoqda… 1-3 daqiqa."))
+        try:
+            view = minutes.generate(user, meeting_id, lang)
+        except (MeetingProblem, intake.Problem) as exc:
+            self._replace(chat_id, holder, esc(f"Bayonnoma yozilmadi: {getattr(exc, 'detail', exc)}"))
+            return
+        except Exception:  # noqa: BLE001 - odam "⏳" bilan qolmasin
+            log.exception("Telegram Plaud bayonnomasi (%s): kutilmagan xato", meeting_id)
+            self._replace(chat_id, holder, "Bayonnoma yozilmadi: ichki xato.")
+            return
+        # Fayllar ALOHIDA: hujjat yozilgan va saqlangan - PDF chizilmasa yoki fayl yuborilmasa Word
+        # va natija baribir yetib boradi, sabab natija ostida; tilni qayta bosish modelni chaqirmaydi.
+        notes: list[str] = []
+        for fmt in ("docx", "pdf"):
+            try:
+                data, media, disposition = minutes.export_file(user, meeting_id, view["id"], fmt)
+            except (MeetingProblem, intake.Problem) as exc:
+                notes.append(esc(f"{fmt.upper()} fayli tayyorlanmadi: {getattr(exc, 'detail', exc)}"))
+                continue
+            except Exception:  # noqa: BLE001
+                log.exception("Telegram Plaud bayonnomasi (%s): %s fayli", meeting_id, fmt)
+                notes.append(f"{fmt.upper()} fayli tayyorlanmadi: ichki xato.")
+                continue
+            name = intake.filename(disposition) or f"bayonnoma.{fmt}"
+            try:
+                self.api.send_document(chat_id, name, data, media or "application/octet-stream",
+                                       caption=MINUTES_CAPTION if fmt == "docx" else None)
+            except TelegramError as exc:
+                log.warning("Telegram Plaud: bayonnoma %s yuborilmadi: %s", fmt, exc)
+                self._send(chat_id, f"Faylni yuborib bo'lmadi ({fmt}) - shu tilni qaytadan tanlang.")
+        text = minutes_html(view, lang)
+        if notes:
+            text += "\n" + "\n".join(f"⚠ {note}" for note in notes)
+        for message_id in self._replace(chat_id, holder, text):
+            self._remember(chat_id, message_id, meeting_id)
+
     # --- yordamchilar ------------------------------------------------------------------------
 
     def _submit(self, user: AuthUser, job: Callable[[], None]) -> None:
@@ -559,7 +614,8 @@ def _btn(text: str, data: str) -> dict[str, str]:
 
 def controls(meeting_id: str, language: str, *, retry: str | None = None) -> dict[str, Any]:
     rows = [[_btn("✅ Vazifalar", f"p:t:{meeting_id}"), _btn("🗂 Boshqa shablon", f"p:s:{meeting_id}")],
-            [_btn("📎 Eksport", f"p:e:{meeting_id}"), _btn("🌐 Boshqa til", f"p:l:{meeting_id}")]]
+            [_btn("📎 Eksport", f"p:e:{meeting_id}"), _btn("🌐 Boshqa til", f"p:l:{meeting_id}")],
+            [_btn("📄 Bayonnoma", f"p:d:{meeting_id}")]]
     if retry:
         rows.append([_btn("🔁 Xulosani qayta urinish", retry)])
     return {"inline_keyboard": rows}
@@ -593,6 +649,16 @@ def confirm_menu(meeting_id: str, lang: str) -> dict[str, Any]:
         [_btn(f"✅ {LANG_NAMES[lang].capitalize()} tilida o'girish (daqiqalar qayta sarflanadi)",
               f"p:l:{meeting_id}:{lang}:y")],
         [_btn("⬅ Bekor qilish", f"p:l:{meeting_id}")]]}
+
+
+def minutes_menu(meeting_id: str, language: str) -> dict[str, Any]:
+    """Bayonnoma tili tugmalari (`minutes.LANGS`), har biri o'z qatorida: tavsiya etilgani
+    (yig'ilish tilidan `minutes.default_lang` - bank hujjati odatda kirillda) BIRINCHI, lekin
+    tanlov odamniki (ega qarori, 2026-11-04)."""
+    default = minutes.default_lang(language)
+    order = [default] + [lang for lang in minutes.LANGS if lang != default]
+    rows = [[_btn(minutes.LANG_TITLES[lang], f"p:d:{meeting_id}:{lang}")] for lang in order]
+    return {"inline_keyboard": rows + [[_btn("⬅ Orqaga", f"p:b:{meeting_id}")]]}
 
 
 # --- matn (sof funksiyalar) ---------------------------------------------------------------------
@@ -645,6 +711,27 @@ def tasks_html(items: list[dict[str, Any]], people: dict[str, dict[str, Any]], l
             line += " <i>(aniqlashtirish kerak)</i>"
         lines.append(f"• {line}")
     return "\n".join(lines)
+
+
+def minutes_html(view: dict[str, Any], lang: str) -> str:
+    """Tayyor bayonnoma haqida xabar (Slack `render.minutes_result` ning Telegram HTML ko'rinishi):
+    bo'lim/band soni, modelning izohlari (aniqlashtirish kerak) va sifat ogohlantirishlari -
+    `ungrounded_name:<ism>` (transkriptda bo'lmagan ism `BLANK` bo'ldi), `script_mismatch`
+    (yozuv tanlangan tilga mos emas). Boshqa ogohlantirish kodlari odamga ko'rsatilmaydi."""
+    title = minutes.LANG_TITLES.get(lang, lang)
+    parts = [f"✅ <b>Bayonnoma tayyor</b> ({esc(title)}): {int(view.get('sectionCount') or 0)} bo'lim, "
+             f"{int(view.get('itemCount') or 0)} band."]
+    notes = [esc(export.one_line(n)) for n in view.get("notes") or [] if export.one_line(n)]
+    if notes:
+        parts.append("❗ <b>Aniqlashtirish kerak:</b>\n" + "\n".join(f"• {n}" for n in notes))
+    warnings = [str(w) for w in view.get("warnings") or []]
+    names = [esc(w.split(":", 1)[1].strip()) for w in warnings if w.startswith("ungrounded_name:")]
+    if any(names):
+        parts.append(f"Transkriptda bo'lmagan ismlar «{minutes.BLANK}» bilan almashtirildi: "
+                     + ", ".join(dict.fromkeys(n for n in names if n)))
+    if "script_mismatch" in warnings:
+        parts.append("Hujjat yozuvi (kirill/lotin) tanlangan tilga to'liq mos kelmadi - matnni ko'zdan kechiring.")
+    return "\n\n".join(parts)
 
 
 def answer_html(found: dict[str, Any], people: dict[str, dict[str, Any]], lang: str) -> str:

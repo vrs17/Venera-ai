@@ -92,6 +92,10 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
 )
 log = logging.getLogger(__name__)
+# Anthropic SDK DEBUG da butun so'rov tanasini (tizim prompti + transkript) jurnalga yozadi -
+# `DEBUG=true` bo'lsa ham yig'ilish matni logga tushmasin; httpx2 ham so'rov qatorlarini yozmasin.
+logging.getLogger("anthropic").setLevel(logging.INFO)
+logging.getLogger("httpx2").setLevel(logging.WARNING)
 
 # Hujjat manzillari ATAYLAB `/api/` ostida.
 #
