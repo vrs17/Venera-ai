@@ -59,7 +59,7 @@ from typing import Any, Callable
 
 from ..core.config import telegram_brief_logins_now, telegram_groups_now
 from ..schemas.auth import AuthUser
-from ..services import admin_users
+from ..services import admin_users, archive
 from ..services.analytics import bind
 from ..services.integrations.ollama import OllamaChat, OllamaError
 from ..services.integrations.telegram import TelegramApi, TelegramError
@@ -1397,6 +1397,9 @@ class BriefService:
         for index, part in enumerate(brief.parts):
             last = index == len(brief.parts) - 1
             self._send(chat_id, part, markup={"inline_keyboard": rows} if last else None)
+        # Yuborilgan brif - arxivga (ega talabi, 2026-11-05: xulosalar ham saqlansin).
+        archive.record("telegram", "out", "text", chat=chat_id, text="\n\n".join(brief.parts),
+                       meta={"brief": scope, "view": brief.view})
 
     # --- yuborish ------------------------------------------------------------------
 

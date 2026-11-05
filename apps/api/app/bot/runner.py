@@ -84,7 +84,7 @@ from typing import Any
 
 from ..core.config import settings
 from ..schemas.auth import AuthUser
-from ..services import admin_users, analytics
+from ..services import admin_users, analytics, archive
 from ..services.analytics import TurnRecorder, bind, redact, set_proposal_status
 from ..services.integrations.assistant import AssistantError
 from ..services.integrations.telegram import UPDATE_TYPES, TelegramApi, TelegramError
@@ -93,6 +93,7 @@ from ..services.telegram_links import LinkStore, TelegramLink
 from ..services.identities import Directory
 from ..services.users import UserStore
 from . import render
+from .media import keep as keep_attachment
 from .briefs import BTN_GROUPS, BriefService
 from .group_actions import ONLY_OWNER, GroupActions
 from .group_admin import GROUP_NOT_ENABLED, GROUP_PAUSED, GroupAdmin
@@ -1026,7 +1027,9 @@ class VeneraBot:
             elif text:
                 self._ask(chat_id, tg_id, user, text)
             else:
-                # Rasm, fayl, stiker... - ishlanmaydi (audio fayl - `plaud`, yuqorida).
+                # Rasm, fayl, stiker... - ishlanmaydi (audio fayl - `plaud`, yuqorida), lekin fayl
+                # arxivga yoziladi: odam yuborgan hech narsa yo'qolmasin (ega talabi, 2026-11-05).
+                keep_attachment(self.api, msg, channel="telegram", actor=user.actorId)
                 self._note(chat_id, "Faqat matn, 🎙 ovozli xabar va audio fayl qabul qilinadi.")
 
     def _addressed(self, msg: dict[str, Any]) -> bool:
@@ -1496,6 +1499,10 @@ class VeneraBot:
                 log.warning("Telegram ovozi olinmadi (%s): %s", user.actorId, exc)
                 self._say(chat_id, "Ovozli xabarni olib bo'lmadi - qaytadan yuboring.")
                 return
+            # Ovozning O'ZI arxivga (matni - `turns` da): ega talabi, hech narsa yo'qolmasin.
+            archive.record("telegram", "in", "voice", chat=chat_id, user=tg_id, actor=user.actorId,
+                           message=msg.get("message_id"), data=audio, name=f"voice-{msg.get('message_id')}.ogg",
+                           mime=str(voice.get("mime_type") or "audio/ogg"), meta={"duration": duration})
             boshlandi = time.monotonic()
             try:
                 result = self.backend.transcribe(audio, str(voice.get("mime_type") or "audio/ogg"))
@@ -1868,6 +1875,8 @@ class VeneraBot:
         except TelegramError as exc:
             log.warning("Telegram: fayl yuborilmadi: %s", exc)
             self._say(chat_id, f"{what}ni yuborib bo'lmadi - qaytadan urinib ko'ring.")
+            return
+        archive.record("telegram", "out", "document", chat=chat_id, data=data, name=name, mime=content_type or "")
 
     # --- yuborish -------------------------------------------------------------------
 

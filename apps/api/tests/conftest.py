@@ -148,9 +148,10 @@ _CODE_DEFAULTS = ("hold_enabled", "wake_log_enabled", "local_login_enabled",
                   "admin_logins", "sso_trusted_roles", "hrm_assistant_engine",
                   "hrm_assistant_engine_by_channel", "hrm_assistant_max_stream_seconds",
                   "meetings_enabled", "meetings_logins", "meetings_llm_chain", "meetings_ask_chain",
-                  # Saqlash muddatlari: jonli `.env` da `MEETINGS_AUDIO_DAYS=0` (o'chirilmaydi) -
-                  # tozalash testi esa 30/180 kunlik koddagi xulqni sinaydi.
-                  "meetings_audio_days", "meetings_retention_days",
+                  # Saqlash muddatlari: jonli `.env` da hammasi 0 (o'chirilmaydi, 2026-11-05 ega qarori) -
+                  # tozalash testlari esa koddagi 30/180/90 kunlik xulqni sinaydi; arxiv chegarasi ham.
+                  "meetings_audio_days", "meetings_retention_days", "telegram_group_days",
+                  "analytics_retention_days", "archive_max_file_mb",
                   # Bo'lak hajmi: jonli `.env` da kichikroq (nginx) - testlar koddagi 4 MiB ni kutadi.
                   "meetings_chunk_bytes",
                   "meetings_openai_model", "openai_api_key", "openai_base_url", "meetings_v3_max_chars",
@@ -168,6 +169,13 @@ def _code_defaults(monkeypatch):
     fields = type(settings).model_fields
     for name in _CODE_DEFAULTS:
         monkeypatch.setattr(settings, name, fields[name].default, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_archive(tmp_path, monkeypatch):
+    """Arxiv (`services/archive.py`) HAR TESTDA vaqtinchalik papkada: Slack va Telegram testlari
+    haqiqiy `data/archive/` ga ovoz, fayl va matn yozmasin."""
+    monkeypatch.setattr(settings, "archive_dir", tmp_path / "archive")
 
 
 @pytest.fixture(autouse=True)

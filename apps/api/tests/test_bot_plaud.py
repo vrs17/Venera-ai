@@ -7,6 +7,8 @@ hech bir test tarmoqqa chiqmaydi. Fon ishchisi yo'q - kutish o'rniga navbat qo'l
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.bot import plaud as plaud_mod
@@ -15,6 +17,7 @@ from app.bot.plaud import BTN_PLAUD, Plaud
 from app.bot.runner import COMMANDS, VeneraBot
 from app.core.config import settings
 from app.core.security import hash_password
+from app.services import archive
 from app.services.meetings import export, intake, minutes
 from app.services.telegram_links import LinkStore
 from app.services.users import StoredUser, UserStore
@@ -351,6 +354,12 @@ def test_bayonnoma_word_va_pdf_yuboriladi(world, monkeypatch):
     assert docx["content_type"] == minutes.FORMATS["docx"][0] and pdf["content_type"] == minutes.FORMATS["pdf"][0]
     assert docx["caption"] == plaud_mod.MINUTES_CAPTION and "«________»" in docx["caption"]
     assert pdf["caption"] is None
+    # Yuborilgan fayllarning o'zi arxivda (ega talabi, 2026-11-05): kimga, qaysi yig'ilish va til.
+    sent = archive.get().rows(channel="telegram")
+    assert [(r["direction"], r["kind"], r["file_name"], r["actor_id"]) for r in sent] == [
+        ("out", "document", docx["filename"], 1), ("out", "document", pdf["filename"], 1)]
+    assert json.loads(sent[0]["meta"]) == {"meeting": mid, "minutes": "ab" * 16, "lang": "uz-cyrl"}
+    assert (archive.get().root / sent[1]["file_path"]).read_bytes() == b"pdf"
     edited = [kw for n, kw in tg.calls if n == "edit_message_text"][-1]
     assert edited["message_id"] == holder["message_id"]
     text = edited["text"]

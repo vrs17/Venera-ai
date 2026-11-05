@@ -14,7 +14,9 @@ Forward qilingan xabar matni asl muallif nomi bilan saqlanadi
 (`[forward: Ism, 06.10 17:50] matn`): uni guruh a'zosi guruhga O'ZI ulashgan -
 guruhdagilar uni allaqachon ko'radi (2026-10-06 qarori; avval matnsiz edi).
 
-QANCHA - `telegram_group_days` (90) kun, keyin o'chiriladi (`purge`).
+QANCHA - `telegram_group_days` (90) kun, keyin o'chiriladi (`purge`). 0 - muddat bo'yicha
+o'chirilmaydi (2026-11-05 ega qarori: hech narsa o'chmasin); xulosa va savol davri baribir
+`WINDOW_DAYS` dan oshmaydi. Rasm, fayl, ovozning o'zi - arxivda (`app/bot/media.py`).
 `secure_delete`: o'chirilgan matn fayl ichida qolib ketmaydi.
 
 SQLite (`data/telegram/groups.db`, gitignore'da, 600) - kontaktlar ombori
@@ -367,7 +369,8 @@ class GroupStore:
 
     def __init__(self, path: Path, *, days: int = 90) -> None:
         self.path = Path(path)
-        self.days = days if 1 <= days <= 365 else 90
+        # 0 - muddatsiz (o'chirilmaydi); 1-365 - kun; boshqasi - default.
+        self.days = days if 0 <= days <= 365 else 90
         self._lock = threading.Lock()
         self._ready = False
         self._purged_at = 0.0
@@ -617,15 +620,24 @@ class GroupStore:
             (value,) = conn.execute("SELECT COUNT(*) FROM messages").fetchone()
         return int(value)
 
+    @property
+    def window_days(self) -> int:
+        """Xulosa va savol davrining chegarasi: saqlash muddati, muddatsiz bo'lsa - `WINDOW_DAYS`."""
+        return self.days or WINDOW_DAYS
+
     def purge(self, now: float | None = None) -> int:
-        """`days` kundan eski xabarlarni o'chiradi. Natija: nechta."""
+        """`days` kundan eski xabarlarni o'chiradi (`days == 0` - muddat bo'yicha hech narsa
+        o'chmaydi; o'chirilgan guruhniki va texnik izlar - baribir). Natija: nechta."""
         now = time.time() if now is None else now
+        aged = self.days > 0
         cutoff = int(now - self.days * 86400)
         cutoff_day = time.strftime("%Y-%m-%d", time.gmtime(cutoff + _DAY_SHIFT))
         with self._tx() as conn:
-            cur = conn.execute("DELETE FROM messages WHERE date < ?", (cutoff,))
-            # Brif hodisalari ham xabarlar bilan birga ketadi (ichida xabar mazmuni bor).
-            conn.execute("DELETE FROM brief_events WHERE day < ?", (cutoff_day,))
+            deleted = 0
+            if aged:
+                deleted = conn.execute("DELETE FROM messages WHERE date < ?", (cutoff,)).rowcount
+                # Brif hodisalari ham xabarlar bilan birga ketadi (ichida xabar mazmuni bor).
+                conn.execute("DELETE FROM brief_events WHERE day < ?", (cutoff_day,))
             # O'chirilgan va boshqa id ga o'tgan guruhlar: o'chirish bilan bir
             # paytda kelib qolgan xabar (ip poygasi) ham qolib ketmasin.
             gone = "SELECT chat_id FROM groups WHERE state IN ('removed', 'migrated')"
@@ -636,17 +648,19 @@ class GroupStore:
             # o'chiriladi (`GroupActions.sweep`); o'chirilganining izi ham muddatdan keyin
             # ketadi. Tugma egalari - `CRM_MESSAGE_TTL` dan keyin.
             stamp = int(now)
-            conn.execute("UPDATE crm_chats SET closed_at = ? WHERE closed_at IS NULL AND deleted_at IS NULL"
-                         " AND created_at < ?", (stamp, cutoff))
+            if aged:
+                conn.execute("UPDATE crm_chats SET closed_at = ? WHERE closed_at IS NULL AND deleted_at IS NULL"
+                             " AND created_at < ?", (stamp, cutoff))
             conn.execute(f"UPDATE crm_chats SET closed_at = ? WHERE closed_at IS NULL AND chat_id IN ({gone})",
                          (stamp,))
-            conn.execute("DELETE FROM crm_chats WHERE deleted_at IS NOT NULL AND deleted_at < ?", (cutoff,))
+            if aged:
+                conn.execute("DELETE FROM crm_chats WHERE deleted_at IS NOT NULL AND deleted_at < ?", (cutoff,))
             conn.execute("DELETE FROM crm_messages WHERE created_at < ?", (int(now - CRM_MESSAGE_TTL),))
             conn.execute(f"DELETE FROM crm_messages WHERE chat_id IN ({gone})")
             # Hech kim qaror qilmagan "kutilayotgan" guruh - ro'yxatdan tushadi.
             conn.execute("DELETE FROM groups WHERE state = 'pending' AND decided_by IS NULL AND kind IS NULL"
                          " AND updated_at < ?", (int(now - PENDING_DAYS * 86400),))
-            return cur.rowcount
+            return deleted
 
     def _maybe_purge(self) -> None:
         now = time.monotonic()
@@ -673,6 +687,9 @@ GONE = frozenset({"left", "kicked"})
 PENDING_MAX = 100
 #: Shuncha kun qaror qilinmagan "kutilayotgan" guruh ro'yxatdan tushadi (`purge`).
 PENDING_DAYS = 30
+#: Muddatsiz saqlashda (`days == 0`) xulosa va savol davrining eng uzuni - model bir so'rovda
+#: cheksiz yozishmani o'qimasin.
+WINDOW_DAYS = 365
 
 _FIELDS = ("chat_id", "state", "kind", "chat_type", "bot_status", "can_pin", "added_tg", "owner_tg",
            "decided_by", "decided_at", "notice_id", "asked_at", "migrated_to", "created_at", "updated_at")

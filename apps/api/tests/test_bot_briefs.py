@@ -21,6 +21,7 @@ from app.bot.briefs import (BTN_ALL, BTN_ONE, REMOVE_KEYBOARD, REPLY_KEYBOARD, B
                             validate_events, GroupStats)
 from app.bot.groups import TZ, Period, parse_period, uz_date
 from app.bot.runner import _UNKNOWN, VeneraBot
+from app.services import archive
 from app.services.integrations.ollama import OllamaError
 from app.services.telegram_links import LinkStore
 from app.services.tg_groups import GroupStore, Row
@@ -462,6 +463,10 @@ def test_davr_tugmasi_brif_yuboradi(world):
     assert brief["text"].startswith("📊 <b>Rahbariyat brifi — Barcha guruhlar</b>")
     data = [b["callback_data"] for b in buttons(brief["reply_markup"])]
     assert data == [f"b:p:{G2}:7d:n", f"b:p:{G1}:7d:n", "b:d:all:7d:n", "b:s:all:n", "b:m:n"]
+    # Yuborilgan brif arxivda ham (ega talabi, 2026-11-05: xulosalar saqlansin).
+    [kept] = archive.get().rows(channel="telegram")
+    assert (kept["direction"], kept["kind"], kept["chat_id"]) == ("out", "text", str(TG_ID))
+    assert kept["text"].endswith(brief["text"]) and json.loads(kept["meta"])["brief"] == "all"
     # Brif ostidagi tugma brifni o'zgartirmaydi - yangi xabar.
     w.bot.handle_update(press(f"b:p:{G1}:7d:n", message_id=777))
     assert all(kw["message_id"] != 777 for n, kw in w.tg.calls if n == "edit_message_text")

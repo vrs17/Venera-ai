@@ -113,8 +113,8 @@ def latest(user: AuthUser, meeting_id: str, lang: str) -> dict[str, Any] | None:
 def generate(user: AuthUser, meeting_id: str, lang: str, *, force: bool = False,
              now: float | None = None) -> dict[str, Any]:
     """Hujjatni yozadi (yoki tayyorini qaytaradi) -> `view`. Xatolar `MeetingProblem`:
-    400 til, 409 transkript yo'q, 429 chegara / model 429, 503 model sozlanmagan yoki band,
-    502 model yozolmadi (sabab `detail` da)."""
+    400 til, 409 transkript yo'q yoki unda nutq yo'q, 429 chegara / model 429, 503 model
+    sozlanmagan yoki band, 502 model yozolmadi (sabab `detail` da)."""
     now = time.time() if now is None else now
     code = normalize(lang)
     if code is None:
@@ -123,6 +123,11 @@ def generate(user: AuthUser, meeting_id: str, lang: str, *, force: bool = False,
     store = rt.store
     m = service._owned(user.actorId, meeting_id)
     service._require_transcript(m)
+    if store.row("SELECT 1 FROM segments WHERE meeting_id=? AND trim(text) <> '' LIMIT 1", (m["id"],)) is None:
+        # Yozuvda nutq yo'q (masalan 5 s jimlik): model chaqirilmaydi - u bo'sh hujjat qaytarib, odam
+        # "qayta urinib ko'ring" degan noto'g'ri xabarni olardi (2026-11-05 jonli sinovi).
+        raise MeetingProblem(409, "transcript_empty",
+                             "Yozuvda nutq topilmadi - bayonnoma uchun gapirilgan yig'ilish yozuvi kerak")
     rev = int(m.get("transcript_rev") or 0)
     if not force:
         found = _ready_row(store, m["id"], code, rev)

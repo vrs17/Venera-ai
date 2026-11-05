@@ -124,12 +124,15 @@ def _connect() -> None:
 
 def _on_message(event: dict[str, Any], client: Any, context: Any) -> None:
     """Bolt tinglovchisi. Faqat navbatga qo'yadi: o'girish va javob daqiqalab davom etadi.
-    Thread'dan tashqaridagi oddiy matn - «🎙 Plaud» yo'riqnomasi (`home.py`)."""
-    from . import home, meeting
+    Thread'dan tashqaridagi oddiy matn - «🎙 Plaud» yo'riqnomasi (`home.py`). Har xabar
+    (matn, audio bo'lmagan fayl) qo'shimcha ravishda arxivga (`keep.py`)."""
+    from . import home, keep, meeting
 
     pool = _pool
     if pool is None:
         return
+    if keep.wants(event):
+        pool.submit(keep.record, event)
     if meeting.wants(event):
         pool.submit(meeting.on_message, client, event, sleep=_sleep, bot_user=context.get("bot_user_id"))
     elif home.is_text(event):

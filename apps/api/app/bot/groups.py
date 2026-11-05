@@ -50,11 +50,12 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from ..core.config import telegram_group_limits_now, telegram_groups_now
+from ..services import archive
 from ..services.analytics import bind
 from ..services.integrations.ollama import OllamaChat, OllamaError
 from ..services.integrations.telegram import TelegramApi, TelegramError
-from ..services.tg_groups import GroupStore, Row, message_text, sender_name, strip_forward_time
-from . import render
+from ..services.tg_groups import GroupStore, Row, mask_text, message_text, sender_name, strip_forward_time
+from . import media, render
 from .render import esc
 
 log = logging.getLogger(__name__)
@@ -101,6 +102,7 @@ def help_text(username: str, days: int = 90, *, crm: bool = False) -> str:
     source = ("/summary va /askbarno javobi faqat shu guruh xabarlaridan tuziladi - HRM ma'lumoti "
               "ishlatilmaydi." if crm else
               "Javob faqat shu guruh xabarlaridan tuziladi - HRM/CRM ma'lumoti ishlatilmaydi.")
+    kept = f"Xabarlar {days} kun saqlanadi." if days else "Xabarlar saqlanadi."     # 0 - muddatsiz
     return (
         "<b>Barno</b> - guruh yordamchisi.\n\n"
         "• /summary - oxirgi 24 soat xulosasi. Davr bilan: <code>/summary bugun</code>, "
@@ -109,7 +111,7 @@ def help_text(username: str, days: int = 90, *, crm: bool = False) -> str:
         "<code>/askbarno Makhmud bu hafta nima qildi?</code>, "
         "<code>/askbarno mini app bo'yicha nima kelishildi?</code>\n"
         f"{task}{mention}\n"
-        f"{source} Xabarlar {days} kun saqlanadi. Shaxsiy savollar - shaxsiy chatda."
+        f"{source} {kept} Shaxsiy savollar - shaxsiy chatda."
     )
 
 
@@ -458,6 +460,12 @@ class GroupAssistant:
             if not str(msg.get("text") or "").startswith("/"):
                 self._remember(msg, anonymous=anonymous)
             return
+        # So'rov (buyruq, @Barno, javob) guruh omboriga yozilmaydi - matni niqoblanib arxivga
+        # (ega talabi, 2026-11-05: odam yozgan hech narsa yo'qolmasin).
+        asked = str(msg.get("text") or msg.get("caption") or "").strip()
+        archive.record("telegram_group", "in", "text", chat=chat_id, user=sender.get("id"),
+                       message=msg.get("message_id"), text=mask_text(asked) if asked else None,
+                       meta={"request": request.kind})
         thread = _thread(msg)
         if request.kind == "task" and self.actions is None:
             request = Request("help", "")
@@ -498,6 +506,10 @@ class GroupAssistant:
             self.store.add(msg)
         except sqlite3.Error as exc:
             log.warning("Telegram guruh: xabar saqlanmadi: %s", exc)
+        if media.file_of(msg) is not None:
+            # Rasm, fayl, ovozning O'ZI - arxivga (matni yuqorida, niqoblangan; ega talabi, 2026-11-05).
+            # Yuklab olish sekin - bot ipida emas, so'rovlar ipida.
+            self._run(lambda: media.keep(self.api, msg, channel="telegram_group"))
 
     def _sync_menu(self, chat_id: Any) -> None:
         """Shu guruh menyusi - `GROUP_COMMANDS`. Jarayon davomida guruhga BIR
@@ -577,7 +589,7 @@ class GroupAssistant:
         message_id = msg.get("message_id")
         thread = _thread(msg)
         now = self._clock()
-        period = parse_period(request.text, request.kind, now, max_days=self.store.days)
+        period = parse_period(request.text, request.kind, now, max_days=self.store.window_days)
         self._typing(chat_id, thread)
         try:
             rows = self.store.window(chat_id, period.since, period.until, thread_id=thread)
@@ -615,6 +627,9 @@ class GroupAssistant:
             parts[-1] += "\n\n<i>…javob qisqartirildi - aniqroq so'rang.</i>"
         for part in parts:
             self._send(chat_id, part, reply_to=message_id, thread=thread)
+        # Guruh xulosasi va javobi - arxivga (yuborilgan ko'rinishida, HTML).
+        archive.record("telegram_group", "out", "text", chat=chat_id, message=message_id, text="\n\n".join(parts),
+                       meta={"request": request.kind, "messages": len(lines)})
         log.info("Telegram guruh: %s - %d xabar, javob %d belgi, %.1f s",
                  request.kind, len(lines), len(answer), time.monotonic() - started)
 

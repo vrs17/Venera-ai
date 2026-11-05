@@ -504,7 +504,8 @@ class Settings(BaseSettings):
     telegram_groups: str = ""
     #: Guruh xabarlari ombori. `data/` gitignore'da, fayl 600.
     telegram_groups_db: Path = BASE_DIR / "data" / "telegram" / "groups.db"
-    #: Guruh xabarlari shuncha kun saqlanadi, keyin o'chiriladi.
+    #: Guruh xabarlari shuncha kun saqlanadi, keyin o'chiriladi. 0 - o'chirilmaydi (2026-11-05 ega
+    #: qarori: hech narsa o'chmasin); xulosa davri baribir `tg_groups.WINDOW_DAYS` dan oshmaydi.
     telegram_group_days: int = 90
     #: Guruh xulosasini yozadigan model (Ollama Cloud). Bo'sh - `ollama_model`.
     telegram_group_model: str = ""
@@ -558,6 +559,13 @@ class Settings(BaseSettings):
     #: 6 soatda o'chiriladi. Shikoyatlar va admin auditi SAQLANADI - ular
     #: statistika emas, hujjat. 0 - hech narsa o'chirilmaydi.
     analytics_retention_days: int = 180
+    #: Arxiv (`services/archive.py`): Telegram va Slack orqali kelgan va yuborilgan, boshqa joyda
+    #: saqlanmaydigan hamma narsa - ovozli savol audiosi, rasm, fayl, Slack matni, yuborilgan Word/PDF.
+    #: Muddati YO'Q (ega qarori, 2026-11-05). `data/` gitignore'da, papkalar 700, fayllar 600.
+    archive_dir: Path = BASE_DIR / "data" / "archive"
+    #: Bundan katta fayl arxivga yozilmaydi (qatori `too_large` bilan qoladi). Telegram botga
+    #: baribir 20 MB dan kattasini bermaydi.
+    archive_max_file_mb: int = 50
     #: "Tizim xaritasi" (admin panel, `/admin/os-map`) ma'lumoti: oqimlar, qadamlar,
     #: kod parchalari va ICHKI PROMPTLAR so'zma-so'z. Shuning uchun `data/` da
     #: (gitignore) va STATIK FAYL SIFATIDA BERILMAYDI - faqat

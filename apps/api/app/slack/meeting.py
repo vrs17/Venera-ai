@@ -30,6 +30,7 @@ from typing import Any
 
 from ..schemas import meetings as schemas
 from ..schemas.auth import AuthUser
+from ..services import archive
 from ..services.meetings import minutes, service, templates
 from ..services.meetings.errors import MeetingProblem
 from ..services.meetings.intake import (  # noqa: F401 - umumiy qadamlar (`intake.py`)
@@ -291,7 +292,8 @@ def export_file(client: Any, channel: str, thread: str | None, user: AuthUser, m
 
 def upload(client: Any, channel: str, thread: str | None, data: bytes, name: str) -> None:
     """Fayl shu chatga (thread ichida bo'lsa - thread'ga). `files:write` ruxsati yo'q bo'lsa -
-    `transcribe.Problem` odam tushunadigan yo'riqnoma bilan (eksport va bayonnoma uchun umumiy)."""
+    `transcribe.Problem` odam tushunadigan yo'riqnoma bilan (eksport va bayonnoma uchun umumiy).
+    Yuborilgan fayl arxivga ham yoziladi (ega talabi, 2026-11-05)."""
     from slack_sdk.errors import SlackApiError
 
     where = {"thread_ts": thread} if thread else {}
@@ -302,6 +304,8 @@ def upload(client: Any, channel: str, thread: str | None, data: bytes, name: str
             raise transcribe.Problem("Faylni yuborib bo'lmadi: ilovaga `files:write` ruxsati kerak "
                                      "(OAuth & Permissions -> Bot Token Scopes, keyin Reinstall).") from None
         raise
+    archive.record("slack", "out", "document", chat=channel, data=data, name=name,
+                   meta={"thread": thread} if thread else None)
 
 
 # --- bayonnoma -------------------------------------------------------------------------------

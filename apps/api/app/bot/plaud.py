@@ -63,6 +63,7 @@ from typing import Any, Callable
 from ..core.config import settings
 from ..schemas import meetings as schemas
 from ..schemas.auth import AuthUser
+from ..services import archive
 from ..services.analytics import bind
 from ..services.integrations.telegram import TelegramApi, TelegramError
 from ..services.meetings import audio, export, intake, minutes, service, templates
@@ -450,6 +451,9 @@ class Plaud:
         except TelegramError as exc:
             log.warning("Telegram Plaud: fayl yuborilmadi: %s", exc)
             self._send(chat_id, "Faylni yuborib bo'lmadi - qaytadan urinib ko'ring.")
+            return
+        archive.record("telegram", "out", "document", chat=chat_id, actor=user.actorId, data=data, name=name,
+                       mime=content_type or "", meta={"meeting": meeting_id, "export": kind})
 
     def _relang(self, chat_id: int, user: AuthUser, meeting_id: str, lang: str) -> None:
         """Boshqa tilda qayta o'girish (GAPI qayta to'lanadi - tugmada tasdiq bor), so'ng
@@ -501,6 +505,9 @@ class Plaud:
             except TelegramError as exc:
                 log.warning("Telegram Plaud: bayonnoma %s yuborilmadi: %s", fmt, exc)
                 self._send(chat_id, f"Faylni yuborib bo'lmadi ({fmt}) - shu tilni qaytadan tanlang.")
+                continue
+            archive.record("telegram", "out", "document", chat=chat_id, actor=user.actorId, data=data, name=name,
+                           mime=media or "", meta={"meeting": meeting_id, "minutes": view["id"], "lang": lang})
         text = minutes_html(view, lang)
         if notes:
             text += "\n" + "\n".join(f"⚠ {note}" for note in notes)

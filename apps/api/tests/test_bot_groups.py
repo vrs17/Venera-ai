@@ -16,10 +16,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.bot.group_admin import notice
 from app.bot.groups import (GROUP_COMMANDS, SYSTEM_PROMPT, TZ, GroupAssistant, Request,
-                            _FAILED, _NOTHING_YET, build_prompt, parse_period, parse_request,
+                            _FAILED, _NOTHING_YET, build_prompt, help_text, parse_period, parse_request,
                             polish_summary, transcript, uz_date)
 from app.bot.runner import _GROUP_ONLY, VeneraBot
+from app.services import archive
 from app.services.integrations.ollama import OllamaError
 from app.services.telegram_links import LinkStore
 from app.services.tg_groups import GroupStore, Row, mask_text, message_text
@@ -286,6 +288,37 @@ def test_ombor_mavzu_va_eskilarini_ochirish(tmp_path):
     assert store.purge() == 1 and store.count() == 2
 
 
+def test_muddatsiz_saqlash_hech_narsa_ochmaydi(tmp_path):
+    # Ega qarori (2026-11-05): hech narsa o'chmasin - jonli `.env` da `TELEGRAM_GROUP_DAYS=0`.
+    store = GroupStore(tmp_path / "groups.db", days=0)
+    store.add(gmsg("juda eski", ago=400 * 86400))
+    store.add(gmsg("yangi"))
+    assert store.purge() == 0 and store.count() == 2
+    assert store.window_days == 365                                # xulosa davri baribir chegaralangan
+    assert GroupStore(tmp_path / "a.db", days=90).window_days == 90 and GroupStore(tmp_path / "b.db", days=-1).days == 90
+    # Guruhga aytiladigan matn ham muddatsiz.
+    assert "Xabarlar saqlanadi." in help_text("barno_bot", 0) and "kun saqlanadi" not in help_text("barno_bot", 0)
+    assert "Xabarlar 90 kun saqlanadi." in help_text("barno_bot", 90)
+    assert "• Xabarlar saqlanadi.\n" in notice(0) and "• Xabarlar 90 kun saqlanadi, keyin o'chiriladi.\n" in notice(90)
+
+
+def test_guruhdagi_faylning_ozi_arxivga(world):
+    # Ega talabi (2026-11-05): matn guruh omborida (niqoblangan), faylning o'zi - arxivda.
+    world.tg.files["voice/d1.oga"] = b"%PDF-1.7"
+    message = send(world, gmsg(caption="Hisobot, tel +998 90 123 45 67",
+                               document={"file_id": "d1", "file_name": "hisobot.pdf",
+                                         "mime_type": "application/pdf", "file_size": 8}))
+    [row] = archive.get().rows(channel="telegram_group")
+    assert (row["kind"], row["file_name"], row["chat_id"], row["user_id"]) == ("document", "hisobot.pdf", str(GROUP),
+                                                                              str(MAKHMUD[0]))
+    assert row["message_id"] == str(message["message_id"]) and row["file_path"].endswith(".pdf")
+    assert (archive.get().root / row["file_path"]).read_bytes() == b"%PDF-1.7"
+    assert "123 45 67" not in row["text"] and "Hisobot" in row["text"]
+    assert world.store.count() == 1                                # matni guruh omborida ham
+    send(world, gmsg("oddiy matn"))                                # fayl yo'q - arxivga emas
+    assert len(archive.get().rows(channel="telegram_group")) == 1
+
+
 # --- yozishma va so'rov matni -------------------------------------------------------------------
 
 
@@ -348,6 +381,13 @@ def test_xulosa(world):
     assert reply["text"].startswith("📋 <b>Barno — oxirgi 24 soat</b>\n<i>2 ta xabar")
     assert "<b>Muhokama</b>" in reply["text"]
     assert world.backend.questions == []                          # HR yordamchisiga hech narsa
+    # So'rov va javob - arxivda (guruh omboriga yozilmaydi; ega talabi, 2026-11-05).
+    asked, answered = archive.get().rows(channel="telegram_group")
+    assert (asked["direction"], asked["kind"], asked["text"], asked["user_id"]) == ("in", "text", "/summary",
+                                                                                   str(AZIZA[0]))
+    assert json.loads(asked["meta"]) == {"request": "summary"}
+    assert (answered["direction"], answered["text"]) == ("out", reply["text"])
+    assert json.loads(answered["meta"]) == {"request": "summary", "messages": 2}
     [menu] = world.tg.sent("set_my_commands")
     assert menu == {"commands": GROUP_COMMANDS, "scope": {"type": "chat", "chat_id": GROUP}}
 

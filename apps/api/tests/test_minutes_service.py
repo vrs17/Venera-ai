@@ -95,6 +95,17 @@ def test_model_yaroqsiz_javob_502(ready):
     assert rt.store.minutes_rows(mid)[-1]["status"] == "failed"
 
 
+def test_nutqsiz_yozuv_modelsiz_409(ready):
+    # Jonli sinov (2026-11-05): 5 s jimlik - model chaqirilmasin, "qayta urinib ko'ring" emas, sabab aytilsin.
+    user, mid, rt = ready
+    rt.store.execute("UPDATE segments SET text='  ' WHERE meeting_id=?", (mid,))
+    with pytest.raises(MeetingProblem) as bad:
+        minutes.generate(user, mid, "uz-cyrl")
+    assert (bad.value.status_code, bad.value.code) == (409, "transcript_empty")
+    assert "nutq topilmadi" in bad.value.detail
+    assert _minutes_calls(rt) == 0 and rt.store.minutes_rows(mid) == []
+
+
 def test_izohlarda_spiker_tokeni_korinmaydi(ready):
     # Birinchi jonli sinov (2026-11-05): izohdagi "[S3] ва [S4]" Slack/Telegram xabariga xom tushgan edi.
     user, mid, rt = ready

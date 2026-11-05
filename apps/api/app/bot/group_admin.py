@@ -71,10 +71,17 @@ NOTICE = (
     "tasdiqlamaguningizcha CRM o'zgarmaydi.\n"
     "• Kompaniya rahbariyati shu guruhdagi ish holati bo'yicha qisqa brif oladi "
     "(guruh a'zosi bo'lmasa ham).\n"
-    "• Xabarlar {days} kun saqlanadi, keyin o'chiriladi.\n"
+    "• {kept}\n"
     "• Shaxsiy masalalar — maosh, ta'til, kasallik — xulosa va briflarga kiritilmaydi.\n\n"
     "Shaxsiy savollaringizni Barnoga shaxsiy chatda yozing."
 )
+
+
+def notice(days: int) -> str:
+    """Guruhga e'lon: saqlash muddati bilan (0 - muddatsiz, `telegram_group_days`)."""
+    return NOTICE.format(kept=f"Xabarlar {days} kun saqlanadi, keyin o'chiriladi." if days else "Xabarlar saqlanadi.")
+
+
 GROUP_NOT_ENABLED = ("👋 Barno guruhga qo'shildi, lekin hali yoqilmagan. Uni kompaniya rahbariyati "
                      "Barno botida yoqadi.")
 GROUP_PAUSED = "⏸ Barno bu guruhda vaqtincha to'xtatilgan."
@@ -470,7 +477,7 @@ class GroupAdmin:
     def _post_notice(self, chat_id: int, *, previous: int | None = None, retried: bool = False) -> str:
         """Guruhga e'lon va uni qadash. Natija: pinned | posted | failed."""
         try:
-            sent = self.api.send_message(chat_id, NOTICE.format(days=self.days))
+            sent = self.api.send_message(chat_id, notice(self.days))
         except TelegramError as exc:
             moved = self._lost(chat_id, exc)
             if moved and not retried:

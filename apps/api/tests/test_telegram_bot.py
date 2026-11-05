@@ -19,6 +19,7 @@ from app.bot import render
 from app.bot.runner import COMMANDS, PROFILE, VeneraBot
 from app.core.config import settings
 from app.core.security import hash_password
+from app.services import archive
 from app.services.integrations.assistant import AnswerStream, AssistantError
 from app.services.integrations.telegram import InitDataError, TelegramError, verify_init_data
 from app.services.stt import SttError, Transcript
@@ -654,6 +655,25 @@ def test_rasm_va_fayl_ochirilmaydi_faqat_izoh(world):
     assert not [n for n, _ in tg.calls if n == "delete_message"]
     assert tg.texts() == ["Faqat matn, 🎙 ovozli xabar va audio fayl qabul qilinadi."]
     assert backend.questions == []
+
+
+def test_ovoz_va_rasmning_ozi_arxivga(world):
+    # Ega talabi (2026-11-05): odam yuborgan ovoz va rasmning o'zi ham saqlansin (matni - `turns` da).
+    bot, tg, links, backend, _ = world
+    links.link(TG_ID, 1)
+    tg.files["voice/v1.oga"] = b"OggS-fake"
+    bot.handle_update(voice_update())
+    tg.files["voice/p2.oga"] = b"JPEG-big"
+    bot.handle_update(media_update("photo", [{"file_id": "p1", "width": 1, "height": 1, "file_size": 10},
+                                             {"file_id": "p2", "width": 9, "height": 9, "file_size": 99}]))
+    voice, photo = archive.get().rows(channel="telegram")
+    assert (voice["direction"], voice["kind"], voice["actor_id"], voice["chat_id"]) == ("in", "voice", 1, str(TG_ID))
+    assert (archive.get().root / voice["file_path"]).read_bytes() == b"OggS-fake"
+    assert json.loads(voice["meta"]) == {"duration": 4} and voice["message_id"] == "20"
+    assert (photo["kind"], photo["status"], photo["actor_id"]) == ("photo", "ok", 1)
+    assert (archive.get().root / photo["file_path"]).read_bytes() == b"JPEG-big"
+    assert backend.questions[0][0] == "bugun kech qoldimmi"                  # savol avvalgidek javob oladi
+    assert tg.texts()[-1] == "Faqat matn, 🎙 ovozli xabar va audio fayl qabul qilinadi."
 
 
 def test_ovoz_va_matn_ishlashda_davom_etadi(world):
