@@ -163,16 +163,10 @@ COMMANDS = [
     {"command": "help", "description": "Bot nima qila oladi"},
     {"command": "logout", "description": "Hisobni botdan uzish"},
 ]
-#: Bot profili - Telegram'da ko'rinadigan nom va tavsif (`setMyName`,
-#: `setMyShortDescription`, `setMyDescription`). Username (@...) bu yerda
-#: o'zgarmaydi. Chegaralar: nom <=64, qisqa tavsif <=120, tavsif <=512.
-PROFILE = {
-    "name": "Barno AI",
-    "short_description": "Barno AI - HRM va CRM bo'yicha kompaniya yordamchisi.",
-    "description": ("Salom! Men Barno AI - kompaniyaning HRM va CRM bo'yicha yordamchisiman. "
-                    "Savolingizni yozing yoki ovozli xabar yuboring. Boshlash uchun /start ni "
-                    "bosing va ish loginingiz bilan bir marta kiring."),
-}
+#: Bot profili (nom, bio - BotFather'dagi "About", tavsif - "What can this bot do?") KODDA YO'Q:
+#: uni ega BotFather'da o'zi boshqaradi. Avval kod har ishga tushishda `setMyName`,
+#: `setMyShortDescription`, `setMyDescription` bilan o'z matnini qaytarib qo'yardi va egasining
+#: o'zgarishi yo'qolardi (ega talabi, 2026-11-05).
 
 _INTRO = (
     "Salom! Men <b>Barno</b> - HRM va CRM bo'yicha yordamchiman.\n\n"
@@ -805,33 +799,6 @@ class VeneraBot:
         log.info("Telegram bot ishga tushdi: @%s", self.username)
         if self.sync_commands:
             self.sync_menu()
-            self.sync_profile()
-
-    def sync_profile(self) -> int:
-        """Bot nomi va tavsiflari `PROFILE` bilan bir xil bo'lsin. IDEMPOTENT:
-        har maydon avval o'qiladi, faqat farq qilsa yoziladi (`setMyName`
-        chegarasi qattiq - 429 uzoq kuttiradi, shuning uchun bir marta).
-
-        Har maydon alohida: biri yiqilsa qolganlari baribir yoziladi. Xato
-        botni TO'XTATMAYDI. Natija: nechta maydon yozildi.
-        """
-        written = 0
-        for field, value in PROFILE.items():
-            try:
-                getter = getattr(self.api, f"get_my_{field}")
-                setter = getattr(self.api, f"set_my_{field}")
-                if getter() == value:
-                    continue
-                setter(value)
-            except TelegramError as exc:
-                log.warning("Telegram bot: profil (%s) yangilanmadi: %s", field, exc)
-                continue
-            except Exception:  # noqa: BLE001 - ip o'lmasligi kerak
-                log.exception("Telegram bot: profil (%s) - kutilmagan xato", field)
-                continue
-            written += 1
-            log.info("Telegram bot: profil (%s) yangilandi", field)
-        return written
 
     def sync_menu(self) -> bool:
         """Buyruqlar menyusi `COMMANDS` bilan bir xil bo'lsin. IDEMPOTENT:

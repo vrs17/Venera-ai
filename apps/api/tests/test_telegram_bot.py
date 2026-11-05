@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.bot import render
-from app.bot.runner import COMMANDS, PROFILE, VeneraBot
+from app.bot.runner import COMMANDS, VeneraBot
 from app.core.config import settings
 from app.core.security import hash_password
 from app.services import archive
@@ -557,33 +557,20 @@ def test_buyruqlar_menyusi_va_offset(world):
     assert "Barno" in tg.texts()[0]
 
 
-def test_bot_profili_bir_marta_yoziladi(world):
-    """Nom va tavsif (`PROFILE`) faqat jonli ishga tushishda va faqat farq
-    qilsa yoziladi - `setMyName` chegarasi qattiq."""
+def test_bot_profili_botfatherda_kod_tegmaydi(world):
+    """Nom, bio ("About") va tavsif - egasining BotFather'dagi matni: jonli ishga tushishda ham
+    kod ularni o'qimaydi va yozmaydi (ega talabi, 2026-11-05 - bio har restartda qaytib qolardi).
+    Buyruqlar menyusi esa avvalgidek koddan."""
     bot, tg, *_ = world
     bot.sync_commands = True
-    tg.profile = {"name": "Venera AI", "short_description": PROFILE["short_description"]}
+    tg.profile = {"name": "Barno AI", "short_description": "BRB-TECHning foydali, aniq va xavfsiz AI yordamchisi",
+                  "description": "BotFather'dagi matn"}
+    before = dict(tg.profile)
     bot._prepare()
-    assert tg.profile == PROFILE and tg.profile["name"] == "Barno AI"
-    assert len(tg.sent("set_my_name")) == 1 and len(tg.sent("set_my_description")) == 1
-    assert not tg.sent("set_my_short_description")          # allaqachon bir xil edi
-    bot._prepared = False
-    bot._prepare()
-    assert len(tg.sent("set_my_name")) == 1 and len(tg.sent("set_my_description")) == 1
-    assert len(PROFILE["name"]) <= 64 and len(PROFILE["short_description"]) <= 120
-    assert len(PROFILE["description"]) <= 512
-
-
-def test_bot_profili_xatosi_botni_toxtatmaydi(world):
-    """Bir maydon yiqilsa (masalan 429) - qolganlari baribir yoziladi."""
-    bot, tg, *_ = world
-
-    def busy(name):
-        raise TelegramError("setMyName: 429", code=429, description="Too Many Requests", retry_after=3600)
-
-    tg.set_my_name = busy
-    assert bot.sync_profile() == 2
-    assert tg.profile == {k: v for k, v in PROFILE.items() if k != "name"}
+    assert tg.profile == before
+    assert not [n for n, _ in tg.calls if n.startswith(("get_my_name", "set_my_name", "get_my_short", "set_my_short",
+                                                        "get_my_description", "set_my_description"))]
+    assert tg.commands == COMMANDS
 
 
 # --- render --------------------------------------------------------------------
