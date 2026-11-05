@@ -719,7 +719,7 @@ def test_redact_va_http_status():
     assert redact(f"Bearer {JWT}") == "Bearer <token>"
     assert JWT not in redact(f"token {JWT} rad etildi")
     assert redact("gapi_abcdef123 kaliti") == "<key> kaliti"
-    assert redact("10353deec7874648981b52bc051b3a59.L5hTO6mDUCJAU0mzAMYc9P1W") == "<key>"
+    assert redact("0123456789abcdef0123456789abcdef.AbCdEfGhIjKlMnOpQrStUvWx") == "<key>"
     assert redact("initData=query_id%3DAAH&hash=abc") == "initData=***&hash=***"
     assert redact("hrm_token o'qib bo'lmadi") == "hrm_token o'qib bo'lmadi"
     assert redact("a\n  b") == "a b"

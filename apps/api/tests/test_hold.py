@@ -25,7 +25,7 @@ from app.services.integrations.assistant import AnswerStream
 from app.services.integrations.ollama import HoldClassifier, parse_label
 
 BASE = "https://ollama.test"
-KEY = "10353deec7874648981b52bc051b3a59.L5hTO6mDUCJAU0mzAMYc9P1W"
+KEY = "0123456789abcdef0123456789abcdef.AbCdEfGhIjKlMnOpQrStUvWx"
 
 
 # ================================================================ gaplar jadvali
