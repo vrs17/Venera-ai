@@ -292,7 +292,7 @@ export interface SummaryLayoutEntry {
   title: string;
 }
 
-/** Xulosani yozgan model (`summary.generatedBy`): v3 - Barno Core, openai - GPT, ollama - Gemma. */
+/** Xulosani yozgan model (`summary.generatedBy`): v3 - Barno Core, openai - GPT, claude - Claude, ollama - Gemma. */
 export type SummaryProvider = 'v3' | 'openai' | 'claude' | 'ollama';
 
 export interface GeneratedBy {
