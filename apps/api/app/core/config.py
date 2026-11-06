@@ -489,6 +489,10 @@ class Settings(BaseSettings):
     #: Bir vaqtda nechta xabar ishlanadi. Bitta odamning xabarlari esa
     #: KETMA-KET, navbat bilan.
     telegram_workers: int = 4
+    #: "📲 Ilovani yuklab olish" tugmasi (`app/bot/mobile_app.py`): 10.10.50.4 dagi ichki "Barno AI
+    #: APK" API - `/latest` (oxirgi versiya) va `/download` (fayl). Unga faqat shu server kira oladi,
+    #: telefonlar emas - faylni bot o'zi yuboradi. Bo'sh - tugma "hozir o'chiq" deydi.
+    mobile_apk_api: str = "http://10.10.50.4:8097"
     #: Venera ISHLAYDIGAN guruhlar - Telegram chat id lar, vergul yoki
     #: bo'shliq bilan (`-1001234567890`). Bo'sh - hamma guruhda eski xulq:
     #: "faqat shaxsiy chat" izohi. Ro'yxatdagi guruhda bot xabarlarni

@@ -98,6 +98,7 @@ from .briefs import BTN_GROUPS, BriefService
 from .group_actions import ONLY_OWNER, GroupActions
 from .group_admin import GROUP_NOT_ENABLED, GROUP_PAUSED, GroupAdmin
 from .groups import GroupAssistant
+from .mobile_app import BTN_APP, MobileApp
 from .plaud import BTN_PLAUD, Plaud
 from .render import esc
 
@@ -494,10 +495,13 @@ class VeneraBot:
         admin: GroupAdmin | None = None,
         group_actions: bool = False,
         plaud: Plaud | None = None,
+        mobile_app: MobileApp | None = None,
     ) -> None:
         self.api = api
         #: "🎙 Plaud" - audio -> matn va xulosa (`plaud.py`). `None` - bot avvalgidek.
         self.plaud = plaud
+        #: "📲 Ilovani yuklab olish" - Android APK (`mobile_app.py`). `None` - tugma "hozir o'chiq" deydi.
+        self.mobile_app = mobile_app
         #: Guruhlarni botda boshqarish (`group_admin.py`). `None` - guruhlar
         #: faqat `.env` dan, bot qo'shilishi/chiqarilishi e'tiborsiz (eski xulq).
         self.admin = admin
@@ -592,6 +596,8 @@ class VeneraBot:
             self.briefs.stop()
         if self.plaud is not None:
             self.plaud.stop()
+        if self.mobile_app is not None:
+            self.mobile_app.stop()
 
     @property
     def running(self) -> bool:
@@ -958,6 +964,14 @@ class VeneraBot:
         if found is None:
             return
         user, login = found
+        if text == BTN_APP:
+            # "📲 Ilovani yuklab olish" (`mobile_app.py`) - HR yordamchisiga ketmaydi.
+            if self.mobile_app is None:
+                self._send(chat_id, "📲 Ilovani yuklab olish hozir o'chiq.")
+            else:
+                log.info("Telegram ilova: tugma (%s)", user.actorId)
+                self.mobile_app.on_button(chat_id, user)
+            return
         if text == BTN_PLAUD and self.plaud is None:
             # Klaviaturada tugma qolgan, bo'lim esa o'chiq - HR yordamchisiga ketmasin.
             self._send(chat_id, "🎙 Plaud hozir o'chiq (yig'ilishlar bo'limi yoqilmagan).")

@@ -132,9 +132,17 @@ class FakeTelegram:
     def download(self, file_path, *, limit):
         return self.files[file_path]
 
-    def send_document(self, chat_id, filename, content, content_type, *, caption=None, reply_markup=None):
+    def send_document(self, chat_id, filename, content, content_type, *, caption=None, reply_markup=None,
+                      timeout=None):
+        self.next_id += 1
         self._rec("send_document", chat_id=chat_id, filename=filename, size=len(content),
-                  content_type=content_type, caption=caption, reply_markup=reply_markup)
+                  content_type=content_type, caption=caption, reply_markup=reply_markup, timeout=timeout)
+        return {"message_id": self.next_id, "document": {"file_id": f"FILE-{self.next_id}"}}
+
+    def send_document_id(self, chat_id, file_id, *, caption=None):
+        self.next_id += 1
+        self._rec("send_document_id", chat_id=chat_id, file_id=file_id, caption=caption)
+        return {"message_id": self.next_id, "document": {"file_id": file_id}}
 
     def get_me(self):
         return {"username": "venera_test_bot"}

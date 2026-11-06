@@ -66,6 +66,7 @@ from ..services.integrations.telegram import TelegramApi, TelegramError
 from ..services.tg_groups import GroupStore, Row, mask_text, strip_forward_time
 from . import render
 from .groups import TZ, Period, _clean, _when, parse_period, uz_date
+from .mobile_app import BTN_APP
 from .plaud import BTN_PLAUD
 from .render import esc
 
@@ -84,14 +85,15 @@ SUPPORT_LOOKBACK_DAYS = 14
 BTN_ALL = "📊 Barcha guruhlar"
 BTN_ONE = "👥 Bitta guruh"
 LABELS = frozenset({BTN_ALL, BTN_ONE})
-#: Klaviatura chat uchun BITTA: rahbarning brif tugmalari "🎙 Plaud" (`plaud.py`, hammaga
-#: ochiq) bilan birga - aks holda brif klaviaturasi Plaud tugmasini yopib qo'yardi.
-REPLY_KEYBOARD = {"keyboard": [[{"text": BTN_ALL}, {"text": BTN_ONE}], [{"text": BTN_PLAUD}]],
+#: Klaviatura chat uchun BITTA: rahbarning brif tugmalari "🎙 Plaud" (`plaud.py`) va "📲 Ilovani
+#: yuklab olish" (`mobile_app.py`, ikkalasi hammaga ochiq) bilan birga - aks holda brif klaviaturasi
+#: ularni yopib qo'yardi.
+REPLY_KEYBOARD = {"keyboard": [[{"text": BTN_ALL}, {"text": BTN_ONE}], [{"text": BTN_PLAUD}, {"text": BTN_APP}]],
                   "resize_keyboard": True, "is_persistent": True}
 #: Guruhlarni boshqarish (`group_admin.py`) - rahbar o'zi guruh qo'shadi.
 BTN_GROUPS = "⚙️ Guruhlar"
 REPLY_KEYBOARD_ADMIN = {"keyboard": [[{"text": BTN_ALL}, {"text": BTN_ONE}], [{"text": BTN_GROUPS}],
-                                     [{"text": BTN_PLAUD}]],
+                                     [{"text": BTN_PLAUD}, {"text": BTN_APP}]],
                         "resize_keyboard": True, "is_persistent": True}
 REMOVE_KEYBOARD = {"remove_keyboard": True}
 

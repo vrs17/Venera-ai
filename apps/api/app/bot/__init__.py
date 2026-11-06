@@ -75,7 +75,7 @@ def start() -> None:
                      webhook_url=settings.telegram_webhook_url, webhook_secret=webhook_secret(),
                      beta_url=settings.telegram_webapp_beta_url, sync_commands=True,
                      groups=_groups(store, registry), briefs=briefs, admin=_admin(store, registry),
-                     group_actions=True, plaud=_plaud())
+                     group_actions=True, plaud=_plaud(), mobile_app=_mobile_app())
     _bot.start()
     # Fonda: guruhlarning kunlik hodisalarini oldindan ajratish - uzun davrli
     # brif soniyalarda ochilsin.
@@ -114,6 +114,17 @@ def _plaud():
         log.info("Telegram Plaud o'chiq: yig'ilishlar bo'limi yoqilmagan")
         return None
     return Plaud(api, workers=max(2, settings.telegram_workers))
+
+
+def _mobile_app():
+    """"📲 Ilovani yuklab olish" (`mobile_app.py`): 10.10.50.4 dagi APK API dan oxirgi Android
+    ilovasi. Manzil bo'sh bo'lsa - yo'q, tugma "hozir o'chiq" deydi."""
+    from .mobile_app import MobileApp
+
+    if not settings.mobile_apk_api.strip():
+        log.info("Telegram ilova tugmasi o'chiq: MOBILE_APK_API bo'sh")
+        return None
+    return MobileApp(api, settings.mobile_apk_api)
 
 
 def _writer():

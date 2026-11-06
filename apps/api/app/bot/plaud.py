@@ -73,12 +73,14 @@ from ..services.integrations.telegram import TelegramApi, TelegramError
 from ..services.meetings import audio, export, intake, minutes, service, templates
 from ..services.meetings.errors import MeetingProblem
 from . import render
+from .mobile_app import BTN_APP
 from .render import esc
 
 log = logging.getLogger(__name__)
 
 BTN_PLAUD = "🎙 Plaud"
-KEYBOARD = {"keyboard": [[{"text": BTN_PLAUD}]], "resize_keyboard": True, "is_persistent": True}
+#: Pastdagi klaviatura: Plaud va "📲 Ilovani yuklab olish" (`mobile_app.py`) yonma-yon.
+KEYBOARD = {"keyboard": [[{"text": BTN_PLAUD}, {"text": BTN_APP}]], "resize_keyboard": True, "is_persistent": True}
 #: Tugmadan keyin shuncha vaqt ichida kelgan ovozli xabar - yozuv.
 ARMED_SEC = 15 * 60
 #: Telegram Bot API `getFile` chegarasi.
@@ -164,7 +166,8 @@ class Plaud:
         self._send(chat_id, PROMPT, markup=KEYBOARD)
 
     def show_keyboard(self, chat_id: int) -> None:
-        self._send(chat_id, "🎙 <b>Plaud</b> - pastdagi tugma: audio yuboring, matn va qisqa xulosa olasiz.",
+        self._send(chat_id, "🎙 <b>Plaud</b> - pastdagi tugma: audio yuboring, matn va qisqa xulosa olasiz.\n"
+                            "📲 <b>Ilovani yuklab olish</b> - Barno AI ilovasi (Android).",
                    markup=KEYBOARD)
 
     def on_audio(self, chat_id: int, user: AuthUser, msg: dict[str, Any], media: dict[str, Any]) -> None:

@@ -115,8 +115,9 @@ class TelegramApi:
         raise AssertionError("yetib kelmaydi")  # pragma: no cover
 
     def upload(self, method: str, fields: Mapping[str, Any], *, file_field: str,
-               filename: str, content: bytes, content_type: str) -> Any:
-        """Fayl bilan chaqiruv (`multipart/form-data`) - masalan `sendDocument`."""
+               filename: str, content: bytes, content_type: str, timeout: float | None = None) -> Any:
+        """Fayl bilan chaqiruv (`multipart/form-data`) - masalan `sendDocument`. `timeout` - katta
+        fayl uchun (default 60 s dan kam emas)."""
         boundary = f"----venera{uuid.uuid4().hex}"
         parts: list[bytes] = []
         for name, value in fields.items():
@@ -137,7 +138,8 @@ class TelegramApi:
         )
         parts.append(f"--{boundary}--\r\n".encode())
         headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
-        return self._send(method, b"".join(parts), headers, max(self.timeout, 60.0))
+        wait = timeout if timeout is not None else max(self.timeout, 60.0)
+        return self._send(method, b"".join(parts), headers, wait)
 
     def download(self, file_path: str, *, limit: int) -> bytes:
         """`getFile` bergan yo'l bo'yicha fayl. `limit` dan katta bo'lsa xato."""
@@ -294,7 +296,7 @@ class TelegramApi:
 
     def send_document(self, chat_id: int, filename: str, content: bytes, content_type: str, *,
                       caption: str | None = None,
-                      reply_markup: Mapping[str, Any] | None = None) -> Any:
+                      reply_markup: Mapping[str, Any] | None = None, timeout: float | None = None) -> Any:
         fields: dict[str, Any] = {"chat_id": str(chat_id)}
         if caption:
             fields["caption"] = caption
@@ -302,7 +304,15 @@ class TelegramApi:
         if reply_markup:
             fields["reply_markup"] = dict(reply_markup)
         return self.upload("sendDocument", fields, file_field="document", filename=filename,
-                           content=content, content_type=content_type)
+                           content=content, content_type=content_type, timeout=timeout)
+
+    def send_document_id(self, chat_id: int, file_id: str, *, caption: str | None = None) -> Any:
+        """Telegram'da allaqachon turgan faylni (`file_id`) qayta yuklamasdan yuborish."""
+        params: dict[str, Any] = {"chat_id": chat_id, "document": file_id}
+        if caption:
+            params["caption"] = caption
+            params["parse_mode"] = "HTML"
+        return self.call("sendDocument", params)
 
     # --- guruhlar (`app/bot/group_admin.py`) ----------------------------------
 
