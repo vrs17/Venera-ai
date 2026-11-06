@@ -31,7 +31,7 @@ from app.core.config import settings
 from app.services.integrations.assistant import AnswerStream
 from app.services.telegram_links import LinkStore
 from tests.test_contacts import people  # noqa: F401 - fikstura
-from tests.test_sso_login import LOGIN, hub, net  # noqa: F401 - fikstura
+from tests.sso_fake import hub, net, sso_session  # noqa: F401 - fikstura
 from tests.test_telegram_bot import (
     BOT_TOKEN,
     TG_ID,
@@ -85,8 +85,8 @@ def telegram_api(monkeypatch):
 
 
 def _sso_login(client) -> tuple[int, dict]:
-    body = client.post("/api/v1/auth/login", json=LOGIN).json()
-    return body["user"]["actorId"], {"Authorization": f"Bearer {body['token']}"}
+    """SSO bilan kirgan xodim (brauzer oqimi, `tests/sso_fake.py`)."""
+    return sso_session(client)
 
 
 # --- bot.start(): qo'lda hal qilingan joy -------------------------------------------

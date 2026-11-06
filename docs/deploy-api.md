@@ -67,6 +67,12 @@ chmod 600 config/users.yaml .env
 `/api/health` namuna xeshlari qolganini aniqlaydi va qaysi hisob ekanini
 aytadi.
 
+**Kirish SSO orqali (2026-11 dan).** `users.yaml` faqat zahira; asosiy
+kirish Keycloak (`SSO_ISSUER`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`,
+`SSO_APP_URL` - `.env` da). Keycloak client sozlamasi, rollar va sinash:
+`docs/auth-sso.md`. Yangi bog'liqlik `PyJWT[crypto]` - `.env` dan tashqari
+`venv/bin/pip install -e .` ham kerak (token imzosini tekshirish).
+
 ## 3. Bir marta: Swagger fayllari
 
 

@@ -140,12 +140,12 @@ def _isolated_identities(tmp_path, monkeypatch):
 #: turgani uchun kutish ovozi va uyg'otish jurnali testlari yiqilgan edi -
 #: kod emas, mashina sozlamasi sinalayotgan edi. Qolganlari xuddi shu
 #: turdagi tuzoq: `LOCAL_LOGIN_ENABLED=false` bo'lsa deyarli hamma test
-#: kira olmaydi, `ADMIN_LOGINS` / `SSO_TRUSTED_ROLES` esa rollarni
+#: kira olmaydi, `ADMIN_LOGINS` esa rollarni
 #: o'zgartiradi. O'zgacha qiymat kerak bo'lgan test uni o'zi qo'yadi.
 #: Yordamchi dvigateli ham: `.env` dagi `HRM_ASSISTANT_ENGINE=v1` yoki kanal
 #: istisnosi oqim yo'lini va "Pro" ni o'zgartirib, testni mashinaga bog'lardi.
 _CODE_DEFAULTS = ("hold_enabled", "wake_log_enabled", "local_login_enabled",
-                  "admin_logins", "sso_trusted_roles", "hrm_assistant_engine",
+                  "admin_logins", "hrm_assistant_engine",
                   "hrm_assistant_engine_by_channel", "hrm_assistant_max_stream_seconds",
                   "meetings_enabled", "meetings_logins", "meetings_llm_chain", "meetings_ask_chain",
                   # Saqlash muddatlari: jonli `.env` da hammasi 0 (o'chirilmaydi, 2026-11-05 ega qarori) -

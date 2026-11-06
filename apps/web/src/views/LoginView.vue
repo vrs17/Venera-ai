@@ -1,20 +1,72 @@
 <script setup lang="ts">
+// Kirish sahifasi - ikki yo'l (`GET /auth/sso/config` aytadi qaysi biri ochiq):
+//
+//   1. SSO (Keycloak, brauzer orqali): tugma odamni Keycloak kirish sahifasiga
+//      yuboradi (`startSso`). Keycloak qaytarganda server bizni shu sahifaga
+//      `?sso=<bir martalik kod>` bilan yo'naltiradi - kod sessiyaga almashtiriladi
+//      (`completeSso`). Xato bo'lsa `?sso_error=<sabab>` keladi.
+//   2. Zahira hisob (`users.yaml`): login + parol shakli, faqat `localLoginEnabled`.
+//
+// Parol SSO yo'lida bu sahifadan HECH QACHON o'tmaydi.
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
 import { authErrorKind, localizeAuthError } from '../api/errors'
+import { ApiError } from '../api/http'
 import { redirectTarget } from '../router'
+import type { SsoErrorCode } from '../types'
 import AuthShell from '../components/AuthShell.vue'
 import AuthField from '../components/AuthField.vue'
 import AuthButton from '../components/AuthButton.vue'
 import AuthError from '../components/AuthError.vue'
+import VButton from '../ui/VButton.vue'
 
 const { t } = useI18n({ useScope: 'global' })
 const router = useRouter()
 const route = useRoute()
-const { login } = useAuth()
+const { login, sso, loadSsoConfig, startSso, completeSso } = useAuth()
 
+const SSO_ERRORS: SsoErrorCode[] = ['denied', 'blocked', 'expired', 'network', 'config', 'failed']
+
+// --- SSO ---
+const ssoReady = ref(false)
+const ssoBusy = ref<'' | 'redirecting' | 'finishing'>('')
+const ssoError = ref<SsoErrorCode | ''>('')
+const showSso = computed(() => Boolean(sso.value?.enabled))
+const showLocal = computed(() => sso.value?.localLoginEnabled !== false)
+
+function queryString(key: string): string {
+  const raw = route.query[key]
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return typeof value === 'string' ? value : ''
+}
+
+function ssoErrorOf(raw: string): SsoErrorCode {
+  return (SSO_ERRORS as string[]).includes(raw) ? (raw as SsoErrorCode) : 'failed'
+}
+
+function signInWithSso() {
+  if (ssoBusy.value) return
+  ssoError.value = ''
+  ssoBusy.value = 'redirecting'
+  startSso(redirectTarget(route.query))
+}
+
+async function finishSso(code: string) {
+  ssoBusy.value = 'finishing'
+  try {
+    await completeSso(code)
+    // `?sso=` manzilda qolmasin (yangilash kodni qayta yubormasin) - replace.
+    router.replace(redirectTarget(route.query) ?? '/')
+  } catch (err) {
+    ssoError.value = err instanceof ApiError ? 'expired' : 'network'
+    ssoBusy.value = ''
+    router.replace({ name: 'login', query: { ...route.query, sso: undefined } })
+  }
+}
+
+// --- zahira hisob ---
 const username = ref('')
 const password = ref('')
 const busy = ref(false)
@@ -30,8 +82,6 @@ const crmUrl = ((import.meta.env.VITE_CRM_URL as string | undefined) ?? '').trim
 const loginField = ref<InstanceType<typeof AuthField> | null>(null)
 const passwordField = ref<InstanceType<typeof AuthField> | null>(null)
 
-// Login - HRM/CRM (Keycloak) hisobi, masalan `y.mamajonov`; email emas.
-// Zahira hisob (users.yaml) uchun email ham shu maydonga yoziladi.
 const valid = computed(() => username.value.trim().length > 0 && password.value.length > 0)
 // Errors are computed and only surface once submit was attempted, so they appear
 // on submit and clear live as the user fixes the field (no watcher races).
@@ -44,9 +94,19 @@ watch([username, password], () => {
   setupHelp.value = false
 })
 
-onMounted(() => {
-  // Faqat sichqonchali qurilmada: telefonda klaviatura o'zi ochilib, sahifani yopmasin.
-  if (window.matchMedia('(pointer: fine)').matches) loginField.value?.focus()
+onMounted(async () => {
+  await loadSsoConfig()
+  ssoReady.value = true
+  const code = queryString('sso')
+  if (code) {
+    await finishSso(code)
+    return
+  }
+  const failed = queryString('sso_error')
+  if (failed) ssoError.value = ssoErrorOf(failed)
+  // Faqat sichqonchali qurilmada va parol shakli bo'lsa: telefonda klaviatura
+  // o'zi ochilib, sahifani yopmasin.
+  if (showLocal.value && !showSso.value && window.matchMedia('(pointer: fine)').matches) loginField.value?.focus()
 })
 
 async function submit() {
@@ -79,40 +139,63 @@ async function submit() {
 </script>
 
 <template>
-  <AuthShell :title="t('signIn')" :caption="t('shell.auth.caption')">
-    <form class="auth-form" novalidate @submit.prevent="submit">
-      <div class="auth-form__fields">
-        <AuthField
-          ref="loginField"
-          v-model="username"
-          :label="t('loginName')"
-          type="text"
-          name="username"
-          autocomplete="username"
-          autocapitalize="none"
-          autocorrect="off"
-          spellcheck="false"
-          :error="usernameError"
-        />
-        <AuthField
-          ref="passwordField"
-          v-model="password"
-          :label="t('password')"
-          type="password"
-          name="password"
-          autocomplete="current-password"
-          :error="passwordError"
-        />
-      </div>
+  <AuthShell :title="t('signIn')" :caption="showSso ? t('shell.auth.sso.caption') : t('shell.auth.caption')">
+    <div v-if="ssoReady" class="auth-form">
+      <template v-if="showSso">
+        <VButton
+          type="button"
+          variant="primary"
+          size="lg"
+          block
+          pill
+          :loading="ssoBusy !== ''"
+          data-testid="sso-login"
+          @click="signInWithSso"
+        >
+          {{ ssoBusy ? t(`shell.auth.sso.${ssoBusy}`) : t('shell.auth.sso.button') }}
+        </VButton>
+        <AuthError :message="ssoError ? t(`shell.auth.sso.${ssoError}`) : ''" />
+        <div v-if="showLocal" class="auth-form__divider" role="separator">
+          <span>{{ t('shell.auth.sso.or') }}</span>
+        </div>
+      </template>
 
-      <AuthButton :label="t('signIn')" :busy="busy" />
+      <form v-if="showLocal" class="auth-form" novalidate @submit.prevent="submit">
+        <div class="auth-form__fields">
+          <AuthField
+            ref="loginField"
+            v-model="username"
+            :label="t('loginName')"
+            type="text"
+            name="username"
+            autocomplete="username"
+            autocapitalize="none"
+            autocorrect="off"
+            spellcheck="false"
+            :error="usernameError"
+          />
+          <AuthField
+            ref="passwordField"
+            v-model="password"
+            :label="t('password')"
+            type="password"
+            name="password"
+            autocomplete="current-password"
+            :error="passwordError"
+          />
+        </div>
 
-      <AuthError :message="formError">
-        <a v-if="setupHelp && crmUrl" :href="crmUrl" target="_blank" rel="noopener noreferrer">
-          {{ t('shell.auth.openCrm') }}
-        </a>
-      </AuthError>
-    </form>
+        <AuthButton :label="t('signIn')" :busy="busy" />
+
+        <AuthError :message="formError">
+          <a v-if="setupHelp && crmUrl" :href="crmUrl" target="_blank" rel="noopener noreferrer">
+            {{ t('shell.auth.openCrm') }}
+          </a>
+        </AuthError>
+      </form>
+
+      <AuthError v-if="!showSso && !showLocal" :message="t('shell.auth.sso.config')" />
+    </div>
   </AuthShell>
 </template>
 
@@ -126,5 +209,19 @@ async function submit() {
   display: flex;
   flex-direction: column;
   gap: var(--s-5);
+}
+.auth-form__divider {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  color: var(--text-3);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+}
+.auth-form__divider::before,
+.auth-form__divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--line-strong);
 }
 </style>

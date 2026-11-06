@@ -266,3 +266,21 @@ def test_telegram_sessiya_javobi_login_bilan_bir_xil(client, monkeypatch):
 def test_hujjat_havolasi_javobi_mos(client, auth):
     body = client.post("/api/v1/chat/doc/HR_045/link", json={"filename": "x"}, headers=auth).json()
     assert set(body) == FILE_LINK_FIELDS
+
+
+# types.ts: SsoConfig
+SSO_CONFIG_FIELDS = {"enabled", "localLoginEnabled", "startPath"}
+
+
+def test_sso_config_shartnomasi(client):
+    """`GET /auth/sso/config` - ochiq endpoint, `types.ts: SsoConfig` bilan bir xil."""
+    body = client.get("/api/v1/auth/sso/config").json()
+    assert set(body) == SSO_CONFIG_FIELDS
+    assert body["startPath"] == "/api/v1/auth/sso/start"
+
+
+def test_logout_javobida_sso_manzili_maydoni(client, auth):
+    """`types.ts: LogoutResponse.ssoLogoutUrl` - zahira hisobda `null`."""
+    body = client.post("/api/v1/auth/logout", headers=auth).json()
+    assert set(body) == {"status", "message", "ssoLogoutUrl"}
+    assert body["ssoLogoutUrl"] is None

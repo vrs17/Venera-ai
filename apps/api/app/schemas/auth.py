@@ -30,11 +30,29 @@ class AuthUser(BaseModel):
     passwordChangeRequired: bool = False
 
 
-class LoginRequest(BaseModel):
-    """types.ts: LoginRequest
+class SsoConfig(BaseModel):
+    """types.ts: SsoConfig - kirish sahifasi qaysi yo'llarni ko'rsatishi.
 
-    `username` - HRM/CRM (Keycloak) logini, masalan `y.mamajonov`. Zahira
-    hisob (`users.yaml`) uchun email ham shu maydonga yoziladi.
+    `enabled` - Keycloak (SSO) sozlangan, `startPath` ga o'tish mumkin;
+    `localLoginEnabled` - parol shakli (`POST /auth/login`, `users.yaml`) ochiq.
+    """
+
+    enabled: bool
+    localLoginEnabled: bool
+    startPath: str = "/api/v1/auth/sso/start"
+
+
+class SsoExchangeRequest(BaseModel):
+    """types.ts: SsoExchangeRequest - callback bergan bir martalik kod."""
+
+    code: str
+
+
+class LoginRequest(BaseModel):
+    """types.ts: LoginRequest - ZAHIRA hisob (`config/users.yaml`).
+
+    `username` - zahira hisobning emaili (login o'rnida). Asosiy kirish SSO
+    (`SsoConfig`), u parol yubormaydi.
 
     `email` - ESKI NOM. Eski build yoki mini app hali uni yuborsa ham
     kirish ishlayveradi (API frontend'dan oldin yangilanishi mumkin).
@@ -66,10 +84,16 @@ class LoginResponse(BaseModel):
 
 
 class LogoutResponse(BaseModel):
-    """types.ts: LogoutResponse"""
+    """types.ts: LogoutResponse
+
+    `ssoLogoutUrl` - SSO bilan kirgan odam uchun Keycloak chiqish manzili:
+    frontend tokenni o'chirgach o'sha yerga o'tadi (Keycloak sessiyasi ham
+    yopilsin). Zahira hisobda va SSO o'chiq bo'lsa `null`.
+    """
 
     status: str = "OK"
     message: str = ""
+    ssoLogoutUrl: str | None = None
 
 
 class ApiErrorResponse(BaseModel):

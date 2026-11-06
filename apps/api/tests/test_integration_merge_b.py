@@ -45,7 +45,7 @@ from tests.test_integration_merge import (
     telegram_api,  # noqa: F401 - fikstura
 )
 from tests.test_pro import api, assistant, server  # noqa: F401 - fikstura
-from tests.test_sso_login import hub, net  # noqa: F401 - fikstura
+from tests.sso_fake import hub, net  # noqa: F401 - fikstura
 from tests.test_telegram_bot import TG_ID, WEBHOOK_URL, _conflict, text_update
 
 TURN = re.compile(r"[0-9a-f]{32}")
@@ -210,7 +210,7 @@ def test_health_detail_faqat_samarali_admin_sso_va_conflicts_bilan(
 
     # Admin paneldan ADMIN - o'sha SSO sessiya qayta kirmasdan ko'radi.
     r = client.patch(f"/api/v1/admin/users/{actor}", headers=auth,
-                     json={"roles": ["employee", "crm-user", "ADMIN"]})
+                     json={"roles": ["EMPLOYEE", "ADMIN"]})
     assert r.status_code == 200, r.text
     r = client.get("/api/health/detail", headers=headers)
     assert r.status_code == 200, r.text
@@ -221,7 +221,7 @@ def test_health_detail_faqat_samarali_admin_sso_va_conflicts_bilan(
 
     # Rol olindi - yana 403.
     client.patch(f"/api/v1/admin/users/{actor}", headers=auth,
-                 json={"roles": ["employee", "crm-user"]})
+                 json={"roles": ["EMPLOYEE"]})
     assert client.get("/api/health/detail", headers=headers).status_code == 403
 
 

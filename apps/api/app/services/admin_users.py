@@ -9,7 +9,7 @@ admin qarori analitika omboridagi `user_admin` jadvalida, `actor_id`
 bo'yicha, manbadan ALOHIDA turadi va manbaning USTIDAN qo'yiladi:
 
   * rollar - `user_admin.roles` NULL bo'lmasa o'sha, aks holda manbaniki
-    (SSO manbasidan ADMIN/RAG_ADMIN faqat `sso_trusted_roles` da bo'lsa -
+    (SSO manbasidan rollar bizning Keycloak client'imizniki, ishoniladi -
     `_source_roles` izohi);
   * bloklash - `disabled=1`: kirish 403, mavjud token 401, bot rad etadi;
   * sessiya versiyasi - `token_version`. Tokenda `ver` turadi
@@ -151,45 +151,18 @@ def is_bootstrap(email: str | None, login: str | None = None) -> bool:
     return bool(value) and str(value).strip().lower() in wanted
 
 
-_trusted_cache: tuple[str, frozenset[str]] = ("", frozenset())
-
-
-def sso_trusted_roles() -> frozenset[str]:
-    """`settings.sso_trusted_roles` - Keycloak'dan qabul qilinadigan
-    imtiyozli rollar, KATTA harfda (Venera rollari shunday yoziladi).
-
-    Har chaqiruvda sozlamadan o'qiladi (`bootstrap_logins` kabi), bo'lish esa
-    satr o'zgarganda qayta qilinadi.
-    """
-    global _trusted_cache
-    raw = str(getattr(settings, "sso_trusted_roles", "") or "")
-    cached_raw, cached = _trusted_cache
-    if raw == cached_raw:
-        return cached
-    parsed = frozenset(part.strip().upper() for part in re.split(r"[,\s;]+", raw) if part.strip())
-    _trusted_cache = (raw, parsed)
-    return parsed
-
-
 def _source_roles(source: Iterable[str], *, sso: bool) -> list[str]:
-    """Manba rollari - SSO bo'lsa imtiyozlilari SUZIB olingan.
+    """Manba rollari.
 
-    NEGA. SSO rollari Keycloak'dan qanday bo'lsa shunday ko'chiriladi
-    (`services/sso.py`, `_roles`): realm rollari ham, client rollari ham.
-    Realm'ni Venera boshqarmaydi - u yerda boshqa tizim uchun yaratilgan
-    `ADMIN` degan rol bo'lishi yoki kimgadir tasodifan berilishi mumkin, va
-    u shu zahoti Venera ADMIN ini, ya'ni HAMMANING suhbat yozuvlarini
-    o'qish huquqini berardi. Shuning uchun imtiyoz default faqat bizning
-    manbalarimizdan: `admin_logins`, `users.yaml` va admin panel.
-    Keycloak rollari Venera uchun ataylab boshqarilsa - `sso_trusted_roles`.
-
-    Imtiyozsiz rollar (`employee`, `crm-user`) tegilmaydi: ular hech narsa
-    ochmaydi, panelda esa kimligini ko'rsatadi.
+    SSO rollari endi FAQAT bizning Keycloak client'imizning rollari
+    (`services/oidc.py`, `resource_access["barno-ai"].roles`): ularni
+    Keycloak administratori aynan Barno uchun beradi - ishoniladi, ADMIN
+    ham. Realm rollari (boshqa tizimlar uchun berilganlar) u yerda umuman
+    o'qilmaydi, shuning uchun eski `SSO_TRUSTED_ROLES` suzgichi kerak emas.
+    `sso` argumenti chaqiruvchilar manbani aniq aytishi uchun qoldi.
     """
-    if not sso:
-        return list(source)
-    trusted = sso_trusted_roles()
-    return [role for role in source if role not in PRIVILEGED_ROLES or role in trusted]
+    del sso
+    return list(source)
 
 
 # --- holat (user_admin) -----------------------------------------------------------

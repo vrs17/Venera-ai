@@ -42,14 +42,37 @@ class Settings(BaseSettings):
     #: izohi). Sessiya undan UZUN bo'lsa "+" menyusida HRM qatori sessiya
     #: tugamasdan "muddati tugagan" bo'lib qoladi - `.env` da 10 tavsiya.
     token_ttl_hours: int = 12
-    #: Kirish Keycloak orqali (`services/sso.py`): `crm_idp_token_url`,
-    #: `crm_client_id/secret`, `crm_base_url` (pastda) to'ldirilgan bo'lsa
-    #: login + parol Keycloak'ka ketadi va kirgan odam uchun HRM/CRM
-    #: ulanishlari o'zi ochiladi. `users.yaml` dagi hisoblar ZAHIRA:
-    #: Keycloak sozlanmagan, o'chgan yoki parolni rad etgan bo'lsa sinab
-    #: ko'riladi - administrator Keycloak'siz ham kira olsin. Prod'da
-    #: o'chirish mumkin.
+    #: Parol bilan kirish (`POST /auth/login`, `config/users.yaml`) - ZAHIRA:
+    #: administrator Keycloak'siz ham kira olsin (Keycloak yiqilganda,
+    #: birinchi sozlashda). Asosiy kirish SSO (pastda). Prod'da o'chirish
+    #: mumkin - shunda endpoint 403 qaytaradi va kirish sahifasida faqat
+    #: SSO tugmasi qoladi.
     local_login_enabled: bool = True
+    # --- SSO: Keycloak, brauzer orqali (OpenID Connect, `services/oidc.py`) ---
+    #: Realm manzili, masalan `https://myid.brb-tech.uz/auth/realms/brb-realm`
+    #: (staging'da `https://test-keycloak.../auth/realms/<realm>`). Tokendagi
+    #: `iss` aynan shu bo'lishi kerak. BO'SH bo'lsa SSO o'chiq.
+    sso_issuer: str = ""
+    #: Keycloak'dagi BIZNING client (Clients -> barno-ai). Rollar ham shu
+    #: client'niki: `admin` -> ADMIN, `employee` -> EMPLOYEE, `executive` ->
+    #: EXECUTIVE (`services/oidc.ROLE_MAP`). Realm rollari o'qilmaydi.
+    sso_client_id: str = "barno-ai"
+    #: Client siri (Credentials tab) - FAQAT `.env` da. Bo'sh bo'lsa SSO o'chiq.
+    sso_client_secret: str = ""
+    #: Ilovaning tashqi manzili, masalan `https://llm.brb-tech.uz`. Undan
+    #: Keycloak'ga beriladigan qaytish manzili yasaladi:
+    #: `<sso_app_url>/api/v1/auth/sso/callback` - u Keycloak'dagi "Valid
+    #: redirect URIs" ro'yxatida AYNAN shunday turishi shart. BO'SH bo'lsa
+    #: so'rovning o'zidan (`X-Forwarded-Proto`, `Host`) olinadi - dev'da
+    #: (vite proxy, http://10.10.50.8:5174) shu yetadi; prod'da nginx
+    #: konteyneri TLS ni ko'rmaydi (`http` deb yuboradi), shuning uchun
+    #: prod'da ANIQ yoziladi.
+    sso_app_url: str = ""
+    #: Mobil ilova uchun ruxsat etilgan qaytish manzili (masalan
+    #: `barnoai://sso`). Bo'sh - mobil SSO o'chiq. Boshqa har qanday tashqi
+    #: manzil rad etiladi (ochiq yo'naltirish bo'lardi).
+    sso_mobile_redirect: str = ""
+    sso_timeout: float = 10.0
     #: SSO bilan kirganlar: Keycloak `sub` -> `actor_id`
     #: (`services/identities.py`). Sir yo'q, lekin `data/` da, 600.
     identities_file: Path = BASE_DIR / "data" / "identities.json"
@@ -584,15 +607,9 @@ class Settings(BaseSettings):
     #: Keycloak'da odam o'zi o'zgartira oladi; email faqat `users.yaml` dagi
     #: zahira hisob uchun ishlaydi (`services/admin_users.is_bootstrap`).
     admin_logins: str = ""
-    #: Keycloak'dan kelgan qaysi IMTIYOZLI rollarga (ADMIN, RAG_ADMIN)
-    #: ishoniladi - vergul bilan. Default BO'SH: SSO rollari Keycloak'dan
-    #: qanday bo'lsa shunday ko'chiriladi, va realm'da yoki boshqa client'da
-    #: tasodifan `ADMIN` degan rol bo'lsa, u Venera ADMIN ini (hammaning
-    #: suhbat yozuvlarini o'qish) berib yuborardi. Imtiyoz faqat
-    #: `admin_logins`, `users.yaml` va admin panel orqali keladi; Keycloak
-    #: rollari Venera uchun ATAYLAB boshqarilsagina shu yerga yoziladi
-    #: (`services/admin_users._effective_roles`).
-    sso_trusted_roles: str = ""
+    #: (`SSO_TRUSTED_ROLES` OLIB TASHLANDI, 2026-11: SSO rollari endi faqat
+    #: bizning Keycloak client'imizniki - `sso_client_id` izohi - va ularga
+    #: to'liq ishoniladi; realm rollari umuman o'qilmaydi.)
 
     # --- Yig'ilish yozuvchisi (Venera Yozuv, `services/meetings/`) ---
     #

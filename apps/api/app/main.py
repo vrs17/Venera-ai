@@ -36,6 +36,7 @@ from .api.metering import ChannelMiddleware
 from .api.v1 import router as v1_router
 from .core import errors
 from .core.config import crm_token_now, hrm_token_now, settings
+from .services.oidc import KeycloakOidc
 from .schemas.auth import AuthUser
 from .services.integrations.assistant import token_warning
 from .services.upstream import UpstreamHealth, warnings_for
@@ -392,6 +393,11 @@ def hold_state() -> dict:
     }
 
 
+def _sso_configured() -> bool:
+    """SSO (Keycloak, brauzer orqali) sozlanganmi - `api/v1/auth._oidc` bilan bir manba."""
+    return KeycloakOidc(settings.sso_issuer, settings.sso_client_id, settings.sso_client_secret).configured
+
+
 def _diagnostics() -> dict:
     """To'liq tashxis. FAQAT sessiya bilan ko'rsatiladi (pastga qara).
 
@@ -485,14 +491,18 @@ def _diagnostics() -> dict:
     # Foydalanuvchilarning o'z HRM/CRM ulanishlari. Sozlanmagan bo'lsa "+"
     # menyusidagi tugma "serverda sozlanmagan" deydi - sababi shu yerda.
     hub = connector_hub()
-    # Kirish yo'li: SSO (Keycloak = CRM ulanishi sozlamasi) yoki zahira
-    # (`users.yaml`). Ikkalasi ham yo'q bo'lsa HECH KIM kira olmaydi - va
-    # bu `/api/health` da aytilmasa faqat login oynasidagi xatodan bilinardi.
-    if not hub.crm.configured and not settings.local_login_enabled:
+    # Kirish yo'li: SSO (Keycloak, brauzer orqali - `SSO_ISSUER`/`SSO_CLIENT_SECRET`,
+    # `services/oidc.py`) yoki zahira (`users.yaml`). Ikkalasi ham yo'q bo'lsa
+    # HECH KIM kira olmaydi - va bu `/api/health` da aytilmasa faqat login
+    # oynasidagi xatodan bilinardi.
+    sso_ready = _sso_configured()
+    if not sso_ready and not settings.local_login_enabled:
         warnings.append(
-            "kirish yo'li yo'q: Keycloak (CRM_IDP_TOKEN_URL/CRM_CLIENT_SECRET/CRM_BASE_URL) "
+            "kirish yo'li yo'q: SSO (SSO_ISSUER/SSO_CLIENT_ID/SSO_CLIENT_SECRET) "
             "sozlanmagan va LOCAL_LOGIN_ENABLED=false"
         )
+    elif not sso_ready:
+        warnings.append("SSO_ISSUER / SSO_CLIENT_SECRET bo'sh - Keycloak orqali kirish o'chiq, faqat users.yaml")
     if not hub.hrm.configured:
         warnings.append("hrm_base_url bo'sh - HRM ulanishi (foydalanuvchi hisobi) o'chiq")
     if not hub.crm.configured:
@@ -608,7 +618,7 @@ def _diagnostics() -> dict:
         },
         # Kirish: SSO sozlanganmi, zahira ochiqmi, SSO bilan nechta odam kirgan.
         "login": {
-            "sso": hub.crm.configured,
+            "sso": _sso_configured(),
             "local": settings.local_login_enabled,
             "identities": len(get_identity_store()),
         },

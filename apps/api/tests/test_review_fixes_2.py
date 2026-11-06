@@ -8,9 +8,9 @@
      to'xtash ham chala javob - u ham xato.
   2. SSO IMTIYOZLARI. Keycloak rollari qanday bo'lsa shunday ko'chiriladi;
      realm'dagi `ADMIN` degan rol Venera ADMIN ini (hammaning suhbatlari)
-     berib yuborardi. Endi SSO manbasidan ADMIN/RAG_ADMIN default rad
-     etiladi (`admin_users._source_roles`), `SSO_TRUSTED_ROLES` bilan
-     ataylab yoqiladi. `admin_logins`, `users.yaml` va panel o'zgarmaydi.
+     berib yuborardi. Endi (2026-11) SSO rollari faqat bizning Keycloak
+     client'imizdan o'qiladi (`services/oidc.py`) va ularga ishoniladi;
+     realm rollari umuman o'qilmaydi. `admin_logins`, `users.yaml` va panel o'zgarmaydi.
 
 Muhitdan mustaqillik (3-band) `conftest.py` da: `_code_defaults` va
 `client` fiksturasi - ularning isboti mavjud testlarning o'zi
@@ -38,7 +38,7 @@ from tests.conftest import ADMIN
 from tests.test_capture import (  # noqa: F401 - fiksturalar
     FRAMES, ask_stream, db, events_of, payload, rows, upstream,
 )
-from tests.test_sso_login import LOGIN, hub, net  # noqa: F401 - fiksturalar
+from tests.sso_fake import LOGIN, hub, net, sso_login  # noqa: F401 - fiksturalar
 
 
 def frame(**kw) -> bytes:
@@ -282,36 +282,33 @@ def test_endpoint_toliq_oqim_ok(client, auth, upstream, db):
 
 
 def _sso_login(client, net, roles: list[str]) -> dict:
-    net.roles = [*roles, "employee", "offline_access"]
-    response = client.post("/api/v1/auth/login", json=LOGIN)
-    assert response.status_code == 200, response.text
-    return response.json()
+    """`roles` - Keycloak'dagi BIZNING client'ning rollari (`admin`, `rag-admin`...)."""
+    return sso_login(client, net, roles=[*roles, "employee"])
 
 
 def _bearer(body: dict) -> dict:
     return {"Authorization": f"Bearer {body['token']}"}
 
 
-def test_keycloak_admin_roli_venera_admin_bermaydi(client, hub, net):
-    """Realm'da `ADMIN` / `RAG_ADMIN` degan rol - Venera imtiyozi EMAS."""
-    body = _sso_login(client, net, ["ADMIN", "RAG_ADMIN"])
-    assert "ADMIN" not in body["user"]["roles"]
-    assert "RAG_ADMIN" not in body["user"]["roles"]
-    # Imtiyozsiz rollar joyida - ular faqat kimligini ko'rsatadi.
-    assert body["user"]["roles"] == ["employee", "crm-user"]
+def test_realm_va_boshqa_client_rollari_venera_admin_bermaydi(client, hub, net):
+    """Realm'dagi `ADMIN` / `RAG_ADMIN` va boshqa client'ning `admin` i - Venera
+    imtiyozi EMAS: faqat bizning client'ning rollari o'qiladi."""
+    net.realm_roles = ["ADMIN", "RAG_ADMIN", "offline_access"]
+    net.other_client_roles = ["admin", "rag-admin"]
+    body = _sso_login(client, net, [])
+    assert body["user"]["roles"] == ["EMPLOYEE"]
     headers = _bearer(body)
-    assert client.get("/api/v1/auth/me", headers=headers).json()["roles"] == ["employee", "crm-user"]
+    assert client.get("/api/v1/auth/me", headers=headers).json()["roles"] == ["EMPLOYEE"]
     assert client.get("/api/v1/admin/users", headers=headers).status_code == 403
     assert client.get("/api/health/detail", headers=headers).status_code == 403
 
 
-def test_keycloak_admin_roli_ishonilsa_admin(client, hub, net, monkeypatch):
-    """`SSO_TRUSTED_ROLES=ADMIN` - Keycloak rollari Venera uchun ataylab
-    boshqariladi. Ro'yxatda yo'q RAG_ADMIN baribir suziladi."""
-    monkeypatch.setattr(settings, "sso_trusted_roles", "admin")     # registr muhim emas
-    body = _sso_login(client, net, ["ADMIN", "RAG_ADMIN"])
-    assert "ADMIN" in body["user"]["roles"]
-    assert "RAG_ADMIN" not in body["user"]["roles"]
+def test_bizning_client_admin_roli_venera_admin(client, hub, net):
+    """Keycloak'da `barno-ai` client'ining `admin` roli - Venera ADMIN i: uni
+    Keycloak administratori aynan Barno uchun beradi (eski `SSO_TRUSTED_ROLES`
+    suzgichi kerak emas, 2026-11)."""
+    body = _sso_login(client, net, ["admin", "rag-admin"])
+    assert body["user"]["roles"] == ["ADMIN", "RAG_ADMIN", "EMPLOYEE"]
     assert client.get("/api/v1/admin/users", headers=_bearer(body)).status_code == 200
 
 
@@ -325,20 +322,20 @@ def test_users_yaml_admin_ishlayveradi(client, auth):
 
 def test_panel_override_sso_hisobga_admin_beradi(client, hub, net, auth):
     """Admin panel qarori - imtiyozning qonuniy yo'li; SSO hisobiga ham ishlaydi."""
-    body = _sso_login(client, net, ["ADMIN"])
+    body = _sso_login(client, net, [])
     headers = _bearer(body)
     actor = body["user"]["actorId"]
     assert client.get("/api/v1/admin/users", headers=headers).status_code == 403
 
-    # Panelda ham Keycloak ADMIN i ko'rinmaydi - sessiyadagi bilan bir xil.
+    # Panelda manba rollari - sessiyadagi bilan bir xil.
     items = {i["actorId"]: i for i in client.get("/api/v1/admin/users", headers=auth).json()["items"]}
-    assert "ADMIN" not in items[actor]["roles"]
+    assert items[actor]["roles"] == ["EMPLOYEE"]
     assert items[actor]["rolesSource"] == "source"
 
     response = client.patch(f"/api/v1/admin/users/{actor}", headers=auth,
-                            json={"roles": ["employee", "ADMIN"]})
+                            json={"roles": ["EMPLOYEE", "ADMIN"]})
     assert response.status_code == 200, response.text
-    assert response.json()["roles"] == ["employee", "ADMIN"]
+    assert response.json()["roles"] == ["EMPLOYEE", "ADMIN"]
     # Rollar har so'rovda qayta hisoblanadi - o'sha token bilan darhol.
     assert client.get("/api/v1/admin/users", headers=headers).status_code == 200
 
@@ -351,21 +348,21 @@ def test_admin_logins_sso_hisobga_admin_beradi(client, hub, net, monkeypatch):
     assert client.get("/api/v1/admin/users", headers=_bearer(body)).status_code == 200
 
 
-def test_keycloak_admin_oxirgi_admin_hisobiga_kirmaydi():
-    """"Oxirgi admin" himoyasi ham SESSIYA bilan bir xil qoidada sanaydi:
-    Keycloak ADMIN i bor SSO hisobi faol admin EMAS. Aks holda yagona haqiqiy
-    admin o'zini "sen oxirgisi emassan" deb pasaytira olardi."""
+def test_sso_admin_oxirgi_admin_hisobiga_kiradi():
+    """"Oxirgi admin" himoyasi SESSIYA bilan bir xil qoidada sanaydi: bizning
+    client'dan ADMIN olgan SSO hisobi ham faol admin (manba rollari ishonchli)."""
     st = admin_users.AdminState(actor_id=7)
     sso = admin_users.Person(actor_id=7, sso=True, sso_login="kc.user", source_roles=["ADMIN"])
     local = admin_users.Person(actor_id=8, local=True, email="it@x.uz", source_roles=["ADMIN"])
-    assert admin_users._is_active_admin(sso, st) is False
+    assert admin_users._is_active_admin(sso, st) is True
     assert admin_users._is_active_admin(local, admin_users.AdminState(actor_id=8)) is True
 
 
 def test_effective_manba_login_boyicha():
-    """`login is not None` - SSO (bot ham shu yo'l bilan chaqiradi)."""
+    """`login is not None` - SSO (bot ham shu yo'l bilan chaqiradi); manba
+    rollari ikkala yo'lda ham o'zgarishsiz (SSO rollari bizning client'niki)."""
     user = AuthUser(actorId=5, email="x@brb.uz", fullName="X", roles=["ADMIN", "USER"])
     st = admin_users.AdminState(actor_id=5)
-    assert admin_users.effective(user, login="x", admin_state=st).roles == ["USER"]
-    assert admin_users.effective(user, login="", admin_state=st).roles == ["USER"]
+    assert admin_users.effective(user, login="x", admin_state=st).roles == ["ADMIN", "USER"]
+    assert admin_users.effective(user, login=None, admin_state=st).roles == ["ADMIN", "USER"]
     assert admin_users.effective(user, login=None, admin_state=st).roles == ["ADMIN", "USER"]

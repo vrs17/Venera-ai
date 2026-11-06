@@ -22,7 +22,7 @@ from app.services.analytics import get_db
 from app.services.identities import IdentityStore
 from app.services.users import UserStore
 from tests.conftest import ADMIN, USER
-from tests.test_sso_login import IDP, LOGIN, hub, net  # noqa: F401 - fiksturalar
+from tests.sso_fake import LOGIN, callback, hub, net, sso_login, start  # noqa: F401 - fiksturalar
 from tests.test_connectors import CRM, HRM
 
 ADMIN_ACTOR = AuthUser(actorId=1, email=ADMIN["email"], fullName="Administrator",
@@ -283,25 +283,23 @@ def test_ozini_signout_qilish_mumkin(client, auth):
 # --- SSO bilan bloklangan odam ---------------------------------------------------------
 
 
-def test_sso_bloklangan_odam_keycloak_sessiyasi_yopiladi(client, hub, net, users_file):
-    first = _login(client, LOGIN)
-    assert first.status_code == 200, first.text
-    actor = first.json()["user"]["actorId"]
+def test_sso_bloklangan_odam_kira_olmaydi(client, hub, net, users_file):
+    first = sso_login(client, net)
+    actor = first["user"]["actorId"]
     identities, users = _stores(users_file)
     seen_before = identities.by_actor_id(actor).last_login_at
     admin_users.update_user(ADMIN_ACTOR, actor, identities, users, disabled=True)
 
     net.calls.clear()
-    again = _login(client, LOGIN)
-    assert again.status_code == 403 and again.json()["message"] == BLOCKED_LOGIN
-    # Keycloak "ha" dedi - yangi refresh_token CRM da DARHOL bekor qilindi, HRM ga
-    # borilmadi va ulanishlar qayta yozilmadi.
-    assert net.urls() == [IDP, f"{CRM}/api/auth/logout"]
+    code, state = start(client, net)
+    location, query = callback(client, code, state)
+    # Keycloak "ha" dedi, Barno sessiya bermadi: kirish sahifasiga sabab bilan.
+    assert query["sso_error"] == "blocked" and "sso" not in query, location
     assert f"{HRM}/api/authenticate" not in net.urls()
     # Bloklangan urinish "oxirgi kirish" bo'lib ko'rinmaydi.
     assert identities.by_actor_id(actor).last_login_at == seen_before
     # Avvalgi SSO tokeni ham o'ldi.
-    me = _me(client, first.json()["token"])
+    me = _me(client, first["token"])
     assert me.status_code == 401 and me.json()["message"] == "Hisob bloklangan"
     events = _auth_events()
     assert [(e["ok"], e["method"], e["reason"]) for e in events] == [
@@ -310,9 +308,9 @@ def test_sso_bloklangan_odam_keycloak_sessiyasi_yopiladi(client, hub, net, users
 
 def test_sso_kirish_javobida_samarali_rollar(client, hub, net, bootstrap):
     bootstrap("y.mamajonov")
-    body = _login(client, LOGIN).json()
-    assert body["user"]["roles"] == ["employee", "crm-user", "ADMIN"]
-    assert _me(client, body["token"]).json()["roles"] == ["employee", "crm-user", "ADMIN"]
+    body = sso_login(client, net, roles=["employee"])
+    assert body["user"]["roles"] == ["EMPLOYEE", "ADMIN"]
+    assert _me(client, body["token"]).json()["roles"] == ["EMPLOYEE", "ADMIN"]
 
 
 # --- Telegram bot ---------------------------------------------------------------------

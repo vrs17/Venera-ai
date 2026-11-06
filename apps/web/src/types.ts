@@ -371,6 +371,24 @@ export interface LoginResponse {
   user: AuthUser
 }
 
+/** Kirish sahifasi qaysi yo'llarni ko'rsatishi (`GET /auth/sso/config`). */
+export interface SsoConfig {
+  /** Keycloak (SSO) sozlangan - `startPath` ga o'tish mumkin. */
+  enabled: boolean
+  /** Parol shakli (`POST /auth/login`, zahira hisob) ochiq. */
+  localLoginEnabled: boolean
+  /** Brauzerni Keycloak'ga yuboradigan API yo'li (`?return=&channel=`). */
+  startPath: string
+}
+
+/** Callback bergan bir martalik kod (`/login?sso=...`) -> `POST /auth/sso/exchange`. */
+export interface SsoExchangeRequest {
+  code: string
+}
+
+/** Callback'dan kelgan xato sababi (`/login?sso_error=...`), `shell.auth.sso.*` kalitlari. */
+export type SsoErrorCode = 'denied' | 'blocked' | 'expired' | 'network' | 'config' | 'failed'
+
 export interface ChangePasswordRequest {
   currentPassword: string
   newPassword: string
@@ -385,6 +403,8 @@ export interface ChangePasswordResponse {
 export interface LogoutResponse {
   status: string
   message: string
+  /** SSO bilan kirgan odam uchun Keycloak chiqish manzili - token o'chirilgach shu yerga o'tiladi. */
+  ssoLogoutUrl?: string | null
 }
 
 /** Uniform backend error envelope returned on every failure. */

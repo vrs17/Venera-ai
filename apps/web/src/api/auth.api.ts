@@ -1,7 +1,7 @@
 // Auth endpoint wrappers — pure HTTP, no state side effects. Token storage and
 // routing live in the auth store/composable that consumes these.
 
-import { apiFetch } from './http'
+import { BASE_URL, apiFetch } from './http'
 import type {
   AuthUser,
   ChangePasswordRequest,
@@ -11,7 +11,26 @@ import type {
   LogoutResponse,
   SignupRequest,
   SignupResponse,
+  SsoConfig,
 } from '../types'
+
+/** Kirish sahifasi uchun: SSO yoqilganmi, parol shakli bormi. Ochiq endpoint. */
+export function ssoConfig(): Promise<SsoConfig> {
+  return apiFetch<SsoConfig>('/api/v1/auth/sso/config')
+}
+
+/** Brauzerni Keycloak'ga yuboradigan to'liq manzil. `returnTo` - kirishdan keyin
+ *  qaytiladigan ilova yo'li (server faqat `/...` ko'rinishini qabul qiladi). */
+export function ssoStartUrl(startPath: string, returnTo: string | null, channel: string): string {
+  const params = new URLSearchParams({ channel })
+  if (returnTo && returnTo !== '/') params.set('return', returnTo)
+  return `${BASE_URL}${startPath}?${params.toString()}`
+}
+
+/** Callback bergan bir martalik kodni sessiyaga almashtirish. Kod ikki marta ishlamaydi. */
+export function ssoExchange(code: string): Promise<LoginResponse> {
+  return apiFetch<LoginResponse>('/api/v1/auth/sso/exchange', { method: 'POST', body: JSON.stringify({ code }) })
+}
 
 /** Create an account. Backend emails a temporary password; no password is sent here. */
 export function signup(data: SignupRequest): Promise<SignupResponse> {

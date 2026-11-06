@@ -34,7 +34,7 @@ from tests.test_integration_merge import (
     telegram_api,  # noqa: F401 - fikstura
 )
 from tests.test_pro import PRO_BLOCK, api, assistant, server  # noqa: F401 - fikstura
-from tests.test_sso_login import hub, net  # noqa: F401 - fikstura
+from tests.sso_fake import hub, net  # noqa: F401 - fikstura
 from tests.test_telegram_bot import TG_ID, text_update
 
 
