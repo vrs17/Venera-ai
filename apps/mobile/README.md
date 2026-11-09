@@ -177,7 +177,13 @@ bildirishnoma tinglovchi - 2026-11-06 da 1.3.5 aynan Accessibility tufayli "App 
 bo'lgan), debuggable/testOnly, eski targetSdk, siqilgan resources.arsc yoki .so. Faqat standart
 Python - build serverga hech narsa o'rnatilmaydi.
 
-Pilot APK faqat `llm.brb-tech.uz/download/` orqali tarqatiladi. EAS Build
+**Tarqatish.** Reliz APK 10.10.50.4 build serverida yig'iladi (`~/Barno_AI`, `scripts/build-barno.sh`):
+`check_apk.py` dan o'tmagan APK saqlanmaydi va tarqatilmaydi. Foydalanuvchilarga Telegram bot orqali
+beriladi: «📲 Ilovani yuklab olish» tugmasi (`apps/api/app/bot/mobile_app.py`) APK'ni .4 dagi APK API'dan
+(`MOBILE_APK_API`, arm64 variant) oladi. Release kalit sertifikati (1.3.6 dan boshlab) SHA-256
+`EF710FF1662C7D792889A76B0608D745288632CC61F8A79B2A72C9ACCFD970BB`. 1.3.5 va eskiroq versiyalar debug kalit
+bilan imzolangan, ular o'rnatilgan telefonda avval eski ilovani o'chirish kerak (yuborilmagan yozuvlar ham
+o'chadi - avval hammasi yuklanganini tekshiring). EAS Build
 (`npx eas-cli build -p android --profile preview`) ham mumkin, lekin unda kod
 kompaniyadan tashqariga chiqadi - lead ruxsati kerak.
 
