@@ -181,11 +181,21 @@ class MobileApp:
             log.debug("Telegram ilova: xabar o'chirilmadi: %s", exc)
 
 
+#: Ochiq debug kalit bilan imzolangan oxirgi versiya (1.3.5). Undan keyingilari - o'z release kalitimiz:
+#: Android imzosi boshqa ilovani ustidan o'rnatmaydi ("App not installed"), eski ilovani avval o'chirish kerak.
+LAST_DEBUG_SIGNED, LAST_DEBUG_SIGNED_CODE = "1.3.5", 10
+
+
 def caption_of(info: dict[str, Any]) -> str:
     # Play Protect qatori (2026-11-09, ega so'rovi "Play Protect bloklamasin"): 1.3.6 dan ilovada
     # Accessibility yo'q - qattiq blok tushmaydi; Play'dan tashqaridagi har ilovaga chiqadigan YUMSHOQ
     # ogohlantirishda odam "OK" ni bossa "App not installed" bo'lardi - yo'lini shu yerda aytamiz.
-    return (f"📲 <b>Barno AI</b> {esc(info['version'])} - Android ilovasi\n\n"
+    # VAQTINCHALIK (2026-11-09, ega so'rovi): debug -> release kalitga o'tish. Faqat yuborilayotgan APK
+    # 1.3.5 dan YANGI bo'lsa - 1.3.5 ning o'zi yuborilganda "1.3.5 ni o'chiring" chalkash bo'lardi.
+    # 1.3.5 o'rnatgan odam qolmagach (ega aytadi) - olib tashlansin.
+    switch = (f"Telefoningizda {LAST_DEBUG_SIGNED} yoki eskiroq versiya bo'lsa, avval uni o'chiring - "
+              "imzo kaliti yangilandi.\n" if int(info.get("versionCode") or 0) > LAST_DEBUG_SIGNED_CODE else "")
+    return (f"📲 <b>Barno AI</b> {esc(info['version'])} - Android ilovasi\n\n{switch}"
             "O'rnatish: faylni oching; telefon so'rasa, «Noma'lum manbalardan o'rnatish»ga ruxsat bering. "
             "Play Protect ogohlantirsa: «Batafsil» → «Baribir o'rnatish». "
             "Kirish - HRM/CRM login va parolingiz bilan.")

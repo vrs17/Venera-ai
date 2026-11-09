@@ -76,6 +76,7 @@ def test_tugma_apk_yuboradi_keyingisi_qayta_yuklanmaydi(world):
     assert doc["content_type"] == "application/vnd.android.package-archive" and doc["timeout"] == 300.0
     assert doc["caption"].startswith("📲 <b>Barno AI</b> 1.3.5 - Android ilovasi\n\n")
     assert "Play Protect ogohlantirsa: «Batafsil» → «Baribir o'rnatish»" in doc["caption"]   # yumshoq ogohlantirish
+    assert "avval uni o'chiring" not in doc["caption"]         # 1.3.5 ning o'zi - "1.3.5 ni o'chiring" demaymiz
     assert api.calls == ["http://10.10.50.4:8097/latest", "http://10.10.50.4:8097/download?variant=arm64"]
     # Yuklash paytida "⏳" xabari - fayl ketgach o'chadi.
     holder = next(kw for kw in tg.sent() if kw["text"] == "⏳ Barno AI 1.3.5 (Android) tayyorlanmoqda…")
@@ -91,7 +92,11 @@ def test_tugma_apk_yuboradi_keyingisi_qayta_yuklanmaydi(world):
     # Yangi versiya (versionCode oshdi) - yangisi yuklanadi.
     api.data, api.version, api.code = APK + b"!", "1.3.6", 11
     bot.handle_update(text_update(BTN_APP, message_id=12))
-    assert tg.sent("send_document")[-1]["filename"] == "barno-ai-1.3.6-vc11-arm64.apk"
+    newer = tg.sent("send_document")[-1]
+    assert newer["filename"] == "barno-ai-1.3.6-vc11-arm64.apk"
+    # Release kalitga o'tish (vaqtinchalik): 1.3.5 dan yangisida - eski ilovani avval o'chirish.
+    assert ("Telefoningizda 1.3.5 yoki eskiroq versiya bo'lsa, avval uni o'chiring - imzo kaliti yangilandi.\n"
+            in newer["caption"])
 
     # Arxivda - kimga qaysi versiya ketgani; APK ning o'zi har safar ko'chirilmaydi.
     rows = archive.get().rows(channel="telegram")
