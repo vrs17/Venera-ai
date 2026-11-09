@@ -4,7 +4,7 @@
  * aynan bir xil ekanini runtime'da qayd etamiz - kimdir types.ts ga maydon
  * qo'shib, serverni unutsa, shu test eslatadi.
  */
-import { actionItem, askAnswer, card, config, crmProposal, crmState, meeting, speakers, summary, summaryCard, transcript } from './fixtures/server';
+import { actionItem, askAnswer, card, config, crmProposal, crmState, meeting, minutesView, speakers, summary, summaryCard, transcript } from './fixtures/server';
 
 const keys = (o: object) => Object.keys(o).sort();
 
@@ -40,6 +40,15 @@ describe('API contract field sets (spec 3.1)', () => {
     expect(keys(crmState())).toEqual(['expiresAt', 'proposal', 'result', 'status', 'token', 'updatedAt']);
     expect(keys(crmProposal())).toEqual(['changes', 'connector', 'expires_at', 'operation', 'summary', 'target', 'token', 'warnings']);
     expect(keys(summary().generatedBy!)).toEqual(['model', 'provider']);
+  });
+
+  it('Bayonnoma: MinutesView field set (server `minutes.view`)', () => {
+    expect(keys(minutesView())).toEqual(
+      [
+        'id', 'meetingId', 'language', 'status', 'createdAt', 'finishedAt', 'provider', 'model', 'transcriptRev', 'stale',
+        'agendaCount', 'sectionCount', 'itemCount', 'notes', 'warnings', 'error',
+      ].sort(),
+    );
   });
 
   it('SummaryContent has every section of spec 6.2', () => {

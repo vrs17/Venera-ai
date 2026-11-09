@@ -135,7 +135,7 @@ describe('AppDrawer', () => {
     expect(router.push).not.toHaveBeenCalled();
   });
 
-  it('with meetings on: Yozuvlar, Vazifalarim, profile and the red pill close first, then navigate', async () => {
+  it('with meetings on: Plaud, Vazifalarim, profile and the red pill close first, then navigate', async () => {
     useAuth.getState().setConfig(config);
     const { onClose } = await renderDrawer();
     expect(screen.getByText('Yozish')).toBeTruthy();
@@ -155,23 +155,23 @@ describe('AppDrawer', () => {
     }
   });
 
-  it('offline with a local recording: Yozuvlar stays reachable and shows the not-uploaded count', async () => {
+  it('offline with a local recording: Plaud stays reachable and shows the not-uploaded count', async () => {
     await renderDrawer({ rows: [localRow(), localRow({ clientId: 'c-2', state: 'failed' }), localRow({ clientId: 'c-3', state: 'done' })] });
     const row = await screen.findByTestId('drawer-recordings');
     // `done` sanalmaydi.
     expect(screen.getByText('2')).toBeTruthy();
-    expect(row.props.accessibilityLabel).toBe('Yozuvlar, 2 ta yozuv yuklanmagan');
+    expect(row.props.accessibilityLabel).toBe('Plaud, 2 ta yozuv yuklanmagan');
     expect(screen.getByTestId('drawer-record')).toBeTruthy();
     // Vazifalar - serverdagi yig'ilishlardan; konfig yo'q - ko'rsatilmaydi.
     expect(screen.queryByTestId('drawer-tasks')).toBeNull();
   });
 
-  it('while recording: live pill on Yozuvlar and the red pill shows the clock; paused shows "Pauzada"', async () => {
+  it('while recording: live pill on Plaud and the red pill shows the clock; paused shows "Pauzada"', async () => {
     const at = Date.now() - 65_000;
     useRecorderStore.setState({ machine: { ...initialRecorderState, status: 'recording', startedAt: at, segmentStartedAt: at } });
     await renderDrawer({ rows: [localRow({ state: 'recording' })] });
     const row = await screen.findByTestId('drawer-recordings');
-    expect(row.props.accessibilityLabel).toBe('Yozuvlar, Yozilmoqda');
+    expect(row.props.accessibilityLabel).toBe('Plaud, Yozilmoqda');
     expect(screen.getByText('Yozilmoqda')).toBeTruthy();
     expect(screen.getByText(/^Yozilmoqda 01:0\d$/)).toBeTruthy();
     await act(async () => {

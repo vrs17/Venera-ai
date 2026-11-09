@@ -18,8 +18,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
 /**
  * JS API (modules/venera-entry/index.ts):
  *   setRecordingState(recording), requestAddTile(), setLauncherEnabled(enabled),
- *   isLauncherEnabled(), setTrustedKey(key), isKeyServiceEnabled(),
- *   openAccessibilitySettings()
+ *   isLauncherEnabled(), setTrustedKey(key)
  *   Qo'ng'iroq yozuvlari: hasAudioReadPermission(), listCallRecordings(sinceMs, limit),
  *   copyToAppStorage(uri, destFileName), getImportMeta(fileName), removeImport(fileName),
  *   clearImports() - CallImport.kt; "Ulashish -> Barno AI" - ImportActivity.kt.
@@ -65,23 +64,6 @@ class VeneraEntryModule : Module() {
       context.packageManager.getComponentEnabledSetting(
         ComponentName(context, RecordLauncherActivity::class.java)
       ) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-    }
-
-    // Ovoz tugmasi xizmati (RecordKeyService) Android "Maxsus imkoniyatlar" da yoqilganmi.
-    Function("isKeyServiceEnabled") {
-      val mine = ComponentName(context, RecordKeyService::class.java)
-      val enabled = android.provider.Settings.Secure.getString(
-        context.contentResolver,
-        android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-      ) ?: ""
-      enabled.split(':').any { ComponentName.unflattenFromString(it.trim()) == mine }
-    }
-
-    // Ilova o'zi yoqa olmaydi - foydalanuvchini tizim sozlamasiga olib boramiz.
-    Function("openAccessibilitySettings") {
-      val intent = Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-      context.startActivity(intent)
     }
 
     AsyncFunction("requestAddTile") { promise: Promise ->

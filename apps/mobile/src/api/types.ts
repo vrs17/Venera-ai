@@ -33,7 +33,9 @@ export type SummaryStatus = 'none' | 'queued' | 'running' | 'ready' | 'failed' |
 /**
  * Yozuv qayerdan kelgan. `call` - Samsung Telefon yozgan qo'ng'iroq (MediaStore), `share` -
  * "Ulashish -> Barno AI". Bular yozish kirish nuqtasi EMAS (deep link `src=` ularni qabul qilmaydi),
- * server esa `call` uchun qo'ng'iroq shablonlarini afzal ko'radi.
+ * server esa `call` uchun qo'ng'iroq shablonlarini afzal ko'radi. `volume` - olib tashlangan ovoz
+ * tugmasi (2026-11-09): faqat yangilanishdan oldin yozilib, hali yuklanmagan qatorlar va server
+ * tarixi uchun qoldi (server ham qabul qiladi); yangi yozuvda ishlatilmaydi.
  */
 export type EntrySource = 'app' | 'tile' | 'launcher' | 'volume' | 'shortcut' | 'notification' | 'link' | 'call' | 'share';
 
@@ -160,7 +162,11 @@ export interface MeetingsConfig {
 }
 
 // ---------------------------------------------------------------- endpoints 2-5
-export type AudioContentType = 'audio/aac' | 'audio/mp4';
+/**
+ * Server `ACCEPTED_TYPES` (kanonik nomlar - taxalluslar `lib/audioTypes`). Yozuvchi doim
+ * `audio/aac`; qo'ng'iroq va "Ulashish" - aac/mp4; Plaud'dagi "Audio yuklash" - beshalasi.
+ */
+export type AudioContentType = 'audio/aac' | 'audio/mp4' | 'audio/mpeg' | 'audio/wav' | 'audio/ogg';
 
 export interface CreateMeetingRequest {
   clientId: string;
@@ -199,7 +205,11 @@ export interface Mark {
 export interface CompleteRequest {
   totalBytes: number;
   sha256: string;
-  durationSec: number;
+  /**
+   * Ma'lumot uchun: server davomiylikni o'zi o'lchaydi (`audio.measure`) va `null` ni ham oladi.
+   * Hajmdan taxmin faqat bitreyti ma'lum yozuvda (AAC/MP4); mp3/wav/ogg da - `null`.
+   */
+  durationSec: number | null;
   endedAt: string;
   marks: Mark[];
 }
@@ -319,6 +329,48 @@ export interface CreateSummaryRequest {
 
 export type SummaryExportFormat = 'md' | 'txt';
 export type TranscriptExportFormat = 'txt' | 'srt';
+
+// ---------------------------------------------------------------- 34. Bayonnoma (rasmiy hujjat)
+/** Hujjat tili - transkript tilidan farq qilishi mumkin (server o'giradi). */
+export type MinutesLanguage = 'uz-latn' | 'uz-cyrl' | 'ru' | 'en';
+/** Yiqilgan yozish ham `failed` bo'ladi (`error.code = 'interrupted'`). */
+export type MinutesStatus = 'running' | 'ready' | 'failed';
+export type MinutesExportFormat = 'docx' | 'pdf' | 'md';
+
+/** `GET /meetings/{id}/minutes` qatori va `POST` javobi (mazmunsiz). */
+export interface MinutesView {
+  id: string;
+  meetingId: string;
+  language: MinutesLanguage;
+  status: MinutesStatus;
+  createdAt: string;
+  finishedAt: string | null;
+  provider: string | null;
+  model: string | null;
+  transcriptRev: number;
+  /** Hujjat yozilgandan keyin transkript tahrirlangan. */
+  stale: boolean;
+  agendaCount: number;
+  sectionCount: number;
+  itemCount: number;
+  /** Model izohlari ("Aniqlashtirish kerak") - faqat ko'rsatish uchun; `minutesNotes` himoyalangan o'qiydi. */
+  notes: string[];
+  /** Tekshiruv ogohlantirishlari (kodlar) - varaqda faqat soni. */
+  warnings: string[];
+  /** Xato bilan tugaganda: kod bo'yicha matn (`message` - texnik sabab, odamga ko'rsatilmaydi). */
+  error: { code: string; message: string } | null;
+}
+
+/** `GET /meetings/{id}/minutes/{minutesId}`: ko'rinish + mazmun (tayyor bo'lsa). */
+export interface MinutesDetail extends MinutesView {
+  content: Record<string, unknown> | null;
+}
+
+export interface CreateMinutesRequest {
+  language?: MinutesLanguage;
+  /** Tayyori bo'lsa ham qayta yozish ("Qayta yozish"). */
+  force?: boolean;
+}
 
 // ---------------------------------------------------------------- 6.2 SummaryContent
 export interface Ev {

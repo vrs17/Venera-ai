@@ -230,6 +230,14 @@ def reset_for_tests(root: Path | str, *, gapi: Any = None, router: Any = None, l
 
 def start() -> None:
     """Ilova ishga tushganda (`main.py`). `MEETINGS_WORKER=false` - ip yo'q."""
+    # Bayonnoma: oldingi jarayondan qolgan `running` qatorlar darhol `interrupted` (`minutes.recover`) -
+    # ishchi o'chiq bo'lsa ham (bayonnomani ishchi emas, REST havzasi va botlar yozadi).
+    from .minutes import recover as recover_minutes
+
+    try:
+        recover_minutes(runtime().store)
+    except Exception:                                            # noqa: BLE001
+        log.exception("Bayonnoma: qolib ketgan running qatorlarni tozalab bo'lmadi")
     if not settings.meetings_worker:
         return
     from .worker import Worker
@@ -244,6 +252,11 @@ def stop() -> None:
     rt = _runtime
     if rt is not None and rt.worker is not None:
         rt.worker.stop()
+    # Bayonnoma fon havzasi (REST `minutes.start`): navbatdagi ishlar to'xtash paytida boshlanib, pullik
+    # chaqiruvni jarayon bilan birga yo'qotmasin.
+    from .minutes import stop as stop_minutes
+
+    stop_minutes()
 
 
 def status() -> dict[str, Any]:

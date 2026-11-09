@@ -1,12 +1,13 @@
 /**
- * Ulashish va eksport varag'i (Plaud'dagidek): format (PDF, Word, Markdown, matn, audio
- * fayl) va hujjat qismlari (Qisqa xulosa, Xulosa, Vazifalar, Aqliy xarita, Transkript),
+ * Ulashish va eksport varag'i (Plaud'dagidek): format (PDF, Word, Markdown, matn, subtitr,
+ * audio fayl) va hujjat qismlari (Qisqa xulosa, Xulosa, Vazifalar, Aqliy xarita, Transkript),
  * pastda bitta "Ulashish" tugmasi.
  *
- * Oqim: fayl serverda chiziladi (`GET /meetings/{id}/export`, audio - `/audio?download=1`),
- * `Authorization` bilan telefon keshiga yuklanadi va Android ulashish oynasi ochiladi
- * (Telegram, Gmail, Drive...). Hujjat har doim "Qisqa xulosa" bilan boshlanadi - buni
- * server tartibi ta'minlaydi (`MEETING_EXPORT_PARTS`).
+ * Oqim: fayl serverda chiziladi (`GET /meetings/{id}/export`, audio - `/audio?download=1`,
+ * subtitr - `/transcript/export?format=srt`), `Authorization` bilan telefon keshiga yuklanadi
+ * va Android ulashish oynasi ochiladi (Telegram, Gmail, Drive...) - `shareFile.ts`. Hujjat har
+ * doim "Qisqa xulosa" bilan boshlanadi - buni server tartibi ta'minlaydi (`MEETING_EXPORT_PARTS`).
+ * "Subtitr (SRT)" (Slack eksport ro'yxatidagi kabi) - faqat transkript, qismlar tanlanmaydi.
  *
  * Xatolar SABABi bilan (spec "Honest"): internet yo'q, oldingi fayl hali tayyorlanmoqda
  * (429/503 `export_busy`), soatlik chegara (429 `rate_limited`), xulosa tayyor emas
@@ -20,6 +21,7 @@
  */
 import {
   AudioLines,
+  Captions,
   FileCode,
   FileText,
   FileType,
@@ -38,19 +40,18 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View
 
 import { ApiError } from '@/api/client';
 import {
-  downloadWithAuth,
   fileNameFromDisposition,
   headerOf,
   MEETING_EXPORT_PARTS,
   SHARE_FILE_TYPES,
   SUMMARY_EXPORT_PARTS,
-  type FileDownloader,
   type MeetingExportFormat,
   type MeetingExportPart,
 } from '@/api/meetings';
 import type { TFn, TKey } from '@/i18n';
 import { useSettings, useT } from '@/features/settings/settingsStore';
 import { useOnline } from '@/features/upload/uploadStatus';
+import { AUDIO_EXTENSIONS, canonicalAudioType } from '@/lib/audioTypes';
 import { useServices } from '@/services';
 import { Banner, Button } from '@/ui/components';
 import { errorText } from '@/ui/errors';
@@ -60,7 +61,15 @@ import { ListGroup, ListRow } from '@/ui/list';
 import { useTheme, type Theme } from '@/ui/theme';
 import { iconSize, stroke, type as typeScale } from '@/ui/tokens';
 
-export type ShareChoice = MeetingExportFormat | 'audio';
+import { downloadForShare, nativeShare, placeForShare } from './shareFile';
+
+/** `srt` - transkript subtitr bo'lib (qismlarsiz), `audio` - asl yozuv. */
+export type ShareChoice = MeetingExportFormat | 'audio' | 'srt';
+
+/** Qismlar (Qisqa xulosa, Transkript...) faqat hujjatda tanlanadi - audio va subtitr - bitta narsa. */
+function isDocChoice(c: ShareChoice): c is MeetingExportFormat {
+  return c !== 'audio' && c !== 'srt';
+}
 
 export interface ExportSheetProps {
   visible: boolean;
@@ -81,6 +90,7 @@ const FORMATS: { value: ShareChoice; title: TKey; hint: TKey; icon: LucideIcon; 
   { value: 'docx', title: 'share.fmt.docx', hint: 'share.fmt.docxHint', icon: FileType, tone: 'info' },
   { value: 'md', title: 'share.fmt.md', hint: 'share.fmt.mdHint', icon: FileCode, tone: 'raised' },
   { value: 'txt', title: 'share.fmt.txt', hint: 'share.fmt.txtHint', icon: NotebookText, tone: 'raised' },
+  { value: 'srt', title: 'share.fmt.srt', hint: 'share.fmt.srtHint', icon: Captions, tone: 'raised' },
   { value: 'audio', title: 'share.fmt.audio', hint: 'share.fmt.audioHint', icon: AudioLines, tone: 'accent' },
 ];
 
@@ -142,6 +152,8 @@ export function shareProblem(err: unknown, choice: ShareChoice, parts: readonly 
   if (err.code === 'docx_unavailable') return { kind: 'docxUnavailable' };
   if (err.status === 409) {
     if (choice === 'audio') return { kind: 'notReady', audio: true, nothing: false, transcriptOnly: false };
+    // Subtitr - faqat transkript: u tayyor bo'lmasa ulashadigan boshqa narsa yo'q.
+    if (choice === 'srt') return { kind: 'notReady', audio: false, nothing: true, transcriptOnly: false };
     const raw = err.body?.available;
     const available = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
     const wantsSummary = parts.some((p) => SUMMARY_EXPORT_PARTS.includes(p));
@@ -181,75 +193,10 @@ function problemText(t: TFn, p: ShareProblem): string {
   }
 }
 
-// --- Native qatlam (faqat "Ulashish" bosilganda yuklanadi) ------------------------------------------
-
-interface ShareNative {
-  io: FileDownloader;
-  /** Eksport papkasi `.../cache/exports/` (chiqishda va ilova ochilganda ham tozalanadi - `lib/paths`). */
-  /** Eksport papkasi (`.../cache/exports/`), oldingi fayllardan tozalangan. */
-  freshDir(): Promise<string>;
-  move(from: string, to: string): Promise<void>;
-  canShare(): Promise<boolean>;
-  share(uri: string, mimeType: string, dialogTitle: string): Promise<void>;
-}
-
-/**
- * NIMA UCHUN `expo-file-system/legacy` ning `createDownloadResumable`i: u xato statusda ham
- * tanani faylga yozib `status` qaytaradi - 409/503 dagi server kodi (`pdf_unavailable`,
- * `export_busy`, `available`) o'qiladi. Yangi `File.downloadFileAsync` esa faqat
- * "HTTP 503" deydi - PDF yo'qmi yoki server bandmi, ajratib bo'lmasdi. Oddiy `downloadAsync`
- * emas: u oqim o'rtasida uzilsa va'dani hech qachon tugatmasdi; resumable - xatoda reject
- * qiladi, bekor qilinadi (`cancelAsync`) va progress beradi (qo'riqchi shunga tayanadi).
- * `require` - native modullar faqat ulashish paytida yuklanadi (ekran va testlar ularsiz).
- */
-function nativeShare(): ShareNative {
-  /* eslint-disable @typescript-eslint/no-require-imports */
-  const FS = require('expo-file-system/legacy') as typeof import('expo-file-system/legacy');
-  const Sharing = require('expo-sharing') as typeof import('expo-sharing');
-  /* eslint-enable @typescript-eslint/no-require-imports */
-  return {
-    io: {
-      async download(url, fileUri, headers, control) {
-        const task = FS.createDownloadResumable(url, fileUri, { headers }, (p) =>
-          control?.onProgress?.({ written: p.totalBytesWritten, total: p.totalBytesExpectedToWrite }),
-        );
-        const cancel = () => void task.cancelAsync().catch(() => {});
-        control?.signal?.addEventListener('abort', cancel);
-        try {
-          const r = await task.downloadAsync();
-          if (!r) throw new Error('cancelled');
-          return { status: r.status, uri: r.uri, headers: r.headers ?? {} };
-        } finally {
-          control?.signal?.removeEventListener('abort', cancel);
-        }
-      },
-      readText: (uri) => FS.readAsStringAsync(uri),
-      remove: (uri) => FS.deleteAsync(uri, { idempotent: true }),
-    },
-    async freshDir() {
-      const dir = `${FS.cacheDirectory ?? ''}exports/`;
-      // Oldingi eksport (audio o'nlab MB bo'lishi mumkin) keshda yig'ilib qolmasin. Ulashishdan
-      // DARHOL keyin emas, keyingi eksportda tozalanadi: qabul qilgan ilova (Telegram) faylni
-      // ulashish oynasi yopilgandan keyin ham o'qib turgan bo'lishi mumkin.
-      await FS.deleteAsync(dir, { idempotent: true });
-      await FS.makeDirectoryAsync(dir, { intermediates: true });
-      return dir;
-    },
-    move: (from, to) => FS.moveAsync({ from, to }),
-    canShare: () => Sharing.isAvailableAsync(),
-    share: (uri, mimeType, dialogTitle) => Sharing.shareAsync(uri, { mimeType, dialogTitle }),
-  };
-}
-
 // --- Varaq ----------------------------------------------------------------------------------------
 
 function rememberChoice(c: ShareChoice): void {
   lastChoice = c;
-}
-
-/** Faylga yuklash uchun vaqtinchalik nom (har urinish o'zinikini oladi). */
-function partFileName(): string {
-  return `download-${Date.now()}.part`;
 }
 
 export function ExportSheet(props: ExportSheetProps) {
@@ -292,7 +239,7 @@ function ExportBody({ onClose, meetingId, title, hasSummary, summaryId }: Export
     };
   }, []);
 
-  const isDoc = choice !== 'audio';
+  const isDoc = isDocChoice(choice);
   // Xulosa yo'q bo'lsa xulosa qismlari yuborilmaydi (server 409 berardi).
   const sendParts = hasSummary ? parts : parts.filter((p) => !SUMMARY_EXPORT_PARTS.includes(p));
   const canSend = !busy && (!isDoc || sendParts.length > 0);
@@ -328,11 +275,14 @@ function ExportBody({ onClose, meetingId, title, hasSummary, summaryId }: Export
         if (current()) setProblem({ kind: 'cannotShare' });
         return;
       }
-      const url = c === 'audio' ? meetings.audioDownloadUrl(meetingId) : meetings.exportUrl(meetingId, { format: c, parts: list, summaryId });
-      const dir = await nat.freshDir();
-      const res = await downloadWithAuth(url, `${dir}${partFileName()}`, {
+      const url =
+        c === 'audio'
+          ? meetings.audioDownloadUrl(meetingId)
+          : c === 'srt'
+            ? meetings.transcriptExportUrl(meetingId, 'srt')
+            : meetings.exportUrl(meetingId, { format: c, parts: list, summaryId });
+      const { res, dir } = await downloadForShare(nat, url, {
         tokens: session,
-        io: nat.io,
         language: uiLang,
         signal: ctl.signal,
         // Foiz faqat hajm ma'lum bo'lsa (audio); hujjat odatda bir zumda keladi.
@@ -342,13 +292,13 @@ function ExportBody({ onClose, meetingId, title, hasSummary, summaryId }: Export
       });
       const type = SHARE_FILE_TYPES[c];
       const contentType = (headerOf(res.headers, 'Content-Type') ?? '').split(';')[0].trim();
-      // Audio serverda m4a yoki (qayta o'rash bo'lmasa) asl AAC - nom va MIME javobdan.
-      const ext = c === 'audio' && contentType === 'audio/aac' ? 'aac' : type.ext;
+      // Audio serverda m4a (yoki qayta o'ralmagan asl AAC), mp3, wav yoki ogg - kengaytma va MIME
+      // javobdan (aks holda mp3 yig'ilish Telegram'ga "yozuv.mp3.m4a" bo'lib borardi).
+      const served = c === 'audio' ? canonicalAudioType(contentType) : null;
+      const ext = served ? AUDIO_EXTENSIONS[served].slice(1) : type.ext;
       const mime = c === 'audio' && contentType.startsWith('audio/') ? contentType : type.mime;
       const name = fileNameFromDisposition(headerOf(res.headers, 'Content-Disposition'), title, ext);
-      // URI ichida nom kodlanadi: "#" yoki "%" bo'lsa ham `Uri.parse` yo'lni buzmasin.
-      const target = `${dir}${encodeURIComponent(name)}`;
-      await nat.move(res.uri, target);
+      const target = await placeForShare(nat, dir, res.uri, name);
       if (!current()) return;
       await nat.share(target, mime, title || name);
       if (current()) onClose();

@@ -5,6 +5,7 @@
  * `{name}` - o'rniga qiymat qo'yiladi.
  */
 import { callsPart } from './parts/calls';
+import { minutesPart } from './parts/minutes';
 import { nav } from './parts/nav';
 import { recordingsPart } from './parts/recordings';
 import { settingsPart } from './parts/settings';
@@ -54,7 +55,8 @@ export const uz = {
 
   'template.auto': 'Avtomatik',
   'template.general': "Umumiy yig'ilish",
-  'template.minutes': 'Bayonnoma',
+  // Server bilan bir xil (2026-11-04): "Bayonnoma" - rasmiy hujjat (Word/PDF, ⋮ menyu), bu shablon - xulosa kartasi.
+  'template.minutes': 'Protokol',
   'template.standup': 'Stend-ap / holat',
   'template.one_on_one': '1:1 suhbat',
   'template.project_review': "Loyiha ko'rigi",
@@ -79,12 +81,13 @@ export const uz = {
   'shell.errorTitle': "Barno AI ochilmadi",
   'shell.errorBody': "Server javob bermadi. Birozdan keyin qayta urinib ko'ring. Yig'ilish yozish ishlayveradi.",
   'shell.record': "Yig'ilishni yozish",
-  'shell.meetings': "Yig'ilish yozuvlari",
+  // Bo'lim nomi Slack/Telegram'dagi «🎙 Plaud» bilan bir xil (2026-11-06) - marshrut va id'lar o'zgarmaydi.
+  'shell.meetings': 'Plaud',
   'shell.closeTitle': 'Yopilsinmi?',
   'shell.closeBody': "Kiritilgan o'zgarishlar saqlanmasligi mumkin.",
   'shell.closeConfirm': 'Baribir yopish',
 
-  'list.title': "Yig'ilishlar",
+  'list.title': 'Plaud',
   'list.empty': "Hali yig'ilish yo'q. Qizil tugmani bosib yozishni boshlang.",
   'list.search': 'Qidirish',
   'list.openItems': '{n} ta ochiq vazifa',
@@ -141,6 +144,9 @@ export const uz = {
     "Yozuv asosan boshqa tilda ko'rinadi - matn noto'g'ri bo'lishi mumkin. Rus/ingliz tilida qayta o'girish (spikersiz)?",
   'detail.retranscribeRu': "Rus tilida qayta o'girish",
   'detail.retranscribeEn': "Ingliz tilida qayta o'girish",
+  'detail.retranscribeUz': "O'zbek tilida qayta o'girish",
+  // Amallar menyusida doim (Slack'da har kartada "boshqa til" bor) - maqsad tili keyin tanlanadi.
+  'detail.retranscribeOther': "Boshqa tilda qayta o'girish",
   'detail.retranscribeConfirm': "Qayta o'girish yana limitdan hisoblanadi va eski xulosalar o'chadi. Davom etasizmi?",
   'detail.routerMode': 'Bu tilda spikerlar ajratilmaydi, vaqtlar taxminiy',
   'detail.stale': "Matn tahrirlandi - xulosa eskirgan bo'lishi mumkin",
@@ -514,18 +520,11 @@ export const uz = {
   'settings.connAs': "{login} sifatida",
   'settings.reconnectHint': "Ulanish muddati tugasa yoki parol o'zgarsa - qayta kiring.",
   'settings.reconnect': "Qayta kirish",
-  'settings.meetings': "Yig'ilish yozuvlari",
+  'settings.meetings': 'Plaud',
   'settings.meetingsHint': "Yig'ilishni yozish, xulosa va vazifalar",
   'settings.myTasks': "Yig'ilishlardagi vazifalarim",
   'settings.appearance': "Ko'rinish",
   'settings.recordingSection': "Yig'ilish yozish sozlamalari",
-  'settings.volumeTitle': "Ovoz tugmasi bilan yozish",
-  'settings.volumeOn': "Yoqilgan",
-  'settings.volumeOff': "O'chiq",
-  'settings.volumeHint': "Ovozni pasaytirish tugmasini ketma-ket ikki marta bosing - yozuv boshlanadi, yana ikki marta - to'xtaydi. Istalgan ilovada, ekran yoniq paytda ishlaydi. Barno faqat shu tugmani kuzatadi.",
-  'settings.volumeSteps': "Yoqish: \"Sozlamani ochish\" > O'rnatilgan ilovalar > \"Barno: ovoz tugmasi bilan yozish\" > Yoqish.",
-  'settings.volumeOpen': "Sozlamani ochish",
-  'settings.volumeManage': "Sozlamada boshqarish",
 
   // UI qayta ishlanishi (2026-10-10): har bo'lim o'z faylida - parallel ishda to'qnashmasin.
   ...nav.uz,
@@ -533,6 +532,7 @@ export const uz = {
   ...recordingsPart.uz,
   ...sharePart.uz,
   ...callsPart.uz,
+  ...minutesPart.uz,
 } as const;
 
 export type TKey = keyof typeof uz;

@@ -3,7 +3,7 @@
  * `?download=1`) `Authorization` bilan keshga -> Android ulashish oynasi. Xatolar sababi
  * bilan: 409 (faqat transkript), 503 pdf_unavailable (Word'da), 429/503 band, internet yo'q,
  * yuklash uzilib qoldi (qo'riqchi), 410 (qayta urinish yo'q). Standart tarkib - Qisqa xulosa,
- * To'liq xulosa, Vazifalar. Native qatlam (expo-file-system/legacy, expo-sharing) - soxta;
+ * To'liq xulosa, Vazifalar. "Subtitr (SRT)" - faqat transkript (`/transcript/export?format=srt`). Native qatlam (expo-file-system/legacy, expo-sharing) - soxta;
  * tarmoq yo'q.
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
@@ -88,10 +88,12 @@ function envelope(status: number, code: string, extra: Record<string, unknown> =
 
 function services() {
   const real = createMeetingsApi(new ApiClient({ baseUrl: 'https://x.uz/' }));
-  return fakeServices({ meetings: fakeMeetingsApi({ exportUrl: real.exportUrl, audioDownloadUrl: real.audioDownloadUrl }) });
+  return fakeServices({
+    meetings: fakeMeetingsApi({ exportUrl: real.exportUrl, audioDownloadUrl: real.audioDownloadUrl, transcriptExportUrl: real.transcriptExportUrl }),
+  });
 }
 
-async function open(props: { hasSummary?: boolean; format?: 'pdf' | 'docx' | 'md' | 'txt' | 'audio'; summaryId?: string } = {}) {
+async function open(props: { hasSummary?: boolean; format?: 'pdf' | 'docx' | 'md' | 'txt' | 'srt' | 'audio'; summaryId?: string } = {}) {
   const onClose = jest.fn();
   const svc = services();
   const view = await render(
@@ -293,6 +295,57 @@ describe('ExportSheet', () => {
     await waitFor(() => expect(Sharing.shareAsync).toHaveBeenCalled());
     expect(url()).toBe(`${BASE}/audio?download=1`);
     expect(Sharing.shareAsync).toHaveBeenCalledWith('file:///cache/exports/Narxlar%202026-10-10.m4a', { mimeType: 'audio/mp4', dialogTitle: 'Narxlar va hisobot' });
+  });
+
+  it('Subtitr (SRT): transcript only via /transcript/export?format=srt - no parts, a .srt subrip file', async () => {
+    const { onClose } = await open({ format: 'srt' });
+    expect(screen.getByTestId('export-fmt-srt')).toBeChecked();
+    expect(screen.getByText('Subtitr (SRT)')).toBeTruthy();
+    expect(screen.getByText('Faqat transkript, vaqt belgilari bilan')).toBeTruthy();
+    // Qismlar subtitrga taalluqli emas.
+    expect(screen.queryByTestId('export-part-brief')).toBeNull();
+    expect(screen.queryByTestId('export-part-transcript')).toBeNull();
+    respond(200, { 'Content-Type': 'application/x-subrip; charset=utf-8', 'Content-Disposition': 'attachment; filename="narxlar-va-hisobot.srt"' });
+    await share();
+    await waitFor(() => expect(Sharing.shareAsync).toHaveBeenCalled());
+    expect(url()).toBe(`${BASE}/transcript/export?format=srt`);
+    expect(FS.downloadAsync.mock.calls[0][2].headers).toMatchObject({ Authorization: 'Bearer jwt' });
+    expect(Sharing.shareAsync).toHaveBeenCalledWith('file:///cache/exports/narxlar-va-hisobot.srt', {
+      mimeType: 'application/x-subrip',
+      dialogTitle: 'Narxlar va hisobot',
+    });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('SRT before the transcript is ready: 409 says so honestly, no "transcript only" offer', async () => {
+    await open({ format: 'srt', hasSummary: false });
+    respond(409, {}, envelope(409, 'not_ready'));
+    await share();
+    expect(await screen.findByText("Yozuv hali matnga o'girilmagan - tayyor bo'lgach ulashing")).toBeTruthy();
+    expect(screen.queryByText('Faqat transkript')).toBeNull();
+    expect(shareProblem(new ApiError(409, 'not_ready', 'x', { available: ['transcript'] }), 'srt', ['brief'])).toEqual({
+      kind: 'notReady',
+      audio: false,
+      nothing: true,
+      transcriptOnly: false,
+    });
+  });
+
+  it('audio of an mp3/wav/ogg meeting keeps its real extension and MIME (not "x.mp3.m4a")', async () => {
+    for (const [type, file] of [
+      ['audio/mpeg', 'Kengash 9-noyabr.mp3'],
+      ['audio/wav', 'Diktofon.wav'],
+      ['audio/ogg', 'Ovozli xabar.ogg'],
+    ] as const) {
+      Sharing.shareAsync.mockClear();
+      FS.downloadAsync.mockReset();
+      await open({ format: 'audio' });
+      respond(200, { 'Content-Type': type, 'Content-Disposition': `attachment; filename="a"; filename*=UTF-8''${encodeURIComponent(file)}` });
+      await share();
+      await waitFor(() => expect(Sharing.shareAsync).toHaveBeenCalled());
+      expect(Sharing.shareAsync).toHaveBeenCalledWith(`file:///cache/exports/${encodeURIComponent(file)}`, { mimeType: type, dialogTitle: 'Narxlar va hisobot' });
+      await screen.unmount();
+    }
   });
 
   it('410 audio_expired is explained WITHOUT a useless retry; a phone without a share target says so', async () => {

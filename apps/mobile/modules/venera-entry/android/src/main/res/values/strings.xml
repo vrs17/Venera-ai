@@ -5,9 +5,6 @@
   <string name="venera_entry_tile_label">Yozish</string>
   <string name="venera_entry_tile_idle">Bosing - yozish</string>
   <string name="venera_entry_tile_recording">Yozilmoqda - to\'xtatish</string>
-  <!-- Android "Maxsus imkoniyatlar" ro'yxatidagi nom va izoh. -->
-  <string name="venera_entry_key_service_label">Barno: ovoz tugmasi bilan yozish</string>
-  <string name="venera_entry_key_service_desc">Ovozni pasaytirish tugmasini ketma-ket ikki marta bosing - yig\'ilish yozuvi boshlanadi, yana ikki marta - to\'xtaydi. Barno faqat shu tugmani kuzatadi: ekrandagi matnni o\'qimaydi va hech narsani saqlamaydi.</string>
   <!-- "Ulashish" ro'yxatidagi nom (ImportActivity) va nusxalash paytidagi xabarlar. -->
   <string name="venera_entry_import_label">Barno AI</string>
   <string name="venera_entry_import_preparing">Barno: yozuv tayyorlanmoqda…</string>

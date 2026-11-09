@@ -33,13 +33,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: 'Barno AI',
   slug: 'venera-yozuv',
-  version: '1.3.5',
+  version: '1.3.6',
   scheme: 'venera-rec',
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
   android: {
     package: 'uz.brbtech.venera.meetings',
-    versionCode: 10,
+    versionCode: 11,
     // Yozuvlar va tokenlar Google zaxirasiga tushmasligi kerak (spec 2.3, 4.4).
     allowBackup: false,
     // Mikrofon/bildirishnoma ruxsatlarini expo-audio plagini qo'shadi.
@@ -51,6 +51,29 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       'android.permission.SYSTEM_ALERT_WINDOW',
       'android.permission.WRITE_EXTERNAL_STORAGE',
       'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+      // Google Play Protect (2026-11-09, ega qarori): "kuchaytirilgan firibgarlikdan himoya"
+      // sideload qilingan ilovani o'rnatishning O'ZIDA to'sadi, agar u SMS (o'qish/qabul),
+      // qo'ng'iroqlar jurnali, boshqa ilova o'rnatish yoki hamma ilovalarni ko'rish ruxsatini
+      // e'lon qilsa - bank kodlarini o'g'irlovchi zararli ilovalarning belgilari. Barno bularning
+      // hech birini ishlatmaydi; bu yerda ular kelajakdagi kutubxona qo'shib yuborsa ham
+      // birlashtirilgan manifestdan olib tashlanadi (tools:node="remove"). Testi: playProtect.test.ts.
+      'android.permission.RECEIVE_SMS',
+      'android.permission.READ_SMS',
+      'android.permission.SEND_SMS',
+      'android.permission.RECEIVE_MMS',
+      'android.permission.RECEIVE_WAP_PUSH',
+      'android.permission.READ_CALL_LOG',
+      'android.permission.WRITE_CALL_LOG',
+      'android.permission.PROCESS_OUTGOING_CALLS',
+      'android.permission.REQUEST_INSTALL_PACKAGES',
+      'android.permission.QUERY_ALL_PACKAGES',
+      // 1.3.5 APK auditi: kutubxona qo'shadi, ilova ishlatmaydi (keraksiz ruxsat - ortiqcha shubha).
+      // androidx.biometric (expo-secure-store): faqat `requireAuthentication`/`canUseBiometricAuthentication`
+      // bilan ishlaydi - biz SecureStore'ni oddiy get/set/delete bilan chaqiramiz.
+      'android.permission.USE_BIOMETRIC',
+      'android.permission.USE_FINGERPRINT',
+      // installreferrer (expo-application): faqat `getInstallReferrerAsync` uchun - chaqirilmaydi.
+      'com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE',
     ],
     permissions: ['android.permission.RECORD_AUDIO', 'android.permission.POST_NOTIFICATIONS', 'android.permission.VIBRATE'],
   },

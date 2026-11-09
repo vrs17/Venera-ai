@@ -2,7 +2,8 @@
  * Qo'ng'iroq yozuvini / ulashilgan faylni yig'ilishlar navbatiga qo'shish.
  *
  * Yangi yuklash yo'li YO'Q: fayl ilova xotirasiga (`recordings/`) nusxalanadi va oddiy
- * navbat qatori yoziladi (`contentType` audio/mp4 yoki audio/aac, `source` call/share) -
+ * navbat qatori yoziladi (`source` call/share; `contentType` - qo'ng'iroq va native ulashishda
+ * audio/mp4 yoki audio/aac, Plaud'dagi "Audio yuklash" da yana audio/mpeg, audio/wav, audio/ogg) -
  * keyin yozuvlar bilan bir xil rezyumli uploader, oflayn kutish, xato pill'lari, xulosa.
  *
  * Takror yubormaslik ikki qavat:
@@ -18,6 +19,7 @@ import { formatTime } from '@/features/meeting/formatDate';
 import { newQueueRow, type QueueStore } from '@/features/upload/queueStore';
 import type { Uploader } from '@/features/upload/uploader';
 import type { TFn } from '@/i18n';
+import { AUDIO_EXTENSIONS, type AudioExtension } from '@/lib/audioTypes';
 import { sha256Hex } from '@/lib/sha256';
 import { uuidV4 } from '@/lib/uuid';
 
@@ -77,8 +79,9 @@ export function isStillWriting(rec: Pick<CallRecording, 'dateMs'>, now: number):
   return age < QUIET_MS && age > -QUIET_MS;
 }
 
-export function extensionFor(contentType: AudioContentType): '.m4a' | '.aac' {
-  return contentType === 'audio/aac' ? '.aac' : '.m4a';
+/** `recordings/<clientId><ext>`: kengaytma turga mos - pleer (ExoPlayer) formatni shundan ham taniydi. */
+export function extensionFor(contentType: AudioContentType): AudioExtension {
+  return AUDIO_EXTENSIONS[contentType];
 }
 
 export type SendOutcome =
@@ -198,21 +201,28 @@ async function copyAndQueue(
   return { kind: 'queued', clientId };
 }
 
+/**
+ * Tasdiq ekranidagi fayl: native `ImportMeta` (m4a/aac - Kotlin `readImportMeta`) yoki JS o'qigan
+ * meta ("Audio yuklash" yozgan mp3/wav/ogg - native ularni tanimaydi). Tur - serverning beshta
+ * turidan biri (`null` - qabul qilinmaydi).
+ */
+export type ImportFileMeta = Omit<ImportMeta, 'contentType'> & { contentType: AudioContentType | null };
+
 export interface ImportSendDeps {
   queue: Pick<QueueStore, 'insert'>;
   /**
    * `imports/<nom>` ni `recordings/<clientId><ext>` ga ko'chiradi va file:// URI qaytaradi.
    * NIMA UCHUN ko'chirish: recordings/ dagi fayllar yuklangach o'chadi va chiqishda tozalanadi.
    */
-  moveIntoRecordings(meta: ImportMeta, clientId: string, ext: '.m4a' | '.aac'): string;
-  /** Native `removeImport`: ko'chirilgan faylning `.json` meta'si ham ketadi. */
+  moveIntoRecordings(meta: ImportFileMeta, clientId: string, ext: AudioExtension): string;
+  /** `imports/` dan olib tashlash (native nom - Kotlin `removeImport`, qolgani - JS): `.json` meta ham ketadi. */
   removeImport(fileName: string): boolean;
   newClientId(): string;
   now?: () => number;
 }
 
 /** "Ulashish -> Barno AI" bilan kelgan bitta faylni navbatga qo'shadi (uploader'ni chaqiruvchi turtadi). */
-export async function sendImportedFile(deps: ImportSendDeps, meta: ImportMeta, opts: SendOptions): Promise<SendOutcome> {
+export async function sendImportedFile(deps: ImportSendDeps, meta: ImportFileMeta, opts: SendOptions): Promise<SendOutcome> {
   const now = deps.now ?? Date.now;
   if (!meta.contentType) return { kind: 'unsupported' };
   if (meta.sizeBytes < MIN_BYTES) return { kind: 'missing' };

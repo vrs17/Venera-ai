@@ -219,9 +219,9 @@ describe('Collapsible / StepList', () => {
 });
 
 describe('StatusPill / ProgressBar', () => {
-  it('textTestID lands on the inner Text (keeps `volume-status` readable)', async () => {
-    await render(<StatusPill testID="pill" textTestID="volume-status" label="Yoqilgan" tone="good" icon={Mic} />);
-    const text = screen.getByTestId('volume-status');
+  it('textTestID lands on the inner Text (keeps the pill label readable in tests)', async () => {
+    await render(<StatusPill testID="pill" textTestID="pill-text" label="Yoqilgan" tone="good" icon={Mic} />);
+    const text = screen.getByTestId('pill-text');
     expect(text).toHaveTextContent('Yoqilgan');
     expect(text).toHaveStyle({ color: lightTheme.tones.good.fg });
     expect(screen.getByTestId('pill')).toHaveStyle({ backgroundColor: lightTheme.tones.good.bg });

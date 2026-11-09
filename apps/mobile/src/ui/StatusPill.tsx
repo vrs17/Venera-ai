@@ -33,7 +33,7 @@ export function StatusPill({
   icon?: LucideIcon;
   dot?: boolean;
   testID?: string;
-  /** Ichki Text'ga - eski testlar (`volume-status`) matnni to'g'ridan-to'g'ri o'qiydi. */
+  /** Ichki Text'ga - testlar pill matnini to'g'ridan-to'g'ri o'qiydi (masalan `ListRow` dagi pill). */
   textTestID?: string;
   style?: StyleProp<ViewStyle>;
 }) {

@@ -9,6 +9,7 @@
  * bilan ishlaydi (bir xil shartnoma, `__tests__/queueStore.test.ts`).
  */
 import type { AudioContentType, EntrySource, Lang, Mark, TemplateId } from '@/api/types';
+import { isAudioContentType } from '@/lib/audioTypes';
 
 export type QueueState = 'recording' | 'stopped' | 'creating' | 'uploading' | 'completing' | 'done' | 'failed';
 
@@ -17,7 +18,8 @@ export interface QueueRow {
   fileUri: string;
   /**
    * Yozuvchi doim `audio/aac` (ADTS) yozadi; import qilingan qo'ng'iroq / ulashilgan fayl
-   * (`source` = `call` | `share`, 2026-10-10) ko'pincha `audio/mp4` (.m4a). Server ikkalasini qabul qiladi.
+   * (`source` = `call` | `share`, 2026-10-10) ko'pincha `audio/mp4` (.m4a); Plaud'dagi "Audio yuklash"
+   * (2026-11-09) yana `audio/mpeg`, `audio/wav`, `audio/ogg`. Server beshalasini qabul qiladi.
    */
   contentType: AudioContentType;
   language: Lang;
@@ -148,8 +150,9 @@ function fromDb(r: DbRow): QueueRow {
   return {
     clientId: String(r.clientId),
     fileUri: String(r.fileUri),
-    // Noma'lum qiymat (qo'lda buzilgan DB) serverda 415 bo'lardi - eski standart turga qaytamiz.
-    contentType: r.contentType === 'audio/mp4' ? 'audio/mp4' : 'audio/aac',
+    // Beshta tur o'zgarmay qaytadi. Noma'lum qiymat (qo'lda buzilgan DB) serverda 415 bo'lardi -
+    // yozuvchining standart turiga qaytamiz.
+    contentType: isAudioContentType(r.contentType) ? r.contentType : 'audio/aac',
     language: r.language as Lang,
     template: r.template as TemplateId,
     expectedSpeakers: r.expectedSpeakers == null ? null : Number(r.expectedSpeakers),

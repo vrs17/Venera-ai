@@ -1,4 +1,5 @@
 import { callsPart } from './parts/calls';
+import { minutesPart } from './parts/minutes';
 import { nav } from './parts/nav';
 import { recordingsPart } from './parts/recordings';
 import { settingsPart } from './parts/settings';
@@ -74,12 +75,12 @@ export const ru: Record<TKey, string> = {
   'shell.errorTitle': 'Не удалось открыть Barno AI',
   'shell.errorBody': 'Сервер не ответил. Попробуйте ещё раз чуть позже. Запись встреч продолжает работать.',
   'shell.record': 'Записать встречу',
-  'shell.meetings': 'Записи встреч',
+  'shell.meetings': 'Plaud',
   'shell.closeTitle': 'Закрыть?',
   'shell.closeBody': 'Внесённые изменения могут не сохраниться.',
   'shell.closeConfirm': 'Всё равно закрыть',
 
-  'list.title': 'Встречи',
+  'list.title': 'Plaud',
   'list.empty': 'Встреч пока нет. Нажмите красную кнопку, чтобы начать запись.',
   'list.search': 'Поиск',
   'list.openItems': 'Открытых задач: {n}',
@@ -136,6 +137,8 @@ export const ru: Record<TKey, string> = {
     'Похоже, запись в основном на другом языке - текст может быть неточным. Расшифровать заново на русском/английском (без спикеров)?',
   'detail.retranscribeRu': 'Расшифровать на русском',
   'detail.retranscribeEn': 'Расшифровать на английском',
+  'detail.retranscribeUz': 'Расшифровать на узбекском',
+  'detail.retranscribeOther': 'Расшифровать на другом языке',
   'detail.retranscribeConfirm': 'Повторная расшифровка снова расходует лимит, старые итоги удалятся. Продолжить?',
   'detail.routerMode': 'Для этого языка спикеры не разделяются, время приблизительное',
   'detail.stale': 'Текст изменён - итог может быть устаревшим',
@@ -506,22 +509,16 @@ export const ru: Record<TKey, string> = {
   'settings.connAs': "как {login}",
   'settings.reconnectHint': "Если подключение истекло или пароль изменился - войдите заново.",
   'settings.reconnect': "Войти заново",
-  'settings.meetings': "Записи встреч",
+  'settings.meetings': 'Plaud',
   'settings.meetingsHint': "Запись встреч, резюме и задачи",
   'settings.myTasks': "Мои задачи со встреч",
   'settings.appearance': "Оформление",
   'settings.recordingSection': "Настройки записи встреч",
-  'settings.volumeTitle': "Запись кнопкой громкости",
-  'settings.volumeOn': "Включено",
-  'settings.volumeOff': "Выключено",
-  'settings.volumeHint': "Дважды подряд нажмите кнопку уменьшения громкости - запись начнётся, ещё дважды - остановится. Работает в любом приложении при включённом экране. Barno следит только за этой кнопкой.",
-  'settings.volumeSteps': "Включить: «Открыть настройки» > Установленные приложения > «Barno: запись кнопкой громкости» > Включить.",
-  'settings.volumeOpen': "Открыть настройки",
-  'settings.volumeManage': "Управлять в настройках",
   // UI qayta ishlanishi (2026-10-10): har bo'lim o'z faylida - parallel ishda to'qnashmasin.
   ...nav.ru,
   ...settingsPart.ru,
   ...recordingsPart.ru,
   ...sharePart.ru,
   ...callsPart.ru,
+  ...minutesPart.ru,
 };

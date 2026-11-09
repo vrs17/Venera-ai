@@ -146,6 +146,16 @@ class CrmRequest(BaseModel):
     force: bool = False
 
 
+class MinutesRequest(BaseModel):
+    """`POST /meetings/{id}/minutes` tanasi - ixtiyoriy (bo'sh tana = default'lar)."""
+
+    #: Hujjat tili (`MinutesLang`). `null` - yig'ilish tilidan (`uz` -> `uz-cyrl`, bank hujjati). Tekshiruv
+    #: xizmatda: noma'lum til 400 `invalid_language` (422 emas) - Slack/Telegram bilan bir xil xato.
+    language: str | None = Field(default=None, max_length=16)
+    #: Tayyori bo'lsa ham qayta yozish. Xuddi shu hujjat hozir yozilayotgan bo'lsa - unga qo'shiladi (200).
+    force: bool = False
+
+
 # --- javoblar ----------------------------------------------------------------------
 
 
@@ -428,6 +438,49 @@ class AskAnswer(BaseModel):
 
 class QuestionList(BaseModel):
     items: list[AskAnswer]
+
+
+#: Bayonnoma (rasmiy hujjat) tili - `minutes.LANGS`; xulosa tilidan (`Lang`) farqli, o'zbekcha ikki yozuvda.
+MinutesLang = Literal["uz-latn", "uz-cyrl", "ru", "en"]
+#: `running` - fonda yozilmoqda, `ready` - tayyor, `failed` - yozilmadi (`error.code`: `llm_failed`,
+#: `llm_busy`, `llm_rate_limited`, `llm_not_configured`, `internal`, `interrupted`).
+MinutesStatus = Literal["running", "ready", "failed"]
+
+
+class MinutesView(BaseModel):
+    """Bayonnoma holati, mazmunsiz (`minutes.view`)."""
+
+    id: str
+    meetingId: str
+    language: MinutesLang
+    status: MinutesStatus
+    createdAt: str
+    finishedAt: str | None = None
+    #: Yozgan model: `claude` | `openai` | `ollama` va model nomi (tayyor hujjatda).
+    provider: str | None = None
+    model: str | None = None
+    transcriptRev: int
+    #: Transkript hujjatdan keyin tahrirlangan - yangi versiya bo'yicha qayta yozish mumkin.
+    stale: bool
+    agendaCount: int
+    sectionCount: int
+    itemCount: int
+    #: Modelning "Aniqlashtirish kerak" izohlari - hujjatdagidek (`[S#]` o'rniga ism yoki "3-иштирокчи").
+    notes: list[str]
+    #: Tekshiruv ogohlantirishlari: `ungrounded_name:<ism>`, `unverified_number:<raqam>`, `script_mismatch`, ...
+    warnings: list[str]
+    #: `{code, message}` - faqat `failed` da.
+    error: SummaryErrorOut | None = None
+
+
+class MinutesList(BaseModel):
+    items: list[MinutesView]
+
+
+class MinutesDetail(MinutesView):
+    #: Hujjat mazmuni (`minutes/validate.py` shakli + `version`, `language`, `meeting`, `quality`) - `null`,
+    #: agar holat `ready` bo'lmasa. Fayl - `.../minutes/{id}/export`.
+    content: dict[str, Any] | None = None
 
 
 class TemplateInfo(BaseModel):

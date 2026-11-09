@@ -1,11 +1,16 @@
 /**
- * Yozuvlar ro'yxati (spec 3.1, Plaud uslubi): bitta vaqt chizig'i - serverdagi
- * yig'ilishlar va telefonda turgan (hali yuklanmagan) yozuvlar birga, kunlar
+ * Plaud bo'limi - yozuvlar ro'yxati (spec 3.1, Plaud uslubi; 2026-11-06 dan bo'lim nomi ham
+ * "Plaud" - Slack/Telegram'dagi «🎙 Plaud» bilan bir xil, marshrut `/meetings` o'zgarmagan):
+ * bitta vaqt chizig'i - serverdagi yig'ilishlar va telefonda turgan (hali yuklanmagan) yozuvlar birga, kunlar
  * bo'yicha ("Bugun", "Kecha", "8-oktabr"). Har karta: belgi, nom, davomiylik,
  * soat va holat (yuklash sababi bilan: "Internet yo'q", "Yuklanmoqda 42%").
  *
  * Yozish - bosh amal: pastda katta qizil tugma; bo'sh holat esa yozishni o'rgatadi.
  * Yozuv ketayotganda tepada jonli karta ("Yozilmoqda 12:34").
+ *
+ * "Audio yuklash" (sarlavhada va bo'sh holatda): telefondagi audio fayl(lar) tizim oynasidan
+ * tanlanadi va "Ulashish -> Barno AI" bilan bir yo'ldan o'tadi - `/import` tasdiq ekrani
+ * (`features/calls/useAudioUpload`). Faqat native import bor ilovada (tasdiq ekrani shunga tayanadi).
  *
  * Saqlangan xatti-harakat: sessiya tugadi banneri, 403/404 -> "bo'lim yoqilmagan",
  * pastga tortib yangilash, sahifalab yuklash, ishlov yoki lokal yozuv bo'lsa 15 s da
@@ -19,7 +24,7 @@
  */
 import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query';
 import { router, Stack, useFocusEffect } from 'expo-router';
-import { ChevronRight, CircleAlert, CircleDot, CloudOff, ListChecks, Mic, Phone, RotateCcw, Search, Settings2, X } from 'lucide-react-native';
+import { ChevronRight, CircleAlert, CircleDot, CloudOff, ListChecks, Mic, Phone, RotateCcw, Search, Settings2, Upload, X } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -37,6 +42,7 @@ import { ApiError } from '@/api/client';
 import { useAuth } from '@/features/auth/authStore';
 import { CallsPanel } from '@/features/calls/CallsPanel';
 import { callsSupported } from '@/features/calls/permission';
+import { useAudioUpload } from '@/features/calls/useAudioUpload';
 import { isProcessing } from '@/features/meeting/queries';
 import { localTitle, RecordingCard } from '@/features/meeting/RecordingCard';
 import { dayLabel, groupByDay, matchesQuery, mergeTimeline, type TimelineItem, type TimelineSection } from '@/features/meeting/timeline';
@@ -93,6 +99,7 @@ export default function MeetingsScreen() {
   const [callsOn] = useState(callsSupported);
   const [tab, setTab] = useState<'recordings' | 'calls'>('recordings');
   const callsTab = callsOn && tab === 'calls';
+  const upload = useAudioUpload();
 
   useFocusEffect(
     useCallback(() => {
@@ -136,6 +143,8 @@ export default function MeetingsScreen() {
   const failedEmpty = listFailed && nothing;
   const showSearch = q !== '' || items.length > 0 || list.isLoading;
   const fabHidden = live || empty || featureOff || callsTab;
+  // Yuklash yozuv ketayotganda ham mumkin (mikrofon kerak emas); bo'lim yoqilmagan bo'lsa - yo'q (FAB kabi).
+  const uploadOn = upload.supported && !callsTab && !featureOff;
 
   const onRefresh = async () => {
     setPulling(true);
@@ -239,6 +248,11 @@ export default function MeetingsScreen() {
           title={t('recs.emptyTitle')}
           body={t('recs.emptyBody')}
           action={{ title: t('list.record'), icon: CircleDot, variant: 'record', testID: 'meetings-empty-record', onPress: () => router.push('/record?src=app') }}
+          altAction={
+            uploadOn
+              ? { title: t('calls.pick.title'), icon: Upload, testID: 'meetings-empty-upload', loading: upload.busy, onPress: () => void upload.pick() }
+              : undefined
+          }
           secondary={{ title: t('recs.emptyQuick'), testID: 'meetings-empty-quick', onPress: () => router.push('/settings/quick') }}
         />
       );
@@ -255,6 +269,16 @@ export default function MeetingsScreen() {
             <View style={s.headerRight}>
               {callsTab ? (
                 <IconButton testID="calls-settings" icon={Settings2} label={t('calls.settingsTitle')} onPress={() => router.push('/settings/calls')} />
+              ) : null}
+              {uploadOn ? (
+                upload.busy ? (
+                  // Katta fayl nusxalanguncha bir necha soniya - qayta bosilmasin, nima bo'layotgani ko'rinsin.
+                  <View testID="meetings-upload-busy" style={s.headerBusy} accessible accessibilityLabel={t('calls.pick.preparing')}>
+                    <ActivityIndicator color={th.textMuted} />
+                  </View>
+                ) : (
+                  <IconButton testID="meetings-upload" icon={Upload} label={t('calls.pick.title')} onPress={() => void upload.pick()} />
+                )
               ) : null}
               <IconButton testID="meetings-tasks" icon={ListChecks} label={t('list.myTasks')} onPress={() => router.push('/action-items')} />
             </View>
@@ -344,6 +368,7 @@ const s = StyleSheet.create({
   root: { flex: 1 },
   tabs: { paddingHorizontal: 16, paddingTop: 8 },
   headerRight: { flexDirection: 'row', alignItems: 'center' },
+  headerBusy: { width: hit.min, height: hit.min, alignItems: 'center', justifyContent: 'center' },
   content: { paddingHorizontal: 16, paddingTop: 8, flexGrow: 1 },
   header: { gap: 12, paddingBottom: 4 },
   search: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: radius.md, paddingHorizontal: 12, minHeight: hit.min },

@@ -163,6 +163,20 @@ apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk   #
 Faqat o'zingiz sinash uchun (pilotga BERILMAYDI): `./gradlew assembleRelease
 -PveneraAllowDebugSigned=true` - debug kalit bilan imzolanadi.
 
+**Tarqatishdan oldin - majburiy tekshiruv** (har bir APK, arm64 va universal ham):
+
+```bash
+python3 scripts/check_apk.py android/app/build/outputs/apk/release/app-release.apk --expect-cert <SHA-256>
+```
+
+Chiqish kodi 0 bo'lmasa APK'ni APK API'ga / Telegram botga BERMANG. Skript to'xtatadi:
+debug kalit (ayniqsa React Native shablonidagi ochiq kalit), boshqa kalit (`--expect-cert` -
+birinchi release'da yozib qo'yilgan SHA-256; kalit almashsa o'rnatilgan ilova yangilanmaydi),
+Play Protect sideload'da to'sadigan ruxsat yoki xizmat (SMS, qo'ng'iroqlar jurnali, Accessibility,
+bildirishnoma tinglovchi - 2026-11-06 da 1.3.5 aynan Accessibility tufayli "App not installed"
+bo'lgan), debuggable/testOnly, eski targetSdk, siqilgan resources.arsc yoki .so. Faqat standart
+Python - build serverga hech narsa o'rnatilmaydi.
+
 Pilot APK faqat `llm.brb-tech.uz/download/` orqali tarqatiladi. EAS Build
 (`npx eas-cli build -p android --profile preview`) ham mumkin, lekin unda kod
 kompaniyadan tashqariga chiqadi - lead ruxsati kerak.

@@ -109,4 +109,24 @@ describe.each(impls)('QueueStore (%s)', (_name, make) => {
     await store.clear();
     expect(await store.list()).toEqual([]);
   });
+
+  it('keeps every server audio type (aac, mp4, mp3, wav, ogg) through insert, update and reads', async () => {
+    const store = await make();
+    if (!store) return;
+    const types = ['audio/aac', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/ogg'] as const;
+    for (let i = 0; i < types.length; i++) await store.insert({ ...base(`t${i}`, `2026-11-09T06:00:0${i}Z`), contentType: types[i] });
+    expect((await store.list()).map((r) => r.contentType)).toEqual([...types]);
+    await store.update('t2', { state: 'uploading', receivedBytes: 10 });
+    expect(await store.get('t2')).toMatchObject({ contentType: 'audio/mpeg', state: 'uploading' });
+  });
+});
+
+describe('QueueStore (sqlite) content type safety', () => {
+  it('a corrupted contentType falls back to the recorder type instead of a certain 415', async () => {
+    const db = nodeSqliteDb();
+    if (!db) return;
+    const store = await createSqliteQueueStore(db);
+    await store.insert({ ...base('x', '2026-11-09T06:00:00Z'), contentType: 'audio/flac' as never });
+    expect((await store.get('x'))?.contentType).toBe('audio/aac');
+  });
 });

@@ -67,6 +67,9 @@ describe('meetings API endpoints', () => {
     ['25 my action items', (s) => s.m.myActionItems('open', 100), 'GET', `${M}/action-items`, { status: 'open', limit: '100' }],
     ['26 ask', (s) => s.m.ask(ID, { question: 'q' }), 'POST', `${M}/${ID}/ask`],
     ['27 questions', (s) => s.m.questions(ID), 'GET', `${M}/${ID}/questions`],
+    ['34a minutes list', (s) => s.m.minutesList(ID), 'GET', `${M}/${ID}/minutes`],
+    ['34b create minutes', (s) => s.m.createMinutes(ID, { language: 'uz-cyrl', force: true }), 'POST', `${M}/${ID}/minutes`],
+    ['34c minutes', (s) => s.m.minutes(ID, 'D1'), 'GET', `${M}/${ID}/minutes/D1`],
     ['29 register device', (s) => s.a.registerDevice({ deviceName: 'd', platform: 'android', appVersion: '1' }, 'jwt'), 'POST', '/api/v1/auth/devices'],
     ['30 device session', (s) => s.a.deviceSession('dt'), 'POST', '/api/v1/auth/devices/session'],
     ['31 revoke device', (s) => s.a.revokeDevice('dt'), 'POST', '/api/v1/auth/devices/revoke'],
@@ -108,6 +111,21 @@ describe('meetings API endpoints', () => {
     expect(s.calls.slice(0, 3).map((c) => c.headers.Authorization)).toEqual([undefined, undefined, undefined]);
     expect(s.calls[3].headers.Authorization).toBe('Bearer fresh');
     expect(s.calls[0].body).toEqual({ deviceToken: 'dt' });
+  });
+
+  it('34b sends an explicit document language and force (server: plain "uz" = Latin, none = Cyrillic)', async () => {
+    const s = setup();
+    await s.m.createMinutes(ID, { language: 'uz-latn', force: false });
+    expect(s.calls[0].body).toEqual({ language: 'uz-latn', force: false });
+    expect(s.calls[0].headers.Authorization).toBe('Bearer tok');
+  });
+
+  it('34d/21b file URLs: minutes export and transcript subtitles (downloaded with auth, not via JSON)', () => {
+    const s = setup();
+    expect(s.m.minutesExportUrl(ID, 'D1', 'docx')).toBe(`https://llm.brb-tech.uz${M}/${ID}/minutes/D1/export?format=docx`);
+    expect(s.m.minutesExportUrl(ID, 'D1', 'pdf')).toBe(`https://llm.brb-tech.uz${M}/${ID}/minutes/D1/export?format=pdf`);
+    expect(s.m.transcriptExportUrl(ID, 'srt')).toBe(`https://llm.brb-tech.uz${M}/${ID}/transcript/export?format=srt`);
+    expect(s.calls).toHaveLength(0);
   });
 
   it('export endpoints return text', async () => {

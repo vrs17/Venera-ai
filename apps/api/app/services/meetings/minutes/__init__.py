@@ -22,6 +22,16 @@ o'giradi, iqtibos va kodlar o'zgarmaydi.
 
 KIMNING NOMIDAN: xulosa kabi - yig'ilish egasi (`service._owned`); Slack'da umumiy hisob,
 Telegram'da odamning o'z hisobi. Soatlik chegara `MEETINGS_MINUTES_PER_HOUR` (har hujjat pullik).
+
+IKKI YO'L, BITTA QUVUR (2026-11-06):
+    generate   SINXRON - Slack va Telegram (bot ipi 1-3 daqiqa kutadi, natijani o'zi yuboradi)
+    start      ASINXRON - REST / mobil ilova: tez tekshiruvlar so'rov ipida, `running` qator yoziladi,
+               model fon ipida (`runner` yoki `WORKERS` li havza) `_lock` ostida; ilova qatorni `get`
+               bilan so'rab turadi. HTTP so'rovi 1-3 daqiqa osilib turmasin (proksi va telefon tarmog'i
+               uzib qo'yardi, ilova esa "qayta bosish" bilan ikkinchi pullik chaqiruv qilardi).
+Ikkalasi bir xil tekshiruv (`_code`, `_source`, `_providers`), dedupe (`_ready_row`) va yozuvdan
+(`_insert` + `_fill`) foydalanadi. `running` qator `stale_after()` dan eski bo'lsa - uni yozayotgan ip
+jarayon bilan o'lgan (restart, yiqilish): `failed` / `interrupted` (`_settle`), dedupe uni hisoblamaydi.
 """
 
 from __future__ import annotations
@@ -30,13 +40,15 @@ import logging
 import threading
 import time
 
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable
 
 from ....core.config import settings
 from ....schemas.auth import AuthUser
 from .. import export, llm, service
 from ..errors import MeetingProblem
 from ..store import jdump, jload, new_id
+from ...analytics.meter import carry
 from ...integrations.ollama import OllamaError
 from ..summarize import LlmBusy, LlmFailed, LlmRateLimited, LlmUnavailable, parse_json
 from . import compose, prompt, render, text, validate
@@ -46,6 +58,24 @@ log = logging.getLogger(__name__)
 
 #: Hujjat formatlari -> (Content-Type, kengaytma). Asosiy natija - Word; PDF - nusxa; MD - ko'rish uchun.
 FORMATS = {"docx": export.FORMATS["docx"], "pdf": export.FORMATS["pdf"], "md": export.FORMATS["md"]}
+
+#: Fon ishi iplari (`start`). Claude klientida bitta slot (`meetings._claude(1, ...)`, xulosa bilan umumiy):
+#: ko'p ip faqat semaforda o'tirib, `meetings_claude_timeout` dan keyin `llm_busy` bilan yiqilardi. Ikkinchi
+#: ip - boshqa yig'ilishning hujjati birinchisi tugashi bilan navbatsiz boshlansin.
+WORKERS = 2
+#: Eskirgan `running` qator chegarasi ustiga zaxira (soniya): prompt yig'ish, tekshiruv, ombor, havza navbati.
+STALE_MARGIN_SEC = 300
+#: Uzilgan qatorning sababi (`error.message`) - odam uchun: tugma bosilsa yangisi yoziladi.
+INTERRUPTED = "Bayonnoma yozilishi uzilib qoldi - qayta urinib ko'ring"
+#: Fon ishini kim bajaradi. `None` - umumiy ip havzasi (`WORKERS`). Testlar o'rniga `lambda job: job()`
+#: (shu ipda - deterministik) yoki `jobs.append` (keyin qo'lda ishga tushiradi) qo'yadi.
+runner: Callable[[Callable[[], None]], Any] | None = None
+
+_pool: ThreadPoolExecutor | None = None
+_pool_guard = threading.Lock()
+#: `start` dagi "tayyormi / yozilmoqdami -> chegara -> qator" ketma-ketligi uchun QISQA qulf (ombor so'rovlari):
+#: bir vaqtda kelgan ikki bosish ikkita qator va ikkita model chaqiruvi bo'lib ketmasin. Modelni `_lock` kutadi.
+_start_guard = threading.Lock()
 
 _locks: dict[tuple[str, str], threading.Lock] = {}
 _locks_guard = threading.Lock()
@@ -95,16 +125,107 @@ def _ready_row(store: Any, meeting_id: str, lang: str, rev: int) -> dict[str, An
     return None
 
 
-def listing(user: AuthUser, meeting_id: str) -> dict[str, Any]:
+def stale_after() -> float:
+    """`running` qator shuncha soniyadan eski bo'lsa - TIRIK EMAS: uni yozayotgan ip jarayon bilan birga
+    o'lgan (restart, yiqilish). Aks holda qator abadiy "yozilmoqda" bo'lib, yangi bosishni ham o'ziga
+    qo'shib yutib turardi. Chegara - eng yomon model vaqti (`ClaudeChat.complete_meta`): slotni kutish
+    (`meetings_claude_timeout` gacha) + har urinish (`meetings_claude_retries` + 1) shu chegaragacha, ustiga
+    `STALE_MARGIN_SEC`. Default: 600 x (1 + 3) + 300 = 2700 s (45 daqiqa)."""
+    timeout = max(0.0, float(settings.meetings_claude_timeout))
+    attempts = max(0, int(settings.meetings_claude_retries)) + 1
+    return timeout * (1 + attempts) + STALE_MARGIN_SEC
+
+
+def _fail_running(store: Any, minutes_id: str, code: str, reason: str, now: float | None = None) -> None:
+    """Qator HALI `running` bo'lsa - `failed`. Shart ombor so'rovining o'zida: shu orada tugagan ishning
+    natijasi (`ready` yoki aniq sabab) ustidan yozilmaydi."""
+    store.execute("UPDATE minutes SET status='failed', error_code=?, error=?, finished_at=? "
+                  "WHERE id=? AND status='running'",
+                  (code, str(reason)[:300], int(time.time() if now is None else now), minutes_id))
+
+
+def _settle(store: Any, row: dict[str, Any], now: float) -> dict[str, Any]:
+    """Eskirgan `running` qator -> `failed` / `interrupted` (omborga ham yoziladi - holat hamma joyda bir
+    xil). Boshqa qator o'zgarmaydi."""
+    if row.get("status") != "running" or now - float(row.get("created_at") or 0) <= stale_after():
+        return row
+    _fail_running(store, row["id"], "interrupted", INTERRUPTED, now)
+    log.info("Yig'ilish %s: bayonnoma %s uzilgan (running %d s) - interrupted", row["meeting_id"], row["id"],
+             int(now - float(row.get("created_at") or 0)))
+    return store.minutes_row(row["meeting_id"], row["id"]) or {
+        **row, "status": "failed", "error_code": "interrupted", "error": INTERRUPTED, "finished_at": int(now)}
+
+
+def recover(store: Any, now: float | None = None) -> int:
+    """Jarayon ishga tushganda (`meetings.start`): ombordagi BARCHA `running` qatorlar oldingi jarayondan
+    qolgan - ularni yozayotgan iplar (REST havzasi, Slack/Telegram `generate`) jarayon bilan birga o'lgan
+    (API bitta uvicorn jarayoni, bu paytda yangi ish hali boshlanmagan). `stale_after` ni (45 daqiqa)
+    kutmasdan darhol `failed` / `interrupted`: aks holda har deploy (restart) dan keyin ilova shu qatorni
+    "yozilmoqda" deb ko'rsatib turar, qayta bosish ham (`force` bilan ham) o'lik qatorga qo'shilardi.
+    Qaytaradi - belgilangan qatorlar soni."""
+    if not store.exists:
+        # Ombor hali yo'q (yangi o'rnatish, bo'lim o'chiq): unda qator ham yo'q - ishga tushish uni
+        # YARATMASIN (`MeetingStore.exists` qoidasi, ishchi ham shunday).
+        return 0
+    now = time.time() if now is None else now
+    rows = store.rows("SELECT id FROM minutes WHERE status='running'")
+    for row in rows:
+        _fail_running(store, row["id"], "interrupted", INTERRUPTED, now)
+    if rows:
+        log.info("Bayonnoma: oldingi jarayondan qolgan %d ta yozuv uzilgan deb belgilandi (interrupted)",
+                 len(rows))
+    return len(rows)
+
+
+def _running_row(store: Any, meeting_id: str, lang: str, rev: int, now: float) -> dict[str, Any] | None:
+    """Xuddi shu hujjat (til + transkript versiyasi + prompt versiyasi) hozir yozilmoqdami - tirik `running`
+    qator (REST fon ishi yoki Slack/Telegram `generate`). Eskirgani shu yerda `interrupted` bo'ladi."""
+    for row in reversed(store.minutes_rows(meeting_id)):
+        if row["status"] == "running" and row["language"] == lang and int(row["transcript_rev"]) == rev \
+                and row["prompt_version"] == prompt.MINUTES_VERSION \
+                and _settle(store, row, now)["status"] == "running":
+            return row
+    return None
+
+
+def _code(lang: Any) -> str:
+    code = normalize(lang)
+    if code is None:
+        raise MeetingProblem(400, "invalid_language", "Hujjat tili: uz-latn, uz-cyrl, ru yoki en")
+    return code
+
+
+def _source(user: AuthUser, meeting_id: str) -> dict[str, Any]:
+    """Hujjat manbasi: egasining yig'ilishi (404), transkripti tayyor (409 `not_ready`) va unda nutq bor."""
     m = service._owned(user.actorId, meeting_id)
-    return {"items": [view(r, m) for r in service.runtime().store.minutes_rows(m["id"])]}
+    service._require_transcript(m)
+    if service.runtime().store.row("SELECT 1 FROM segments WHERE meeting_id=? AND trim(text) <> '' LIMIT 1",
+                                   (m["id"],)) is None:
+        # Yozuvda nutq yo'q (masalan 5 s jimlik): model chaqirilmaydi - u bo'sh hujjat qaytarib, odam
+        # "qayta urinib ko'ring" degan noto'g'ri xabarni olardi (2026-11-05 jonli sinovi).
+        raise MeetingProblem(409, "transcript_empty",
+                             "Yozuvda nutq topilmadi - bayonnoma uchun gapirilgan yig'ilish yozuvi kerak")
+    return m
+
+
+def _providers(rt: Any, m: dict[str, Any]) -> list[Any]:
+    providers = [p for p in llm.minutes_providers(rt, m["actor_id"]) if p.configured]
+    if not providers:
+        raise MeetingProblem(503, "llm_not_configured",
+                             "Bayonnoma uchun model sozlanmagan (CLAUDE_API_KEY / MEETINGS_MINUTES_CHAIN)")
+    return providers
+
+
+def listing(user: AuthUser, meeting_id: str, *, now: float | None = None) -> dict[str, Any]:
+    now = time.time() if now is None else now
+    m = service._owned(user.actorId, meeting_id)
+    store = service.runtime().store
+    return {"items": [view(_settle(store, r, now), m) for r in store.minutes_rows(m["id"])]}
 
 
 def latest(user: AuthUser, meeting_id: str, lang: str) -> dict[str, Any] | None:
     """Shu tilda, joriy transkript bo'yicha TAYYOR hujjat (yoki `None`)."""
-    code = normalize(lang)
-    if code is None:
-        raise MeetingProblem(400, "invalid_language", "Hujjat tili: uz-latn, uz-cyrl, ru yoki en")
+    code = _code(lang)
     m = service._owned(user.actorId, meeting_id)
     row = _ready_row(service.runtime().store, m["id"], code, int(m.get("transcript_rev") or 0))
     return view(row, m) if row else None
@@ -116,27 +237,16 @@ def generate(user: AuthUser, meeting_id: str, lang: str, *, force: bool = False,
     400 til, 409 transkript yo'q yoki unda nutq yo'q, 429 chegara / model 429, 503 model
     sozlanmagan yoki band, 502 model yozolmadi (sabab `detail` da)."""
     now = time.time() if now is None else now
-    code = normalize(lang)
-    if code is None:
-        raise MeetingProblem(400, "invalid_language", "Hujjat tili: uz-latn, uz-cyrl, ru yoki en")
+    code = _code(lang)
     rt = service.runtime()
     store = rt.store
-    m = service._owned(user.actorId, meeting_id)
-    service._require_transcript(m)
-    if store.row("SELECT 1 FROM segments WHERE meeting_id=? AND trim(text) <> '' LIMIT 1", (m["id"],)) is None:
-        # Yozuvda nutq yo'q (masalan 5 s jimlik): model chaqirilmaydi - u bo'sh hujjat qaytarib, odam
-        # "qayta urinib ko'ring" degan noto'g'ri xabarni olardi (2026-11-05 jonli sinovi).
-        raise MeetingProblem(409, "transcript_empty",
-                             "Yozuvda nutq topilmadi - bayonnoma uchun gapirilgan yig'ilish yozuvi kerak")
+    m = _source(user, meeting_id)
     rev = int(m.get("transcript_rev") or 0)
     if not force:
         found = _ready_row(store, m["id"], code, rev)
         if found is not None:
             return view(found, m)
-    providers = [p for p in llm.minutes_providers(rt, m["actor_id"]) if p.configured]
-    if not providers:
-        raise MeetingProblem(503, "llm_not_configured",
-                             "Bayonnoma uchun model sozlanmagan (CLAUDE_API_KEY / MEETINGS_MINUTES_CHAIN)")
+    providers = _providers(rt, m)
     with _lock(m["id"], code):
         if not force:
             # Qulf ichida qayta: parallel bosish birinchisining natijasini oladi - model ham, soatlik
@@ -149,12 +259,129 @@ def generate(user: AuthUser, meeting_id: str, lang: str, *, force: bool = False,
     return view(row, store.meeting_any(m["id"]) or m)
 
 
-def _write(rt: Any, m: dict[str, Any], lang: str, rev: int, providers: list[Any], now: float) -> dict[str, Any]:
+def start(user: AuthUser, meeting_id: str, lang: str | None = None, *, force: bool = False,
+          now: float | None = None) -> tuple[dict[str, Any], bool]:
+    """REST (mobil ilova): hujjatni FONDA boshlaydi -> (`view`, boshlandimi).
+
+    `True` (202): tez tekshiruvlar (`generate` dagi tartibda: 400 til, 404, 409 transkript yo'q / nutqsiz,
+    503 model sozlanmagan, 429 chegara) shu ipda o'tdi, `running` qator yozildi va model fon ipida
+    (`_background`). `False` (200): tayyori bor (`force` bo'lmasa) YOKI xuddi shu hujjat hozir yozilmoqda -
+    ikkinchi bosish birinchisiga qo'shiladi, `force` bilan ham (yozilayotgan hujjat baribir yangi): model
+    ham, soatlik chegara ham ikkinchi marta sarflanmaydi. `lang` `None` - yig'ilish tilidan (`default_lang`)."""
+    now = time.time() if now is None else now
+    code = _code(lang) if lang is not None else None
+    rt = service.runtime()
     store = rt.store
+    m = _source(user, meeting_id)
+    code = code or default_lang(m.get("language"))
+    rev = int(m.get("transcript_rev") or 0)
+    with _start_guard:
+        if not force:
+            found = _ready_row(store, m["id"], code, rev)
+            if found is not None:
+                return view(found, m), False
+        running = _running_row(store, m["id"], code, rev, now)
+        if running is not None:
+            return view(running, m), False
+        providers = _providers(rt, m)
+        service._rate("minutes", user.actorId, settings.meetings_minutes_per_hour)
+        minutes_id = _insert(store, m, code, rev, now)
+    # Javob - qator yozilgan paytdagi holat (`running`): fon ishi shu ipda bajarilsa ham (testlar) shartnoma
+    # bir xil, natijani ilova `get` bilan oladi.
+    out = view(store.minutes_row(m["id"], minutes_id), m)
+
+    def job() -> None:
+        _background(rt, m, code, rev, providers, minutes_id, force)
+
+    try:
+        # `carry`: hisob konteksti (kim, qaysi kanal) fon ipiga ham o'tadi - Claude chaqiruvi odamniki bo'lib yoziladi.
+        _submit(carry(job))
+    except Exception:
+        _fail_running(store, minutes_id, "internal", "fon ishi boshlanmadi")
+        raise
+    return out, True
+
+
+def _background(rt: Any, m: dict[str, Any], lang: str, rev: int, providers: list[Any], minutes_id: str,
+                force: bool) -> None:
+    """Fon ipi (`start`): `generate` dagidek `_lock` ostida model. Natija ham, sabab ham - qatorda; hech
+    qanday xato qatorni `running` da qoldirmaydi (qolsa - `stale_after` dan keyin `interrupted`)."""
+    store = rt.store
+    try:
+        with _lock(m["id"], lang):
+            if store.minutes_row(m["id"], minutes_id) is None:
+                # Navbatda turgan paytda yig'ilish (qatorlari kaskad bilan) o'chirildi - pullik chaqiruv yo'q.
+                log.info("Yig'ilish %s: bayonnoma %s - yig'ilish o'chirilgan, model chaqirilmadi", m["id"],
+                         minutes_id)
+                return
+            if not force:
+                # Qulf ichida qayta (`generate` dagidek): navbatda turgan paytda boshqa yo'l (Slack/Telegram)
+                # xuddi shu hujjatni yozib bo'lgan bo'lsa - model ikkinchi marta chaqirilmaydi, tayyor mazmun
+                # shu qatorga ko'chiriladi (ilova aynan shu id ni so'rab turibdi).
+                found = _ready_row(store, m["id"], lang, rev)
+                if found is not None:
+                    store.update_minutes(minutes_id, status="ready", provider=found.get("provider"),
+                                         model=found.get("model"), content_json=found["content_json"],
+                                         finished_at=int(time.time()), error_code=None, error=None)
+                    return
+            _fill(rt, m, lang, rev, providers, minutes_id)
+    except MeetingProblem as exc:
+        # Model / tekshiruv xatosi: `_fill` sababni qatorga yozgan (pastdagi - ehtiyot to'ri); odam ilovada ko'radi.
+        log.info("Yig'ilish %s: bayonnoma (fon) yozilmadi: %s", m["id"], exc.code)
+        code, reason = exc.code, str(exc.detail)
+    except Exception as exc:                                     # noqa: BLE001
+        log.exception("Yig'ilish %s: bayonnoma fon ishida kutilmagan xato", m["id"])
+        code, reason = "internal", type(exc).__name__
+    else:
+        return
+    try:
+        _fail_running(store, minutes_id, code, reason)
+    except Exception:                                            # noqa: BLE001
+        # Havza `Future` idagi xatoni hech kim o'qimaydi - shu yerda jurnalga; qator eskirgach `interrupted`.
+        log.exception("Yig'ilish %s: bayonnoma qatori yangilanmadi", m["id"])
+
+
+def _submit(job: Callable[[], None]) -> None:
+    """Fon ishini beradi: `runner` (testlar) yoki umumiy ip havzasi (birinchi ishda yaratiladi)."""
+    global _pool
+    custom = runner
+    if custom is not None:
+        custom(job)
+        return
+    with _pool_guard:
+        if _pool is None:
+            _pool = ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="minutes")
+        pool = _pool
+    pool.submit(job)
+
+
+def stop() -> None:
+    """Ilova to'xtaganda (`meetings.stop`): navbatdagi ishlar bekor qilinadi (qatorlari eskirgach
+    `interrupted`), boshlangani jarayon bilan tugaydi - Slack/Telegram havzalari kabi."""
+    global _pool
+    with _pool_guard:
+        pool, _pool = _pool, None
+    if pool is not None:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _write(rt: Any, m: dict[str, Any], lang: str, rev: int, providers: list[Any], now: float) -> dict[str, Any]:
+    """Sinxron yo'l (`generate`, chaqiruvchi `_lock` ichida): qator + model."""
+    return _fill(rt, m, lang, rev, providers, _insert(rt.store, m, lang, rev, now))
+
+
+def _insert(store: Any, m: dict[str, Any], lang: str, rev: int, now: float) -> str:
     minutes_id = new_id()
-    # Qator OLDIN yoziladi (`running`): prompt yig'ish yoki model xatosi ham qatorda qoladi (`failed`).
+    # Qator OLDIN yoziladi (`running`): prompt yig'ish yoki model xatosi ham qatorda qoladi (`failed`);
+    # REST yo'lida ilova aynan shu id ni so'rab turadi.
     store.insert_minutes({"id": minutes_id, "meeting_id": m["id"], "language": lang, "transcript_rev": rev,
                           "prompt_version": prompt.MINUTES_VERSION, "status": "running", "created_at": int(now)})
+    return minutes_id
+
+
+def _fill(rt: Any, m: dict[str, Any], lang: str, rev: int, providers: list[Any], minutes_id: str) -> dict[str, Any]:
+    """`running` qatorga model natijasi (`ready`) yoki sabab (`failed` + `MeetingProblem`)."""
+    store = rt.store
 
     def attempt(provider: Any, strict: bool) -> dict[str, Any]:
         content = _ask(provider, system, user_text)
@@ -238,10 +465,11 @@ def _failed(store: Any, minutes_id: str, code: str, reason: str) -> None:
                          finished_at=int(time.time()))
 
 
-def get(user: AuthUser, meeting_id: str, minutes_id: str) -> dict[str, Any]:
-    """Ko'rinish + mazmun (tayyor bo'lsa)."""
+def get(user: AuthUser, meeting_id: str, minutes_id: str, *, now: float | None = None) -> dict[str, Any]:
+    """Ko'rinish + mazmun (tayyor bo'lsa). REST ilovasi `start` dan keyin shuni so'rab turadi."""
+    now = time.time() if now is None else now
     m = service._owned(user.actorId, meeting_id)
-    row = _row_or_404(m, minutes_id)
+    row = _settle(service.runtime().store, _row_or_404(m, minutes_id), now)
     out = view(row, m)
     out["content"] = jload(row.get("content_json")) if row["status"] == "ready" else None
     return out

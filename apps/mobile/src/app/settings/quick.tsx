@@ -8,30 +8,17 @@
  * yoqilgan, keyingi qadam qaysi tugma.
  *
  * Xatti-harakat eskisi bilan bir xil: launcher switch'i (native holat kechiksa ham tanlov
- * ko'rinadi), plitka so'rovi natijasi, ovoz tugmasi holati ilovaga qaytganda qayta o'qiladi.
- * Native modul yo'q bo'lsa (iOS, Jest) faqat ilova yorlig'i ishlaydi - qolganlari
- * "Bu telefonda yo'q" deydi va tugmalari o'chadi.
+ * ko'rinadi), plitka so'rovi natijasi. Native modul yo'q bo'lsa (iOS, Jest) faqat ilova
+ * yorlig'i ishlaydi - qolganlari "Bu telefonda yo'q" deydi va tugmalari o'chadi.
+ *
+ * "Ovoz tugmasi bilan yozish" yo'q (ega qarori, 2026-11-09): u "Maxsus imkoniyatlar" xizmati
+ * edi va Google Play Protect sideload o'rnatishni to'sdi. Qaytarilmasin - `playProtect.test.ts`.
  */
-import {
-  AppWindow,
-  ExternalLink,
-  LayoutGrid,
-  PanelTop,
-  Plus,
-  Smartphone,
-  Volume1,
-  type LucideIcon,
-} from 'lucide-react-native';
+import { AppWindow, LayoutGrid, PanelTop, Plus, Smartphone, type LucideIcon } from 'lucide-react-native';
 import { useState, type ReactNode } from 'react';
 import { ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
-import {
-  isLauncherEnabled,
-  openAccessibilitySettings,
-  requestAddTile,
-  setLauncherEnabled,
-  type AddTileResult,
-} from '@/features/entry/nativeEntry';
+import { isLauncherEnabled, requestAddTile, setLauncherEnabled, type AddTileResult } from '@/features/entry/nativeEntry';
 import { useQuickState } from '@/features/settings/quickMethods';
 import { useT } from '@/features/settings/settingsStore';
 import type { TKey } from '@/i18n';
@@ -116,39 +103,6 @@ export default function QuickRecordScreen() {
         // Samsung va Pixel - muqobil yo'llar, ketma-ket qadam emas: raqamsiz.
         numbered={false}
         steps={[t('set.m.sideSamsung'), t('set.m.sidePixel')]}
-      />
-
-      <MethodCard
-        testID="quick-volume"
-        icon={Volume1}
-        title={t('set.m.volume')}
-        what={t('set.m.volumeWhat')}
-        status={
-          !available ? (
-            <StatusPill label={t('set.unavailable')} textTestID="volume-status" style={s.pill} />
-          ) : (
-            <StatusPill
-              label={quick.volume ? t('settings.volumeOn') : t('settings.volumeOff')}
-              tone={quick.volume ? 'good' : 'neutral'}
-              textTestID="volume-status"
-              style={s.pill}
-            />
-          )
-        }
-        action={
-          <CardButton
-            testID="volume-open"
-            icon={ExternalLink}
-            title={quick.volume ? t('settings.volumeManage') : t('settings.volumeOpen')}
-            disabled={!available}
-            onPress={() => openAccessibilitySettings()}
-          />
-        }
-        // Android "qurilmani to'liq boshqarish" deb ogohlantiradi - xotirjamlik va yo'l
-        // tugmadan OLDIN ko'rinib tursin (yopiq "Qanday sozlash" ichida emas).
-        note={!quick.volume && available ? [t('settings.volumeSteps'), t('set.m.volumePrivacy')] : undefined}
-        numbered={false}
-        steps={quick.volume ? [t('set.m.volumeStop'), t('set.m.volumePrivacy')] : [t('set.m.volumeStop')]}
       />
 
       <MethodCard

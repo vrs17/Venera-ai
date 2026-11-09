@@ -34,10 +34,8 @@ jest.mock('expo-router', () => {
 jest.mock('@/features/entry/nativeEntry', () => ({
   isAvailable: jest.fn(() => false),
   isLauncherEnabled: jest.fn(() => false),
-  isKeyServiceEnabled: jest.fn(() => false),
   setLauncherEnabled: jest.fn(),
   requestAddTile: jest.fn(async () => 'unsupported'),
-  openAccessibilitySettings: jest.fn(),
   setRecordingState: jest.fn(),
   setTrustedKey: jest.fn(),
 }));

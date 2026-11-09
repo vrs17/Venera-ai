@@ -383,6 +383,20 @@ describe('uploader', () => {
     expect(typeof body.endedAt).toBe('string');
   });
 
+  it('"Audio yuklash" types: create carries mp3/wav/ogg as is; no fake size-based duration for them', async () => {
+    for (const contentType of ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4'] as const) {
+      const s = setup({ rows: [row({ contentType, source: 'share', durationSec: null, endedAt: null })] });
+      await s.uploader.runOnce();
+      const create = s.server.calls.find((c) => c.method === 'POST' && c.path === '/api/v1/meetings');
+      expect([contentType, create?.body]).toEqual([contentType, expect.objectContaining({ contentType, source: 'share' })]);
+      const body = [...s.server.meetings.values()][0].completeBody!;
+      // Bitreyti noma'lum formatda server o'zi o'lchaydi (`audio.measure`) - taxmin o'rniga null.
+      if (contentType === 'audio/mp4') expect(body.durationSec).toBeCloseTo((2500 * 8) / 48000, 2);
+      else expect([contentType, body.durationSec]).toEqual([contentType, null]);
+      expect((await s.get()).state).toBe('done');
+    }
+  });
+
   it('re-arms its own backoff: one timer at the nearest nextAttemptAt retries and finishes the upload', async () => {
     const s = setup();
     s.server.inject((r) => r.method === 'POST' && r.path === '/api/v1/meetings', { status: 503, json: { status: 503, message: 'busy' } });

@@ -1,6 +1,6 @@
 /**
  * Yagona kirish deep link'i (spec 2.2):
- *   venera-rec://record?src=<tile|launcher|volume|shortcut|notification|app|link>&k=<installKey>[&action=stop][&n=<nonce>]
+ *   venera-rec://record?src=<tile|launcher|shortcut|notification|app|link>&k=<installKey>[&action=stop][&n=<nonce>]
  *
  * Xavfsizlik: istalgan ilova deep link yubora oladi. Shuning uchun yozish
  * AVTOMATIK faqat `k` bizning installKey'ga teng bo'lsa boshlanadi. Begona
@@ -14,22 +14,24 @@
  *
  * "Ulashish -> Barno AI" (2026-10-10): ImportActivity fayllarni `imports/` ga nusxalab
  *   venera-rec://import?files=<a.m4a,b.aac>[&skipped=<n>]&n=<nonce>
- * ochadi. Fayl nomlari qat'iy tekshiriladi (faqat ASCII, `..` yo'q, .m4a/.aac) - begona
+ * ochadi (Plaud'dagi "Audio yuklash" ham shu ekranga - yana .mp3/.wav/.ogg bilan). Fayl nomlari
+ * qat'iy tekshiriladi (faqat ASCII, `..` yo'q, qabul qilinadigan audio kengaytmasi) - begona
  * ilova bu havola bilan `imports/` dan tashqaridagi faylga ishora qila olmasin. Hech narsa
  * avtomatik yuborilmaydi: tasdiq ekrani doim ko'rsatiladi. Shuning uchun o'rnatish kaliti (`k`)
  * import havolasida KERAK EMAS - kelsa ham tashlanadi (router holatiga tarqalmasin).
  */
 import type { EntrySource } from '@/api/types';
+// Sof yordamchi (native'siz): `nativeEntry` testlarda mock qilinadi - marshrut tozalovchi unga bog'liq
+// bo'lmasin. Native nomlar (m4a/aac) + "Audio yuklash" yozgan mp3/wav/ogg.
+import { parseImportNames } from '@/features/calls/importNames';
 import type { RecorderStatus } from '@/features/recorder/recorderMachine';
-
-// Sof yordamchi (native'siz): `nativeEntry` testlarda mock qilinadi - marshrut tozalovchi unga bog'liq bo'lmasin.
-import { parseImportFiles } from '../../../modules/venera-entry/importNames';
 
 /**
  * YOZISH kirish nuqtalari (`record?src=`). `call`/`share` bu yerda YO'Q: ular yozishni
- * boshlamaydi, faqat import oqimida navbat qatoriga yoziladi.
+ * boshlamaydi, faqat import oqimida navbat qatoriga yoziladi. `volume` ham YO'Q (2026-11-09):
+ * ovoz tugmasi xizmati olib tashlandi, uni hech narsa yubormaydi - eski havola `link` bo'ladi.
  */
-export const ENTRY_SOURCES: EntrySource[] = ['tile', 'launcher', 'volume', 'shortcut', 'notification', 'app', 'link'];
+export const ENTRY_SOURCES: EntrySource[] = ['tile', 'launcher', 'shortcut', 'notification', 'app', 'link'];
 export const KEY_RE = /^[0-9a-f]{64}$/;
 export const NONCE_RE = /^[0-9]{1,20}$/;
 
@@ -87,7 +89,7 @@ export function parseImportParams(raw: RawParams): ImportParams {
   const skipped = first(raw.skipped);
   const n = first(raw.n);
   return {
-    files: parseImportFiles(raw.files ?? null),
+    files: parseImportNames(raw.files ?? null),
     skipped: skipped && SKIPPED_RE.test(skipped) ? Number(skipped) : 0,
     n: n && NONCE_RE.test(n) ? n : null,
   };
@@ -153,10 +155,10 @@ export function decideEntry(p: EntryParams, trustedKey: string | null, status: R
   const active = ACTIVE.includes(status);
   if (p.action === 'stop') {
     if (trusted && (status === 'recording' || status === 'paused')) return 'stop';
-    // Yon tugma, ovoz tugmasi va plitka - ALMASHTIRGICH: "to'xtat" keldi-yu, hech narsa yozilmayapti
+    // Yon tugma va plitka - ALMASHTIRGICH: "to'xtat" keldi-yu, hech narsa yozilmayapti
     // (bayroq eskirgan - ilova yozuv paytida o'ldirilgan). Odam uchun bu bosish "yoz" degani.
     // Bildirishnomadagi Stop'ga tegmaymiz - u eski bildirishnomadan kelishi mumkin.
-    if (trusted && !active && (p.src === 'launcher' || p.src === 'volume' || p.src === 'tile')) return 'start';
+    if (trusted && !active && (p.src === 'launcher' || p.src === 'tile')) return 'start';
     return active ? 'show' : 'ready';
   }
   if (active) return 'show';

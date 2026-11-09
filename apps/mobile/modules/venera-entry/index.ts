@@ -20,8 +20,6 @@ interface VeneraEntryNative {
   setLauncherEnabled(enabled: boolean): void;
   isLauncherEnabled(): boolean;
   setTrustedKey(key: string): void;
-  isKeyServiceEnabled(): boolean;
-  openAccessibilitySettings(): void;
   // Qo'ng'iroq yozuvlari (2026-10-10). Ixtiyoriy: eski APK'da bu funksiyalar yo'q.
   hasAudioReadPermission?(): boolean;
   listCallRecordings?(sinceMs: number, limit: number): Promise<unknown[]>;
@@ -82,24 +80,6 @@ export function isLauncherEnabled(): boolean {
 export function setTrustedKey(key: string): void {
   try {
     native?.setTrustedKey(key);
-  } catch {
-    /* no-op */
-  }
-}
-
-/** Ovoz tugmasi bilan yozish (RecordKeyService) Android sozlamasida yoqilganmi. */
-export function isKeyServiceEnabled(): boolean {
-  try {
-    return native?.isKeyServiceEnabled() ?? false;
-  } catch {
-    return false;
-  }
-}
-
-/** Android "Maxsus imkoniyatlar" sozlamasi - xizmatni foydalanuvchi o'zi yoqadi. */
-export function openAccessibilitySettings(): void {
-  try {
-    native?.openAccessibilitySettings();
   } catch {
     /* no-op */
   }

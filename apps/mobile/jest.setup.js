@@ -37,6 +37,12 @@ jest.mock('expo-audio', () => {
   };
 });
 
+// Fayl tanlash oynasi ("Audio yuklash"): testda hech qachon tizim oynasi ochilmaydi - default
+// "bekor qilindi", testlar `jest.requireMock('expo-document-picker')` orqali javob beradi.
+jest.mock('expo-document-picker', () => ({
+  getDocumentAsync: jest.fn(async () => ({ canceled: true, assets: null })),
+}));
+
 jest.mock('expo-clipboard', () => ({
   setStringAsync: jest.fn(async () => true),
   getStringAsync: jest.fn(async () => ''),

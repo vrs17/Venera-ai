@@ -124,7 +124,7 @@ describe('Meeting detail', () => {
     const { api } = await open();
     await waitFor(() => expect(screen.getByTestId('summary-new')).toBeTruthy());
     await fireEvent.press(screen.getByTestId('summary-new'));
-    await fireEvent.press(screen.getByText('Bayonnoma'));
+    await fireEvent.press(screen.getByText('Protokol'));
     await waitFor(() => expect(api.createSummary).toHaveBeenCalledWith(ID, { template: 'minutes', makePrimary: true }));
   });
 
@@ -306,6 +306,70 @@ describe('Meeting detail', () => {
     } finally {
       alert.mockRestore();
       clear.mockRestore();
+    }
+  });
+
+  it('⋮ menu: Bayonnoma opens the minutes sheet; another-language retranscribe offers only the other two languages', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    try {
+      const api = fakeMeetingsApi({ minutesList: jest.fn(async () => ({ items: [] })) });
+      await open(api, { withHeader: true });
+      await waitFor(() => expect(screen.getByTestId('meeting-menu')).toBeTruthy());
+      await fireEvent.press(screen.getByTestId('meeting-menu'));
+      // Slack/Telegram Plaud kartasidagi kabi: ulashish, bayonnoma, boshqa til, nomlash, o'chirish.
+      const json = JSON.stringify(screen.toJSON());
+      const order = ['menu-export', 'menu-minutes', 'menu-retranscribe', 'menu-rename', 'menu-delete'].map((id) => json.indexOf(`"${id}"`));
+      expect(order.every((i) => i >= 0)).toBe(true);
+      expect([...order].sort((a, b) => a - b)).toEqual(order);
+      expect(screen.getByTestId('menu-minutes')).toHaveTextContent('Bayonnoma');
+      await fireEvent.press(screen.getByTestId('menu-minutes'));
+      expect(await screen.findByTestId('minutes-sheet')).toBeTruthy();
+      await waitFor(() => expect(api.minutesList).toHaveBeenCalledWith(ID));
+      // O'zbekcha yig'ilish - hujjat tili default'i kirill.
+      expect(screen.getByTestId('minutes-lang-uz-cyrl')).toBeChecked();
+      await fireEvent.press(screen.getByTestId('minutes-close'));
+      await waitFor(() => expect(screen.queryByTestId('minutes-sheet')).toBeNull());
+
+      // Til ogohlantirishi yo'q bo'lsa ham "boshqa til" doim bor (Slack'da har kartada).
+      expect(screen.queryByTestId('language-warning')).toBeNull();
+      await fireEvent.press(screen.getByTestId('meeting-menu'));
+      await fireEvent.press(screen.getByTestId('menu-retranscribe'));
+      expect(await screen.findByTestId('menu-relang-ru')).toHaveTextContent("Rus tilida qayta o'girish");
+      expect(screen.getByTestId('menu-relang-en')).toHaveTextContent("Ingliz tilida qayta o'girish");
+      expect(screen.queryByTestId('menu-relang-uz')).toBeNull();
+      await fireEvent.press(screen.getByTestId('menu-relang-en'));
+      await waitFor(() => expect(alert).toHaveBeenCalled());
+      expect(alert.mock.calls.at(-1)?.[0]).toBe("Ingliz tilida qayta o'girish");
+      expect(alert.mock.calls.at(-1)?.[1]).toBe("Qayta o'girish yana limitdan hisoblanadi va eski xulosalar o'chadi. Davom etasizmi?");
+      const buttons = alert.mock.calls.at(-1)?.[2] as AlertButton[];
+      await act(async () => {
+        await buttons.find((b) => b.text === 'OK')?.onPress?.();
+      });
+      await waitFor(() => expect(api.retranscribe).toHaveBeenCalledWith(ID, { language: 'en', expectedSpeakers: null, confirmCharge: true }));
+    } finally {
+      alert.mockRestore();
+    }
+  });
+
+  it('a Russian meeting can be re-transcribed in Uzbek; cancelling the confirmation changes nothing', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    try {
+      const api = fakeMeetingsApi({ get: jest.fn(async () => meeting({ language: 'ru' })) });
+      await open(api, { withHeader: true });
+      await waitFor(() => expect(screen.getByTestId('meeting-menu')).toBeTruthy());
+      await fireEvent.press(screen.getByTestId('meeting-menu'));
+      await fireEvent.press(screen.getByTestId('menu-retranscribe'));
+      expect(await screen.findByTestId('menu-relang-uz')).toHaveTextContent("O'zbek tilida qayta o'girish");
+      expect(screen.queryByTestId('menu-relang-ru')).toBeNull();
+      await fireEvent.press(screen.getByTestId('menu-relang-uz'));
+      await waitFor(() => expect(alert.mock.calls.at(-1)?.[0]).toBe("O'zbek tilida qayta o'girish"));
+      const buttons = alert.mock.calls.at(-1)?.[2] as AlertButton[];
+      await act(async () => {
+        await buttons.find((b) => b.text === 'Bekor qilish')?.onPress?.();
+      });
+      expect(api.retranscribe).not.toHaveBeenCalled();
+    } finally {
+      alert.mockRestore();
     }
   });
 

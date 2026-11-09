@@ -319,6 +319,10 @@ Declare the static paths (`/meetings/config`, `/meetings/action-items`) **before
 | 29 | `POST /auth/devices` | register this device and get a device token |
 | 30 | `POST /auth/devices/session` | device token → fresh Venera JWT |
 | 31 | `POST /auth/devices/revoke` | revoke a device token |
+| 32 | `GET /meetings/{id}/minutes` | Bayonnoma (formal minutes) documents of the meeting |
+| 33 | `POST /meetings/{id}/minutes` | start a Bayonnoma in the background (202) or get the ready / running one (200) |
+| 34 | `GET /meetings/{id}/minutes/{minutesId}` | Bayonnoma status (poll) and content |
+| 35 | `GET /meetings/{id}/minutes/{minutesId}/export?format=docx\|pdf\|md` | Bayonnoma file |
 
 #### 1. `GET /meetings/config` → 200
 
@@ -581,6 +585,42 @@ Why: the Venera JWT lives 12 h and has no refresh. The design copies `/telegram/
   - `RateLimiter(6/min)` per token hash, plus a cap per IP; 429 carries Retry-After.
   - An unknown, expired or revoked token returns 401.
 - `POST /auth/devices/revoke`, body `{deviceToken}` → 200 `{"status": "OK"}` (idempotent).
+
+#### 32-35. Bayonnoma (formal minutes, 2026-11-06; service `services/meetings/minutes/`)
+
+```ts
+type MinutesLang = 'uz-latn' | 'uz-cyrl' | 'ru' | 'en';
+interface MinutesView {
+  id: string; meetingId: string; language: MinutesLang; status: 'running' | 'ready' | 'failed';
+  createdAt: string; finishedAt: string | null; provider: string | null; model: string | null;
+  transcriptRev: number; stale: boolean;          // stale: the transcript was edited after this document
+  agendaCount: number; sectionCount: number; itemCount: number;
+  notes: string[]; warnings: string[];            // "to be clarified" notes, validation warnings
+  error: { code: string; message: string } | null; // only when failed
+}
+```
+- `GET /meetings/{id}/minutes` → 200 `{"items": [MinutesView]}` (oldest first).
+- `POST /meetings/{id}/minutes`, optional body `{language?: MinutesLang | null, force?: boolean}`;
+  no language → from the meeting language (`uz` → `uz-cyrl`, `ru` → `ru`, `en` → `en`).
+  - 200 `MinutesView` (ready): a ready document exists for (language, current `transcriptRev`,
+    `MINUTES_VERSION`) and `force` is false.
+  - 200 `MinutesView` (running): the same document is already being written (also from Slack/Telegram),
+    with or without `force`. The second tap joins the first: no second model call, no second rate-limit slot.
+  - Otherwise the fast checks run in the request, in this order: 400 `invalid_language`, 404 `not_found`,
+    409 `not_ready` (no transcript yet), 409 `transcript_empty`, 503 `llm_not_configured`, 429
+    `rate_limited` + `Retry-After` (`MEETINGS_MINUTES_PER_HOUR`). Then a `running` row is stored and the
+    model call starts in a background thread pool → 202 `MinutesView` (running). Poll endpoint 34.
+  - Background failures end up on the row as `failed` with `error.code` `llm_failed`, `llm_busy`,
+    `llm_rate_limited`, `llm_not_configured` or `internal`. A row left `running` by a crash/restart for
+    longer than `MEETINGS_CLAUDE_TIMEOUT` × (`MEETINGS_CLAUDE_RETRIES` + 2) + 300 s (2700 s by default:
+    slot wait + every attempt + margin) is reported and stored as `failed` / `interrupted` and is not joined.
+- `GET /meetings/{id}/minutes/{minutesId}` → 200 `MinutesView & {content: object | null}` (`null` unless
+  ready); 404 `minutes_not_found`.
+- `GET /meetings/{id}/minutes/{minutesId}/export?format=docx|pdf|md` (default `docx`) → the file with
+  `Content-Type`, `Content-Disposition: attachment; filename="..."; filename*=UTF-8''...` and
+  `Cache-Control: private, no-store`; 409 `not_ready`; 404 `minutes_not_found`; 503 `pdf_unavailable` /
+  `docx_unavailable` / `export_busy` (+ `Retry-After`); 429 `export_busy` (same user already exporting);
+  422 for another format.
 
 ### 3.3 Processing states
 

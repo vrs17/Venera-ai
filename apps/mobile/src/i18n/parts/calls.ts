@@ -44,7 +44,7 @@ const uz = {
   'calls.titleNoName': "Qo'ng'iroq, {time}",
   'calls.sizeMb': '{n} MB',
   'calls.sizeKb': '{n} KB',
-  'calls.queued': 'Yuborilmoqda - holati Yozuvlarda',
+  'calls.queued': "Yuborilmoqda - holati Plaud'da",
   'calls.sendFailed': "Yuborib bo'lmadi: {reason}",
   'calls.err.space': "telefonda joy kam - joy bo'shating",
   'calls.err.read': "faylni o'qib bo'lmadi",
@@ -89,10 +89,17 @@ const uz = {
   'calls.import.emptyBody': "Fayl allaqachon yuborilgan yoki o'chirilgan.",
   'calls.import.tooLargeBody': 'Fayl {mb} MB dan katta',
   'calls.import.unsupportedBody': 'Faqat .m4a yoki .aac audio',
-  'calls.import.toRecordings': "Yozuvlarga o'tish",
+  'calls.import.toRecordings': "Plaud'ga o'tish",
   'calls.import.queued': "{n} ta yozuv navbatga qo'shildi",
   'calls.import.queuedOne': 'Yozuv yuborilmoqda',
   'calls.import.note': "Qo'ng'iroqni faqat suhbatdoshni ogohlantirib yozing.",
+  // "Audio yuklash" (Plaud ro'yxati): tanlangan fayllar ulashish bilan bir yo'ldan - tasdiq ekrani `calls.import.*`.
+  'calls.pick.title': 'Audio yuklash',
+  'calls.pick.preparing': 'Fayllar tayyorlanmoqda...',
+  'calls.pick.failed': "Audio qo'shilmadi: {reason}",
+  'calls.pick.unsupported': 'faqat .m4a, .aac, .mp3, .wav yoki .ogg audio qabul qilinadi',
+  'calls.pick.mismatch': 'fayl ichidagi format kengaytmasiga mos emas',
+  'calls.pick.openFailed': "Fayl tanlash oynasini ochib bo'lmadi",
 } as const;
 
 type K = keyof typeof uz;
@@ -133,7 +140,7 @@ const ru: Record<K, string> = {
   'calls.titleNoName': 'Звонок, {time}',
   'calls.sizeMb': '{n} МБ',
   'calls.sizeKb': '{n} КБ',
-  'calls.queued': 'Отправляется - статус в Записях',
+  'calls.queued': 'Отправляется - статус в Plaud',
   'calls.sendFailed': 'Не удалось отправить: {reason}',
   'calls.err.space': 'мало места - освободите память',
   'calls.err.read': 'не удалось прочитать файл',
@@ -178,10 +185,16 @@ const ru: Record<K, string> = {
   'calls.import.emptyBody': 'Файл уже отправлен или удалён.',
   'calls.import.tooLargeBody': 'Файл больше {mb} МБ',
   'calls.import.unsupportedBody': 'Подходят только .m4a и .aac',
-  'calls.import.toRecordings': 'К записям',
+  'calls.import.toRecordings': 'Открыть Plaud',
   'calls.import.queued': 'Добавлено в очередь: {n}',
   'calls.import.queuedOne': 'Запись отправляется',
   'calls.import.note': 'Записывайте звонок, только предупредив собеседника.',
+  'calls.pick.title': 'Загрузить аудио',
+  'calls.pick.preparing': 'Готовим файлы...',
+  'calls.pick.failed': 'Аудио не добавлено: {reason}',
+  'calls.pick.unsupported': 'подходят только аудио .m4a, .aac, .mp3, .wav и .ogg',
+  'calls.pick.mismatch': 'содержимое файла не совпадает с его расширением',
+  'calls.pick.openFailed': 'Не удалось открыть выбор файлов',
 };
 
 const en: Record<K, string> = {
@@ -220,7 +233,7 @@ const en: Record<K, string> = {
   'calls.titleNoName': 'Call, {time}',
   'calls.sizeMb': '{n} MB',
   'calls.sizeKb': '{n} KB',
-  'calls.queued': 'Sending - see status in Recordings',
+  'calls.queued': 'Sending - see status in Plaud',
   'calls.sendFailed': "Couldn't send: {reason}",
   'calls.err.space': 'phone storage is low - free up space',
   'calls.err.read': "couldn't read the file",
@@ -265,10 +278,16 @@ const en: Record<K, string> = {
   'calls.import.emptyBody': 'The file was already sent or deleted.',
   'calls.import.tooLargeBody': 'The file is over {mb} MB',
   'calls.import.unsupportedBody': 'Only .m4a or .aac audio',
-  'calls.import.toRecordings': 'Go to recordings',
+  'calls.import.toRecordings': 'Go to Plaud',
   'calls.import.queued': '{n} recording(s) queued',
   'calls.import.queuedOne': 'Sending the recording',
   'calls.import.note': 'Only record a call after telling the other person.',
+  'calls.pick.title': 'Upload audio',
+  'calls.pick.preparing': 'Preparing files...',
+  'calls.pick.failed': 'Audio not added: {reason}',
+  'calls.pick.unsupported': 'only .m4a, .aac, .mp3, .wav or .ogg audio is accepted',
+  'calls.pick.mismatch': "the file's content doesn't match its extension",
+  'calls.pick.openFailed': "Couldn't open the file picker",
 };
 
 export const callsPart = { uz, ru, en };

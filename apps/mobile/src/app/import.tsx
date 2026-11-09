@@ -8,6 +8,11 @@
  *
  * Yuborilganda fayl `imports/` dan `recordings/` ga ko'chadi va oddiy navbat qatori bo'ladi
  * (source `share`): yuklash, oflayn kutish va xulosa yozuvlar bilan bir xil.
+ *
+ * Plaud ro'yxatidagi "Audio yuklash" ham shu ekranga keladi (fayllarni `imports/` ga JS o'zi
+ * nusxalaydi - `features/calls/pickAudio`). Shuning uchun keyin Plaud'ga `dismissTo` bilan
+ * qaytamiz: ro'yxat stekda bo'lsa o'shanga qaytadi (ikkinchi nusxa ochilmaydi), bo'lmasa
+ * (tashqi ulashish) - `replace` kabi almashtiradi.
  */
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { AudioLines, FileXCorner, Phone, Send } from 'lucide-react-native';
@@ -130,7 +135,7 @@ export default function ImportScreen() {
     // Bittasi bo'lsa ham ketdi - "yuborilmadi" deb qo'rqitmaymiz; hech biri ketmasa - sababi.
     if (queued) showToast(queued === 1 ? t('calls.import.queuedOne') : t('calls.import.queued', { n: queued }));
     else if (problem) toastSendOutcome(t, problem);
-    if (queued) router.replace('/meetings');
+    if (queued) router.dismissTo('/meetings');
     else leave();
   };
 
@@ -162,7 +167,7 @@ export default function ImportScreen() {
               testID: 'import-to-recordings',
               onPress: () => {
                 discardImports(params.files);
-                router.replace('/meetings');
+                router.dismissTo('/meetings');
               },
             }}
           />

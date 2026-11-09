@@ -27,6 +27,7 @@ import type {
   CompleteRequest,
   CreateActionItemRequest,
   CreateMeetingRequest,
+  CreateMinutesRequest,
   CreateSummaryRequest,
   CrmRequest,
   CrmResult,
@@ -40,6 +41,9 @@ import type {
   MeetingsConfig,
   MergeSpeakersRequest,
   MergeSpeakersResponse,
+  MinutesDetail,
+  MinutesExportFormat,
+  MinutesView,
   PatchActionItemRequest,
   PatchMeetingRequest,
   PatchSegmentRequest,
@@ -91,6 +95,8 @@ export const SHARE_FILE_TYPES = {
   docx: { ext: 'docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
   md: { ext: 'md', mime: 'text/markdown' },
   txt: { ext: 'txt', mime: 'text/plain' },
+  // Subtitr: server `application/x-subrip` beradi (`export_transcript`).
+  srt: { ext: 'srt', mime: 'application/x-subrip' },
   audio: { ext: 'm4a', mime: 'audio/mp4' },
 } as const;
 export type ShareFileKind = keyof typeof SHARE_FILE_TYPES;
@@ -170,6 +176,10 @@ export function createMeetingsApi(client: ApiClient) {
         query: { format: o.format, speakers: o.speakers ?? true, timestamps: o.timestamps ?? true },
         responseType: 'text',
       }),
+    // 21b - o'sha transkript FAYL bo'lib (ulashish varag'i, "Subtitr (SRT)"): `downloadWithAuth`
+    // bilan keshga - matn JS xotirasi va `Share.share` chegarasidan o'tmaydi.
+    transcriptExportUrl: (id: string, format: TranscriptExportFormat) =>
+      client.url(`${M}/${enc(id)}/transcript/export`, { format }),
     // 22
     actionItems: (id: string) => client.request<{ items: ActionItem[] }>(`${M}/${enc(id)}/action-items`),
     // 23
@@ -198,6 +208,16 @@ export function createMeetingsApi(client: ApiClient) {
         parts: exportPartsParam(o.parts),
         summaryId: o.summaryId || undefined,
       }),
+    // 34a - bayonnomalar (rasmiy hujjat loyihasi): har til va transkript versiyasi uchun qatorlar
+    minutesList: (id: string) => client.request<{ items: MinutesView[] }>(`${M}/${enc(id)}/minutes`),
+    // 34b - 200 tayyor (yoki allaqachon yozilmoqda), 202 `running` - holat 34c bilan so'raladi
+    createMinutes: (id: string, body: CreateMinutesRequest) =>
+      client.request<MinutesView>(`${M}/${enc(id)}/minutes`, { method: 'POST', body }),
+    // 34c
+    minutes: (id: string, minutesId: string) => client.request<MinutesDetail>(`${M}/${enc(id)}/minutes/${enc(minutesId)}`),
+    // 34d - FAYL (Word/PDF): ExportSheet kabi `downloadWithAuth` bilan keshga, so'ng ulashish oynasi
+    minutesExportUrl: (id: string, minutesId: string, format: MinutesExportFormat) =>
+      client.url(`${M}/${enc(id)}/minutes/${enc(minutesId)}/export`, { format }),
     // 32 - vazifa -> v3 -> CRM TAKLIFI (hech narsa o'zgarmaydi; tasdiqlash - actions.ts)
     actionItemToCrm: (id: string, itemId: string, body: CrmRequest = {}) =>
       client.request<CrmResult>(`${M}/${enc(id)}/action-items/${enc(itemId)}/crm`, {

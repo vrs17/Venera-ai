@@ -182,8 +182,12 @@ class MobileApp:
 
 
 def caption_of(info: dict[str, Any]) -> str:
+    # Play Protect qatori (2026-11-09, ega so'rovi "Play Protect bloklamasin"): 1.3.6 dan ilovada
+    # Accessibility yo'q - qattiq blok tushmaydi; Play'dan tashqaridagi har ilovaga chiqadigan YUMSHOQ
+    # ogohlantirishda odam "OK" ni bossa "App not installed" bo'lardi - yo'lini shu yerda aytamiz.
     return (f"📲 <b>Barno AI</b> {esc(info['version'])} - Android ilovasi\n\n"
             "O'rnatish: faylni oching; telefon so'rasa, «Noma'lum manbalardan o'rnatish»ga ruxsat bering. "
+            "Play Protect ogohlantirsa: «Batafsil» → «Baribir o'rnatish». "
             "Kirish - HRM/CRM login va parolingiz bilan.")
 
 

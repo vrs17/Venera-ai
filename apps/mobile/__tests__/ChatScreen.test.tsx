@@ -163,14 +163,14 @@ describe('ChatScreen', () => {
     expect(router.push).toHaveBeenCalledWith('/settings');
   });
 
-  it('top bar: ≋ Yozuvlar is hidden without meetings and opens /meetings in one tap when enabled', async () => {
+  it('top bar: ≋ Plaud is hidden without meetings and opens /meetings in one tap when enabled', async () => {
     await renderChat();
     expect(screen.queryByTestId('chat-meetings')).toBeNull();
     await act(async () => {
       useAuth.getState().setConfig(config);
     });
     const btn = await screen.findByTestId('chat-meetings');
-    expect(btn.props.accessibilityLabel).toBe('Yozuvlar');
+    expect(btn.props.accessibilityLabel).toBe('Plaud');
     await act(async () => {
       await fireEvent.press(btn);
     });

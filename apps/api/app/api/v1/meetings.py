@@ -1,6 +1,7 @@
-"""Yig'ilishlar bo'limi - `/api/v1/meetings` (spetsifikatsiya 3.2, 1-28).
+"""Yig'ilishlar bo'limi - `/api/v1/meetings` (spetsifikatsiya 3.2, 1-28; bayonnoma 32-35).
 
-Router'da MANTIQ YO'Q: har endpoint `services/meetings/service.py` ga uzatadi.
+Router'da MANTIQ YO'Q: har endpoint `services/meetings/service.py` ga (bayonnoma -
+`services/meetings/minutes/` ga) uzatadi.
 
 KIRISH ESHIGI (`meetings_access`):
   * `MEETINGS_ENABLED` o'chiq - 404 (bo'lim umuman ko'rinmaydi). `.env` dan
@@ -26,7 +27,7 @@ from ...core.channels import channel_of
 from ...core.config import settings
 from ...schemas.auth import AuthUser
 from ...schemas import meetings as schemas
-from ...services.meetings import service
+from ...services.meetings import minutes, service
 from ...services.meetings.errors import MeetingProblem
 from ..deps import current_user, get_identity_store
 
@@ -298,6 +299,47 @@ def export_meeting(meeting_id: str, request: Request,
     data, media, disposition = service.export_meeting(
         user, meeting_id, format, summary_id=summary_id, parts=parts,
         lang=service.accept_language(request.headers.get("Accept-Language")))
+    # Shaxsiy hujjat: oraliq kesh (proksi, brauzer) saqlab qolmasin.
+    return Response(content=data, media_type=media,
+                    headers={"Content-Disposition": disposition, "Cache-Control": "private, no-store"})
+
+
+# --- bayonnoma (rasmiy hujjat, `services/meetings/minutes/`) ------------------------------------
+
+
+@router.get("/{meeting_id}/minutes", response_model=schemas.MinutesList)
+def list_minutes(meeting_id: str, user: AuthUser = Depends(meetings_access)) -> dict:
+    return minutes.listing(user, meeting_id)
+
+
+@router.post("/{meeting_id}/minutes", response_model=schemas.MinutesView, status_code=status.HTTP_202_ACCEPTED,
+             responses={200: {"model": schemas.MinutesView,
+                              "description": "Tayyori bor yoki xuddi shu hujjat hozir yozilmoqda"}})
+def create_minutes(meeting_id: str, response: Response, body: schemas.MinutesRequest | None = None,
+                   user: AuthUser = Depends(meetings_access)) -> dict:
+    """Hujjat FONDA yoziladi (1-3 daqiqa): 202 `running` - ilova `GET .../minutes/{id}` ni so'rab turadi.
+    200 - tayyori bor (`force` bo'lmasa) yoki xuddi shu hujjat hozir yozilmoqda (ikkinchi bosish
+    birinchisiga qo'shiladi: model ham, soatlik chegara ham ikkinchi marta sarflanmaydi)."""
+    body = body or schemas.MinutesRequest()
+    view, started = minutes.start(user, meeting_id, body.language, force=body.force)
+    if not started:
+        response.status_code = status.HTTP_200_OK
+    return view
+
+
+@router.get("/{meeting_id}/minutes/{minutes_id}", response_model=schemas.MinutesDetail)
+def get_minutes(meeting_id: str, minutes_id: str, user: AuthUser = Depends(meetings_access)) -> dict:
+    return minutes.get(user, meeting_id, minutes_id)
+
+
+@router.get("/{meeting_id}/minutes/{minutes_id}/export", responses={200: {"content": {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {}, "application/pdf": {},
+    "text/markdown": {}}}})
+def export_minutes(meeting_id: str, minutes_id: str, format: str = Query("docx", pattern="^(docx|pdf|md)$"),
+                   user: AuthUser = Depends(meetings_access)) -> Response:
+    """Tayyor hujjat fayli: Word (asosiy - kotib «________» joylarini to'ldiradi), PDF (nusxa), MD.
+    `async` EMAS: chizish CPU ishi - threadpool'da (`_export_slot`: bir odam - bir vaqtda bitta)."""
+    data, media, disposition = minutes.export_file(user, meeting_id, minutes_id, format)
     # Shaxsiy hujjat: oraliq kesh (proksi, brauzer) saqlab qolmasin.
     return Response(content=data, media_type=media,
                     headers={"Content-Disposition": disposition, "Cache-Control": "private, no-store"})

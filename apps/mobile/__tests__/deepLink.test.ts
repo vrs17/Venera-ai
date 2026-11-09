@@ -80,10 +80,10 @@ describe('entry decision', () => {
     // Plitka/yon tugma - almashtirgich: eskirgan "to'xtat" (hech narsa yozilmayapti) = yangi yozuv.
     expect(decideEntry(p(KEY, 'stop'), KEY, 'idle')).toBe('start');
     expect(decideEntry({ src: 'launcher', k: KEY, action: 'stop' }, KEY, 'idle')).toBe('start');
-    // Ovoz tugmasi (2x pastga) - yon tugma bilan bir xil almashtirgich.
-    expect(decideEntry({ src: 'volume', k: KEY, action: 'stop' }, KEY, 'recording')).toBe('stop');
-    expect(decideEntry({ src: 'volume', k: KEY, action: null }, KEY, 'idle')).toBe('start');
-    expect(parseEntryParams({ src: 'volume', k: KEY })).toMatchObject({ src: 'volume' });
+    // Ovoz tugmasi xizmati olib tashlandi (Play Protect): `src=volume` endi kirish nuqtasi emas - oddiy havola.
+    expect(ENTRY_SOURCES).not.toContain('volume');
+    expect(parseEntryParams({ src: 'volume', k: KEY })).toMatchObject({ src: 'link', k: KEY });
+    expect(decideEntry({ src: 'link', k: KEY, action: 'stop' }, KEY, 'idle')).toBe('ready');
     // Bildirishnomadagi Stop esa hech qachon yangi yozuv boshlamaydi.
     expect(decideEntry({ src: 'notification', k: KEY, action: 'stop' }, KEY, 'idle')).toBe('ready');
     expect(decideEntry(p(OTHER, 'stop'), KEY, 'idle')).toBe('ready');
@@ -146,10 +146,17 @@ describe('import deep link ("Ulashish -> Barno AI")', () => {
 
   it('drops path traversal, foreign extensions, junk params; nothing left -> recordings list', () => {
     expect(sanitizeIncomingPath(`venera-rec://import?files=../../databases/venera-queue.db,${B}`)).toBe(`/import?files=${B}`);
-    expect(sanitizeIncomingPath('venera-rec://import?files=a.mp3,b.json,..%2Fx.m4a')).toBe('/meetings');
+    expect(sanitizeIncomingPath('venera-rec://import?files=a.flac,b.json,..%2Fx.m4a,c.mp3.part')).toBe('/meetings');
     expect(sanitizeIncomingPath('venera-rec://import')).toBe('/meetings');
     expect(sanitizeIncomingPath(`venera-rec://import?files=${B}&skipped=9999&n=x1&k=short`)).toBe(`/import?files=${B}`);
     expect(sanitizeIncomingPath(`https://evil.example/import?files=${B}`)).toBe('/');
+  });
+
+  it('"Audio yuklash" names (.mp3, .wav, .ogg) pass the same strict check as native m4a/aac names', () => {
+    const files = ['share_1731130000000_0_Kengash.mp3', 'share_1731130000000_1_diktofon.wav', 'share_1731130000000_2_voice.ogg'];
+    expect(parseImportParams({ files: files.join(','), n: '3' })).toEqual({ files, skipped: 0, n: '3' });
+    expect(sanitizeIncomingPath(`venera-rec://import?files=${files[0]},../${files[1]},x.MP3&n=4`)).toBe(`/import?files=${files[0]},x.MP3&n=4`);
+    expect(parseImportParams({ files: 'a b.mp3,.mp3,ж.ogg,x.wav.json' }).files).toEqual([]);
   });
 
   it('caps the number of files and removes duplicates', () => {

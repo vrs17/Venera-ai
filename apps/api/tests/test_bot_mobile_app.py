@@ -75,6 +75,7 @@ def test_tugma_apk_yuboradi_keyingisi_qayta_yuklanmaydi(world):
     assert doc["filename"] == "barno-ai-1.3.5-vc10-arm64.apk" and doc["size"] == len(APK)
     assert doc["content_type"] == "application/vnd.android.package-archive" and doc["timeout"] == 300.0
     assert doc["caption"].startswith("📲 <b>Barno AI</b> 1.3.5 - Android ilovasi\n\n")
+    assert "Play Protect ogohlantirsa: «Batafsil» → «Baribir o'rnatish»" in doc["caption"]   # yumshoq ogohlantirish
     assert api.calls == ["http://10.10.50.4:8097/latest", "http://10.10.50.4:8097/download?variant=arm64"]
     # Yuklash paytida "⏳" xabari - fayl ketgach o'chadi.
     holder = next(kw for kw in tg.sent() if kw["text"] == "⏳ Barno AI 1.3.5 (Android) tayyorlanmoqda…")

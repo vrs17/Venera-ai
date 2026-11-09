@@ -393,7 +393,7 @@ describe('send feedback', () => {
     toastSendOutcome(t, { kind: 'error', code: 'ERR_NO_SPACE' });
     expect(toast).toHaveBeenLastCalledWith("Yuborib bo'lmadi: telefonda joy kam - joy bo'shating");
     toastSendOutcome(t, { kind: 'queued', clientId: 'x' });
-    expect(toast).toHaveBeenLastCalledWith('Yuborilmoqda - holati Yozuvlarda');
+    expect(toast).toHaveBeenLastCalledWith("Yuborilmoqda - holati Plaud'da");
     expect(limitMb(157286400)).toBe('150');
   });
 });

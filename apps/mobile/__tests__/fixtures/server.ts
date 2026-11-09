@@ -13,6 +13,7 @@ import type {
   MeetingCard,
   MeetingList,
   MeetingsConfig,
+  MinutesView,
   RegisterDeviceResponse,
   Speaker,
   Summary,
@@ -367,3 +368,26 @@ export const deviceResponse = {
   deviceToken: 'x'.repeat(43),
   expiresAt: '2026-11-08T06:00:00Z',
 } satisfies RegisterDeviceResponse;
+
+/** Bayonnoma qatori (`GET /meetings/{id}/minutes`, server `minutes.view`) - tayyor, eskirmagan. */
+export function minutesView(over: Partial<MinutesView> = {}): MinutesView {
+  return {
+    id: 'f'.repeat(32),
+    meetingId: 'a'.repeat(32),
+    language: 'uz-cyrl',
+    status: 'ready',
+    createdAt: '2026-11-06T06:00:00Z',
+    finishedAt: '2026-11-06T06:01:30Z',
+    provider: 'claude',
+    model: 'claude-sonnet-5-5',
+    transcriptRev: 1,
+    stale: false,
+    agendaCount: 2,
+    sectionCount: 2,
+    itemCount: 5,
+    notes: ['Muddat aniq aytilmagan - 2-band'],
+    warnings: [],
+    error: null,
+    ...over,
+  } satisfies MinutesView;
+}

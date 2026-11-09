@@ -1,7 +1,7 @@
 /**
- * Bo'sh holat: belgi + sarlavha + qisqa izoh + bitta asosiy amal (+ ixtiyoriy
- * ikkinchi matnli tugma). NIMA UCHUN: "Yozuv yo'q" degan quruq matn o'rniga
- * foydalanuvchi keyingi qadamni darhol ko'rsin (masalan "Yozishni boshlash").
+ * Bo'sh holat: belgi + sarlavha + qisqa izoh + bitta asosiy amal (+ ixtiyoriy muqobil
+ * tugma va ikkinchi matnli tugma). NIMA UCHUN: "Yozuv yo'q" degan quruq matn o'rniga
+ * foydalanuvchi keyingi qadamni darhol ko'rsin (masalan "Yozishni boshlash" yoki "Audio yuklash").
  *
  * `compact` - kartaning ichida (ekranni to'ldirmaydi, kichikroq belgi).
  */
@@ -19,6 +19,8 @@ export interface EmptyStateAction {
   variant?: ButtonVariant;
   icon?: LucideIcon;
   testID?: string;
+  /** Amal davom etmoqda (masalan fayllar tayyorlanmoqda) - tugma aylanma, qayta bosilmaydi. */
+  loading?: boolean;
 }
 
 export function EmptyState({
@@ -27,6 +29,7 @@ export function EmptyState({
   title,
   body,
   action,
+  altAction,
   secondary,
   compact,
   testID,
@@ -36,6 +39,8 @@ export function EmptyState({
   title: string;
   body?: string | null;
   action?: EmptyStateAction;
+  /** Asosiy amalga teng muqobil yo'l (default `secondary` uslubida) - masalan yozish o'rniga fayl yuklash. */
+  altAction?: EmptyStateAction;
   secondary?: { title: string; onPress: () => void; testID?: string };
   compact?: boolean;
   testID?: string;
@@ -58,8 +63,22 @@ export function EmptyState({
           icon={action.icon}
           variant={action.variant ?? 'primary'}
           onPress={action.onPress}
+          loading={action.loading}
           small={compact}
           style={{ marginTop: compact ? 12 : 16 }}
+        />
+      ) : null}
+      {altAction ? (
+        <Button
+          pill
+          testID={altAction.testID}
+          title={altAction.title}
+          icon={altAction.icon}
+          variant={altAction.variant ?? 'secondary'}
+          onPress={altAction.onPress}
+          loading={altAction.loading}
+          small={compact}
+          style={{ marginTop: action ? 8 : compact ? 12 : 16 }}
         />
       ) : null}
       {secondary ? (

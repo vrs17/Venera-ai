@@ -1,4 +1,5 @@
 import { callsPart } from './parts/calls';
+import { minutesPart } from './parts/minutes';
 import { nav } from './parts/nav';
 import { recordingsPart } from './parts/recordings';
 import { settingsPart } from './parts/settings';
@@ -74,12 +75,12 @@ export const en: Record<TKey, string> = {
   'shell.errorTitle': 'Barno AI did not open',
   'shell.errorBody': 'The server did not respond. Please try again a bit later. Meeting recording keeps working.',
   'shell.record': 'Record a meeting',
-  'shell.meetings': 'Meeting recordings',
+  'shell.meetings': 'Plaud',
   'shell.closeTitle': 'Close?',
   'shell.closeBody': 'Changes you made may not be saved.',
   'shell.closeConfirm': 'Close anyway',
 
-  'list.title': 'Meetings',
+  'list.title': 'Plaud',
   'list.empty': 'No meetings yet. Tap the red button to start recording.',
   'list.search': 'Search',
   'list.openItems': '{n} open tasks',
@@ -136,6 +137,8 @@ export const en: Record<TKey, string> = {
     'The recording seems to be mostly in another language - the text may be wrong. Transcribe again in Russian/English (without speakers)?',
   'detail.retranscribeRu': 'Transcribe again in Russian',
   'detail.retranscribeEn': 'Transcribe again in English',
+  'detail.retranscribeUz': 'Transcribe again in Uzbek',
+  'detail.retranscribeOther': 'Transcribe in another language',
   'detail.retranscribeConfirm': 'Transcribing again is charged again and old summaries are deleted. Continue?',
   'detail.routerMode': 'Speakers are not separated for this language, times are approximate',
   'detail.stale': 'The transcript was edited - the summary may be out of date',
@@ -506,22 +509,16 @@ export const en: Record<TKey, string> = {
   'settings.connAs': "as {login}",
   'settings.reconnectHint': "If a connection expired or your password changed - sign in again.",
   'settings.reconnect': "Sign in again",
-  'settings.meetings': "Meeting recordings",
+  'settings.meetings': 'Plaud',
   'settings.meetingsHint': "Record meetings, summaries and tasks",
   'settings.myTasks': "My tasks from meetings",
   'settings.appearance': "Appearance",
   'settings.recordingSection': "Meeting recording settings",
-  'settings.volumeTitle': "Record with the volume button",
-  'settings.volumeOn': "On",
-  'settings.volumeOff': "Off",
-  'settings.volumeHint': "Press volume down twice in a row to start recording, twice again to stop. Works in any app while the screen is on. Barno watches only this button.",
-  'settings.volumeSteps': "To turn on: \"Open settings\" > Installed apps > \"Barno: record with the volume button\" > On.",
-  'settings.volumeOpen': "Open settings",
-  'settings.volumeManage': "Manage in settings",
   // UI qayta ishlanishi (2026-10-10): har bo'lim o'z faylida - parallel ishda to'qnashmasin.
   ...nav.en,
   ...settingsPart.en,
   ...recordingsPart.en,
   ...sharePart.en,
   ...callsPart.en,
+  ...minutesPart.en,
 };

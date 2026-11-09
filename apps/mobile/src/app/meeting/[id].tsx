@@ -3,8 +3,10 @@
  * tablar (Xulosa | Matn | Vazifalar | Savol), pastda doim turgan pleer. Xulosa tabining
  * tepasida "Xulosa | Xarita" almashtirgichi (Plaud kabi): xarita 5-tab bo'lganda 360 dp
  * telefonda "Vazifalar 2" va "Transcript" kesilib qolardi.
- * Sarlavhadagi ulashish belgisi - eksport varag'i (PDF, Word, Markdown, matn, audio) -
- * ko'rib turilgan xulosa bilan.
+ * Sarlavhadagi ulashish belgisi - eksport varag'i (PDF, Word, Markdown, matn, subtitr, audio) -
+ * ko'rib turilgan xulosa bilan. ⋮ menyusida (Slack/Telegram'dagi Plaud tugmalari bilan bir xil):
+ * ulashish, «Bayonnoma» (rasmiy hujjat loyihasi - `MinutesSheet`), "Boshqa tilda qayta o'girish"
+ * (doim - til ogohlantirishi bo'lmasa ham), nomlash, o'chirish.
  *
  * Pleer manbasi: telefondagi fayl, u yo'q bo'lsa - serverdagi audio
  * (`PlayerBar.useAudioChoice`). Shuning uchun yuklanayotgan yozuvni ham darhol
@@ -23,6 +25,8 @@ import {
   AudioLines,
   CloudOff,
   EllipsisVertical,
+  FilePen,
+  Languages,
   ListChecks,
   MessageCircleQuestionMark,
   Network,
@@ -44,11 +48,13 @@ import { ExportSheet } from '@/features/meeting/ExportSheet';
 import { formatDateTime } from '@/features/meeting/formatDate';
 import { LocalRecording } from '@/features/meeting/LocalRecording';
 import { MeetingHeader } from '@/features/meeting/MeetingHeader';
+import { MinutesSheet } from '@/features/meeting/MinutesSheet';
 import { MindMapTab } from '@/features/meeting/MindMapView';
 import { leaveRecording } from '@/features/meeting/nav';
 import { AudioDock, useAudioChoice, type AudioChoice, type SeekRequest } from '@/features/meeting/PlayerBar';
 import { useMeeting, useMeetingMutations, useSummaries } from '@/features/meeting/queries';
 import { MeetingStatusPill } from '@/features/meeting/RecordingCard';
+import { RETRANSCRIBE_TITLE, retranscribeTargets } from '@/features/meeting/retranscribe';
 import { SummaryView } from '@/features/meeting/SummaryView';
 import { TranscriptView } from '@/features/meeting/TranscriptView';
 import { UploadStatusCard } from '@/features/meeting/UploadStatusCard';
@@ -193,6 +199,9 @@ function MeetingBody({
   const [editTitle, setEditTitle] = useState(false);
   const [menu, setMenu] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [minutesOpen, setMinutesOpen] = useState(false);
+  // "Boshqa tilda qayta o'girish" -> maqsad tilini tanlash varag'i.
+  const [relang, setRelang] = useState(false);
   // Xulosa tabida tanlangan xulosa - xarita va eksport ham shundan (null - asosiysi).
   const [summaryId, setSummaryId] = useState<string | null>(null);
   // Xulosalar ro'yxati xulosa ko'rinishi bilan UMUMIY keshda - qo'shimcha so'rov yo'q.
@@ -233,7 +242,7 @@ function MeetingBody({
     ]);
 
   const confirmRetranscribe = (language: Lang) =>
-    Alert.alert(language === 'ru' ? t('detail.retranscribeRu') : t('detail.retranscribeEn'), t('detail.retranscribeConfirm'), [
+    Alert.alert(t(RETRANSCRIBE_TITLE[language]), t('detail.retranscribeConfirm'), [
       { text: t('common.cancel'), style: 'cancel' },
       { text: t('common.ok'), onPress: () => muts.retranscribe.mutate({ language, expectedSpeakers: m.expectedSpeakers }) },
     ]);
@@ -372,9 +381,31 @@ function MeetingBody({
         onClose={() => setMenu(false)}
         items={[
           { key: 'export', title: t('recs.export'), icon: Share2, onPress: () => setExporting(true) },
+          { key: 'minutes', title: t('minutes.title'), icon: FilePen, onPress: () => setMinutesOpen(true) },
+          { key: 'retranscribe', title: t('detail.retranscribeOther'), icon: Languages, onPress: () => setRelang(true) },
           { key: 'rename', title: t('tr.rename'), icon: Pencil, onPress: () => setEditTitle(true) },
           { key: 'delete', title: t('common.delete'), icon: Trash, destructive: true, onPress: confirmDelete },
         ]}
+      />
+      {/* Ikkinchi varaq birinchisi yopilgandan keyin ochiladi (ActionMenu amalni yopilishdan keyin bajaradi). */}
+      <ActionMenu
+        visible={relang}
+        title={t('detail.retranscribeOther')}
+        onClose={() => setRelang(false)}
+        items={retranscribeTargets(m.language).map((language) => ({
+          key: `relang-${language}`,
+          title: t(RETRANSCRIBE_TITLE[language]),
+          icon: Languages,
+          onPress: () => confirmRetranscribe(language),
+        }))}
+      />
+      <MinutesSheet
+        visible={minutesOpen}
+        onClose={() => setMinutesOpen(false)}
+        meetingId={m.id}
+        title={m.title}
+        // Hujjat tili default'i yig'ilish tilidan (uz -> kirill, server qoidasi).
+        meetingLanguage={m.language}
       />
       <ExportSheet
         visible={exporting}

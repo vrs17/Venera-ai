@@ -3,6 +3,7 @@
  * qabul qilinmaganlar soni, suhbat tili, "Yuborish" -> fayl recordings/ ga ko'chadi va
  * navbat qatori (source share) yoziladi, "Bekor qilish" -> imports/ tozalanadi.
  * Avtomatik yuborish YO'Q: kalitli havola ham faqat tasdiq ekranini ochadi.
+ * "Audio yuklash" yozgan mp3/wav/ogg: native ularni tanimaydi - meta JS'da o'qiladi, tozalash JS'da.
  */
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import { router } from 'expo-router';
@@ -21,7 +22,7 @@ import { config, loginResponse } from './fixtures/server';
 
 const mockParams: { value: Record<string, string> } = { value: {} };
 jest.mock('expo-router', () => ({
-  router: { push: jest.fn(), replace: jest.fn(), navigate: jest.fn(), back: jest.fn(), canGoBack: jest.fn(() => true) },
+  router: { push: jest.fn(), replace: jest.fn(), dismissTo: jest.fn(), navigate: jest.fn(), back: jest.fn(), canGoBack: jest.fn(() => true) },
   Stack: { Screen: () => null },
   useLocalSearchParams: () => mockParams.value,
   useFocusEffect: () => {},
@@ -34,6 +35,27 @@ jest.mock('@/features/entry/nativeEntry', () => ({
   removeImport: jest.fn(() => true),
 }));
 const native = jest.requireMock<Record<string, jest.Mock>>('@/features/entry/nativeEntry');
+
+// "Audio yuklash" yozgan mp3/wav/ogg uchun JS `imports/` (expo-file-system o'rniga).
+const mockJs = new Map<string, { size: number; meta: Record<string, unknown> | null }>();
+const mockJsRemoved: string[] = [];
+jest.mock('@/features/calls/pickAudio', () => ({
+  ...jest.requireActual('@/features/calls/pickAudio'),
+  appImportsDir: () => ({
+    exists: (name: string) => mockJs.has(name),
+    copyIn: async () => 0,
+    head: () => new Uint8Array(),
+    writeMeta: () => {},
+    readMeta: (name: string) => mockJs.get(name)?.meta ?? null,
+    stat: (name: string) => (mockJs.has(name) ? { path: `/data/user/0/app/files/imports/${name}`, size: mockJs.get(name)!.size } : null),
+    remove: (name: string) => {
+      mockJsRemoved.push(name);
+      mockJs.delete(name);
+    },
+    freeBytes: () => null,
+    sweep: () => {},
+  }),
+}));
 
 const mockMoved: [string, string][] = [];
 jest.mock('expo-file-system', () => ({
@@ -57,7 +79,8 @@ jest.mock('expo-crypto', () => ({
 }));
 
 const alertSpy = jest.spyOn(Alert, 'alert');
-const replace = router.replace as jest.Mock;
+// Plaud stekda bo'lsa o'shanga qaytiladi ("Audio yuklash" dan kelganda ikkinchi nusxa ochilmaydi).
+const dismissTo = router.dismissTo as jest.Mock;
 const back = router.back as jest.Mock;
 
 const A = 'share_1728560000000_0_Call_recording_Alisher_241010_143012.m4a';
@@ -92,6 +115,8 @@ async function renderImport(params: Record<string, string>) {
 beforeEach(() => {
   __setCallsStorage(null);
   mockImports.clear();
+  mockJs.clear();
+  mockJsRemoved.length = 0;
   mockMoved.length = 0;
   alertSpy.mockReset();
   useSettings.setState({ uiLang: 'uz', lastLanguage: 'uz' });
@@ -123,7 +148,7 @@ describe('Import confirm screen', () => {
 
     alertSpy.mockImplementationOnce((_t?: string, _m?: string, buttons?: AlertButton[]) => buttons?.find((b) => b.text === 'Tushundim')?.onPress?.());
     await fireEvent.press(screen.getByTestId('import-send'));
-    await waitFor(() => expect(replace).toHaveBeenCalledWith('/meetings'));
+    await waitFor(() => expect(dismissTo).toHaveBeenCalledWith('/meetings'));
 
     const rows = await services.queue.list();
     expect(rows).toHaveLength(2);
@@ -165,8 +190,10 @@ describe('Import confirm screen', () => {
     await waitFor(() => expect(screen.getByTestId('import-empty')).toBeTruthy());
     expect(screen.getByText("Yuboriladigan fayl yo'q")).toBeTruthy();
     expect(within(screen.getByTestId(`import-item-${A}`)).getByText('Fayl topilmadi')).toBeTruthy();
+    // Bo'lim nomi Slack/Telegram'dagi kabi "Plaud" (marshrut va testID o'zgarmagan).
+    expect(screen.getByTestId('import-to-recordings')).toHaveTextContent("Plaud'ga o'tish");
     await fireEvent.press(screen.getByTestId('import-to-recordings'));
-    expect(replace).toHaveBeenCalledWith('/meetings');
+    expect(dismissTo).toHaveBeenCalledWith('/meetings');
   });
 
   it('the empty state names the real cause: all too large / all unsupported', async () => {
@@ -191,8 +218,60 @@ describe('Import confirm screen', () => {
   });
 
   it('invalid names from the link are never read', async () => {
-    await renderImport({ files: '../../databases/venera-queue.db,x.mp3', n: '9' });
+    await renderImport({ files: '../../databases/venera-queue.db,x.flac,y.json', n: '9' });
     await waitFor(() => expect(screen.getByTestId('import-empty')).toBeTruthy());
     expect(native.getImportMeta).not.toHaveBeenCalled();
+  });
+
+  const MP3 = 'share_1731130000000_0_Kengash_9-noyabr.mp3';
+  const WAV = 'share_1731130000000_1_diktofon.wav';
+  const OGG = 'share_1731130000000_2_voice.ogg';
+  const jsMeta = (displayName: string, contentType: string) => ({ displayName, contentType, sizeBytes: 1, durationMs: 0, dateMs: null, source: 'share' });
+
+  it('"Audio yuklash" files (mp3, wav, ogg): metadata read in JS, sent with their own type, cleaned up in JS', async () => {
+    mockImports.set(A, meta(A, { displayName: 'Call recording Alisher_241010_143012.m4a' }));
+    mockJs.set(MP3, { size: 2_000_000, meta: jsMeta('Kengash 9-noyabr.mp3', 'audio/mpeg') });
+    mockJs.set(WAV, { size: 9_000_000, meta: jsMeta('Diktofon yozuvi.wav', 'audio/wav') });
+    // Meta yo'q (yozilmay qolgan) - nom va tur fayl nomidan (native qoidasi bilan bir xil).
+    mockJs.set(OGG, { size: 400_000, meta: null });
+    const services = await renderImport({ files: `${A},${MP3},${WAV},${OGG}`, n: '20' });
+    await waitFor(() => expect(screen.getByTestId('import-send')).toBeTruthy());
+    // Sarlavha - asl nom kengaytmasiz (native fayllar kabi).
+    expect(within(screen.getByTestId(`import-item-${MP3}`)).getByText('Kengash 9-noyabr')).toBeTruthy();
+    expect(within(screen.getByTestId(`import-item-${WAV}`)).getByText('Diktofon yozuvi')).toBeTruthy();
+    // Meta'siz fayl ham yuboriladi (tur nomdan - audio/ogg), "Fayl topilmadi" emas.
+    expect(within(screen.getByTestId(`import-item-${OGG}`)).queryByText('Fayl topilmadi')).toBeNull();
+    expect(screen.getByText('Yuborish (4)')).toBeTruthy();
+    // Native faqat o'zi taniydigan nomni o'qiydi.
+    expect(native.getImportMeta.mock.calls).toEqual([[A]]);
+
+    alertSpy.mockImplementationOnce((_t?: string, _m?: string, buttons?: AlertButton[]) => buttons?.find((b) => b.text === 'Tushundim')?.onPress?.());
+    await fireEvent.press(screen.getByTestId('import-send'));
+    await waitFor(() => expect(dismissTo).toHaveBeenCalledWith('/meetings'));
+
+    const rows = await services.queue.list();
+    const byType = Object.fromEntries(rows.map((r) => [r.contentType, r]));
+    expect(Object.keys(byType).sort()).toEqual(['audio/mp4', 'audio/mpeg', 'audio/ogg', 'audio/wav']);
+    expect(byType['audio/mpeg']).toMatchObject({ source: 'share', fileUri: `file:///doc/recordings/${byType['audio/mpeg'].clientId}.mp3`, totalBytes: 2_000_000 });
+    expect(byType['audio/wav'].fileUri).toBe(`file:///doc/recordings/${byType['audio/wav'].clientId}.wav`);
+    expect(byType['audio/ogg'].fileUri).toBe(`file:///doc/recordings/${byType['audio/ogg'].clientId}.ogg`);
+    expect(mockMoved).toEqual(
+      expect.arrayContaining([[`file:///data/user/0/app/files/imports/${MP3}`, `file:///doc/recordings/${byType['audio/mpeg'].clientId}.mp3`]]),
+    );
+    // mp3/wav/ogg ning `.json` i JS'da o'chiriladi (Kotlin `removeImport` bu nomlarni rad etadi).
+    expect(new Set(mockJsRemoved)).toEqual(new Set([MP3, WAV, OGG]));
+    expect(native.removeImport.mock.calls.map(([n]) => n)).toEqual([A, A]);
+  });
+
+  it('cancel: JS-written files are deleted in JS, native ones natively; a vanished JS file says "Fayl topilmadi"', async () => {
+    mockImports.set(B, meta(B));
+    mockJs.set(MP3, { size: 2_000_000, meta: jsMeta('Kengash.mp3', 'audio/mpeg') });
+    await renderImport({ files: `${B},${MP3},${WAV}`, n: '21' });
+    await waitFor(() => expect(screen.getByTestId('import-send')).toBeTruthy());
+    expect(within(screen.getByTestId(`import-item-${WAV}`)).getByText('Fayl topilmadi')).toBeTruthy();
+    await fireEvent.press(screen.getByTestId('import-cancel'));
+    expect(mockJsRemoved).toEqual([MP3, WAV]);
+    expect(native.removeImport.mock.calls).toEqual([[B]]);
+    expect(back).toHaveBeenCalled();
   });
 });

@@ -29,7 +29,7 @@
  */
 import { ApiError, AuthRequiredError } from '@/api/client';
 import type { MeetingsApi } from '@/api/meetings';
-import type { Meeting } from '@/api/types';
+import type { AudioContentType, Meeting } from '@/api/types';
 import { Sha256 } from '@/lib/sha256';
 
 import { backoffMs } from './backoff';
@@ -41,7 +41,10 @@ export const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_RESYNCS = 6;
 /** Butun-fayl sha mos kelmasa necha marta 0 dan qayta yuklanadi. */
 const MAX_SHA_RESTARTS = 1;
-/** Taxminiy davomiylik (crash'dan tiklangan, durationSec yo'q qator uchun). Server baribir o'zi o'lchaydi. */
+/**
+ * Taxminiy davomiylik (crash'dan tiklangan, durationSec yo'q qator uchun) - yozuvchining AAC
+ * bitreyti. Server baribir o'zi o'lchaydi (`audio.measure`) va `null` ni ham oladi.
+ */
 const FALLBACK_BITRATE = 48_000;
 /** Qayta qurollangan taymer bundan tez ishlamaydi (tor aylanish bo'lmasin). */
 export const MIN_REARM_MS = 1000;
@@ -108,7 +111,13 @@ export function isPending(row: QueueRow): boolean {
   return row.state === 'stopped' || row.state === 'creating' || row.state === 'uploading' || row.state === 'completing';
 }
 
-function estimateDuration(bytes: number): number {
+/**
+ * Hajmdan davomiylik faqat bitreyti bizga ma'lum formatda (yozuvchi/qo'ng'iroq: AAC, MP4).
+ * mp3/wav/ogg ("Audio yuklash") bitreyti har xil - 48 kbps bilan 100 MB WAV "4,6 soat" bo'lardi;
+ * yolg'on son o'rniga `null` (server o'lchaydi).
+ */
+function estimateDuration(bytes: number, contentType: AudioContentType): number | null {
+  if (contentType !== 'audio/aac' && contentType !== 'audio/mp4') return null;
   return Math.round(((bytes * 8) / FALLBACK_BITRATE) * 100) / 100;
 }
 
@@ -301,7 +310,7 @@ export function createUploader(deps: UploaderDeps): Uploader {
           const res = await deps.api.complete(serverId, {
             totalBytes: size,
             sha256,
-            durationSec: row.durationSec ?? estimateDuration(size),
+            durationSec: row.durationSec ?? estimateDuration(size, row.contentType),
             endedAt: row.endedAt ?? new Date(now()).toISOString(),
             marks: row.marks,
           });

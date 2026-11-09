@@ -3,6 +3,7 @@ import { join } from 'path';
 
 import { DICTS, interpolate, translate, UI_LANGS } from '@/i18n';
 import { callsPart } from '@/i18n/parts/calls';
+import { minutesPart } from '@/i18n/parts/minutes';
 import { nav } from '@/i18n/parts/nav';
 import { recordingsPart } from '@/i18n/parts/recordings';
 import { settingsPart } from '@/i18n/parts/settings';
@@ -16,6 +17,7 @@ const PARTS = [
   ['recordings', recordingsPart, 'recs.'],
   ['share', sharePart, 'share.'],
   ['calls', callsPart, 'calls.'],
+  ['minutes', minutesPart, 'minutes.'],
 ] as const;
 
 describe('i18n', () => {
@@ -45,11 +47,11 @@ describe('i18n', () => {
       }
     }
     // Prefikslar faqat bo'lim fayllariga tegishli: asosiy uz.ts ichida qo'lda yozilgan
-    // `nav.`/`set.`/`recs.`/`share.`/`calls.` kaliti bo'lmasin (bo'lim fayli uni jim ustidan yozib yuborardi).
-    for (const k of Object.keys(uz)) if (/^(nav|set|recs|share|calls)\./.test(k)) expect([k, seen.has(k)]).toEqual([k, true]);
+    // `nav.`/`set.`/`recs.`/`share.`/`calls.`/`minutes.` kaliti bo'lmasin (bo'lim fayli uni jim ustidan yozib yuborardi).
+    for (const k of Object.keys(uz)) if (/^(nav|set|recs|share|calls|minutes)\./.test(k)) expect([k, seen.has(k)]).toEqual([k, true]);
     for (const lang of UI_LANGS) {
       const src = readFileSync(join(__dirname, `../src/i18n/${lang}.ts`), 'utf8');
-      expect([lang, src.match(/^\s*['"](nav|set|recs|share|calls)\./m)]).toEqual([lang, null]);
+      expect([lang, src.match(/^\s*['"](nav|set|recs|share|calls|minutes)\./m)]).toEqual([lang, null]);
     }
   });
 
@@ -67,6 +69,28 @@ describe('i18n', () => {
     expect(interpolate('{a} {b}', { a: 1 })).toBe('1 {b}');
     // Lotin yozuvi: kirill harflari yo'q.
     for (const v of Object.values(uz)) expect(v).not.toMatch(/[Ѐ-ӿ]/);
+  });
+
+  it('the meetings section is called "Plaud" (as «🎙 Plaud» in Slack/Telegram); recordings as things stay "yozuv"', () => {
+    for (const lang of UI_LANGS) {
+      for (const k of ['nav.recordings', 'shell.meetings', 'settings.meetings', 'list.title'] as const) {
+        expect([lang, k, translate(lang, k)]).toEqual([lang, k, 'Plaud']);
+      }
+      // Bo'limga ishora qiluvchi matnlar ("holati Plaud'da", "Plaud'ga o'tish", "Plaud bo'limi yoqilmagan").
+      for (const k of ['calls.queued', 'calls.import.toRecordings', 'recs.up.disabledBody'] as const) {
+        expect([lang, k, translate(lang, k)]).toEqual([lang, k, expect.stringContaining('Plaud')]);
+      }
+    }
+    expect(translate('uz', 'calls.queued')).toBe("Yuborilmoqda - holati Plaud'da");
+    expect(translate('uz', 'calls.import.toRecordings')).toBe("Plaud'ga o'tish");
+    expect(translate('ru', 'calls.import.toRecordings')).toBe('Открыть Plaud');
+    // Bo'lim ichidagi tab (yozuvlar ro'yxati | qo'ng'iroqlar) va yozuvlar NARSA sifatida - o'zgarmaydi.
+    expect(translate('uz', 'calls.tab.recordings')).toBe('Yozuvlar');
+    expect(translate('uz', 'list.sessionExpired')).toMatch(/Yozuvlar telefonda saqlanib turibdi/);
+    expect(translate('uz', 'recs.listFailed')).toBe("Yozuvlarni yuklab bo'lmadi");
+    expect(translate('uz', 'recs.emptyTitle')).toBe("Hali yozuv yo'q");
+    // Eski bo'lim nomi hech bir uz matnida qolmadi.
+    for (const v of Object.values(uz)) expect(v).not.toMatch(/Yozuvlar(da|ga)\b|Yig'ilish yozuvlari/);
   });
 
   it('the product is "Barno AI": no user-visible string says Venera (any language, any case)', () => {

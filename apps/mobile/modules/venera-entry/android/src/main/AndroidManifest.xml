@@ -11,8 +11,9 @@
   RecordTileService - Quick Settings "Yozish" plitkasi (toggle: bo'sh -> boshlash,
     yozilmoqda -> to'xtatish).
 
-  RecordKeyService - "Maxsus imkoniyatlar" xizmati: ovozni pasaytirish tugmasini ikki
-    marta bosish = boshlash/to'xtatish. Foydalanuvchi Android sozlamasida o'zi yoqadi.
+  "Maxsus imkoniyatlar" xizmati va bildirishnoma tinglovchisi YO'Q va qaytarilmasin (ega qarori,
+    2026-11-09): 1.3.5 dagi "ovoz tugmasi bilan yozish" shunday xizmat edi - Google Play Protect
+    sideload o'rnatishni "App not installed" bilan to'sdi. Regressiya testi: __tests__/playProtect.test.ts.
 
   Qo'ng'iroq yozuvlari (2026-10-10, CallImport.kt):
   READ_MEDIA_AUDIO (Android 13+) / READ_EXTERNAL_STORAGE (12 va pastda, maxSdk 32) -
@@ -85,19 +86,6 @@
       <meta-data
         android:name="android.service.quicksettings.TOGGLEABLE_TILE"
         android:value="true" />
-    </service>
-
-    <service
-      android:name="uz.brbtech.venera.entry.RecordKeyService"
-      android:exported="true"
-      android:label="@string/venera_entry_key_service_label"
-      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-      <intent-filter>
-        <action android:name="android.accessibilityservice.AccessibilityService" />
-      </intent-filter>
-      <meta-data
-        android:name="android.accessibilityservice"
-        android:resource="@xml/venera_entry_key_service" />
     </service>
   </application>
 </manifest>

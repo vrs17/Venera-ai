@@ -42,16 +42,14 @@ jest.mock('expo-router', () => {
 });
 
 // Native modul (VeneraEntry) holati testdan boshqariladi; default - modul yo'q (Jest/iOS kabi).
-const mockNative = { available: false, launcher: false, volume: false, tile: 'added' as AddTileResult };
+const mockNative = { available: false, launcher: false, tile: 'added' as AddTileResult };
 jest.mock('@/features/entry/nativeEntry', () => ({
   isAvailable: jest.fn(() => mockNative.available),
   isLauncherEnabled: jest.fn(() => mockNative.available && mockNative.launcher),
-  isKeyServiceEnabled: jest.fn(() => mockNative.available && mockNative.volume),
   setLauncherEnabled: jest.fn((v: boolean) => {
     mockNative.launcher = v;
   }),
   requestAddTile: jest.fn(async () => (mockNative.available ? mockNative.tile : 'unsupported')),
-  openAccessibilitySettings: jest.fn(),
   setRecordingState: jest.fn(),
   setTrustedKey: jest.fn(),
 }));
@@ -108,7 +106,7 @@ function row(over: Partial<QueueRow> & { clientId: string }): QueueRow {
 }
 
 beforeEach(() => {
-  Object.assign(mockNative, { available: false, launcher: false, volume: false, tile: 'added' });
+  Object.assign(mockNative, { available: false, launcher: false, tile: 'added' });
   appListeners = [];
   appState.addEventListener.mockImplementation((_type: string, fn: Listener) => {
     appListeners.push(fn);
@@ -135,11 +133,10 @@ afterEach(() => {
 });
 
 describe('quickMethodCount', () => {
-  it('counts the app shortcut always, launcher and volume key only with the native module', () => {
-    expect(quickMethodCount({ available: false, launcher: true, volume: true })).toBe(1);
-    expect(quickMethodCount({ available: true, launcher: false, volume: false })).toBe(1);
-    expect(quickMethodCount({ available: true, launcher: true, volume: false })).toBe(2);
-    expect(quickMethodCount({ available: true, launcher: true, volume: true })).toBe(3);
+  it('counts the app shortcut always and the launcher only with the native module', () => {
+    expect(quickMethodCount({ available: false, launcher: true })).toBe(1);
+    expect(quickMethodCount({ available: true, launcher: false })).toBe(1);
+    expect(quickMethodCount({ available: true, launcher: true })).toBe(2);
   });
 
   it('language endonyms are written in their own script', () => {
@@ -160,8 +157,8 @@ describe('Settings hub', () => {
     expect(screen.getByText('Yusuf Mamajonov')).toBeTruthy();
     expect(screen.getByText('Dasturchi · y@brb.uz')).toBeTruthy();
     expect(screen.getByText('YM')).toBeTruthy();
-    // Yozuvlar va vazifalar endi drawer'da - Sozlamalarda faqat sozlama.
-    expect(screen.queryByText("Yig'ilish yozuvlari")).toBeNull();
+    // Plaud (yozuvlar) va vazifalar endi drawer'da - Sozlamalarda faqat sozlama.
+    expect(screen.queryByText('Plaud')).toBeNull();
     expect(screen.queryByText("Yig'ilishlardagi vazifalarim")).toBeNull();
   });
 
@@ -180,10 +177,10 @@ describe('Settings hub', () => {
     expect(await screen.findByText("Ulanish yo'q")).toBeTruthy();
   });
 
-  it('counts the launcher and volume key once the native module reports them on', async () => {
-    Object.assign(mockNative, { available: true, launcher: true, volume: true });
+  it('counts the launcher once the native module reports it on', async () => {
+    Object.assign(mockNative, { available: true, launcher: true });
     await renderScreen(SettingsScreen);
-    expect(await screen.findByText('3 ta usul yoqilgan')).toBeTruthy();
+    expect(await screen.findByText('2 ta usul yoqilgan')).toBeTruthy();
   });
 
   it('every row opens its own screen', async () => {
@@ -336,9 +333,7 @@ describe('Quick record', () => {
     await renderScreen(QuickRecordScreen);
     expect(screen.getByText('Ilovani ochmasdan yozishni boshlang')).toBeTruthy();
     expect(screen.queryByTestId('launcher-toggle')).toBeNull();
-    expect(screen.getAllByText("Bu telefonda yo'q")).toHaveLength(4);
-    expect(screen.getByTestId('volume-status').props.children).toBe("Bu telefonda yo'q");
-    expect(screen.getByTestId('volume-open')).toBeDisabled();
+    expect(screen.getAllByText("Bu telefonda yo'q")).toHaveLength(3);
     expect(screen.getByTestId('tile-add')).toBeDisabled();
     expect(within(screen.getByTestId('quick-shortcut')).getByText('Doim bor')).toBeTruthy();
   });
@@ -364,20 +359,16 @@ describe('Quick record', () => {
     expect(within(screen.getByTestId('quick-side')).getByText('Telefonda sozlanadi')).toBeTruthy();
   });
 
-  it('volume key: opens accessibility settings and re-reads the state when the app comes back', async () => {
+  it('no volume-key method any more (it was an Accessibility service - Play Protect); the launcher state is re-read on return', async () => {
     mockNative.available = true;
     await renderScreen(QuickRecordScreen);
-    expect(screen.getByTestId('volume-status').props.children).toBe("O'chiq");
-    // Android "to'liq boshqaruv" ogohlantirishidan OLDIN: yo'l va xotirjamlik ochiq ko'rinadi.
-    const volumeCard = screen.getByTestId('quick-volume');
-    expect(within(volumeCard).getByText(/O'rnatilgan ilovalar/)).toBeTruthy();
-    expect(within(volumeCard).getByText("Barno faqat shu tugmani kuzatadi, ekrandagi matnni o'qimaydi.")).toBeTruthy();
-    await fireEvent.press(screen.getByTestId('volume-open'));
-    expect(native.openAccessibilitySettings).toHaveBeenCalled();
-    mockNative.volume = true;
+    expect(screen.queryByTestId('quick-volume')).toBeNull();
+    expect(screen.queryByText('Ovoz tugmasi')).toBeNull();
+    expect(screen.queryByText(/Maxsus imkoniyatlar|O'rnatilgan ilovalar/)).toBeNull();
+    // Belgi ilovadan tashqarida o'zgargan bo'lsa (ilova yangilandi) - qaytganda haqiqiy holat.
+    mockNative.launcher = true;
     await act(async () => appListeners.forEach((l) => l('active')));
-    expect(screen.getByTestId('volume-status').props.children).toBe('Yoqilgan');
-    expect(screen.getByText('Sozlamada boshqarish')).toBeTruthy();
+    expect(screen.getByTestId('launcher-toggle').props.on).toBe(true);
   });
 
   it('tile request: shows the result; "unsupported" opens the manual steps', async () => {
