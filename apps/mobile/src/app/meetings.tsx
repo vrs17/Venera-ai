@@ -21,10 +21,15 @@
  * Bo'limning o'zi `features/calls/CallsPanel` da; yuborilgan qo'ng'iroq oddiy navbat qatori,
  * shuning uchun "Yozuvlar" vaqt chizig'ida ham ko'rinadi. Qo'ng'iroqlar bo'limida sarlavha
  * o'ngida sozlama tugmasi (ro'yxat tepasida ikkinchi qator bo'lmasin).
+ *
+ * Manba filtri va tartib (2026-11-11, ega talabi): qidiruv ostida chiplar - ilovada yozilgan, yuklangan
+ * fayl, Slack, Telegram bot, Mini App, web (`OriginFilter`); server filtrlaydi (`?origin=`, sahifalash
+ * to'g'ri qolsin). Tartib `?sort=listed`: bugun yuklangan eski fayl "Bugun" ostida, eng tepada
+ * (`timeline.ts` - qaysi vaqt).
  */
 import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query';
 import { router, Stack, useFocusEffect } from 'expo-router';
-import { ChevronRight, CircleAlert, CircleDot, CloudOff, ListChecks, Mic, Phone, RotateCcw, Search, Settings2, Upload, X } from 'lucide-react-native';
+import { ChevronRight, CircleAlert, CircleDot, CloudOff, ListChecks, ListFilter, Mic, Phone, RotateCcw, Search, Settings2, Upload, X } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -39,11 +44,13 @@ import {
 } from 'react-native';
 
 import { ApiError } from '@/api/client';
+import type { MeetingOrigin } from '@/api/types';
 import { useAuth } from '@/features/auth/authStore';
 import { CallsPanel } from '@/features/calls/CallsPanel';
 import { callsSupported } from '@/features/calls/permission';
 import { useAudioUpload } from '@/features/calls/useAudioUpload';
-import { isProcessing } from '@/features/meeting/queries';
+import { OriginFilter } from '@/features/meeting/OriginFilter';
+import { isProcessing, qk } from '@/features/meeting/queries';
 import { localTitle, RecordingCard } from '@/features/meeting/RecordingCard';
 import { dayLabel, groupByDay, matchesQuery, mergeTimeline, type TimelineItem, type TimelineSection } from '@/features/meeting/timeline';
 import { useRecorderStore } from '@/features/recorder/RecorderProvider';
@@ -89,6 +96,8 @@ export default function MeetingsScreen() {
   const liveClientId = useRecorderStore((s) => s.machine.clientId);
   const online = useOnline();
   const [q, setQ] = useState('');
+  // Manba filtri: `null` - hammasi.
+  const [origin, setOrigin] = useState<MeetingOrigin | null>(null);
   const [focused, setFocused] = useState(true);
   const [pulling, setPulling] = useState(false);
   // "Bugun/Kecha" uchun soat: ekranga qaytganda va tortib yangilaganda yangilanadi.
@@ -113,9 +122,10 @@ export default function MeetingsScreen() {
   const serverQ = useDebounced(query, SEARCH_DEBOUNCE_MS);
 
   const list = useInfiniteQuery({
-    queryKey: ['meetings', 'list', serverQ],
+    queryKey: qk.list(serverQ, origin),
     initialPageParam: 0,
-    queryFn: ({ pageParam }) => services.meetings.list({ limit: PAGE, offset: pageParam, q: serverQ }),
+    // `sort: 'listed'` - server ham `timeline` dagi vaqt bilan tartiblaydi (sahifalar orasida sakrash bo'lmasin).
+    queryFn: ({ pageParam }) => services.meetings.list({ limit: PAGE, offset: pageParam, q: serverQ, origin, sort: 'listed' }),
     // Yozayotganda ro'yxat spinner'ga aylanib "sakramasin" - yangi natija kelguncha eskisi turadi.
     placeholderData: keepPreviousData,
     getNextPageParam: (last) => (last.offset + last.items.length < last.total ? last.offset + last.items.length : undefined),
@@ -128,20 +138,22 @@ export default function MeetingsScreen() {
   const cards = useMemo(() => list.data?.pages.flatMap((p) => p.items) ?? [], [list.data]);
   const items = useMemo(() => {
     // Hozir yozilayotgan yozuv tepadagi jonli kartada - ro'yxatda takrorlanmaydi.
-    const merged = mergeTimeline(cards, rows, { hideClientId: live ? liveClientId : null });
+    const merged = mergeTimeline(cards, rows, { hideClientId: live ? liveClientId : null, origin });
     // Server `q` bilan o'zi qidiradi; telefondagi yozuvlarni nomi bo'yicha shu yerda.
     return query ? merged.filter((it) => it.kind === 'server' || matchesQuery(localTitle(it.row, t), query)) : merged;
-  }, [cards, rows, live, liveClientId, query, t]);
+  }, [cards, rows, live, liveClientId, origin, query, t]);
   const sections = useMemo(() => groupByDay(items), [items]);
 
   // Ro'yxat yuklanmadi: "Hali yozuv yo'q" deyish yolg'on bo'lardi (yozuvlar bor, faqat kelmadi).
   const listFailed = list.isError && !list.data;
   // 403/404: bo'lim bu odamga yoqilmagan - yozishga undamaymiz (yuklash baribir "Yoqilmagan" bo'ladi).
   const featureOff = listFailed && list.error instanceof ApiError && (list.error.status === 403 || list.error.status === 404);
-  const nothing = items.length === 0 && !query && !live;
+  // Filtr tanlangan va bo'sh - bu "hali yozuv yo'q" EMAS (boshqa manbada bor): katta bo'sh holat o'rniga izoh.
+  const filtered = origin !== null;
+  const nothing = items.length === 0 && !query && !filtered && !live;
   const empty = !list.isLoading && !listFailed && nothing;
   const failedEmpty = listFailed && nothing;
-  const showSearch = q !== '' || items.length > 0 || list.isLoading;
+  const showSearch = q !== '' || filtered || items.length > 0 || list.isLoading;
   const fabHidden = live || empty || featureOff || callsTab;
   // Yuklash yozuv ketayotganda ham mumkin (mikrofon kerak emas); bo'lim yoqilmagan bo'lsa - yo'q (FAB kabi).
   const uploadOn = upload.supported && !callsTab && !featureOff;
@@ -195,6 +207,7 @@ export default function MeetingsScreen() {
           ) : null}
         </View>
       ) : null}
+      {showSearch ? <OriginFilter value={origin} onChange={setOrigin} /> : null}
       {live ? <LiveCard /> : null}
     </View>
   );
@@ -258,6 +271,17 @@ export default function MeetingsScreen() {
       );
     }
     if (query) return <EmptyState compact icon={Search} title={t('tr.noResults')} testID="meetings-no-results" />;
+    if (filtered) {
+      return (
+        <EmptyState
+          compact
+          icon={ListFilter}
+          title={t('recs.origin.empty')}
+          testID="meetings-origin-empty"
+          action={{ title: t('recs.origin.reset'), variant: 'secondary', testID: 'meetings-origin-reset', onPress: () => setOrigin(null) }}
+        />
+      );
+    }
     return null;
   };
 

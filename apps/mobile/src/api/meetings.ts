@@ -132,7 +132,14 @@ export function createMeetingsApi(client: ApiClient) {
     // 6
     list: (query: MeetingListQuery = {}) =>
       client.request<MeetingList>(M, {
-        query: { limit: query.limit ?? 20, offset: query.offset ?? 0, q: query.q || undefined, status: query.status || undefined },
+        query: {
+          limit: query.limit ?? 20,
+          offset: query.offset ?? 0,
+          q: query.q || undefined,
+          status: query.status || undefined,
+          origin: query.origin || undefined,
+          sort: query.sort,
+        },
       }),
     // 7
     get: (id: string) => client.request<Meeting>(`${M}/${enc(id)}`),

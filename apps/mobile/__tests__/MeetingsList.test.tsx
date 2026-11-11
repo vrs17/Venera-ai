@@ -35,7 +35,8 @@ jest.mock('expo-router', () => {
 const push = router.push as jest.Mock;
 const DAY = 24 * 60 * 60 * 1000;
 
-const card = (over: Partial<MeetingCard>): MeetingCard => ({ ...baseCard, ...over });
+// Ilovada yozilgan karta: server `listedAt` = `recordedAt` beradi (boshqasi berilmasa).
+const card = (over: Partial<MeetingCard>): MeetingCard => ({ ...baseCard, ...over, listedAt: over.listedAt ?? over.recordedAt ?? baseCard.listedAt });
 const row = (over: Partial<QueueRow> & { clientId: string }): QueueRow =>
   newQueueRow({
     fileUri: `file:///doc/recordings/${over.clientId}.aac`,
@@ -165,6 +166,60 @@ describe('Recordings list', () => {
     await waitFor(() => expect(screen.getByTestId('meetings-no-results')).toBeTruthy());
     expect(screen.queryByTestId('local-n1')).toBeNull();
     expect(screen.queryByTestId('meetings-empty')).toBeNull();
+  });
+
+  it('origin filter (ega talabi 2026-11-11): chips go to the server, local rows follow, empty source says so', async () => {
+    const slackCard = card({ id: 'S'.repeat(32), clientId: 'cS', title: 'Slack: audio.wav', origin: 'slack', source: 'share', status: 'ready', progress: null });
+    const list = jest.fn(async ({ origin }: { origin?: string | null }) => {
+      const items = origin === 'web' ? [] : origin === 'slack' || !origin ? [slackCard] : [];
+      return { items, limit: 20, offset: 0, total: items.length };
+    });
+    await renderList({ list, rows: [row({ clientId: 'rec1', title: 'Telefonda' })] });
+    await waitFor(() => expect(screen.getByTestId('local-rec1')).toBeTruthy());
+    // Plaud ro'yxati doim yangi tartibda so'raydi.
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ origin: null, sort: 'listed' }));
+    for (const id of ['all', 'recording', 'upload', 'slack', 'telegram', 'miniapp', 'web']) expect(screen.getByTestId(`origin-${id}`)).toBeTruthy();
+    expect(screen.getByTestId('origin-all').props.accessibilityState).toEqual({ selected: true });
+
+    await fireEvent.press(screen.getByTestId('origin-slack'));
+    await waitFor(() => expect(list).toHaveBeenCalledWith(expect.objectContaining({ origin: 'slack', sort: 'listed' })));
+    await waitFor(() => expect(screen.queryByTestId('local-rec1')).toBeNull()); // telefondagi yozuv - Slack emas
+    expect(screen.getByTestId(`meeting-${'S'.repeat(32)}`)).toBeTruthy();
+    expect(screen.getByTestId('origin-slack').props.accessibilityState).toEqual({ selected: true });
+
+    await fireEvent.press(screen.getByTestId('origin-recording'));
+    await waitFor(() => expect(screen.getByTestId('local-rec1')).toBeTruthy());
+    await waitFor(() => expect(screen.queryByTestId(`meeting-${'S'.repeat(32)}`)).toBeNull());
+
+    // Bo'sh manba: "hali yozuv yo'q" EMAS - izoh va "hammasini ko'rsatish".
+    await fireEvent.press(screen.getByTestId('origin-web'));
+    await waitFor(() => expect(screen.getByTestId('meetings-origin-empty')).toBeTruthy());
+    expect(screen.getByText("Bu manbadan yozuv yo'q")).toBeTruthy();
+    expect(screen.queryByTestId('meetings-empty')).toBeNull();
+    await fireEvent.press(screen.getByTestId('meetings-origin-reset'));
+    await waitFor(() => expect(screen.getByTestId('local-rec1')).toBeTruthy());
+    expect(screen.getByTestId('origin-all').props.accessibilityState).toEqual({ selected: true });
+  });
+
+  it('an old file uploaded today is under "Bugun" with the upload time, not under its recording date', async () => {
+    const now = Date.now();
+    const old = card({
+      id: 'O'.repeat(32),
+      clientId: 'cO',
+      title: "Qo'ng'iroq, 13:46",
+      origin: 'upload',
+      source: 'share',
+      status: 'ready',
+      progress: null,
+      recordedAt: new Date(now - 3 * DAY).toISOString(),
+      listedAt: new Date(now - 60_000).toISOString(),
+    });
+    await renderList({ cards: [old] });
+    const el = await waitFor(() => screen.getByTestId(`meeting-${'O'.repeat(32)}`));
+    expect(screen.getByText('Bugun')).toBeTruthy();
+    expect(screen.queryByText('Kecha')).toBeNull();
+    const shown = new Date(now - 60_000).toLocaleTimeString('en-GB', { timeZone: 'Asia/Tashkent', hour: '2-digit', minute: '2-digit', hour12: false });
+    expect(within(el).getByText(shown)).toBeTruthy();
   });
 
   it('feature disabled (403): one honest "not enabled" state - no "no recordings yet", no record CTA', async () => {

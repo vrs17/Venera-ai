@@ -115,6 +115,9 @@ def test_ovozli_xabar_transkript_va_qisqa_xulosa(world):
     row = rt.store.meeting_any(mid)
     assert row["actor_id"] == 1 and row["channel"] == "bot" and row["content_type"] == "audio/ogg"
     assert row["title"].startswith("Telegram: ovozli xabar")
+    # Plaud filtri (2026-11-11): manba bazada aniq - ilovaning "Telegram bot" filtri shuni oladi.
+    assert row["origin"] == "telegram"
+    assert rt.store.list_meetings(1, limit=10, offset=0, origin="telegram")[1] == 1
     # Jarayon xabari (ega talabi, 2026-11-05): ovozli xabarga javob qilib "qabul qilindi", bosqichlar
     # joyida yangilanadi; transkript ostida - xulosa bosqichi; natija chiqqach ikkalasi o'chadi.
     status = next(kw for kw in tg.sent() if kw["text"].startswith("🎙 Ovozli xabaringiz qabul qilindi."))

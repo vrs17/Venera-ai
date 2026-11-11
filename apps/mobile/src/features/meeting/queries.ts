@@ -15,6 +15,7 @@ import type {
   CreateSummaryRequest,
   Lang,
   Meeting,
+  MeetingOrigin,
   PatchActionItemRequest,
   PatchMeetingRequest,
   PatchSegmentRequest,
@@ -24,7 +25,8 @@ import { useServices } from '@/services';
 
 export const qk = {
   config: ['meetings', 'config'] as const,
-  list: (q: string) => ['meetings', 'list', q] as const,
+  /** Plaud ro'yxati: qidiruv + manba filtri (`null` - hammasi). `['meetings', 'list']` prefiksi - hammasini yangilash. */
+  list: (q: string, origin: MeetingOrigin | null) => ['meetings', 'list', q, origin ?? 'all'] as const,
   meeting: (id: string) => ['meetings', id] as const,
   transcript: (id: string) => ['meetings', id, 'transcript'] as const,
   summaries: (id: string) => ['meetings', id, 'summaries'] as const,

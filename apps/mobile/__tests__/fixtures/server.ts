@@ -88,6 +88,9 @@ export const card = {
   openActionItems: 0,
   overview: null,
   error: null,
+  source: 'launcher',
+  origin: 'recording',
+  listedAt: '2026-10-09T06:00:00Z',
 } satisfies MeetingCard;
 
 export const list = { items: [card], limit: 20, offset: 0, total: 57 } satisfies MeetingList;

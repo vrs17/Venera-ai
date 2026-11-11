@@ -185,7 +185,7 @@ def test_migratsiya_v1_dan_v2_ga_malumot_bilan(tmp_path):
     conn.close()
 
     st = MeetingStore(root)
-    assert st.version() == store_mod.SCHEMA_VERSION == 5
+    assert st.version() == store_mod.SCHEMA_VERSION == 6
     # v4: eski yozuvning GAPI hisobi bo'sh - ya'ni birinchi kalit (`GAPI_API_KEY`).
     assert st.rows("SELECT stt_account FROM meetings WHERE id='m1'")[0]["stt_account"] is None
     summary = st.summary("m1", "s1")
@@ -205,4 +205,65 @@ def test_migratsiya_v1_dan_v2_ga_malumot_bilan(tmp_path):
     st.update_action_item("a1", crm_token="tok", crm_status="executed")
     assert st.set_crm_status(7, "tok", "expired") == 0
     assert st.action_item("m1", "a1")["crm_status"] == "executed"
+    st.close_all()
+
+
+def test_migratsiya_v6_manba_va_royxatdagi_orni(tmp_path):
+    """v5 ombori v6 ga: `origin` ustuni qo'shiladi, eski Slack yozuvi nomidan belgilanadi; qolganining
+    manbasi `channel`/`source` dan (`ORIGIN_SQL`). `sort=listed`: tayyor fayl (`share`, `call`) kelgan
+    vaqti bilan, ilovada yozilgani - yozilgan vaqti bilan (ega talabi 2026-11-11)."""
+    root = tmp_path / "m"
+    root.mkdir()
+    conn = sqlite3.connect(root / "meetings.db")
+    for step in store_mod.MIGRATIONS[:5]:
+        for statement in step:
+            conn.execute(statement)
+    day = 86400
+    t0 = 1_794_000_000
+    rows = [  # id, channel, source, title, recorded_at, created_at
+        ("rec", "mobile", "app", "Yig'ilish", t0 + 2 * day, t0 + 2 * day + 60),
+        ("vol", "mobile", "volume", "Ovoz tugmasi", t0 + day, t0 + day + 30),
+        ("up", "mobile", "share", "Qo'ng'iroq, 13:46", t0 - 3 * day, t0 + 3 * day),   # eski fayl, bugun yuklangan
+        ("call", "mobile", "call", "Qo'ng'iroq: Ali", t0, t0 + 10),
+        ("slack", "api", "share", "Slack: audio.wav", t0 + 5, t0 + 6),
+        ("tg", "bot", "share", "Telegram: ovozli xabar", t0 + 7, t0 + 8),
+        ("mini", "miniapp", "app", "Mini App", t0 + 9, t0 + 9),
+        ("web", "web", "share", "Web", t0 + 11, t0 + 11),
+        ("rest", "api", "share", "SQL dars 2", t0 + 12, t0 + 12),
+    ]
+    for mid, channel, source, title, recorded, created in rows:
+        conn.execute("INSERT INTO meetings (id, actor_id, client_id, channel, source, title, recorded_at, created_at, "
+                     "updated_at, status) VALUES (?, 7, ?, ?, ?, ?, ?, ?, ?, 'ready')",
+                     (mid, "c-" + mid, channel, source, title, recorded, created, created))
+    conn.execute("PRAGMA user_version = 5")
+    conn.commit()
+    conn.close()
+
+    st = MeetingStore(root)
+    assert st.version() == store_mod.SCHEMA_VERSION == 6
+    stored = {r["id"]: r["origin"] for r in st.rows("SELECT id, origin FROM meetings")}
+    assert stored == {mid: ("slack" if mid == "slack" else None) for mid, *_ in rows}
+
+    def ids(**kw):
+        found, total = st.list_meetings(7, limit=50, offset=0, **kw)
+        assert total == len(found)
+        return [r["id"] for r in found]
+
+    assert ids(origin="recording") == ["rec", "vol"]
+    assert set(ids(origin="upload")) == {"up", "call"}
+    assert ids(origin="slack") == ["slack"]
+    assert ids(origin="telegram") == ["tg"]
+    assert ids(origin="miniapp") == ["mini"] and ids(origin="web") == ["web"]
+    assert ids(origin="api") == ["rest"] and ids(origin="desktop") == []
+    # Eski tartib (default) o'zgarmagan: yozilgan vaqti bo'yicha - eski fayl ro'yxat oxirida.
+    assert ids()[0] == "rec" and ids()[-1] == "up"
+    # Yangi tartib: bugun yuklangan eski fayl - ENG TEPADA; ilovadagi yozuvlar o'z kunida.
+    listed = st.list_meetings(7, limit=50, offset=0, sort="listed")[0]
+    assert [r["id"] for r in listed][:3] == ["up", "rec", "vol"]
+    by_id = {r["id"]: r for r in listed}
+    assert by_id["up"]["listed_at"] == t0 + 3 * day and by_id["rec"]["listed_at"] == t0 + 2 * day
+    assert by_id["call"]["listed_at"] == t0 + 10 and by_id["slack"]["effective_origin"] == "slack"
+    # Filtr + qidiruv + sahifa birga.
+    assert [r["id"] for r in st.list_meetings(7, limit=1, offset=1, origin="upload", sort="listed")[0]] == ["call"]
+    assert st.list_meetings(7, limit=5, offset=0, q="qo'ng'iroq", origin="upload")[1] == 2
     st.close_all()

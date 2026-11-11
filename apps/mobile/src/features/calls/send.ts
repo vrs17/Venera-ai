@@ -186,6 +186,8 @@ async function copyAndQueue(
         title: importTitle(opts.t, { ...parsed, looksLikeCall: true }, formatTime(startMs)),
         startedAt: new Date(startMs).toISOString(),
         endedAt: new Date(endMs).toISOString(),
+        // Plaud ro'yxatida qo'ng'iroq bo'lgan kunga emas, yuborilgan kunga tushadi (`timeline.rowListedAt`).
+        queuedAt: new Date(now()).toISOString(),
         durationSec: rec.durationMs > 0 ? Math.round(rec.durationMs / 10) / 100 : null,
         totalBytes: rec.sizeBytes,
         state: 'stopped',
@@ -251,6 +253,8 @@ export async function sendImportedFile(deps: ImportSendDeps, meta: ImportFileMet
         title: parsed.looksLikeCall ? importTitle(opts.t, parsed, formatTime(startMs)) : null,
         startedAt: new Date(startMs).toISOString(),
         endedAt: meta.durationMs > 0 ? new Date(startMs + meta.durationMs).toISOString() : null,
+        // 8-noyabrdagi fayl bugun yuklansa - Plaud'da "Bugun" ostida (`timeline.rowListedAt`).
+        queuedAt: new Date(now()).toISOString(),
         durationSec: meta.durationMs > 0 ? Math.round(meta.durationMs / 10) / 100 : null,
         totalBytes: meta.sizeBytes,
         state: 'stopped',

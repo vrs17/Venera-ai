@@ -18,6 +18,8 @@ tekshiriladi (katta tana threadpool ishchisini band qilmasin), ko'pi bilan
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
@@ -86,8 +88,13 @@ def create_meeting(body: schemas.CreateMeetingRequest, request: Request, respons
 @router.get("", response_model=schemas.MeetingList)
 def list_meetings(limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0),
                   q: str = Query("", max_length=200), status_: str = Query("", alias="status", max_length=20),
+                  origin: schemas.MeetingOrigin | None = Query(None),
+                  sort: Literal["recorded", "listed"] = Query("recorded"),
                   user: AuthUser = Depends(meetings_access)) -> dict:
-    return service.list_meetings(user, limit=limit, offset=offset, q=q, status=status_)
+    """`origin` - Plaud filtri (manba); `sort=listed` - tayyor fayl kelgan kuniga (mobil 1.3.8+),
+    default `recorded` - yozilgan vaqti (eski ilovalar kunlarga shunga guruhlaydi)."""
+    return service.list_meetings(user, limit=limit, offset=offset, q=q, status=status_, origin=origin or "",
+                                 sort=sort)
 
 
 # --- yuklash ---------------------------------------------------------------------------

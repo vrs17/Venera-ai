@@ -38,6 +38,12 @@ export type SummaryStatus = 'none' | 'queued' | 'running' | 'ready' | 'failed' |
  * tarixi uchun qoldi (server ham qabul qiladi); yangi yozuvda ishlatilmaydi.
  */
 export type EntrySource = 'app' | 'tile' | 'launcher' | 'volume' | 'shortcut' | 'notification' | 'link' | 'call' | 'share';
+/**
+ * Plaud filtri - yozuv qaysi kanaldan kelgan (server `store.ORIGIN_SQL`, 2026-11-11). `recording` - shu
+ * ilovada yozilgan, `upload` - telefondan yuborilgan tayyor fayl ("Audio yuklash", "Ulashish -> Barno AI",
+ * qo'ng'iroq yozuvi), `slack`/`telegram` - bot orqali, `miniapp`/`web`/`desktop` - o'sha klient, `api` - qolgani.
+ */
+export type MeetingOrigin = 'recording' | 'upload' | 'slack' | 'telegram' | 'miniapp' | 'web' | 'desktop' | 'api';
 
 export interface Speaker {
   id: string; // 'S1'..'S4' (order of first appearance)
@@ -127,6 +133,15 @@ export interface MeetingCard {
   openActionItems: number;
   overview: string | null; // <=200 chars
   error: MeetingError | null;
+  /** Server 2026-10-10 dan beradi. */
+  source?: EntrySource;
+  /** Plaud filtri (server 2026-11-11 dan; eski server bermaydi). */
+  origin?: MeetingOrigin;
+  /**
+   * Ro'yxatdagi o'rni va kun guruhi (`sort=listed`): tayyor fayl - serverga KELGAN vaqti, ilovada
+   * yozilgani - `recordedAt`. Eski server bermaydi - unda `recordedAt`.
+   */
+  listedAt?: string;
 }
 
 // ---------------------------------------------------------------- endpoint 1
@@ -227,6 +242,10 @@ export interface MeetingListQuery {
   offset?: number;
   q?: string;
   status?: MeetingStatus | '';
+  /** Plaud filtri: shu manbadan kelganlar. */
+  origin?: MeetingOrigin | null;
+  /** `listed` - `listedAt` bo'yicha (Plaud ro'yxati); server default `recorded` - `recordedAt` bo'yicha. */
+  sort?: 'recorded' | 'listed';
 }
 
 export interface PatchMeetingRequest {

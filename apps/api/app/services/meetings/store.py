@@ -149,9 +149,39 @@ _V5: tuple[str, ...] = (
     "CREATE INDEX minutes_meeting ON minutes(meeting_id, created_at)",
 )
 
+#: v6 (2026-11-11): Plaud filtri - yozuv QAYERDAN kelgani (`ORIGIN_SQL`). Ustunga faqat server o'zi
+#: yaratgan yozuv (Slack, Telegram bot - `intake.upload`) yoziladi: qolganini `channel`/`source` aytadi.
+#: Slack'ni ulardan ajratib bo'lmaydi (`channel=api`) - eski Slack yozuvlari nomidan ("Slack: ...")
+#: belgilanadi, shunda odam keyin nomini o'zgartirsa ham Slack filtrida qoladi.
+_V6: tuple[str, ...] = (
+    "ALTER TABLE meetings ADD COLUMN origin TEXT",
+    "UPDATE meetings SET origin = 'slack' WHERE origin IS NULL AND channel = 'api' AND title LIKE 'Slack:%'",
+)
+
 #: `MIGRATIONS[i]` fayl `user_version = i` dan `i + 1` ga o'tkazadi. FAQAT OXIRIGA.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4, _V5)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4, _V5, _V6)
 SCHEMA_VERSION = len(MIGRATIONS)
+
+#: Yozuv manbasi (Plaud filtri; mobil `MeetingOrigin`). `recording` - telefonda yozilgan, `upload` - telefondan
+#: yuborilgan tayyor fayl ("Audio yuklash", "Ulashish -> Barno AI", qo'ng'iroq yozuvi), `miniapp`/`web`/`desktop` -
+#: o'sha klient, `api` - qolgani (skript, REST import).
+ORIGINS: tuple[str, ...] = ("recording", "upload", "slack", "telegram", "miniapp", "web", "desktop", "api")
+
+#: Manba - BITTA joyda, SQL ifoda: filtr ham, karta ham shundan (Python'da ikkinchi nusxa yo'q). `origin`
+#: ustuni bo'sh bo'lsa (v6 dan oldingi yoki boshqa ombordan ko'chirilgan qator) `channel`/`source` dan.
+ORIGIN_SQL = """CASE
+  WHEN origin IS NOT NULL THEN origin
+  WHEN channel = 'bot' THEN 'telegram'
+  WHEN channel = 'api' AND title LIKE 'Slack:%' THEN 'slack'
+  WHEN channel = 'mobile' AND source IN ('share', 'call') THEN 'upload'
+  WHEN channel = 'mobile' THEN 'recording'
+  WHEN channel IN ('miniapp', 'web', 'desktop') THEN channel
+  ELSE 'api' END"""
+
+#: Ro'yxatdagi o'rni (`sort=listed`): tayyor fayl (`share`, `call` - telefondan, Slack'dan, Telegram'dan)
+#: Barno'ga KELGAN vaqti bilan, ilovada yozilgani - YOZILGAN vaqti bilan. NEGA: 8-noyabrdagi yozuv bugun
+#: yuklansa - u bugungi ish, 8-noyabr ostiga tushib, ko'rinmay qolmasin (ega talabi 2026-11-11).
+LISTED_SQL = "CASE WHEN source IN ('share', 'call') THEN created_at ELSE COALESCE(recorded_at, created_at) END"
 
 #: Apostrofning hamma ko'rinishi - qidiruvda olib tashlanadi ("o'zbek" = "oʻzbek" = "ozbek").
 _APOSTROPHES = "'ʻʼ’‘`´"
@@ -386,13 +416,18 @@ class MeetingStore:
     def delete_meeting_rows(self, meeting_id: str) -> None:
         self.execute("DELETE FROM meetings WHERE id=?", (str(meeting_id),))
 
-    def list_meetings(self, actor_id: int, *, limit: int, offset: int, q: str = "",
-                      status: str = "") -> tuple[list[dict[str, Any]], int]:
+    def list_meetings(self, actor_id: int, *, limit: int, offset: int, q: str = "", status: str = "",
+                      origin: str = "", sort: str = "recorded") -> tuple[list[dict[str, Any]], int]:
+        """Qatorlarda qo'shimcha `effective_origin` (`ORIGIN_SQL`) va `listed_at` (`LISTED_SQL`) bor.
+        `sort`: `recorded` - yozilgan vaqti (eski ilovalar shunga guruhlaydi), `listed` - ro'yxatdagi o'rni."""
         where = ["actor_id=?"]
         params: list[Any] = [int(actor_id)]
         if status:
             where.append("status=?")
             params.append(status)
+        if origin:
+            where.append(f"({ORIGIN_SQL}) = ?")
+            params.append(origin)
         needle = fold(q).strip()
         if needle:
             pattern = "%" + needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -400,8 +435,9 @@ class MeetingStore:
             params += [pattern, pattern]
         clause = " AND ".join(where)
         total = int(self.scalar(f"SELECT COUNT(*) FROM meetings WHERE {clause}", params, 0))
-        rows = self.rows(f"SELECT * FROM meetings WHERE {clause} "
-                         "ORDER BY recorded_at DESC, created_at DESC LIMIT ? OFFSET ?",
+        order = "listed_at DESC, created_at DESC" if sort == "listed" else "recorded_at DESC, created_at DESC"
+        rows = self.rows(f"SELECT *, ({ORIGIN_SQL}) AS effective_origin, ({LISTED_SQL}) AS listed_at "
+                         f"FROM meetings WHERE {clause} ORDER BY {order} LIMIT ? OFFSET ?",
                          params + [int(limit), int(offset)])
         return rows, total
 

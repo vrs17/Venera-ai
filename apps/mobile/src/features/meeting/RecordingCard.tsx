@@ -81,7 +81,8 @@ export const RecordingCard = memo(function RecordingCard({ item, lang, online }:
         testID={`local-${row.clientId}`}
         tile={uploadListTile(st.cause)}
         title={localTitle(row, t)}
-        time={formatTime(row.startedAt, lang)}
+        // Kun guruhi bilan bir xil vaqt (`timeline`): tayyor fayl - qo'shilgan, yozuv - boshlangan.
+        time={formatTime(item.at, lang)}
         durationSec={row.durationSec}
         pills={pill ? [{ key: 'up', ...pill }] : []}
         onPress={() => router.push(localHref(row))}
@@ -100,7 +101,7 @@ export const RecordingCard = memo(function RecordingCard({ item, lang, online }:
       testID={`meeting-${m.id}`}
       tile={up && upPill ? uploadListTile(up.cause) : serverTile(m.status)}
       title={m.title}
-      time={formatTime(m.recordedAt, lang)}
+      time={formatTime(item.at, lang)}
       durationSec={m.durationSec}
       pills={pills}
       overview={m.status === 'ready' ? m.overview : null}

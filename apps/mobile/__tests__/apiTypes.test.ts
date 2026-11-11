@@ -23,7 +23,10 @@ describe('API contract field sets (spec 3.1)', () => {
 
   it('MeetingCard, Speaker, Segment, SummaryCard, ActionItem, Ask, config', () => {
     expect(keys(card)).toEqual(
-      ['id', 'clientId', 'title', 'status', 'progress', 'recordedAt', 'durationSec', 'language', 'template', 'summaryStatus', 'openActionItems', 'overview', 'error'].sort(),
+      [
+        'id', 'clientId', 'title', 'status', 'progress', 'recordedAt', 'durationSec', 'language', 'template', 'summaryStatus',
+        'openActionItems', 'overview', 'error', 'source', 'origin', 'listedAt',
+      ].sort(),
     );
     expect(keys(speakers[0])).toEqual(['id', 'mergedInto', 'name', 'suggestedName', 'talkSec']);
     expect(keys(transcript.segments[0])).toEqual(['edited', 'end', 'id', 'speaker', 'start', 'text']);

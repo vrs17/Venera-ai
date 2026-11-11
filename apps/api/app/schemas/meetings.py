@@ -26,6 +26,8 @@ SummaryStatus = Literal["none", "queued", "running", "ready", "failed", "skipped
 #: ilova MediaStore'dan topadi), `share` - boshqa ilovadan "Ulashish -> Barno AI". Ikkalasi ham tayyor
 #: fayl (odatda `audio/mp4`); `call` da `auto` shablon telefon qo'ng'irog'i shablonlariga moyil.
 EntrySource = Literal["app", "tile", "launcher", "volume", "shortcut", "notification", "link", "call", "share"]
+#: Plaud filtri - yozuv qaysi kanaldan kelgani (`store.ORIGINS`, `store.ORIGIN_SQL`).
+MeetingOrigin = Literal["recording", "upload", "slack", "telegram", "miniapp", "web", "desktop", "api"]
 
 
 # --- so'rovlar ---------------------------------------------------------------------
@@ -249,6 +251,11 @@ class MeetingCard(BaseModel):
     error: MeetingError | None = None
     #: 2026-10-10: ro'yxatda qo'ng'iroq / ulashilgan fayl belgisini ko'rsatish uchun (eski ilova e'tiborsiz qoldiradi).
     source: EntrySource = "app"
+    #: 2026-11-11: Plaud filtri (`GET /meetings?origin=`).
+    origin: MeetingOrigin = "api"
+    #: 2026-11-11: ro'yxatdagi o'rni (`?sort=listed`, kunlarga shu bilan guruhlanadi): tayyor fayl - kelgan
+    #: vaqti, ilovada yozilgani - `recordedAt`.
+    listedAt: str
 
 
 class MeetingList(BaseModel):

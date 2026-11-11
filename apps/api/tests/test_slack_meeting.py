@@ -35,6 +35,18 @@ def _ask(client, thread, text="Kim hisobot yuboradi?"):
     meeting.on_message(client, event, bot_user=BOT_USER)
 
 
+def test_slack_yozuvi_manbasi_bazada(delivered, _isolated_meetings):
+    """Plaud filtri (2026-11-11): Slack yozuvi `channel=api` - manba alohida ustunda, shuning uchun
+    odam nomini o'zgartirsa ham "Slack" filtrida qoladi."""
+    _, mid, _ = delivered
+    store = _isolated_meetings.store
+    row = store.meeting_any(mid)
+    assert row["origin"] == "slack"
+    store.update_meeting(mid, title="Kredit bo'yicha qo'ng'iroq")
+    rows, total = store.list_meetings(row["actor_id"], limit=10, offset=0, origin="slack")
+    assert total == 1 and rows[0]["id"] == mid and rows[0]["effective_origin"] == "slack"
+
+
 def test_xulosa_xabari_ostidagi_savolga_javob(delivered):
     client, mid, summary = delivered
     client.parents[summary["ts"]] = as_parent(summary)

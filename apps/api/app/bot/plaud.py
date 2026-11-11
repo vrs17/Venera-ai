@@ -302,7 +302,8 @@ class Plaud:
             path = Path(tmp) / "audio"
             path.write_bytes(data)
             return intake.upload(user, client, path, len(data), hashlib.sha256(data).hexdigest(), kind,
-                                 title=title_of(media, recorded_at), recorded_at=recorded_at, channel="bot")
+                                 title=title_of(media, recorded_at), recorded_at=recorded_at, channel="bot",
+                                 origin="telegram")
 
     def _deliver(self, chat_id: int, user: AuthUser, meeting_id: str, text: str, *,
                  progress: intake.Progress | None = None) -> None:

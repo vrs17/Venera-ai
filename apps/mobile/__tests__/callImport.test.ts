@@ -138,6 +138,8 @@ describe('sending a call recording', () => {
       totalBytes: 2_400_000,
       startedAt: new Date(local(2024, 10, 10, 14, 30, 12)).toISOString(),
       endedAt: new Date(r.dateMs).toISOString(),
+      // Plaud ro'yxatida qo'ng'iroq kuniga emas, yuborilgan vaqtiga tushadi.
+      queuedAt: new Date(NOW).toISOString(),
     });
     expect(marks).toEqual([[callKey(r), clientId]]);
     expect(deps.uploader.runOnce).toHaveBeenCalled();
@@ -231,6 +233,8 @@ describe('sending a shared file', () => {
       expectedSpeakers: 2,
       title: "Qo'ng'iroq: +998901234567",
       startedAt: new Date(local(2024, 10, 10, 14, 30, 12)).toISOString(),
+      // 2024-yilgi fayl bugun yuklandi - Plaud'da bugungi kunga (`timeline.rowListedAt`).
+      queuedAt: new Date(NOW).toISOString(),
       durationSec: 60,
     });
   });

@@ -3,7 +3,7 @@
  * ishlashi kerak. SQLite Node'ning o'rnatilgan `node:sqlite` moduli orqali
  * (expo-sqlite bilan bir xil SQL) tekshiriladi.
  */
-import { createSqliteQueueStore, newQueueRow, type QueueStore, type SqlDb } from '@/features/upload/queueStore';
+import { CREATE_SQL, createSqliteQueueStore, newQueueRow, type QueueStore, type SqlDb } from '@/features/upload/queueStore';
 import { createMemoryQueueStore } from '@/features/upload/queueStore.memory';
 
 type Params = (string | number | null)[];
@@ -119,6 +119,17 @@ describe.each(impls)('QueueStore (%s)', (_name, make) => {
     await store.update('t2', { state: 'uploading', receivedBytes: 10 });
     expect(await store.get('t2')).toMatchObject({ contentType: 'audio/mpeg', state: 'uploading' });
   });
+
+  it("keeps queuedAt (tayyor fayl Plaud'da qo'shilgan kuniga tushadi); default null", async () => {
+    const store = await make();
+    if (!store) return;
+    await store.insert({ ...base('f', '2026-11-08T08:46:00Z'), source: 'share', queuedAt: '2026-11-11T05:22:00Z' });
+    await store.insert(base('r', '2026-11-11T04:00:00Z'));
+    expect(await store.get('f')).toMatchObject({ source: 'share', startedAt: '2026-11-08T08:46:00Z', queuedAt: '2026-11-11T05:22:00Z' });
+    expect((await store.get('r'))?.queuedAt).toBeNull();
+    await store.update('f', { state: 'uploading' });
+    expect((await store.get('f'))?.queuedAt).toBe('2026-11-11T05:22:00Z');
+  });
 });
 
 describe('QueueStore (sqlite) content type safety', () => {
@@ -128,5 +139,25 @@ describe('QueueStore (sqlite) content type safety', () => {
     const store = await createSqliteQueueStore(db);
     await store.insert({ ...base('x', '2026-11-09T06:00:00Z'), contentType: 'audio/flac' as never });
     expect((await store.get('x'))?.contentType).toBe('audio/aac');
+  });
+});
+
+describe('QueueStore (sqlite) upgrade from an older app', () => {
+  it("1.3.7 dagi jadvalga queuedAt ustuni qo'shiladi: eski qatorlar joyida (queuedAt null), yangisi yoziladi", async () => {
+    const db = nodeSqliteDb();
+    if (!db) return;
+    const oldSql = CREATE_SQL.replace(',\n  queuedAt TEXT', '');
+    expect(oldSql).not.toContain('queuedAt');
+    await db.execAsync(oldSql);
+    await db.runAsync(
+      "INSERT INTO recordings (clientId, fileUri, contentType, language, template, source, state, startedAt) VALUES ('old', 'file:///o.aac', 'audio/aac', 'uz', 'auto', 'call', 'stopped', '2026-11-01T08:00:00Z')",
+    );
+    const store = await createSqliteQueueStore(db);
+    expect(await store.get('old')).toMatchObject({ clientId: 'old', source: 'call', queuedAt: null, marks: [] });
+    await store.insert({ ...base('new', '2026-11-08T08:46:00Z'), source: 'share', queuedAt: '2026-11-11T05:22:00Z' });
+    expect((await store.get('new'))?.queuedAt).toBe('2026-11-11T05:22:00Z');
+    // Ikkinchi ochilish: ustun bor - qayta qo'shilmaydi (xato bermaydi).
+    const again = await createSqliteQueueStore(db);
+    expect((await again.list()).map((r) => r.clientId)).toEqual(['old', 'new']);
   });
 });

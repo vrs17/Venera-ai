@@ -39,6 +39,12 @@ export interface QueueRow {
   nextAttemptAt: number | null; // epoch ms
   lastError: string | null;
   keepUntil: number | null; // epoch ms; done qatorning lokal fayli shu vaqtgacha
+  /**
+   * Navbatga qo'shilgan vaqt (ISO UTC) - tayyor fayl (`call`, `share`) uchun: Plaud ro'yxatida u shu
+   * kunga tushadi, faylning `startedAt` (asl yozilgan vaqti) ga emas (2026-11-11). Ilovadagi yozuvda va
+   * 1.3.8 dan oldingi qatorlarda `null` - unda `startedAt`.
+   */
+  queuedAt: string | null;
 }
 
 export type QueuePatch = Partial<Omit<QueueRow, 'clientId'>>;
@@ -69,6 +75,7 @@ export function newQueueRow(p: Pick<QueueRow, 'clientId' | 'fileUri' | 'language
     nextAttemptAt: null,
     lastError: null,
     keepUntil: null,
+    queuedAt: null,
     ...p,
   };
 }
@@ -104,6 +111,7 @@ const COLUMNS = [
   'nextAttemptAt',
   'lastError',
   'keepUntil',
+  'queuedAt',
 ] as const;
 
 export const CREATE_SQL = `
@@ -127,8 +135,18 @@ CREATE TABLE IF NOT EXISTS recordings (
   attempts INTEGER NOT NULL DEFAULT 0,
   nextAttemptAt INTEGER,
   lastError TEXT,
-  keepUntil INTEGER
+  keepUntil INTEGER,
+  queuedAt TEXT
 );`;
+
+/**
+ * `CREATE_SQL` dan keyin qo'shilgan ustunlar: eski telefondagi jadvalga (`CREATE TABLE IF NOT EXISTS` uni
+ * o'zgartirmaydi) ochilishda qo'shiladi. Faqat bo'sh qoldirsa bo'ladigan ustun (eski qatorda `NULL`).
+ */
+export const ADDED_COLUMNS: readonly { name: (typeof COLUMNS)[number]; sql: string }[] = [
+  // 1.3.8: tayyor fayl Plaud ro'yxatida navbatga qo'shilgan kuniga tushadi.
+  { name: 'queuedAt', sql: 'ALTER TABLE recordings ADD COLUMN queuedAt TEXT' },
+];
 
 type DbRow = Record<(typeof COLUMNS)[number], string | number | null>;
 
@@ -170,11 +188,14 @@ function fromDb(r: DbRow): QueueRow {
     nextAttemptAt: r.nextAttemptAt == null ? null : Number(r.nextAttemptAt),
     lastError: r.lastError == null ? null : String(r.lastError),
     keepUntil: r.keepUntil == null ? null : Number(r.keepUntil),
+    queuedAt: r.queuedAt == null ? null : String(r.queuedAt),
   };
 }
 
 export async function createSqliteQueueStore(db: SqlDb): Promise<QueueStore> {
   await db.execAsync(CREATE_SQL);
+  const have = new Set((await db.getAllAsync<{ name: string }>('PRAGMA table_info(recordings)')).map((c) => c.name));
+  for (const col of ADDED_COLUMNS) if (!have.has(col.name)) await db.execAsync(col.sql);
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((l) => l());
 

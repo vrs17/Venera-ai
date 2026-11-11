@@ -18,7 +18,7 @@ MEETING_FIELDS = {"id", "clientId", "title", "titleSource", "status", "progress"
                   "durationSec", "createdAt", "updatedAt", "upload", "transcript", "speakers", "summaryStatus",
                   "primarySummaryId", "openActionItems", "audioAvailable", "error"}
 CARD_FIELDS = {"id", "clientId", "title", "status", "progress", "recordedAt", "durationSec", "language",
-               "template", "summaryStatus", "openActionItems", "overview", "error", "source"}
+               "template", "summaryStatus", "openActionItems", "overview", "error", "source", "origin", "listedAt"}
 SPEAKER_FIELDS = {"id", "name", "suggestedName", "talkSec", "mergedInto"}
 SEGMENT_FIELDS = {"id", "speaker", "start", "end", "text", "edited"}
 SUMMARY_CARD_FIELDS = {"id", "template", "language", "status", "primary", "stale", "transcriptRev", "createdAt",
@@ -152,6 +152,31 @@ def test_royxat_qidiruv_va_status(client, auth, ready):
     assert client.get("/api/v1/meetings?q=yoq-narsa", headers=auth).json()["total"] == 0
     assert client.get("/api/v1/meetings?status=failed", headers=auth).json()["total"] == 0
     assert client.get("/api/v1/meetings?status=ready", headers=auth).json()["items"][0]["overview"]
+
+
+def test_royxat_manba_filtri_va_tartib(client, auth, monkeypatch, _isolated_meetings):
+    """Plaud (mobil 1.3.8): `origin` filtri va `sort=listed` - 1-oktabrdagi fayl bugun yuklansa ro'yxat
+    tepasida (kelgan vaqti), ilovada yozilgani o'z kunida (`recordedAt`). Default tartib eski ilovalar uchun."""
+    enable(monkeypatch)
+    rec = create_meeting(client, auth, recordedAt="2026-10-09T06:00:00Z")                 # launcher - yozuv
+    up = create_meeting(client, auth, source="share", recordedAt="2026-10-01T06:00:00Z")  # tayyor fayl
+    created = client.get(f"/api/v1/meetings/{up['id']}", headers=auth).json()["createdAt"]
+
+    only = client.get("/api/v1/meetings?origin=upload", headers=auth).json()
+    assert only["total"] == 1 and [c["id"] for c in only["items"]] == [up["id"]]
+    assert only["items"][0]["origin"] == "upload" and only["items"][0]["source"] == "share"
+    assert [c["id"] for c in client.get("/api/v1/meetings?origin=recording", headers=auth).json()["items"]] == [rec["id"]]
+    assert client.get("/api/v1/meetings?origin=slack", headers=auth).json()["total"] == 0
+
+    old = client.get("/api/v1/meetings", headers=auth).json()["items"]
+    assert [c["id"] for c in old] == [rec["id"], up["id"]]
+    listed = client.get("/api/v1/meetings?sort=listed", headers=auth).json()["items"]
+    assert [c["id"] for c in listed] == [up["id"], rec["id"]]
+    assert listed[0]["listedAt"] == created and listed[0]["recordedAt"] == "2026-10-01T06:00:00Z"
+    assert listed[1]["listedAt"] == listed[1]["recordedAt"] == "2026-10-09T06:00:00Z"
+
+    for bad in ("origin=whatsapp", "sort=title"):
+        assert client.get(f"/api/v1/meetings?{bad}", headers=auth).status_code == 422, bad
 
 
 def test_sarlavha_va_shablon_ozgartirish(client, auth, ready, _isolated_meetings):

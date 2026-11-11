@@ -226,6 +226,9 @@ def card_view(m: dict[str, Any], now: float | None = None) -> dict[str, Any]:
         "summaryStatus": m.get("summary_status") or "none",
         "openActionItems": runtime().store.open_items(m["id"]), "overview": overview,
         "error": error_view(m, now), "source": m.get("source") or "app",
+        # 2026-11-11, Plaud filtri va saralash: qatorni `store.list_meetings` beradi (`ORIGIN_SQL`, `LISTED_SQL`).
+        "origin": m.get("effective_origin") or m.get("origin") or "api",
+        "listedAt": iso(m.get("listed_at") or m.get("recorded_at")),
     }
 
 
@@ -250,7 +253,9 @@ def config(user: AuthUser, lang: str) -> dict[str, Any]:
 # --- 2-5. yaratish va yuklash ------------------------------------------------------------------
 
 
-def create(user: AuthUser, body: Any, channel: str, now: float | None = None) -> tuple[dict[str, Any], bool]:
+def create(user: AuthUser, body: Any, channel: str, now: float | None = None, *,
+           origin: str | None = None) -> tuple[dict[str, Any], bool]:
+    """`origin` - faqat server o'zi yaratgan yozuv (Slack, Telegram bot): qolganiniki `store.ORIGIN_SQL` da."""
     now = time.time() if now is None else now
     store = runtime().store
     client_id = str(body.clientId).lower()
@@ -272,6 +277,8 @@ def create(user: AuthUser, body: Any, channel: str, now: float | None = None) ->
         "app_version": (body.appVersion or "")[:40] or None, "device": (body.device or "")[:80] or None,
         "recorded_at": recorded, "content_type": content_type, "status": "uploading",
         "summary_status": "none", "created_at": int(now), "updated_at": int(now)}
+    if origin:
+        fields["origin"] = origin
     consent_at = parse_time(getattr(body, "consentAt", None)) if body.source == "call" else None
     if consent_at:
         # Kelajakdagi vaqt (telefon soati) - hozirgiga tushiriladi; versiya - qisqa belgi.
@@ -439,11 +446,13 @@ def complete(user: AuthUser, meeting_id: str, body: Any, now: float | None = Non
 # --- 6-11. ro'yxat, ko'rish, o'zgartirish ---------------------------------------------------------
 
 
-def list_meetings(user: AuthUser, *, limit: int, offset: int, q: str, status: str) -> dict[str, Any]:
+def list_meetings(user: AuthUser, *, limit: int, offset: int, q: str, status: str, origin: str = "",
+                  sort: str = "recorded") -> dict[str, Any]:
     store = runtime().store
     if not store.exists:
         return {"items": [], "limit": limit, "offset": offset, "total": 0}
-    rows, total = store.list_meetings(user.actorId, limit=limit, offset=offset, q=q, status=status)
+    rows, total = store.list_meetings(user.actorId, limit=limit, offset=offset, q=q, status=status,
+                                      origin=origin, sort=sort)
     now = time.time()
     return {"items": [card_view(m, now) for m in rows], "limit": limit, "offset": offset, "total": total}
 

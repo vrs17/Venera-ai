@@ -102,9 +102,10 @@ def ingest(client: Any, user: AuthUser, file: dict[str, Any]) -> str:
     with tempfile.TemporaryDirectory(prefix="slack-audio-") as tmp:
         path, size, sha, kind = fetch(file, Path(tmp))
         log.info("Slack audio (%s): %s, %d bayt", file.get("id"), kind, size)
-        # Kanal `api`: `core/channels.py` ro'yxatida Slack yo'q.
+        # Kanal `api`: `core/channels.py` ro'yxatida Slack yo'q - Plaud filtri uchun manba alohida (`origin`).
         return intake.upload(user, client_id(file["id"]), path, size, sha, kind, title=f"Slack: {name}",
-                             recorded_at=float(file.get("created") or time.time()), channel="api")
+                             recorded_at=float(file.get("created") or time.time()), channel="api",
+                             origin="slack")
 
 
 def fetch(file: dict[str, Any], folder: Path) -> tuple[Path, int, str, str]:
