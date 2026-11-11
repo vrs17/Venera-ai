@@ -194,9 +194,12 @@ def filename(disposition: str | None) -> str | None:
 # --- jarayon xabari ---------------------------------------------------------------------------
 
 
-def steps(stage: str, *, duration: float | None = None, percent: int | None = None) -> str:
+def steps(stage: str, *, duration: float | None = None, percent: int | None = None,
+          transcript_above: bool = True) -> str:
     """Jarayon xabarining tanasi: bosqichlar va oxirgi qator. Belgilashsiz sodda matn - Slack
-    mrkdwn va Telegram HTML uchun bir xil (fayl nomi kabi qochiriladigan narsa yo'q)."""
+    mrkdwn va Telegram HTML uchun bir xil (fayl nomi kabi qochiriladigan narsa yo'q).
+    `transcript_above` - bot transkriptni chatga yozadimi (Telegram - ha; Slack 2026-11-11 dan - yo'q,
+    u faylda: "📥 Transkriptni yuklab olish")."""
     if stage == QUEUED:
         upload_line = "⏳ Navbatda - oldingi audio tugagach boshlanadi"
     elif stage == UPLOAD:
@@ -206,7 +209,7 @@ def steps(stage: str, *, duration: float | None = None, percent: int | None = No
     if stage == TRANSCRIBE:
         text_line = "⏳ Matnga o'girilmoqda…" + (f" {percent}%" if percent else "")
     elif stage == SUMMARY:
-        text_line = "✅ Matnga o'girildi - matn yuqorida"
+        text_line = "✅ Matnga o'girildi" + (" - matn yuqorida" if transcript_above else "")
     else:
         text_line = "◻️ Matnga o'girish"
     summary_line = "⏳ Qisqa xulosa yozilmoqda…" if stage == SUMMARY else "◻️ Qisqa xulosa"
@@ -237,16 +240,18 @@ class Progress:
     (tarmoq, chegara) audio ishini TO'XTATMAYDI - jurnalda ogohlantirish, xolos."""
 
     def __init__(self, head: str, *, show: Callable[[Any, str], Any], drop: Callable[[Any], None],
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic, transcript_above: bool = True) -> None:
         self.head = head
         self._show, self._drop, self._clock = show, drop, clock
+        self.transcript_above = transcript_above
         self.ref: Any = None
         self.duration: float | None = None
         self._text = self._stage = ""
         self._at = 0.0
 
     def show(self, stage: str, percent: int | None = None) -> None:
-        text = f"{self.head}\n\n{steps(stage, duration=self.duration, percent=percent)}"
+        body = steps(stage, duration=self.duration, percent=percent, transcript_above=self.transcript_above)
+        text = f"{self.head}\n\n{body}"
         now = self._clock()
         if text == self._text or (stage == self._stage and now - self._at < PROGRESS_EVERY):
             return

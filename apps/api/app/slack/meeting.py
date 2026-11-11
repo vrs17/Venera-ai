@@ -3,15 +3,18 @@
 XABARLAR - chatning o'zida (audio thread ichida yuborilgan bo'lsa - o'sha thread'da):
   0. jarayon xabari (`intake.Progress`, ega talabi 2026-11-05): audio kelishi bilan DARHOL
      (`acknowledge`, navbatdan oldin) - "qabul qilindi" va bosqichlar: audio yuklash, matnga
-     o'girish (foizi bilan), qisqa xulosa. Joyida yangilanadi, transkript chiqqach uning ostiga
-     ko'chadi, xulosa (yoki xato) chiqqach o'chiriladi;
-  1. transkript;
-  2. "Qisqa xulosa" - mobil kartadagi bilan AYNI matn (`export_meeting(parts="brief")`,
-     mobil `brief.ts` bilan umumiy namunada tekshiriladi) va tugmalar: vazifalar, bayonnoma
-     (rasmiy hujjat), boshqa shablon bilan xulosa, eksport (fayl), boshqa tilda qayta o'girish.
-  3. "📄 Bayonnoma" - til menyusi (lotin/kirill/rus/ingliz), tanlovdan keyin Word va PDF fayl
+     o'girish (foizi bilan), qisqa xulosa. Joyida yangilanadi, xulosa (yoki xato) chiqqach o'chiriladi;
+  1. "Qisqa xulosa" - mobil kartadagi bilan AYNI matn (`export_meeting(parts="brief")`,
+     mobil `brief.ts` bilan umumiy namunada tekshiriladi) va tugmalar: transkriptni yuklab olish,
+     vazifalar, bayonnoma (rasmiy hujjat), boshqa shablon bilan xulosa, eksport (fayl), boshqa
+     tilda qayta o'girish.
+  2. "📄 Bayonnoma" - til menyusi (lotin/kirill/rus/ingliz), tanlovdan keyin Word va PDF fayl
      (`services.meetings.minutes`): hujjat 1-3 daqiqada yoziladi, odam "⏳" xabarini ko'radi.
-Ikkala xabar bloki `block_id` da yig'ilish id'sini olib yuradi (`render.mark`): xabar ostidagi
+TRANSKRIPT CHATGA YOZILMAYDI (ega talabi 2026-11-11): uzun matn chatni tushunarsiz qilardi. U
+"📥 Transkriptni yuklab olish" tugmasida - .txt fayl kartaning THREAD'iga keladi (asosiy chat toza
+qoladi), Slack'da shu yerdan yuklab olinadi. Istisno - xulosa yozilmagan juda qisqa yozuv: bir-ikki
+gapni faylga solish o'rniga kartaning o'zida (`SHORT_TRANSCRIPT_CHARS`).
+Karta bloki `block_id` da yig'ilish id'sini olib yuradi (`render.mark`): xabar ostidagi
 thread'dagi savol yig'ilishni shundan topadi - lokal ombor kerak emas. Odamning o'z audio
 xabari ostidagi savol - fayl kaliti orqali (`transcribe.meeting_of_file`).
 
@@ -44,6 +47,8 @@ from . import render, transcribe
 log = logging.getLogger(__name__)
 #: Savol chegarasi (`AskRequest.question`).
 QUESTION_CHARS = 500
+#: Xulosa yozilmagan (juda qisqa) yozuvning matni shundan qisqa bo'lsa - kartaning o'zida ko'rsatiladi.
+SHORT_TRANSCRIPT_CHARS = 300
 #: Eksport turlari (`render.EXPORTS`) -> xizmat formati.
 _TRANSCRIPTS = {"transcript_txt": "txt", "transcript_srt": "srt"}
 _REPORTS = {"report_docx": "docx", "report_pdf": "pdf"}
@@ -92,7 +97,8 @@ def status(client: Any, channel: str, thread: str | None, file: dict[str, Any]) 
         client.chat_update(channel=channel, ts=ts, text=text, blocks=render.sections(text))
         return ts
 
-    return intake.Progress(head, show=show, drop=lambda ts: client.chat_delete(channel=channel, ts=ts))
+    return intake.Progress(head, show=show, drop=lambda ts: client.chat_delete(channel=channel, ts=ts),
+                           transcript_above=False)
 
 
 def is_question(event: dict[str, Any]) -> bool:
@@ -134,28 +140,24 @@ def handle(client: Any, channel: str, thread: str | None, files: list[dict[str, 
 
 def deliver(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str, text: str, *,
             sleep: Sleep = time.sleep, progress: intake.Progress | None = None) -> None:
-    """Transkript, keyin (yozilishini kutib) "Qisqa xulosa" va tugmalar. `progress` (audio yo'li) -
-    jarayon xabari transkript OSTIGA ko'chadi va xulosa chiqqach o'chiriladi."""
-    parts = render.split(text or "Audioda nutq topilmadi.")
-    for n, part in enumerate(parts, 1):
-        note = "🎙 Transkript" + (f" ({n}/{len(parts)})" if len(parts) > 1 else "")
-        post(client, channel, thread, render.escape(part), [
-            {"type": "section", "text": {"type": "plain_text", "text": part}},
-            render.context(note, block_id=render.mark(meeting_id, str(n)))])
+    """Matnga o'girildi: (yozilishini kutib) "Qisqa xulosa" va tugmalar. Transkript chatga YOZILMAYDI -
+    kartadagi "📥 Transkriptni yuklab olish" da (modul izohi). `progress` (audio yo'li) - jarayon xabari
+    joyida xulosa bosqichiga o'tadi va xulosa chiqqach o'chiriladi."""
     if progress is not None:
-        progress.close()
         progress.show(intake.SUMMARY)
     try:
         view = wait_summary(user, meeting_id, sleep=sleep)
-        post(client, channel, thread, "Qisqa xulosa", summary_card(user, meeting_id, view))
+        post(client, channel, thread, "Qisqa xulosa", summary_card(user, meeting_id, view, transcript=text))
     finally:
         # Kutish uzilsa ham (server to'xtayapti) "⏳" xabari osilib qolmasin.
         if progress is not None:
             progress.close()
 
 
-def summary_card(user: AuthUser, meeting_id: str, view: dict[str, Any]) -> list[dict[str, Any]]:
-    """"Qisqa xulosa" (yoki nega yo'qligi) va tugmalar."""
+def summary_card(user: AuthUser, meeting_id: str, view: dict[str, Any], *,
+                 transcript: str | None = None) -> list[dict[str, Any]]:
+    """"Qisqa xulosa" (yoki nega yo'qligi) va tugmalar. `transcript` (matn, `wait_transcript`) - faqat
+    xulosa YO'Q holat uchun: nutq yo'q bo'lsa shuni aytadi, juda qisqa bo'lsa matnni kartada ko'rsatadi."""
     status, retry = view["summaryStatus"], None
     if status == "ready":
         try:
@@ -166,6 +168,12 @@ def summary_card(user: AuthUser, meeting_id: str, view: dict[str, Any]) -> list[
         reason = summary_error(user, meeting_id)
         text = "Xulosa yozilmadi" + (f": {render.escape(reason)}" if reason else ".")
         retry = f"m:{meeting_id}" if status == "failed" else None
+        if transcript is not None:
+            spoken = " ".join(transcript.split())
+            if not spoken:
+                text += "\nAudioda nutq topilmadi."
+            elif len(spoken) <= SHORT_TRANSCRIPT_CHARS:
+                text += f"\n\n*Matn:* {render.escape(spoken)}"
     else:
         text = "Xulosa hali tayyor emas - birozdan keyin «Boshqa shablon bilan xulosa» dan oling."
     blocks = [{"type": "header", "text": {"type": "plain_text", "text": "Qisqa xulosa"}}]
@@ -252,7 +260,8 @@ def on_action(client: Any, body: dict[str, Any], *, sleep: Sleep = time.sleep) -
     kind = str(action.get("action_id") or "")
     value = str(action.get("value") or (action.get("selected_option") or {}).get("value") or "")
     channel = (body.get("channel") or {}).get("id") or (body.get("container") or {}).get("channel_id")
-    thread = (body.get("message") or {}).get("thread_ts")
+    message = body.get("message") or {}
+    thread = message.get("thread_ts")
     if not channel:
         return
     try:
@@ -263,7 +272,11 @@ def on_action(client: Any, body: dict[str, Any], *, sleep: Sleep = time.sleep) -
         meeting_id, _, arg = value.partition("|")
         if not _ID.fullmatch(meeting_id):
             return
-        if kind == "barno_tasks":
+        if kind == "barno_transcript" or (kind == "barno_export" and arg == "transcript_txt"):
+            # Eski kartalardagi "Eksport -> Transkript (TXT)" ham shu yo'ldan.
+            transcript_file(client, channel, thread, user, meeting_id, card=message.get("ts"),
+                            clicker=(body.get("user") or {}).get("id"))
+        elif kind == "barno_tasks":
             tasks(client, channel, thread, user, meeting_id)
         elif kind == "barno_minutes":
             minutes_menu(client, channel, thread, user, meeting_id)
@@ -314,6 +327,22 @@ def template(client: Any, channel: str, thread: str | None, user: AuthUser, meet
     except MeetingProblem as exc:
         text = render.escape(f"Xulosa yozilmadi: {exc.detail}")
     replace(client, channel, ts, thread, text)
+
+
+def transcript_file(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str, *,
+                    card: str | None, clicker: str | None) -> None:
+    """"📥 Transkriptni yuklab olish": .txt (spikerlar va vaqt belgilari bilan - eksport bilan bir xil)
+    kartaning THREAD'iga - Slack .txt matnini ochib ko'rsatadi, asosiy chatga tushsa yana o'sha uzun matn
+    bo'lardi. Karta o'zi thread ichida bo'lsa - o'sha thread'ga (Slack'da ichma-ich thread yo'q).
+    Bosgan odamga (faqat unga ko'rinadi) fayl qayerdaligi aytiladi."""
+    text, _, name = service.export_transcript(user, meeting_id, "txt", with_speakers=True, with_timestamps=True)
+    target = thread or card
+    upload(client, channel, target, text.encode("utf-8"), name)
+    if thread is None and card and clicker:
+        try:
+            client.chat_postEphemeral(channel=channel, user=clicker, text=render.TRANSCRIPT_SENT)
+        except Exception as exc:  # noqa: BLE001 - fayl baribir yetib bordi
+            log.warning("Slack ephemeral xabari yuborilmadi (%s): %s", channel, exc)
 
 
 def export_file(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str,
@@ -413,8 +442,8 @@ def minutes_doc(client: Any, channel: str, thread: str | None, user: AuthUser, m
 
 def relang(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str, lang: str, *,
            sleep: Sleep = time.sleep) -> None:
-    """Boshqa tilda qayta o'girish (GAPI qayta to'lanadi - tugmada tasdiq oynasi bor), so'ng
-    yangi transkript va xulosa."""
+    """Boshqa tilda qayta o'girish (GAPI qayta to'lanadi - tugmada tasdiq oynasi bor), so'ng yangi
+    "Qisqa xulosa" kartasi (yangi transkript - uning "📥 Transkriptni yuklab olish" tugmasida)."""
     name = render.LANG_NAMES.get(lang)
     if name is None:
         return

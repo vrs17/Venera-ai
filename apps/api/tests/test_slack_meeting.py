@@ -11,6 +11,7 @@ import pytest
 from app.services.meetings import templates
 from app.slack import meeting, render
 from slack_fakes import AUDIO, BOT_USER, FakeSlack, as_parent, card, drive, elements, setup, shown
+from meetings_fakes import gapi_segments
 
 
 @pytest.fixture
@@ -45,6 +46,50 @@ def test_slack_yozuvi_manbasi_bazada(delivered, _isolated_meetings):
     store.update_meeting(mid, title="Kredit bo'yicha qo'ng'iroq")
     rows, total = store.list_meetings(row["actor_id"], limit=10, offset=0, origin="slack")
     assert total == 1 and rows[0]["id"] == mid and rows[0]["effective_origin"] == "slack"
+
+
+def _press(client, rt, action, message):
+    meeting.on_action(client, {"actions": [action], "channel": {"id": "D1"}, "message": message,
+                               "user": {"id": "U1"}}, sleep=drive(rt))
+
+
+def test_transkript_tugmasi_fayl_kartaning_threadiga(delivered, _isolated_meetings):
+    """Ega talabi (2026-11-11): transkript chatda yo'q - tugma .txt faylni kartaning THREAD'iga yuboradi
+    (asosiy chat toza qoladi), bosgan odamga fayl qayerdaligi aytiladi (faqat unga ko'rinadi)."""
+    client, mid, summary = delivered
+    posted = len(client.posted)
+    _press(client, _isolated_meetings, {"action_id": "barno_transcript", "value": mid}, {"ts": summary["ts"]})
+
+    [sent] = client.uploaded
+    assert (sent["channel"], sent["thread_ts"]) == ("D1", summary["ts"]) and sent["filename"].endswith(".txt")
+    assert "Assalomu alaykum".encode() in sent["file"] and b"[00:00:00]" in sent["file"]
+    assert len(client.posted) == posted                     # asosiy chatga hech narsa yozilmadi
+    assert client.ephemeral == [{"channel": "D1", "user": "U1", "text": render.TRANSCRIPT_SENT}]
+
+    # Karta o'zi thread ichida - fayl o'sha thread'ga (ichma-ich thread yo'q), izoh shart emas.
+    _press(client, _isolated_meetings, {"action_id": "barno_transcript", "value": mid},
+           {"ts": "300.1", "thread_ts": "111.222"})
+    assert client.uploaded[-1]["thread_ts"] == "111.222" and len(client.ephemeral) == 1
+
+    # Eski kartadagi "Eksport -> Transkript (TXT)" ham shu yo'ldan.
+    _press(client, _isolated_meetings, {"action_id": "barno_export", "selected_option": {"value": f"{mid}|transcript_txt"}},
+           {"ts": summary["ts"]})
+    assert client.uploaded[-1]["thread_ts"] == summary["ts"] and len(client.posted) == posted
+
+
+def test_juda_qisqa_yozuv_matni_kartaning_ozida(users_file, monkeypatch, _isolated_meetings):
+    """Xulosa yozilmagan juda qisqa yozuv: bitta gapni faylga solib bo'lmaydi - kartaning o'zida."""
+    setup(monkeypatch, users_file, seconds=5.0)
+    _isolated_meetings.gapi.result = {**_isolated_meetings.gapi.result, "audio_seconds": 5.0,
+                                      "segments": gapi_segments([(0, 0.0, 4.5, "Ertaga soat o'nda uchrashamiz.")])}
+    client = FakeSlack(files={"F1": AUDIO})
+    meeting.handle(client, "D1", None, [AUDIO], sleep=drive(_isolated_meetings))
+
+    [summary] = client.visible()
+    text = shown(summary)
+    assert "Xulosa yozilmadi: Yozuv juda qisqa - xulosa yozilmadi." in text
+    assert "*Matn:* Ertaga soat o'nda uchrashamiz." in text
+    assert elements(summary)[0]["action_id"] == "barno_transcript"
 
 
 def test_xulosa_xabari_ostidagi_savolga_javob(delivered):
@@ -166,7 +211,7 @@ from app.services.meetings import minutes  # noqa: E402 - bayonnoma testlari uch
 def test_bayonnoma_tugmasi_kartada(delivered):
     _, mid, summary = delivered
     ids = [e["action_id"] for e in elements(summary)]
-    assert ids[:2] == ["barno_tasks", "barno_minutes"]
+    assert ids[:3] == ["barno_transcript", "barno_tasks", "barno_minutes"]
     assert [e for e in elements(summary) if e["action_id"] == "barno_minutes"][0]["value"] == mid
 
 

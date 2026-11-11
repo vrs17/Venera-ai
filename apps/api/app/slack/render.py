@@ -22,9 +22,15 @@ MESSAGE_BLOCKS = 45
 MARK = "barno:"
 #: Qayta o'girish tillari (`schemas.meetings.Lang`).
 LANG_NAMES = {"uz": "o'zbek", "ru": "rus", "en": "ingliz"}
-#: Eksport menyusi: qiymat -> nom.
-EXPORTS = (("transcript_txt", "Transkript (TXT)"), ("transcript_srt", "Transkript (SRT)"),
-           ("summary_md", "Xulosa (MD)"), ("report_docx", "Hisobot (Word)"), ("report_pdf", "Hisobot (PDF)"))
+#: Eksport menyusi: qiymat -> nom. Transkript TXT - alohida tugmada (`TRANSCRIPT_BUTTON`, 2026-11-11); eski
+#: kartalardagi `transcript_txt` tanlovi ham o'sha yo'ldan (`meeting.transcript_file`).
+EXPORTS = (("transcript_srt", "Transkript (SRT)"), ("summary_md", "Xulosa (MD)"),
+           ("report_docx", "Hisobot (Word)"), ("report_pdf", "Hisobot (PDF)"))
+#: Transkript chatga YOZILMAYDI (ega talabi 2026-11-11: uzun matn chatni tushunarsiz qiladi) - kartadagi
+#: tugma uni .txt fayl qilib kartaning thread'iga yuboradi, Slack'da shu yerdan yuklab olinadi.
+TRANSCRIPT_BUTTON = "📥 Transkriptni yuklab olish"
+#: Tugmani bosgan odamga (faqat unga ko'rinadi): fayl qayerda.
+TRANSCRIPT_SENT = "📥 Transkript fayli shu xulosa ostidagi thread'ga yuklandi - thread'ni ochib, faylni yuklab oling."
 
 _ID = re.compile(r"[0-9a-f]{32}")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
@@ -125,6 +131,8 @@ def button(text: str, action_id: str, value: str, *, confirm: dict[str, Any] | N
 def controls(meeting_id: str, language: str, templates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Xulosa ostidagi tugmalar va savol haqida eslatma. Qiymatlarda yig'ilish id'si bor."""
     elements = [
+        # Birinchi: transkript endi chatda yo'q - uni olishning yagona yo'li shu tugma.
+        button(TRANSCRIPT_BUTTON, "barno_transcript", meeting_id),
         button("Vazifalar", "barno_tasks", meeting_id),
         # Rasmiy hujjat: til menyusi alohida xabarda (`minutes_menu`) - tugma faqat uni chaqiradi.
         button("📄 Bayonnoma", "barno_minutes", meeting_id),
