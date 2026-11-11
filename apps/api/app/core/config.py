@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     #: `<sso_app_url>/api/v1/auth/sso/callback` - u Keycloak'dagi "Valid
     #: redirect URIs" ro'yxatida AYNAN shunday turishi shart. BO'SH bo'lsa
     #: so'rovning o'zidan (`X-Forwarded-Proto`, `Host`) olinadi - dev'da
-    #: (vite proxy, http://10.10.50.8:5174) shu yetadi; prod'da nginx
+    #: (vite proxy, http://10.10.50.4:5174) shu yetadi; prod'da nginx
     #: konteyneri TLS ni ko'rmaydi (`http` deb yuboradi), shuning uchun
     #: prod'da ANIQ yoziladi.
     sso_app_url: str = ""

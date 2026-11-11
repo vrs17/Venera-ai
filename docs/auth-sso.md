@@ -66,8 +66,8 @@ o'zgartirgach `systemctl --user restart venera-api`.
 Keycloak client'ida (Clients -> barno-ai):
 - Client authentication ON, Standard flow ON, Direct access grants OFF;
 - Valid redirect URIs: `<SSO_APP_URL>/api/v1/auth/sso/callback` (prod),
-  `http://10.10.50.8:5174/api/v1/auth/sso/callback` va
-  `http://localhost:5174/...` (dev);
+  `http://10.10.50.4:5174/api/v1/auth/sso/callback` va
+  `http://localhost:5174/...` (dev; 2026-11-10 dan Venera 10.10.50.4 da);
 - Valid post logout redirect URIs: `<SSO_APP_URL>/*`;
 - Advanced -> PKCE Code Challenge Method: `S256`;
 - Roles: `admin`, `employee`, `executive`.
@@ -79,11 +79,17 @@ o'zgaradi.
 ## Dev'da sinash
 
 ```bash
-# worktree ichida, apps/api/.env da SSO_* to'ldirilgan (SSO_APP_URL bo'sh qolsin)
-cd apps/api && TELEGRAM_BOT_ENABLED=false venv/bin/uvicorn app.main:app --reload --port 8001
+# worktree ichida (venera/.worktrees/sso), apps/api/.env da SSO_* to'ldirilgan (SSO_APP_URL bo'sh qolsin)
+# TELEGRAM_BOT_ENABLED=false va SLACK_APP_TOKEN= SHART: .env prod nusxasi bo'lsa, dev jarayon prod botning
+# Telegram yangilanishlarini (409) va Slack hodisalarini (socket mode ikki ulanishga bo'linadi) olib qo'yadi.
+cd apps/api && TELEGRAM_BOT_ENABLED=false SLACK_APP_TOKEN= venv/bin/uvicorn app.main:app --reload --port 8001
 cd apps/web && VITE_API_TARGET=http://127.0.0.1:8001 npm run dev -- --port 5174
-# brauzerda http://10.10.50.8:5174/login -> "BRB-Tech ID bilan kirish"
+# brauzerda http://10.10.50.4:5174/login -> "BRB-Tech ID bilan kirish"
+# (5174 ufw da yopiq bo'lsa: `ssh -L 5174:127.0.0.1:5174 m.jumanazarov@10.10.50.4` va http://localhost:5174/login)
 ```
+
+Portlar (10.10.50.4): 8000 - `ai-chat-mcp`, 8010 - prod `venera-api`, 5173 - prod sayt; dev uchun 8001 va 5174 bo'sh.
+Ma'lumot: dev jarayon worktree'ning o'z `apps/api/data/` papkasiga yozadi - prod bazalariga tegmaydi.
 
 Keycloak'da xato bo'lsa: Realm -> Events -> Event configs -> Save events ON;
 "User events" da har urinish sababi bilan ko'rinadi. Barno tomonida
