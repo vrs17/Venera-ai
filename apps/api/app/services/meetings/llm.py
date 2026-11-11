@@ -47,7 +47,8 @@ tugamasin), JSON sxema `output_config.format` (`shapes.py`); xizmat sxemani rad 
 (bu API versiyasida 400; Sonnet 5.5 da moslashuvchan o'ylash default, chuqurlik va narx -
 `output_config.effort`). Hisob: `claude / <op>`. Zanjirga `claude` bo'g'ini bilan kiradi
 (`MEETINGS_LLM_CHAIN=claude,ollama`); bayonnoma zanjiri (`MEETINGS_MINUTES_CHAIN`, default faqat
-`claude`) - `minutes_providers`.
+`claude`) - `minutes_providers`. Yig'ilish CHATI (2026-11-11) - `ClaudeChat.converse`: ko'p navbatli
+suhbat, tizim promptining kontekst bloki keshlanadi (`cache_control`), rad-zahirasi (`fallbacks`) bilan.
 
 VAQTINCHALIK XATO butun xulosani past modelga tushirmasin: v3 ning 503/uzilish/jimlik
 xatosi - shu chaqiruv 2 martagacha qayta (5 s, 15 s), OpenAI 5xx/tarmoq - 1 marta (3 s), Claude
@@ -563,6 +564,9 @@ def _error_text(exc: urllib.error.HTTPError, key: str) -> str:
 #: `output_config.effort` darajalari - boshqa qiymat xizmatda 400 (har chaqiruv yiqilardi).
 CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
+#: Server tomonidagi rad-zahirasi (`fallbacks: "default"`) beta sarlavhasi - faqat chat (`converse`).
+CLAUDE_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+
 
 class ClaudeChat:
     """Claude (Anthropic SDK, Messages API) - `complete_meta` Ollama/OpenAI klientidek.
@@ -586,6 +590,13 @@ class ClaudeChat:
     KLIENT kalit QIYMATI bo'yicha keshlanadi: kalit `.env` da almashsa (`claude_key_now`) - yangi
     klient, restart shart emas. 429 / 5xx / tarmoq qayta urinishlari - SDK ning o'zida
     (`max_retries`, eksponensial kutish). Kalit va javob matni jurnalga ham, hisobga ham tushmaydi.
+
+    CHAT (`converse`, yig'ilish chati): `system` - bloklar ro'yxati (kontekst bloki `cache_control` bilan -
+    prompt keshi), tarix - ko'p navbatli `messages`, faqat MATN ("o'ylash" bloklari saqlanmaydi va qayta
+    yuborilmaydi). Shartnoma va xato turlari `complete_meta` bilan bir xil (`_call`). Rad-zahirasi
+    (`fallbacks`, faqat chat klientida yoqiladi): `beta.messages.stream(..., betas=[...], fallbacks="default")`;
+    xizmat uni rad etsa (400, xabarda fallback / beta) - bir marta jurnalga, shu so'rov zahirasiz va bu
+    klientda boshqa yuborilmaydi. Hisobda kesh tokenlari ham (`cache_read`, `cache_write`).
     """
 
     name = "claude"
@@ -593,7 +604,7 @@ class ClaudeChat:
     def __init__(self, key: Callable[[], str], model: str, *, base_url: str = "", timeout: float = 600.0,
                  max_concurrent: int = 1, max_output_tokens: int = 16000, effort: str = "medium",
                  retries: int = 2, client_factory: Callable[..., Any] | None = None,
-                 workspace_id: Callable[[], str] | str = "") -> None:
+                 workspace_id: Callable[[], str] | str = "", fallbacks: bool = False) -> None:
         self._key = key
         self._model = (model or "").strip()
         #: Anthropic workspace id (`anthropic-workspace-id` sarlavhasi): tashkilot darajasidagi kalit
@@ -617,6 +628,9 @@ class ClaudeChat:
         #: 400 bilan bir aylanish bo'lmasin (katta `extract` sxemasi strukturali chiqish chegarasidan
         #: oshishi mumkin; promptda shakl baribir bor, tekshiruvchi hammasini tekshiradi).
         self._formatless: set[str] = set()
+        #: Chat (`converse`) so'rovlarida server tomonidagi rad-zahirasi. Xizmat (yoki proksi) uni rad etsa
+        #: `False` ga tushadi - har savolda 400 bilan bir aylanish bo'lmasin.
+        self.fallbacks = bool(fallbacks)
 
     @property
     def configured(self) -> bool:
@@ -663,14 +677,14 @@ class ClaudeChat:
             _warn_once(f"Claude effort {value!r} tanilmadi ({' | '.join(CLAUDE_EFFORTS)}) - e'tiborsiz")
         return None
 
-    def _request(self, system: str, user: str, num_predict: int, options: dict[str, Any] | None,
-                 schema: dict[str, Any] | None) -> dict[str, Any]:
+    def _request(self, system: Any, messages: list[dict[str, Any]], num_predict: int,
+                 options: dict[str, Any] | None, schema: dict[str, Any] | None) -> dict[str, Any]:
         opts = dict(options or {})
         max_tokens = max(int(num_predict or 0), self.max_output_tokens)
         if opts.get("max_tokens"):
             max_tokens = int(opts["max_tokens"])
         request: dict[str, Any] = {"model": self._model, "max_tokens": max(1, max_tokens), "system": system,
-                                   "messages": [{"role": "user", "content": user}]}
+                                   "messages": messages}
         output_config: dict[str, Any] = {}
         effort = self._effort(opts)
         if effort:
@@ -688,11 +702,32 @@ class ClaudeChat:
         with client.messages.stream(**request) as stream:
             return stream.get_final_message()
 
-    def _exchange(self, client: Any, request: dict[str, Any], op: str, sdk: Any, key: str) -> Any:
-        """400 ni FAQAT sabab sxema bo'lsa bir marta tuzatib qayta (formatsiz); qolgan xatolar
-        chaqiruvchiga (`complete_meta` turini aniqlaydi)."""
-        try:
+    def _chat_stream(self, client: Any, request: dict[str, Any], sdk: Any, key: str, op: str) -> Any:
+        """Chat so'rovi: rad-zahirasi yoqiq bo'lsa beta oqimi (`betas`, `fallbacks="default"`) - klassifikator rad
+        etgan savolni xizmat o'zi tavsiya etilgan modelda qayta yozadi (`fallback` bloklari o'qilmaydi, faqat
+        matn). Xizmat zahirani rad etsa (400, xabarda fallback / beta) - bir marta jurnalga, shu so'rov zahirasiz
+        va bu klientda boshqa yuborilmaydi; boshqa xatolar - chaqiruvchiga (`_exchange`, `_call`)."""
+        if not self.fallbacks:
             return self._stream(client, request)
+        try:
+            with client.beta.messages.stream(**request, betas=[CLAUDE_FALLBACK_BETA], fallbacks="default") as stream:
+                return stream.get_final_message()
+        except sdk.BadRequestError as exc:
+            message = _claude_message(exc, key)
+            if not any(word in message.lower() for word in ("fallback", "beta")):
+                raise
+            self.fallbacks = False
+            log.warning("Claude (%s): rad-zahirasi rad etildi (400: %s) - zahirasiz qayta (keyingilari ham)", op,
+                        message)
+            return self._stream(client, request)
+
+    def _exchange(self, client: Any, request: dict[str, Any], op: str, sdk: Any, key: str,
+                  send: Callable[[Any, dict[str, Any]], Any] | None = None) -> Any:
+        """400 ni FAQAT sabab sxema bo'lsa bir marta tuzatib qayta (formatsiz); qolgan xatolar
+        chaqiruvchiga (`_call` turini aniqlaydi). `send` - so'rov yo'li (default oddiy oqim; chat - `_chat_stream`)."""
+        send = send or self._stream
+        try:
+            return send(client, request)
         except sdk.BadRequestError as exc:
             config = request.get("output_config") or {}
             message = _claude_message(exc, key)
@@ -705,12 +740,11 @@ class ClaudeChat:
                 trimmed = {k: v for k, v in config.items() if k != "format"}
                 if trimmed:
                     retry["output_config"] = trimmed
-                return self._stream(client, retry)
+                return send(client, retry)
             raise
 
-    def complete_meta(self, system: str, user: str, *, num_predict: int = 1200, temperature: float = 0.2,
-                      op: str = "meeting", format: str | None = None, options: dict[str, Any] | None = None,
-                      think: bool | None = None) -> tuple[str, dict[str, Any]]:
+    def _sdk(self) -> tuple[str, Any]:
+        """(kalit, `anthropic` moduli). Kalit yoki model yo'q, paket o'rnatilmagan - `LlmUnavailable`."""
         key = self._key() or ""
         if not (self._model and key):
             raise LlmUnavailable("Claude sozlanmagan")
@@ -719,14 +753,40 @@ class ClaudeChat:
             import anthropic as sdk
         except ImportError:
             raise LlmUnavailable("anthropic o'rnatilmagan") from None
+        return key, sdk
+
+    def complete_meta(self, system: str, user: str, *, num_predict: int = 1200, temperature: float = 0.2,
+                      op: str = "meeting", format: str | None = None, options: dict[str, Any] | None = None,
+                      think: bool | None = None) -> tuple[str, dict[str, Any]]:
+        key, sdk = self._sdk()
         schema = shapes.for_op(op, system) if format == "json" and op not in self._formatless else None
-        request = self._request(system, user, num_predict, options, schema)
+        request = self._request(system, [{"role": "user", "content": user}], num_predict, options, schema)
+        return self._call(request, op, len(system) + len(user), key, sdk)
+
+    def converse(self, system: list[dict[str, Any]], messages: list[dict[str, Any]], *, op: str = "meeting_chat",
+                 num_predict: int = 1200, format: str | None = "json",
+                 options: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
+        """Ko'p navbatli chat (yig'ilish chati, `chat.converse`): `system` - matn bloklari (oxirgisi odatda
+        `cache_control` bilan), `messages` - navbatlar, faqat matn. -> (matn, meta); meta'da `model` - javobni
+        AYNAN qaysi model yozgani (rad-zahirasi ishlasa - zahira modeli). Xatolar - `complete_meta` dagidek."""
+        key, sdk = self._sdk()
+        schema = shapes.for_op(op) if format == "json" and op not in self._formatless else None
+        request = self._request(system, messages, num_predict, options, schema)
+        chars = (sum(len(str(block.get("text") or "")) for block in system)
+                 + sum(len(str(message.get("content") or "")) for message in messages))
+        return self._call(request, op, chars, key, sdk, chat=True)
+
+    def _call(self, request: dict[str, Any], op: str, chars: int, key: str, sdk: Any, *,
+              chat: bool = False) -> tuple[str, dict[str, Any]]:
+        """Bitta so'rov - `complete_meta` va `converse` uchun UMUMIY: slot, hisob (`claude / <op>`), SDK
+        xatolari -> zanjir xatolari, yakuniy xabarni o'qish (`_read`)."""
         if not self._slots.acquire(timeout=self.timeout):
             raise LlmBusy("navbat to'la")
-        chars = len(system) + len(user)
         call = begin("claude", op, units={"chars": chars})
         try:
-            message = self._exchange(self._client_for(key, sdk), request, op, sdk, key)
+            client = self._client_for(key, sdk)
+            send = (lambda c, r: self._chat_stream(c, r, sdk, key, op)) if chat else None
+            message = self._exchange(client, request, op, sdk, key, send)
         except sdk.RateLimitError:
             log.warning("Claude (%s): HTTP 429 - kutish", op)
             call.end("error", http_status=429, error="Claude HTTP 429")
@@ -760,18 +820,28 @@ class ClaudeChat:
             raise LlmFailed(f"Claude {type(exc).__name__}") from None
         finally:
             self._slots.release()
-        return self._read(message, call, chars)
+        return self._read(message, call, chars, chat_op=op if chat else None)
 
-    @staticmethod
-    def _read(message: Any, call: Any, chars: int) -> tuple[str, dict[str, Any]]:
-        """Yakuniy xabar -> (matn, meta); hisob yakunlanadi (tokenlar bilan)."""
+    def _read(self, message: Any, call: Any, chars: int, *,
+              chat_op: str | None = None) -> tuple[str, dict[str, Any]]:
+        """Yakuniy xabar -> (matn, meta); hisob yakunlanadi (tokenlar bilan). Chat (`chat_op`) - hisobda kesh
+        tokenlari ham, jurnalda bitta INFO qatori (model va tokenlar, MATNSIZ), meta'da javob bergan model."""
         stop = getattr(message, "stop_reason", None)
         usage = getattr(message, "usage", None)
         tokens_out = getattr(usage, "output_tokens", None)
         units: dict[str, Any] = {"chars": chars}
-        for name, value in (("tokens_in", getattr(usage, "input_tokens", None)), ("tokens_out", tokens_out)):
+        fields = [("tokens_in", "input_tokens"), ("tokens_out", "output_tokens")]
+        if chat_op:
+            fields += [("cache_read", "cache_read_input_tokens"), ("cache_write", "cache_creation_input_tokens")]
+        for name, attr in fields:
+            value = getattr(usage, attr, None)
             if isinstance(value, int):
                 units[name] = value
+        served = str(getattr(message, "model", None) or self._model)
+        if chat_op:
+            log.info("Claude (%s): %s (%s) - kirish %s, chiqish %s, kesh o'qildi %s, yozildi %s token", chat_op,
+                     served, stop or "-", units.get("tokens_in", "-"), units.get("tokens_out", "-"),
+                     units.get("cache_read", 0), units.get("cache_write", 0))
         if stop == "refusal":
             call.end("error", http_status=200, units=units, error="refusal")
             raise LlmFailed("Claude: rad etdi (refusal)")
@@ -785,8 +855,11 @@ class ClaudeChat:
         # (map yo'li yoki keyingi model). `tokensIn` ATAYLAB yo'q (OpenAI kabi): Claude promptni jim
         # qisqartirmaydi, Ollama uchun yozilgan "prompt kesildi" taxmini faqat xato signal berardi.
         cut = stop in ("max_tokens", "model_context_window_exceeded")
-        return text, {"doneReason": "length" if cut else (str(stop) if stop else None), "tokensIn": None,
-                      "tokensOut": tokens_out if isinstance(tokens_out, int) else None}
+        meta: dict[str, Any] = {"doneReason": "length" if cut else (str(stop) if stop else None), "tokensIn": None,
+                                "tokensOut": tokens_out if isinstance(tokens_out, int) else None}
+        if chat_op:
+            meta["model"] = served
+        return text, meta
 
 
 def _claude_label(exc: Any) -> str:

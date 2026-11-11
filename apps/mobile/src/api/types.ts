@@ -731,7 +731,7 @@ export interface ActionResult {
   result?: Record<string, unknown> | null;
 }
 
-// ---------------------------------------------------------------- endpoints 26-27
+// ---------------------------------------------------------------- endpoints 26a-26c (yozuv bo'yicha chat)
 export interface Citation {
   segmentId: number;
   start: number;
@@ -739,6 +739,7 @@ export interface Citation {
   text: string;
 }
 
+/** Bitta savol-javob (backend `AskAnswer`; `/ask` va `/questions` ham shu ko'rinishda). */
 export interface AskAnswer {
   id: string;
   question: string;
@@ -748,9 +749,52 @@ export interface AskAnswer {
   createdAt: string;
 }
 
-export interface AskRequest {
-  question: string;
-  language?: Lang;
+/** Savol qaysi kanaldan berilgan (backend `questions.channel`). */
+export type ChatChannel = 'mobile' | 'web' | 'miniapp' | 'desktop' | 'api' | 'slack' | 'telegram';
+
+/**
+ * Chatdagi bitta savol-javob: `AskAnswer` + kanal va javob bergan model. Suhbat bitta yozuvga
+ * tegishli va egasining kanallarida BITTA - Telegram'da berilgan savol ilovada ham ko'rinadi.
+ * Slack'da (umumiy hisob) har odamning suhbati alohida - `GET /chat` ularni bermaydi.
+ */
+export interface ChatTurn extends AskAnswer {
+  /** `null` - kanal yozilmagan eski qator. */
+  channel: ChatChannel | (string & {}) | null;
+  /** Masalan `claude-sonnet-5-5`; eski qatorda `null`. */
+  model: string | null;
+  /**
+   * Shu savol-javobni yaratgan xabarning kaliti (`ChatRequest.clientId`) - ilova javobi yo'lda yo'qolgan
+   * xabarini shu bilan taniydi. Botlar (Slack, Telegram) va kalitsiz yuborilgan qatorlarda `null`.
+   */
+  clientId: string | null;
+}
+
+/** `GET /meetings/{id}/chat`: faol (arxivlanmagan) savol-javoblar ESKIDAN YANGIGA. */
+export interface ChatHistory {
+  items: ChatTurn[];
+  /** Hozir javob beradigan model (`claude-sonnet-5-5`); sozlanmagan bo'lsa bo'sh. */
+  model: string;
+}
+
+/** `POST /meetings/{id}/chat` tanasi. */
+export interface ChatRequest {
+  /** 1-1000 belgi. */
+  message: string;
+  language?: Lang | null;
+  /** Server analitikasi uchun; yo'q - `api`. */
+  channel?: 'mobile' | 'web' | 'miniapp' | 'desktop' | 'api' | null;
+  /**
+   * Idempotentlik kaliti: 8-64 belgi, faqat `[A-Za-z0-9_-]` (aks holda 422). Shu yozuvda shu kalitli
+   * faol savol-javob bo'lsa server uni qaytaradi (modelga qayta bormaydi, soatlik limitdan ham
+   * yemaydi); shu kalit bilan urinish hali yo'lda bo'lsa - o'shani kutadi. Ilova uni har xabarga
+   * beradi, "Qayta yuborish" o'sha kalitni qayta yuboradi.
+   */
+  clientId?: string | null;
+}
+
+/** `DELETE /meetings/{id}/chat` ("Yangi suhbat"): nechta savol-javob arxivlandi (o'chirilmaydi). */
+export interface ChatReset {
+  archived: number;
 }
 
 // ---------------------------------------------------------------- auth (existing + 29-31)

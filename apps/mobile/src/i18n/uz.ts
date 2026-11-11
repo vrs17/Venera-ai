@@ -5,6 +5,7 @@
  * `{name}` - o'rniga qiymat qo'yiladi.
  */
 import { callsPart } from './parts/calls';
+import { meetingChatPart } from './parts/meetingChat';
 import { minutesPart } from './parts/minutes';
 import { nav } from './parts/nav';
 import { recordingsPart } from './parts/recordings';
@@ -138,7 +139,7 @@ export const uz = {
   'detail.tab.summary': 'Xulosa',
   'detail.tab.transcript': 'Matn',
   'detail.tab.actions': 'Vazifalar',
-  'detail.tab.ask': 'Savol',
+  'detail.tab.chat': 'Chat',
   'detail.progress': '{status} - {p}%',
   'detail.languageWarning':
     "Yozuv asosan boshqa tilda ko'rinadi - matn noto'g'ri bo'lishi mumkin. Rus/ingliz tilida qayta o'girish (spikersiz)?",
@@ -343,16 +344,12 @@ export const uz = {
   'crm.field.labels': 'Teglar',
   'crm.field.type': 'Turi',
 
-  'ask.placeholder': "Yig'ilish haqida savol bering",
-  'ask.send': 'Yuborish',
   'ask.quick.tasks': 'Vazifalar',
   'ask.quick.tasksQ': "Kim nima qilishi kerak va qachongacha?",
   'ask.quick.decisions': 'Qarorlar',
   'ask.quick.decisionsQ': 'Qanday qarorlar qabul qilindi?',
   'ask.quick.followUp': 'Kuzatuv xabari',
   'ask.quick.followUpQ': "Ishtirokchilarga yuborish uchun qisqa kuzatuv xabarini yozing.",
-  'ask.history': 'Oldingi savollar',
-  'ask.empty': "Savol bering - javob yig'ilish matniga asoslanadi va manbalar ko'rsatiladi.",
   'ask.notReady': "Savol berish uchun matn tayyor bo'lishi kerak",
 
   'player.play': "Ijro etish",
@@ -533,6 +530,7 @@ export const uz = {
   ...sharePart.uz,
   ...callsPart.uz,
   ...minutesPart.uz,
+  ...meetingChatPart.uz,
 } as const;
 
 export type TKey = keyof typeof uz;

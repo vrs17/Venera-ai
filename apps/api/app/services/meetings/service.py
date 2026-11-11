@@ -32,9 +32,10 @@ from ..reports import RateLimiter
 from ..stt import SttError
 from . import ask as ask_mod
 from . import audio, compact, crm, dates, export, prompts, runtime, templates
+from . import chat as chat_mod
 from . import llm as llm_mod
 from .errors import RETRYABLE, MeetingProblem, message_for, not_found
-from .store import jdump, jload, new_id, private_file
+from .store import jdump, jload, new_id, private_file, transcript_ready
 from .summarize import LlmBusy, LlmFailed, LlmRateLimited, LlmUnavailable
 from .transcribe import language_warning
 from .worker import delete_meeting
@@ -555,6 +556,10 @@ def retranscribe(user: AuthUser, meeting_id: str, body: Any, now: float | None =
         conn.execute("DELETE FROM action_items WHERE meeting_id=? AND origin='ai' AND edited=0 AND status='open' "
                      "AND crm_token IS NULL", (m["id"],))
         conn.execute("UPDATE action_items SET source_ids='[]' WHERE meeting_id=?", (m["id"],))
+        # Chat: eski matn bo'yicha javoblar (manba id lari yangi matnda boshqa qatorni ko'rsatadi) xotiraga ham,
+        # ro'yxatga ham bormasin - HAMMA so'rovchining faol navbatlari arxivga (yumshoq, qatorlar qoladi).
+        conn.execute("UPDATE questions SET archived_at=? WHERE meeting_id=? AND archived_at IS NULL",
+                     (int(now), m["id"]))
         conn.execute("DELETE FROM segments WHERE meeting_id=?", (m["id"],))
         conn.execute("DELETE FROM speakers WHERE meeting_id=?", (m["id"],))
         conn.execute(
@@ -573,8 +578,8 @@ def retranscribe(user: AuthUser, meeting_id: str, body: Any, now: float | None =
 
 
 def _transcript_ready(m: dict[str, Any]) -> bool:
-    return bool(int(m.get("transcript_rev") or 0) > 0 and m.get("stt_engine")
-                and m.get("status") in ("summarizing", "ready"))
+    """Qoida bitta joyda - `store.transcript_ready` (chat navbatini saqlash tranzaksiyasi ham shundan)."""
+    return transcript_ready(m)
 
 
 def _require_transcript(m: dict[str, Any]) -> None:
@@ -1243,7 +1248,7 @@ def my_action_items(user: AuthUser, status: str, limit: int) -> dict[str, Any]:
     return {"items": out}
 
 
-# --- 26-27. savol-javob ------------------------------------------------------------------------------------
+# --- 26-27. savol-javob va yig'ilish chati (`chat.py`) ---------------------------------------------------------
 
 
 def _question_view(q: dict[str, Any], by_id: dict[int, dict[str, Any]]) -> dict[str, Any]:
@@ -1253,15 +1258,103 @@ def _question_view(q: dict[str, Any], by_id: dict[int, dict[str, Any]]) -> dict[
         if seg:
             citations.append({"segmentId": int(sid), "start": round(float(seg["start"]), 2),
                               "speaker": seg.get("speaker"), "text": seg["text"]})
+    # `clientId` - xabarning klient kaliti (`chat_send`): ilova kutilayotgan xabarini tarixdagi navbat bilan shu
+    # kalit orqali tanib oladi. Eski `/ask` va `/questions` javob modeli (`AskAnswer`) uni ko'rsatmaydi.
     return {"id": q["id"], "question": q["question"], "answer": q["answer"], "citations": citations,
-            "followUps": jload(q.get("follow_ups"), []) or [], "createdAt": iso(q.get("created_at"))}
+            "followUps": jload(q.get("follow_ups"), []) or [], "createdAt": iso(q.get("created_at")),
+            "clientId": q.get("client_id")}
 
 
-def ask(user: AuthUser, meeting_id: str, question: str, language: str | None) -> dict[str, Any]:
+def _turn_view(q: dict[str, Any], by_id: dict[int, dict[str, Any]]) -> dict[str, Any]:
+    """Chat navbati: savol-javob ko'rinishi (klient kaliti bilan) + qaysi kanaldan kelgani va qaysi model javob
+    bergani (eski qatorda `None`). Eski `/ask` va `/questions` javob modeli (`AskAnswer`) ortiqcha maydonlarni
+    ko'rsatmaydi."""
+    return {**_question_view(q, by_id), "channel": q.get("channel"), "model": q.get("model")}
+
+
+def chat_history(user: AuthUser, meeting_id: str) -> dict[str, Any]:
+    """Yig'ilish chati: hisob EGASINING faol navbatlari (ESKISI birinchi; boshqa so'rovchilarniki - Slack -
+    ko'rinmaydi) va hozir javob beradigan model nomi (`""` - sozlanmagan). Transkript shart emas (tayyor
+    bo'lmasa ro'yxat shunchaki bo'sh)."""
     rt = runtime()
-    store = rt.store
     m = _owned(user.actorId, meeting_id)
-    _require_transcript(m)
+    by_id = {int(s["id"]): s for s in rt.store.segments(m["id"])}
+    return {"items": [_turn_view(q, by_id) for q in rt.store.chat_turns(m["id"])], "model": _chat_model(rt, m)}
+
+
+def _chat_model(rt: Any, m: dict[str, Any]) -> str:
+    """Shu yozuvga javob beradigan zanjirdagi birinchi SOZLANGAN modelning nomi (ilovadagi yorliq) - `chat_send`
+    dagi AYNAN o'sha zanjir: agent bo'g'ini yoqiq bo'lsa (`brain.meeting_ask_providers`, telefon qo'ng'irog'idan
+    boshqasida) - `agent`. Tokensiz va tarmoqsiz: tarix so'rovi CRM sessiyasini yangilamaydi, agent holati
+    keshdan o'qiladi."""
+    from .. import brain as _brain
+
+    live = live_assistant(rt) if "v3" in llm_mod.ask_chain_names() else None
+    providers = llm_mod.ask_providers(rt, user_id="", tokens={}, live_assistant=live)
+    if _brain.meeting_agent_ok(m):
+        providers = _brain.meeting_ask_providers(providers, language=m.get("language") or "uz")
+    return next((p.model for p in providers if p.configured), "")
+
+
+def chat_send(user: AuthUser, meeting_id: str, message: str, language: str | None, *,
+              channel: str = "api", asker: str | None = None, client_id: str | None = None) -> dict[str, Any]:
+    """Yig'ilish chatiga xabar -> javob navbati (`_turn_view`). Javob shu yig'ilishning transkripti, asosiy
+    xulosasi va suhbat xotirasi (`chat.memory`) bilan - hisob egasining mobil ilova, web va Telegram'dagi
+    savollari bitta suhbat. `asker` - UMUMIY hisobda kim so'rayapti (Slack: `slack:<user id>`; ochiq matn,
+    `chat.asker_of`): xotira faqat o'sha odamning navbatlaridan, navbat ham unga yoziladi; `None` - hisob egasi.
+    Saqlanadi: kanal (`chat.CHANNELS`, noma'lumi - `api`), so'rovchi, klient kaliti, javob bergan model va javob
+    tili. Javob kutilayotganda suhbat tozalansa (xotira qatorlari arxivga o'tsa) yoki matn almashsa (qayta
+    o'girish) - navbat arxivda tug'iladi (`store.add_turn`).
+
+    `client_id` - IDEMPOTENTLIK (ilova «Qayta yuborish»da o'sha kalitni yuboradi; botlar bermaydi), soatlik
+    chegara va modeldan OLDIN: (yig'ilish, so'rovchi, kalit) bo'yicha FAOL navbat bor - o'sha qaytadi; shu kalitli
+    xabar shu jarayonda hali javob kutyapti - birinchisi kutiladi (`MEETINGS_ASK_DEADLINE` + `chat.WAIT_EXTRA_SEC`
+    gacha) va yana qaraladi; hech narsa saqlanmagan bo'lsa (birinchisi yiqildi) - oddiy urinish. Xatolar `/ask`
+    dagidek: 404, 409 `not_ready`, 429 `rate_limited` (savol bilan UMUMIY soatlik chegara), 503 `llm_unavailable`."""
+    rt = runtime()
+    asker = chat_mod.asker_of(asker)
+    client_id = chat_mod.client_id_of(client_id)
+    until = time.monotonic() + float(settings.meetings_ask_deadline) + chat_mod.WAIT_EXTRA_SEC
+    while True:
+        # Har aylanishda qaytadan: kutish paytida yozuv o'chirilgan yoki qayta o'girilgan bo'lishi mumkin.
+        m = _owned(user.actorId, meeting_id)
+        _require_transcript(m)
+        if client_id is None:
+            return _chat_answer(rt, user, m, message, language, channel=channel, asker=asker, client_id=None)
+        done = _client_turn(rt, m, client_id, asker)
+        if done is not None:
+            return done
+        key = (m["id"], asker, client_id)
+        event, owner = chat_mod.claim(key)
+        if owner:
+            try:
+                # Oldingi urinish tekshiruv bilan egallash orasida saqlab, kalitni bo'shatgan bo'lishi mumkin.
+                return _client_turn(rt, m, client_id, asker) or _chat_answer(
+                    rt, user, m, message, language, channel=channel, asker=asker, client_id=client_id)
+            finally:
+                chat_mod.release(key, event)
+        left = until - time.monotonic()
+        if left <= 0:
+            # Birinchi urinish o'z muddatidan ham oshdi: oddiy urinish (saqlashda baribir takror yozilmaydi).
+            return _chat_answer(rt, user, m, message, language, channel=channel, asker=asker, client_id=client_id)
+        log.info("Yig'ilish %s: shu klient kalitli xabar hali javob kutmoqda - birinchisi kutiladi", m["id"])
+        event.wait(left)
+
+
+def _client_turn(rt: Any, m: dict[str, Any], client_id: str, asker: str | None) -> dict[str, Any] | None:
+    """Shu so'rovchining shu klient kalitli FAOL navbati (`_turn_view`) yoki `None`: xabar qayta yuborilgan, javob
+    allaqachon saqlangan - modelga ham, soatlik chegaraga ham bormaymiz."""
+    stored = rt.store.turn_by_client(m["id"], client_id, asker=asker)
+    if stored is None:
+        return None
+    log.info("Yig'ilish %s: takroriy chat xabari (o'sha klient kaliti) - saqlangan navbat qaytdi", m["id"])
+    return _turn_view(stored, {int(s["id"]): s for s in rt.store.segments(m["id"])})
+
+
+def _chat_answer(rt: Any, user: AuthUser, m: dict[str, Any], message: str, language: str | None, *,
+                 channel: str, asker: str | None, client_id: str | None) -> dict[str, Any]:
+    """`chat_send` ning bitta urinishi: soatlik chegara, kontekst va xotira, model zanjiri, saqlash."""
+    store = rt.store
     _rate("ask", user.actorId, settings.meetings_ask_per_hour)
     segments = [{"id": int(s["id"]), "start": float(s["start"]), "end": float(s["end"]), "speaker": s["speaker"],
                  "text": s["text"]} for s in store.segments(m["id"])]
@@ -1272,6 +1365,11 @@ def ask(user: AuthUser, meeting_id: str, question: str, language: str | None) ->
     meta = prompts.meta_line(day.date(), dates.WEEKDAYS["en"][day.weekday()], float(m.get("duration_sec") or 0),
                              [{"id": sp["id"], "name": sp.get("name")} for sp in speakers],
                              bool(m.get("speakers_available")), call=m.get("source") == "call")
+    language = language or m.get("language") or "uz"
+    channel = chat_mod.channel_of(channel)
+    keep = int(settings.meetings_chat_history_turns or 0)
+    loaded = store.chat_turns(m["id"], limit=keep, asker=asker) if keep > 0 else []
+    history = chat_mod.memory(loaded)
     from .. import brain as _brain
     from ..analytics import bind
 
@@ -1282,19 +1380,55 @@ def ask(user: AuthUser, meeting_id: str, question: str, language: str | None) ->
             # Telefon qo'ng'irog'i - yangi agent yo'li (bo'g'in va shadow) yo'q (`brain.meeting_agent_ok`).
             result, used = ask_mod.answer_chain(
                 providers, deadline=settings.meetings_ask_deadline, agent_ok=_brain.meeting_agent_ok(m),
-                question=question,
-                language=language or m.get("language") or "uz", meta=meta,
-                segments=segments, speakers=[{"id": sp["id"], "name": sp.get("name")} for sp in speakers],
-                summary=summary)
+                question=message, language=language, meta=meta, segments=segments,
+                speakers=[{"id": sp["id"], "name": sp.get("name")} for sp in speakers], summary=summary,
+                history=history)
     except (LlmUnavailable, LlmFailed, LlmRateLimited, LlmBusy):
         raise MeetingProblem(503, "llm_unavailable", "Model hozir javob bera olmayapti - keyinroq urinib ko'ring")
-    log.info("Yig'ilish %s: savolga %s javob berdi", m["id"], used.name)
     qid = new_id()
-    store.add_question({"id": qid, "meeting_id": m["id"], "question": question.strip()[:500],
-                        "answer": result["answer"], "citations": jdump(result["citations"]),
-                        "follow_ups": jdump(result["followUps"]), "created_at": int(time.time())})
-    q = store.row("SELECT * FROM questions WHERE id=?", (qid,))
-    return _question_view(q, {s["id"]: s for s in segments})
+    try:
+        # Javob qurilgan xotira qatorlari va savol boshidagi matn versiyasi bilan BITTA tranzaksiyada: kutish paytida
+        # suhbat tozalangan yoki matn almashgan bo'lsa navbat arxivda tug'iladi (javob baribir qaytadi - odam so'ragan
+        # edi); shu kalitli navbatni boshqa urinish saqlab ulgurgan bo'lsa - o'sha qaytadi.
+        q = store.add_turn(
+            {"id": qid, "meeting_id": m["id"], "question": message.strip()[:prompts.CHAT_QUESTION_CHARS],
+             "answer": result["answer"], "citations": jdump(result["citations"]),
+             "follow_ups": jdump(result["followUps"]), "channel": channel, "asker": asker, "client_id": client_id,
+             "model": str(result.get("model") or used.model)[:80], "language": language,
+             "created_at": int(time.time())},
+            used=[r["id"] for r in loaded], gen=int(m.get("transcript_gen") or 0))
+    except sqlite3.IntegrityError as exc:
+        if "FOREIGN KEY" not in str(exc):
+            raise
+        # Javob kutilayotganda yozuv o'chirildi (boshqa qurilma, saqlash muddati) - 500 emas, oddiy 404.
+        raise not_found() from None
+    if q["id"] != qid:
+        log.info("Yig'ilish %s: chatga %s javob berdi, lekin shu klient kalitli navbat allaqachon saqlangan - o'sha "
+                 "qaytdi", m["id"], used.name)
+    else:
+        log.info("Yig'ilish %s: chatga %s javob berdi (%s, xotirada %d navbat%s)", m["id"], used.name, channel,
+                 len(history), ", kutish paytida suhbat tozalangan yoki matn almashgan - navbat arxivda"
+                 if q["archived_at"] is not None else "")
+    return _turn_view(q, {s["id"]: s for s in segments})
+
+
+def chat_reset(user: AuthUser, meeting_id: str, now: float | None = None, *,
+               asker: str | None = None) -> dict[str, Any]:
+    """Yangi suhbat: shu so'rovchining (`asker`, `chat_send` dagidek; `None` - hisob egasi) faol navbatlari
+    arxivga - modelga ham, ro'yxatlarga ham bormaydi, qatorlar bazada qoladi (yumshoq); boshqa so'rovchilarning
+    suhbatiga tegilmaydi. Faqat egalik tekshiriladi, transkript shart emas. -> `{"archived": n}`."""
+    m = _owned(user.actorId, meeting_id)
+    archived = runtime().store.archive_questions(m["id"], time.time() if now is None else now,
+                                                 asker=chat_mod.asker_of(asker))
+    log.info("Yig'ilish %s: yangi suhbat (%d navbat arxivga)", m["id"], archived)
+    return {"archived": archived}
+
+
+def ask(user: AuthUser, meeting_id: str, question: str, language: str | None, *,
+        channel: str = "api") -> dict[str, Any]:
+    """Eski savol-javob (`/ask`: eski ilovalar va web) - endi hisob egasining chat navbati (`chat_send`): o'sha
+    ko'rinish, suhbat xotirasi bilan."""
+    return chat_send(user, meeting_id, question, language, channel=channel)
 
 
 def _ask_providers(rt: Any, user: AuthUser) -> list[Any]:
@@ -1406,6 +1540,8 @@ def crm_identity(user: AuthUser) -> tuple[str, dict[str, str]]:
 
 
 def questions(user: AuthUser, meeting_id: str) -> dict[str, Any]:
+    """Eski `/questions`: hisob egasining faol savol-javoblari, YANGISI birinchi ("Yangi suhbat" dan oldingilari va
+    umumiy hisobdagi boshqa so'rovchilarniki - Slack - ko'rinmaydi)."""
     store = runtime().store
     m = _owned(user.actorId, meeting_id)
     by_id = {int(s["id"]): s for s in store.segments(m["id"])}

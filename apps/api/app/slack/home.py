@@ -4,8 +4,9 @@ Slack'da Telegram'dagi kabi doimiy pastki klaviatura yo'q, shuning uchun tugma C
 yo'l bilan qo'l ostida turadi:
   * xush kelibsiz xabari - odam Barno chatini ("Messages" varag'i) birinchi marta ochganda
     (chat bo'sh), yo'riqnoma va tugma chatning o'zida;
-  * oddiy matnga javob - thread'dan tashqaridagi matnli xabarga (hozircha HR chat yo'q)
-    yo'riqnoma va tugma qaytariladi, chatga `TEXT_EVERY` da bir marta;
+  * oddiy matnga javob - chatda hali yozuv bo'lmasa, thread'dan tashqaridagi matnli xabarga
+    yo'riqnoma va tugma qaytariladi, chatga `TEXT_EVERY` da bir marta (yozuv bo'lsa o'sha matn -
+    oxirgi yozuv bo'yicha savol, `meeting.on_text`);
   * `/plaud` buyrug'i (Bolt `command`, Socket Mode'da ishlaydi) - manifestda slash command
     bo'lsa; bo'lmasa shunchaki chaqirilmaydi.
 "Home" varag'i ham bor (`app_home_opened` -> `views.publish`, ruxsat kerak emas).
@@ -13,7 +14,7 @@ Tugma bosilganda: chatda - faqat bosgan odamga ko'rinadigan (ephemeral) eslatma,
 odamning chatiga xabar (`chat.postMessage` ga foydalanuvchi id'si, `chat:write` bilan DM
 ochiladi).
 
-HOZIRCHA audio REJIMSIZ ishlanadi: Slack'dagi Barno faqat audio va thread savoli bilan
+HOZIRCHA audio REJIMSIZ ishlanadi: Slack'dagi Barno faqat audio va yozuvlar bo'yicha savol bilan
 ishlaydi, ya'ni Telegram'dagi kabi "bu yozuv" deb belgilash shart emas. Tugma - nom
 ("Plaud") va yo'riqnoma uchun; Slack'ka HR chat qo'shilganda (ega rejasi, 2026-11-04) aynan
 shu tugma Telegram'dagi kabi rejimni yoqadi (`app/bot/plaud.py`).
@@ -42,8 +43,11 @@ FEATURES = (
     "*🎙 Audio → matn* — ovozli xabar yozing yoki audio fayl yuklang (mp3, m4a, aac, wav, ogg; "
     "3 soat yoki 150 MB gacha). Matn shu chatda chiqadi, bir necha kishi gapirgan bo'lsa — kim gapirgani bilan.\n"
     "*📋 Qisqa xulosa* — matndan keyin o'zi keladi: maqsad, asosiy fikrlar, qarorlar, vazifalar, ochiq savollar.\n"
-    "*💬 Savol-javob* — xulosa ostidagi thread'da savol yozing: Barno yozuv bo'yicha javob beradi va gap "
-    "audioning qaysi daqiqasida aytilganini ko'rsatadi.\n"
+    "*💬 Chat* — savolingizni shu chatga yozing: Barno oxirgi yuborilgan yozuv bo'yicha javob beradi (javob "
+    "boshida qaysi yozuv ekani yoziladi), gap audioning qaysi daqiqasida aytilganini ko'rsatadi va suhbatni eslab "
+    "qoladi — keyingi savolda «batafsilroq» deyish kifoya. Yangi audio yuborsangiz, savollar yangi yozuvga o'tadi; "
+    "oldingi yozuv haqida — o'sha yozuv xabarining thread'ida so'rang. Suhbat har bir odamga alohida; "
+    "«🔄 Yangi suhbat» — boshidan boshlash.\n"
     "*✅ Vazifalar* — bitta tugma: kim, nima, qachongacha.\n"
     "*🗂 Boshqa shablon* — bayonnoma, standup, 1:1, savdo qo'ng'irog'i, intervyu, ma'ruza va boshqalar.\n"
     "*📎 Eksport* — transkript (TXT/SRT), xulosa (MD) yoki to'liq hisobot (Word/PDF) fayli.\n"
@@ -52,15 +56,17 @@ FEATURES = (
     "*🌐 Boshqa til* — audio rus yoki ingliz tilida bo'lsa, bitta tugma bilan qayta o'giring."
 )
 NOTES = (
-    "Barno hozircha faqat shaxsiy chatda va audio bilan ishlaydi; thread'dan tashqaridagi oddiy matnga "
-    "javob bermaydi. Kunlik transkripsiya limiti hamma uchun umumiy — tugasa, audioni ertaga yuboring."
+    "Barno hozircha faqat shaxsiy chatda va yozuvlar bilan ishlaydi: chatga yozilgan matn — oxirgi yozuv bo'yicha "
+    "savol (yozuv hali bo'lmasa — yo'riqnoma). Kunlik transkripsiya limiti hamma uchun umumiy — tugasa, audioni "
+    "ertaga yuboring."
 )
 PROMPT = (
     "🎙 *Plaud* — audio yuboring, matnga o'girib, qisqa xulosa beraman.\n"
     "• mikrofon tugmasi bilan ovozli xabar yozing, yoki\n"
     "• audio fayl yuklang: mp3, m4a, aac, wav, ogg — 3 soat yoki 150 MB gacha.\n"
     "Xulosa ostida: vazifalar, boshqa shablon, eksport, boshqa til va 📄 Bayonnoma (rasmiy hujjat, Word/PDF). "
-    "Savol bo'lsa — xulosa xabarining thread'ida yozing."
+    "Savol bo'lsa — shu chatga yozing: Barno oxirgi yuborilgan yozuv bo'yicha javob beradi va suhbatni eslab "
+    "qoladi. Oldingi yozuv haqida — o'sha yozuv xabarining thread'ida so'rang."
 )
 
 
@@ -93,7 +99,8 @@ def is_plaud(body: dict[str, Any]) -> bool:
 
 
 def is_text(event: dict[str, Any]) -> bool:
-    """Shaxsiy chatdagi, thread'dan tashqaridagi oddiy matn (odam yozgan)."""
+    """Shaxsiy chatdagi, thread'dan tashqaridagi oddiy matn (odam yozgan) - dispetcher uni `meeting.on_text` ga beradi
+    (oxirgi yozuv chati, yozuv bo'lmasa - shu moduldagi yo'riqnoma)."""
     if event.get("channel_type") != "im" or event.get("bot_id") or event.get("subtype"):
         return False
     return not event.get("thread_ts") and bool(str(event.get("text") or "").strip()) and not event.get("files")
@@ -117,7 +124,9 @@ def on_open(client: Any, event: dict[str, Any]) -> None:
 
 
 def on_text(client: Any, event: dict[str, Any]) -> None:
-    """Thread'dan tashqaridagi matn -> yo'riqnoma va tugma (chatga `TEXT_EVERY` da bir marta)."""
+    """Thread'dan tashqaridagi matn, chatda esa yaroqli yozuv yo'q (`meeting.on_text`; o'girib bo'lmagan audio hisob
+    emas) -> yo'riqnoma va tugma (chatga `TEXT_EVERY` da bir marta). Chat tarixini o'qib bo'lmasa - bu yerga
+    kelmaydi (`render.CHAT_UNREAD`, cheklovsiz)."""
     channel = event.get("channel")
     if not channel:
         return

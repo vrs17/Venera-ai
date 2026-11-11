@@ -1,6 +1,6 @@
 /**
  * Yig'ilish sahifasi (RNTL, expo-router testing-library) soxta API bilan:
- * xulosa bo'limlari, transkript dialogi, vazifalar, savol, banner va
+ * xulosa bo'limlari, transkript dialogi, vazifalar, chat, banner va
  * tahrirlash oqimlari. Tarmoqqa chiqmaydi.
  */
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react-native';
@@ -167,19 +167,21 @@ describe('Meeting detail', () => {
     await waitFor(() => expect(api.addActionItem).toHaveBeenCalledWith(ID, { task: 'Shartnoma yuborish', ownerName: null, dueDate: null }));
   });
 
-  it('ask tab: sends a question and shows grounded answers with citations', async () => {
+  it('chat tab (ex "Savol"): this recording\'s conversation with citations; a message goes to /chat as mobile with its own key', async () => {
     const { api } = await open();
-    await fireEvent.press(screen.getByTestId('tab-ask'));
+    expect(screen.getByTestId('tab-chat')).toHaveTextContent('Chat');
+    expect(screen.queryByTestId('tab-ask')).toBeNull();
+    await fireEvent.press(screen.getByTestId('tab-chat'));
     await waitFor(() => expect(screen.getByText('2-ishtirokchi ertaga yuboradi.')).toBeTruthy());
+    expect(api.chatHistory).toHaveBeenCalledWith(ID);
     expect(screen.getByText(/Men ertaga hisobotni yuboraman/)).toBeTruthy();
-    await fireEvent.changeText(screen.getByTestId('ask-input'), 'Narx qancha?');
-    await fireEvent.press(screen.getByTestId('ask-send'));
-    await waitFor(() => expect(api.ask).toHaveBeenCalledWith(ID, { question: 'Narx qancha?', language: 'uz' }));
-    // Javob kelgach tarix qayta o'qiladi - shundan keyin tezkor chip.
-    await waitFor(() => expect(api.questions).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByText('Yuborish')).toBeTruthy()); // mutatsiya tugadi
-    await fireEvent.press(screen.getByText('Vazifalar'));
-    await waitFor(() => expect(api.ask).toHaveBeenCalledTimes(2));
+    await fireEvent.changeText(screen.getByTestId('chat-input'), 'Narx qancha?');
+    await fireEvent.press(screen.getByTestId('chat-send'));
+    await waitFor(() =>
+      expect(api.sendChat).toHaveBeenCalledWith(ID, { message: 'Narx qancha?', language: 'uz', channel: 'mobile', clientId: expect.stringMatching(/^[A-Za-z0-9_-]{16,36}$/) }),
+    );
+    await waitFor(() => expect(screen.getByTestId(`chat-turn-${'t1'.padEnd(32, '0')}`)).toBeTruthy());
+    expect(screen.getByText('2-ishtirokchi javobi: Narx qancha?')).toBeTruthy();
   });
 
   it('shows the language warning, router banner and a retryable error', async () => {
@@ -224,7 +226,7 @@ describe('Meeting detail', () => {
 
   it('tabs carry icons; the header shows date and duration with icons; no status pill when ready', async () => {
     await open();
-    for (const icon of ['Sparkles', 'ScrollText', 'ListChecks', 'MessageCircleQuestionMark', 'Calendar', 'Clock']) {
+    for (const icon of ['Sparkles', 'ScrollText', 'ListChecks', 'MessagesSquare', 'Calendar', 'Clock']) {
       expect(screen.getAllByTestId(`icon-${icon}`).length).toBeGreaterThan(0);
     }
     expect(screen.getByText('9-oktabr, 11:00')).toBeTruthy();

@@ -1404,3 +1404,33 @@ MEETINGS_OPENAI_MODEL=<GPT model id>  # bo'sh - OpenAI o'chiq (default model YO'
   `action_items.crm_*`.
 
 `/api/health/detail` -> `meetings.llmChain`: har bo'g'in, sozlanganmi va modeli (kalitsiz).
+
+### Yig'ilish chati: bitta audio - bitta suhbat (2026-11-11)
+
+`GET/POST/DELETE /api/v1/meetings/{id}/chat` - mobil ilova; Slack va Telegram server ichidan. Zanjir o'sha -
+`MEETINGS_ASK_CHAIN` (prod'da `claude`): Claude'ga suhbat ko'p navbatli xabarlar bilan, transkript tizim
+promptida (prompt keshi); qolgan modellarga oldingi savol-javoblar matn bloki bo'lib ketadi. Kalitlar
+ixtiyoriy, o'zgartirilsa - restart:
+
+```bash
+MEETINGS_CHAT_MODEL=                  # bo'sh - MEETINGS_CLAUDE_MODEL (claude-sonnet-5-5)
+MEETINGS_CHAT_EFFORT=                 # bo'sh - MEETINGS_CLAUDE_EFFORT
+MEETINGS_CHAT_HISTORY_TURNS=10        # xotiraga oxirgi N savol-javob (0 - xotira yo'q)
+MEETINGS_CHAT_HISTORY_CHARS=40000     # xotira matni shundan oshsa - eng eski navbatlar tushadi
+MEETINGS_CHAT_CONTEXT_CHARS=400000    # transkript shu hajmgacha TO'LIQ (keshlanadi), uzuni - tanlangan qatorlar
+MEETINGS_CHAT_CONCURRENCY=4           # chat Claude klientining bir vaqtdagi so'rovlari
+MEETINGS_CHAT_FALLBACKS=true          # rad-zahirasi (beta server-side-fallback-2026-07-01); rad etilsa - o'zi o'chadi
+MEETINGS_ASK_PER_HOUR=60              # bitta hisobning soatlik chegarasi - chat va Ask UMUMIY (avval 30)
+```
+
+- **"Yangi suhbat"** yumshoq: navbatlar `archived_at` bilan arxivga, bazada qoladi. Qayta o'girish ham faol
+  navbatlarni arxivga o'tkazadi.
+- **Slack:** hamma odam bitta hisobdan (`SLACK_ACTOR_ID`), lekin suhbat har odamniki (`questions.asker` =
+  `slack:<user id>`): xotira va "Yangi suhbat" alohida, ilovada (hisob egasida) ko'rinmaydi. Soatlik chegara
+  esa hisobga - Slack'dagi hamma odamga bitta.
+- **Idempotentlik:** `POST /chat` dagi `clientId` (ilova «Qayta yuborish»da o'sha kalitni yuboradi) - 504 yoki
+  uzilgan ulanishdan keyingi qayta urinish ikkinchi navbat yozmaydi va modelga qayta bormaydi; hali javob
+  kutayotgan o'sha kalitni so'rov `MEETINGS_ASK_DEADLINE` + 15 s gacha kutadi (jarayon ichida - bugun bitta worker).
+- **Ombor sxemasi v7** (o'zi ko'chadi): `questions.channel`, `model`, `language`, `archived_at`, `asker`,
+  `client_id` (+ `questions_client` indeksi) va `meetings.transcript_gen` (faqat transkript butunlay almashganda
+  oshadi - javob kutilayotganda qayta o'girilsa navbat arxivga; qator tahriri esa suhbatga tegmaydi).

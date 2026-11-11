@@ -67,8 +67,9 @@ describe('meetings API endpoints', () => {
     ['23 add action item', (s) => s.m.addActionItem(ID, { task: 'x' }), 'POST', `${M}/${ID}/action-items`],
     ['24 patch action item', (s) => s.m.patchActionItem(ID, 'I', { status: 'done' }), 'PATCH', `${M}/${ID}/action-items/I`],
     ['25 my action items', (s) => s.m.myActionItems('open', 100), 'GET', `${M}/action-items`, { status: 'open', limit: '100' }],
-    ['26 ask', (s) => s.m.ask(ID, { question: 'q' }), 'POST', `${M}/${ID}/ask`],
-    ['27 questions', (s) => s.m.questions(ID), 'GET', `${M}/${ID}/questions`],
+    ['26a chat history', (s) => s.m.chatHistory(ID), 'GET', `${M}/${ID}/chat`],
+    ['26b chat message', (s) => s.m.sendChat(ID, { message: 'q', language: 'uz', channel: 'mobile' }), 'POST', `${M}/${ID}/chat`],
+    ['26c new chat (archive)', (s) => s.m.resetChat(ID), 'DELETE', `${M}/${ID}/chat`],
     ['34a minutes list', (s) => s.m.minutesList(ID), 'GET', `${M}/${ID}/minutes`],
     ['34b create minutes', (s) => s.m.createMinutes(ID, { language: 'uz-cyrl', force: true }), 'POST', `${M}/${ID}/minutes`],
     ['34c minutes', (s) => s.m.minutes(ID, 'D1'), 'GET', `${M}/${ID}/minutes/D1`],
@@ -113,6 +114,21 @@ describe('meetings API endpoints', () => {
     expect(s.calls.slice(0, 3).map((c) => c.headers.Authorization)).toEqual([undefined, undefined, undefined]);
     expect(s.calls[3].headers.Authorization).toBe('Bearer fresh');
     expect(s.calls[0].body).toEqual({ deviceToken: 'dt' });
+  });
+
+  it('26b chat message: JSON body with the message, answer language, channel=mobile and the idempotency key, Bearer; 26a/26c have no body', async () => {
+    const s = setup();
+    const clientId = '5f0c2a3b-1111-4222-8333-444455556666';
+    await s.m.sendChat(ID, { message: 'Kim hisobot yuboradi?', language: 'ru', channel: 'mobile', clientId });
+    await s.m.chatHistory(ID);
+    await s.m.resetChat(ID);
+    expect(s.calls[0].body).toEqual({ message: 'Kim hisobot yuboradi?', language: 'ru', channel: 'mobile', clientId });
+    expect(s.calls[0].headers['Content-Type']).toBe('application/json');
+    expect(s.calls.map((c) => [c.method, c.headers.Authorization, c.body])).toEqual([
+      ['POST', 'Bearer tok', { message: 'Kim hisobot yuboradi?', language: 'ru', channel: 'mobile', clientId }],
+      ['GET', 'Bearer tok', null],
+      ['DELETE', 'Bearer tok', null],
+    ]);
   });
 
   it('34b sends an explicit document language and force (server: plain "uz" = Latin, none = Cyrillic)', async () => {

@@ -602,10 +602,11 @@ CLAUDE_MODEL = "claude-sonnet-5-5"
 
 
 def claude_message(text: str, *, stop_reason: str = "end_turn", thinking: bool = True, tokens_in: int = 1200,
-                   tokens_out: int = 340, model: str = CLAUDE_MODEL) -> Any:
+                   tokens_out: int = 340, model: str = CLAUDE_MODEL, cache_read: int | None = None,
+                   cache_write: int | None = None) -> Any:
     """`anthropic.types.Message`: (default bo'sh "o'ylash" bloki +) matn bloki va `usage` - klient
     o'ylash blokini tashlab, faqat matnni olishi sinaladi. `stop_reason="refusal"` - rad,
-    `"max_tokens"` - kesilgan javob."""
+    `"max_tokens"` - kesilgan javob. `cache_read` / `cache_write` - prompt keshi tokenlari (chat)."""
     from anthropic.types import Message, TextBlock, ThinkingBlock, Usage
 
     blocks: list[Any] = []
@@ -614,7 +615,8 @@ def claude_message(text: str, *, stop_reason: str = "end_turn", thinking: bool =
     blocks.append(TextBlock(type="text", text=text))
     return Message(id="msg_test", type="message", role="assistant", model=model, content=blocks,
                    stop_reason=stop_reason, stop_sequence=None,
-                   usage=Usage(input_tokens=tokens_in, output_tokens=tokens_out))
+                   usage=Usage(input_tokens=tokens_in, output_tokens=tokens_out, cache_read_input_tokens=cache_read,
+                               cache_creation_input_tokens=cache_write))
 
 
 def claude_error(kind: Any, status: int | None = None, message: str = "xato") -> Exception:
@@ -637,12 +639,13 @@ class FakeAnthropic:
 
     Klient ZAVODI sifatida chaqiriladi (`fake(api_key=..., base_url=..., timeout=..., max_retries=...)`
     -> o'zi; argumentlar `inits` da) va `messages.stream(**kwargs)` ni beradi: har so'rov `requests` da
-    (kwargs aynan), natija - `with ... as stream: stream.get_final_message()`.
+    (kwargs aynan), natija - `with ... as stream: stream.get_final_message()`. `beta.messages.stream` (chatdagi
+    rad-zahirasi) - o'sha `requests` ga, qo'shimcha `betas` / `fallbacks` kalitlari bilan.
 
     `script` - navbat: matn (-> `claude_message`), tayyor `Message`, istisno (`claude_error`) yoki
     `fn(kwargs) -> shulardan biri`; bo'sh bo'lsa so'rovdagi JSON sxemadan aniqlangan `op` bo'yicha
-    `auto_reply` (`shapes.*` bilan solishtirib - `op_of`). Istisno real SDK dagidek `with` ga kirishda
-    (`__enter__`) otiladi - so'rov o'shanda ketadi."""
+    `auto_reply` (`shapes.*` bilan solishtirib - `op_of`; chat sxemasi savol-javobniki - `meeting_ask`).
+    Istisno real SDK dagidek `with` ga kirishda (`__enter__`) otiladi - so'rov o'shanda ketadi."""
 
     def __init__(self) -> None:
         self.inits: list[dict[str, Any]] = []
@@ -650,6 +653,7 @@ class FakeAnthropic:
         self.script: list[Any] = []
         self.reply: Callable[[str, str, str], str] = auto_reply
         self.messages = _FakeClaudeMessages(self)
+        self.beta = _FakeClaudeBeta(self)
 
     def __call__(self, **kwargs: Any) -> FakeAnthropic:
         self.inits.append(dict(kwargs))
@@ -673,8 +677,13 @@ class FakeAnthropic:
     def ops(self) -> list[str]:
         return [self.op_of(r) for r in self.requests]
 
+    def chats(self) -> list[dict[str, Any]]:
+        """Chat so'rovlari (`ClaudeChat.converse`): `system` - bloklar ro'yxati."""
+        return [r for r in self.requests if isinstance(r.get("system"), list)]
+
     def final_message(self, request: dict[str, Any]) -> Any:
-        """Navbatdagi javob yoki `auto_reply` -> `Message`; istisno otiladi."""
+        """Navbatdagi javob yoki `auto_reply` -> `Message`; istisno otiladi. Chatda (`system` - bloklar)
+        ko'rsatma birinchi blokda, transkript - kontekst blokida: `auto_reply` qatorlarni o'sha yerdan topadi."""
         item = self.script.pop(0) if self.script else None
         if callable(item) and not isinstance(item, BaseException):
             item = item(request)
@@ -682,12 +691,22 @@ class FakeAnthropic:
             raise item
         if item is None:
             system = request.get("system") or ""
-            user = "".join(str(m.get("content") or "") for m in request.get("messages") or []
-                           if m.get("role") == "user")
-            item = self.reply(self.op_of(request), system if isinstance(system, str) else "", user)
+            parts: list[str] = []
+            if isinstance(system, list):
+                texts = [str(block.get("text") or "") for block in system if isinstance(block, dict)]
+                system, parts = (texts[0] if texts else ""), texts[1:]
+            parts += [str(m.get("content") or "") for m in request.get("messages") or [] if m.get("role") == "user"]
+            item = self.reply(self.op_of(request), system if isinstance(system, str) else "", "\n".join(parts))
         if isinstance(item, str):
             item = claude_message(item, model=str(request.get("model") or CLAUDE_MODEL))
         return item
+
+
+class _FakeClaudeBeta:
+    """`client.beta` - faqat `messages.stream` (rad-zahirasi: so'rov `betas` va `fallbacks` bilan)."""
+
+    def __init__(self, fake: FakeAnthropic) -> None:
+        self.messages = _FakeClaudeMessages(fake)
 
 
 class _FakeClaudeMessages:

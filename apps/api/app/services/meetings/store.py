@@ -36,7 +36,7 @@ import unicodedata
 import uuid
 
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator, Mapping
 
 log = logging.getLogger(__name__)
 
@@ -158,8 +158,31 @@ _V6: tuple[str, ...] = (
     "UPDATE meetings SET origin = 'slack' WHERE origin IS NULL AND channel = 'api' AND title LIKE 'Slack:%'",
 )
 
+#: v7 (2026-11-11): yig'ilish CHATI - bitta audio, bitta suhbat (`services/meetings/chat.py`). Savol-javob
+#: qatori endi suhbat navbati: qaysi kanaldan kelgani (`mobile|web|miniapp|desktop|api|slack|telegram`;
+#: `NULL` - eski qator), kim javob bergani (model nomi), javob tili va "Yangi suhbat" belgisi
+#: (`archived_at`): belgilangan navbat modelga xotira sifatida ham, ro'yxatga ham bormaydi, lekin
+#: bazada qoladi - yumshoq tozalash, qattiq o'chirish yo'q. `asker` - UMUMIY hisobda kim so'ragani
+#: (Slack'dagi hamma odam bitta `SLACK_ACTOR_ID` hisobidan: `slack:<user id>`): har odamning suhbati va
+#: "Yangi suhbat"i o'ziniki. `NULL` - hisob egasining o'z kanallari (ilova, web, Telegram). `client_id` -
+#: xabarning klient kaliti (idempotentlik, `ChatRequest.clientId`): ilova noaniq xatodan keyin o'sha kalit
+#: bilan qayta yuboradi va server ikkinchi navbat yozmaydi; `NULL` - kalitsiz (botlar, eski qator).
+_V7: tuple[str, ...] = (
+    "ALTER TABLE questions ADD COLUMN channel TEXT",
+    "ALTER TABLE questions ADD COLUMN model TEXT",
+    "ALTER TABLE questions ADD COLUMN language TEXT",
+    "ALTER TABLE questions ADD COLUMN archived_at INTEGER",
+    "ALTER TABLE questions ADD COLUMN asker TEXT",
+    "ALTER TABLE questions ADD COLUMN client_id TEXT",
+    "CREATE INDEX questions_client ON questions(meeting_id, client_id)",
+    # Transkript AVLODI: faqat transkript butunlay almashganda (`replace_transcript` - o'girish/qayta o'girish)
+    # oshadi; qator tahriri va spikerlarni birlashtirish (`transcript_rev`) uni o'zgartirmaydi. Chat navbati
+    # kutish paytida matn almashganini shu bilan biladi (`add_turn`).
+    "ALTER TABLE meetings ADD COLUMN transcript_gen INTEGER NOT NULL DEFAULT 0",
+)
+
 #: `MIGRATIONS[i]` fayl `user_version = i` dan `i + 1` ga o'tkazadi. FAQAT OXIRIGA.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4, _V5, _V6)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4, _V5, _V6, _V7)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 #: Yozuv manbasi (Plaud filtri; mobil `MeetingOrigin`). `recording` - telefonda yozilgan, `upload` - telefondan
@@ -210,6 +233,13 @@ def jload(raw: Any, default: Any = None) -> Any:
         return json.loads(raw)
     except (TypeError, ValueError):
         return default
+
+
+def transcript_ready(m: Mapping[str, Any]) -> bool:
+    """Transkript tayyor: o'girilgan (`transcript_rev > 0`, `stt_engine`) va yig'ilish xulosa bosqichida yoki
+    tayyor. Qayta o'girish paytida (`uploaded`, `transcribing`, `stt_engine` bo'sh) - yo'q."""
+    return bool(int(m.get("transcript_rev") or 0) > 0 and m.get("stt_engine")
+                and m.get("status") in ("summarizing", "ready"))
 
 
 def _migrate(conn: sqlite3.Connection) -> int:
@@ -486,8 +516,8 @@ class MeetingStore:
                 [(meeting_id, sp["id"], sp.get("rawIndex"), sp.get("talkSec", 0.0)) for sp in speakers])
             meeting_fields["updated_at"] = now
             sets = ", ".join(f"{name}=?" for name in meeting_fields)
-            conn.execute(f"UPDATE meetings SET transcript_rev=transcript_rev+1, {sets} WHERE id=?",
-                         list(meeting_fields.values()) + [meeting_id])
+            conn.execute(f"UPDATE meetings SET transcript_rev=transcript_rev+1, transcript_gen=transcript_gen+1, "
+                         f"{sets} WHERE id=?", list(meeting_fields.values()) + [meeting_id])
             rev = conn.execute("SELECT transcript_rev FROM meetings WHERE id=?",
                                (meeting_id,)).fetchone()[0]
             if summary is not None:
@@ -609,16 +639,84 @@ class MeetingStore:
             "COALESCE(a.due_date, '9999-12-31'), m.recorded_at DESC, a.created_at, a.id LIMIT ?",
             params + [int(limit)])
 
-    # --- savollar ---------------------------------------------------------------
+    # --- savollar (yig'ilish chati) -----------------------------------------------
 
     def questions(self, meeting_id: str) -> list[dict[str, Any]]:
-        return self.rows("SELECT * FROM questions WHERE meeting_id=? ORDER BY created_at DESC, rowid DESC",
-                         (meeting_id,))
+        """Faol (arxivlanmagan) savol-javoblar, YANGISI birinchi - eski `/questions` ro'yxati. Faqat hisob
+        EGASINIKI (`asker IS NULL`): umumiy hisobdagi boshqa odamlarning (Slack) savollari ko'rinmaydi."""
+        return self.rows("SELECT * FROM questions WHERE meeting_id=? AND archived_at IS NULL AND asker IS NULL "
+                         "ORDER BY created_at DESC, rowid DESC", (meeting_id,))
+
+    def chat_turns(self, meeting_id: str, limit: int = 0, *, asker: str | None = None) -> list[dict[str, Any]]:
+        """Faol suhbat navbatlari, ESKISI birinchi - faqat shu so'rovchiniki (`asker`; `None` - hisob egasi).
+        `limit` - faqat oxirgi shuncha navbat (0 - hammasi): modelga xotira uchun butun tarix o'qilmaydi."""
+        where = "meeting_id=? AND archived_at IS NULL AND asker IS ?"
+        if limit > 0:
+            newest = self.rows(f"SELECT * FROM questions WHERE {where} ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                               (meeting_id, asker, int(limit)))
+            return newest[::-1]
+        return self.rows(f"SELECT * FROM questions WHERE {where} ORDER BY created_at, rowid", (meeting_id, asker))
+
+    def archive_questions(self, meeting_id: str, at: float, *, asker: str | None = None) -> int:
+        """Yangi suhbat: shu so'rovchining (`None` - hisob egasi) faol navbatlari arxivga (`archived_at`) -
+        qatorlar o'chirilmaydi, boshqa so'rovchilarnikiga tegilmaydi. -> nechtasi."""
+        return self.execute("UPDATE questions SET archived_at=? WHERE meeting_id=? AND archived_at IS NULL "
+                            "AND asker IS ?", (int(at), meeting_id, asker)).rowcount
 
     def add_question(self, fields: dict[str, Any]) -> None:
         cols = ", ".join(fields)
         marks = ", ".join("?" for _ in fields)
         self.execute(f"INSERT INTO questions ({cols}) VALUES ({marks})", tuple(fields.values()))
+
+    #: Shu so'rovchining shu klient kalitli FAOL navbati - (yig'ilish, kalit, so'rovchi); `turn_by_client` va
+    #: `add_turn` dagi takror tekshiruvi AYNAN bitta shart bilan.
+    _BY_CLIENT = ("SELECT * FROM questions WHERE meeting_id=? AND client_id=? AND asker IS ? "
+                  "AND archived_at IS NULL ORDER BY created_at, rowid LIMIT 1")
+
+    def turn_by_client(self, meeting_id: str, client_id: str, *, asker: str | None = None) -> dict[str, Any] | None:
+        """Shu so'rovchining (`None` - hisob egasi) shu klient kalitli FAOL navbati (`None` - yo'q): ilova xabarni
+        qayta yuborgan - javob allaqachon saqlangan. Arxivdagisi hisobga olinmaydi."""
+        return self.row(self._BY_CLIENT, (meeting_id, client_id, asker))
+
+    def add_turn(self, fields: dict[str, Any], *, used: Iterable[str] = (), gen: int | None = None) -> dict[str, Any]:
+        """Chat navbatini saqlaydi -> bazadagi qator (`archived_at` bilan). Javob kutilayotganda nima o'zgargani
+        o'sha BITTA tranzaksiyada (`BEGIN IMMEDIATE`) tekshiriladi:
+
+          * TAKROR (`fields["client_id"]`): shu so'rovchining shu kalitli FAOL navbati allaqachon bor (ilova qayta
+            yubordi va birinchi urinish boshqa yo'ldan saqlab ulgurdi) - yangisi yozilmaydi, O'SHA qator qaytadi;
+          * XOTIRA (`used` - javob qurilgan navbatlar id lari): "Yangi suhbat" (yoki qayta o'girish) ulardan birini
+            arxivga o'tkazgan bo'lsa - yangi navbat ham O'SHA vaqt bilan arxivda tug'iladi: eski suhbat ustiga
+            qurilgan javob yangi suhbatga xotira bo'lib o'tmasin;
+          * MATN (`gen` - savol boshida o'qilgan `transcript_gen`): transkript butunlay almashgan (qayta o'girish
+            tugagan) yoki endi tayyor emas (`transcript_ready`: qayta o'girilmoqda) - navbat HOZIRGI vaqt bilan
+            arxivda tug'iladi. Xotirasiz birinchi savolni faqat shu ushlaydi: eski matn bo'yicha javob (manba id lari
+            yangi matnda boshqa qatorni ko'rsatadi) faol qolmasin. Qator tahriri va spikerlarni birlashtirish
+            (`transcript_rev`) bunga KIRMAYDI: qator id lari o'zgarmaydi, manbalar to'g'ri - navbat faol qoladi.
+
+        NEGA VAQT BILAN EMAS ("tozalash so'rov boshlangandan keyinmi"): vaqt soniyagacha - tozalashdan keyin
+        o'sha soniyada berilgan yangi savol ham "eski" bo'lib qolardi."""
+        ids = [str(x) for x in used]
+        with self.transaction() as conn:
+            if fields.get("client_id"):
+                same = conn.execute(self._BY_CLIENT, (fields["meeting_id"], fields["client_id"],
+                                                      fields.get("asker"))).fetchone()
+                if same is not None:
+                    return dict(same)
+            gone = None
+            if ids:
+                marks = ", ".join("?" for _ in ids)
+                gone = conn.execute(f"SELECT MAX(archived_at) FROM questions WHERE id IN ({marks}) "
+                                    "AND archived_at IS NOT NULL", ids).fetchone()[0]
+            if gone is None and gen is not None:
+                m = conn.execute("SELECT transcript_gen, transcript_rev, status, stt_engine FROM meetings WHERE id=?",
+                                 (fields["meeting_id"],)).fetchone()
+                # Yig'ilish o'chirilgan bo'lsa (`None`) - INSERT tashqi kalitdan yiqiladi (chaqiruvchida 404).
+                if m is not None and (int(m["transcript_gen"] or 0) != int(gen) or not transcript_ready(dict(m))):
+                    gone = int(time.time())
+            row = dict(fields, archived_at=gone)
+            conn.execute(f"INSERT INTO questions ({', '.join(row)}) VALUES ({', '.join('?' for _ in row)})",
+                         tuple(row.values()))
+            return dict(conn.execute("SELECT * FROM questions WHERE id=?", (row["id"],)).fetchone())
 
     # --- kvota --------------------------------------------------------------------
 

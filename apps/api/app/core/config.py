@@ -672,8 +672,10 @@ class Settings(BaseSettings):
     meetings_map_num_predict: int = 6144
     #: Vazifa va qarorlarni ikkinchi chaqiruv bilan tekshirish.
     meetings_verify: bool = True
-    #: Bitta odamning soatlik chegaralari: savol (Ask) va xulosa tabi.
-    meetings_ask_per_hour: int = 30
+    #: Bitta odamning soatlik chegaralari: savol (Ask) va xulosa tabi. Savol chegarasi yig'ilish CHATI bilan
+    #: UMUMIY (bitta hisoblagich): 2026-11-11 dan 60 - suhbatda savol ko'proq, Slack'dagi hamma odam esa
+    #: bitta xizmat hisobidan so'raydi.
+    meetings_ask_per_hour: int = 60
     meetings_summary_per_hour: int = 10
     #: Mobil ilova yozish manbasi (`voice_recognition` | `mic` | `camcorder`) -
     #: `GET /meetings/config` orqali masofadan A/B sinash uchun.
@@ -716,6 +718,27 @@ class Settings(BaseSettings):
     #: Savol-javob (Ask): odam kutib turgan umumiy muddat (soniya) - hamma model birga.
     #: Oxirgisidan boshqasiga qolgan vaqtning 2/3 qismi beriladi.
     meetings_ask_deadline: float = 90.0
+    #: --- Yig'ilish CHATI (2026-11-11, ega so'rovi): bitta audio - bitta suhbat, `services/meetings/chat.py` ---
+    #: Mobil ilova, Slack va Telegram'dagi suhbat - BITTA tarix (`questions` jadvalining faol qatorlari).
+    #: Zanjir o'sha - `MEETINGS_ASK_CHAIN` (prod'da `claude`); Claude'ga suhbat ko'p navbatli xabarlar bilan
+    #: ketadi (`ClaudeChat.converse`), qolgan modellarga - oldingi savol-javoblar matn bloki bilan.
+    #: Chat modeli (`rt.ask_claude`). Bo'sh - `meetings_claude_model` (claude-sonnet-5-5).
+    meetings_chat_model: str = ""
+    #: Chat `output_config.effort`i. Bo'sh - `meetings_claude_effort`.
+    meetings_chat_effort: str = ""
+    #: Modelga xotira sifatida qaytariladigan oxirgi savol-javoblar soni ("batafsilroq", "u kim edi?").
+    meetings_chat_history_turns: int = 10
+    #: Xotiradagi savol+javob matni shundan oshsa (belgi) - eng eski navbatlar tashlanadi.
+    meetings_chat_history_chars: int = 40000
+    #: Transkript Claude'ga shu hajmgacha (belgi) TO'LIQ ketadi; undan uzunida - savol va oxirgi 2 savol
+    #: so'zlari bo'yicha tanlangan qatorlar (`ask._select`, shu hajmdagi byudjet bilan).
+    meetings_chat_context_chars: int = 400000
+    #: Savol-javob / chat Claude klientining (`rt.ask_claude`) bir vaqtdagi so'rovlari (slotlar).
+    meetings_chat_concurrency: int = 4
+    #: Server tomonidagi rad-zahirasi (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`): Claude
+    #: xavfsizlik klassifikatori savolni rad etsa, xizmat uni o'zi tavsiya etilgan boshqa modelda qayta
+    #: yozadi. Xizmat (yoki proksi) zahirani rad etsa (400) - bir marta zahirasiz va keyin yuborilmaydi.
+    meetings_chat_fallbacks: bool = True
     #: OpenAI kaliti - `apps/api/.env` dan JONLI o'qiladi (`openai_key_now`); u yerda kalit
     #: bo'lmasa - ishga tushishdagi qiymat (systemd `Environment=`). Jurnalga tushmaydi.
     openai_api_key: str = ""

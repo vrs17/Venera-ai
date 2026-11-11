@@ -6,7 +6,9 @@ Slack'dagi Barno AI (`app/slack/meeting.py`) bilan AYNI imkoniyatlar, Telegram k
     deyiladi va chat `ARMED_SEC` davomida QUROLLANADI: shu oraliqda kelgan ovozli xabar
     HR savoli emas, yozuv deb olinadi. Audio FAYL (mp3, m4a, aac, wav, ogg) va
     `telegram_voice_max_sec` dan uzun ovozli xabar esa har doim yozuv - ular chat savoli
-    bo'la olmaydi (bot ularni oldin rad etardi);
+    bo'la olmaydi (bot ularni oldin rad etardi). Yozuv xabariga (yoki «💬 Savol berish»
+    so'roviga) JAVOB bo'lgan ovozli xabar bundan mustasno - u shu yozuv bo'yicha savol
+    (`claims_reply`, pastda);
   * jarayon xabari (`intake.Progress`, ega talabi 2026-11-05) - audio kelishi bilan DARHOL
     (navbatdan oldin), odamning audio xabariga javob qilib: "qabul qilindi" va bosqichlar - audio
     yuklash, matnga o'girish (foizi bilan), qisqa xulosa. Joyida yangilanadi, transkript chiqqach
@@ -17,11 +19,23 @@ Slack'dagi Barno AI (`app/slack/meeting.py`) bilan AYNI imkoniyatlar, Telegram k
   * "📄 Bayonnoma" (ega qarori, 2026-11-04) - rasmiy hujjat loyihasi: til menyusi (lotin /
     kirill / rus / ingliz, tavsiya - yig'ilish tilidan), tanlovdan keyin Word (asosiy) va PDF
     (nusxa) fayl shu chatga (`services.meetings.minutes`); «________» joylari qo'lda to'ldiriladi;
-  * savol - xulosa (yoki transkript, yoki o'z audio) xabariga JAVOB (Reply) qilib yoziladi:
-    Telegram'da thread yo'q, javob shu vazifani bajaradi. Yig'ilish qaysi xabarga javob
+  * yig'ilish CHATI (ega talabi, 2026-11-11) - har yozuvning O'Z suhbati: «💬 Savol berish»
+    tugmasi (ForceReply so'rovi - Telegram javob maydonini o'zi ochadi) yoki xulosa (transkript,
+    javob, o'z audio) xabariga JAVOB (Reply): Telegram'da thread yo'q, javob shu vazifani
+    bajaradi. Javob `service.chat_send` dan (kanal `telegram`): shu yozuv matni, xulosasi va shu
+    suhbatning oldingi savol-javoblari bilan - mobil ilova va Slack'dagi savollar bilan BITTA
+    suhbat. Javob ostida «💬 Yana savol» va «🔄 Yangi suhbat» (`service.chat_reset` - yumshoq:
+    eski navbatlar modelga ham, ro'yxatga ham bormaydi). Yig'ilish qaysi xabarga javob
     berilganidan topiladi: xotiradagi xarita (shu jarayon yuborganlari), xabar tugmalaridagi
     `p:<op>:<yig'ilish>` (qayta ishga tushgandan keyin ham) yoki odamning audio faylining
-    kaliti (`intake.client_id`).
+    kaliti (`intake.client_id`). Shuning uchun chat javobining HAR bo'lagida (va xato
+    xabarida) tugma bor: oxirgisida «💬 Yana savol» va «🔄 Yangi suhbat», qolganlarida
+    «💬 Savol berish». ForceReply so'rovida tugma bo'la olmaydi: qayta ishga tushgandan keyin
+    unga yozilgan savol izoh bilan YUTILADI (HR yordamchisiga ketmaydi). Savol OVOZLI ham
+    bo'ladi: yozuv xabariga yoki so'rovga ovozli javob (`claims_reply`) HR savolidagi AYNI yo'l
+    bilan matnga o'giriladi (`runner._meeting_voice`) va shu yerga savol bo'lib keladi; uning
+    "🎙 matn" xabari ham shu yig'ilishga bog'lanadi (`_link`: «💬 Savol berish» tugmasi va
+    xotira) - unga javob, matn yoki ovoz, ham shu suhbatga savol.
 
 KIMNING NOMIDAN. Telegram odami Venera hisobiga ulangan (`LinkStore`), yozuv O'SHA hisobga
 tushadi: uning yig'ilishlar ro'yxatida (mobil, veb) ko'rinadi, kunlik daqiqalar va soatlik
@@ -33,6 +47,8 @@ soatiga ~14 MB, ya'ni bir soatlik yozuv sig'adi; kattaroq fayl uchun mobil ilova
 Ovozli xabar - OGG/Opus, yig'ilish quvuri uni 2026-11-04 dan qabul qiladi (`audio.ogg_info`).
 
 TUGMALAR (`callback_data`, 64 baytgacha; yig'ilish id'si 32 belgi):
+    p:q:<id>            savol berish: ForceReply so'rovi (yig'ilish chati)
+    p:n:<id>            yangi suhbat: chat navbatlari arxivga (`service.chat_reset`)
     p:t:<id>            vazifalar
     p:s:<id>[:<shablon>] boshqa shablon: menyu / tanlangan shablon bilan xulosa
     p:e:<id>[:<tur>]    eksport: menyu / fayl (txt, srt, md, docx, pdf)
@@ -85,8 +101,8 @@ KEYBOARD = {"keyboard": [[{"text": BTN_PLAUD}, {"text": BTN_APP}]], "resize_keyb
 ARMED_SEC = 15 * 60
 #: Telegram Bot API `getFile` chegarasi.
 MAX_FILE = 20 * 1024 * 1024
-#: Savol chegarasi (`AskRequest.question`).
-QUESTION_CHARS = 500
+#: Savol chegarasi (`ChatRequest.message`, mobil ilovadagi chat bilan bir xil).
+QUESTION_CHARS = 1000
 LANG_NAMES = {"uz": "o'zbek", "ru": "rus", "en": "ingliz"}
 LANG_FLAGS = {"uz": "🇺🇿", "ru": "🇷🇺", "en": "🇬🇧"}
 #: Eksport turlari: tugma yorlig'i -> xizmat formati.
@@ -109,10 +125,19 @@ PROMPT = (
     "• <b>audio fayl</b> yuboring: mp3, m4a, aac, wav, ogg - 20 MB gacha (Telegram chegarasi), "
     "3 soatgacha.\n\n"
     "Keyingi 15 daqiqada kelgan ovozli xabar Plaud'ga ketadi; audio fayllar - har doim. "
-    "Xulosa ostida: vazifalar, boshqa shablon, eksport, boshqa til va 📄 <b>Bayonnoma</b> - rasmiy "
-    "hujjat (Word/PDF) tanlangan tilda. Savol bo'lsa - xulosa xabariga javob (Reply) qilib yozing."
+    "Xulosa ostida: 💬 <b>Savol berish</b> (shu yozuv bo'yicha chat - Barno suhbatni eslab qoladi), "
+    "vazifalar, boshqa shablon, eksport, boshqa til va 📄 <b>Bayonnoma</b> - rasmiy hujjat (Word/PDF) "
+    "tanlangan tilda."
 )
-_HINT = "💬 Savol bo'lsa - shu xabarga javob (Reply) qilib yozing."
+BTN_ASK = "💬 Savol berish"
+_HINT = ("💬 Savol bo'lsa - «💬 Savol berish» tugmasini bosing yoki shu xabarga javob (Reply) qilib yozing. "
+         "Barno suhbatni eslab qoladi.")
+#: "💬 Savol berish" so'rovining tugmasi o'rnida: Telegram javob maydonini o'zi ochadi.
+ASK_REPLY = {"force_reply": True, "input_field_placeholder": "Savolingiz…"}
+#: So'rov matnidagi belgi (`ask_prompt`; Telegram javobdagi xabarni teglarsiz beradi).
+_PROMPT_MARK = "savolingizni yozing"
+STALE_PROMPT = "Bu so'rov eskirgan - yozuv ostidagi «💬 Savol berish» tugmasini qayta bosing."
+CHAT_RESET = "🔄 Yangi suhbat boshlandi - oldingi savol-javoblar endi hisobga olinmaydi."
 
 
 class Plaud:
@@ -149,7 +174,8 @@ class Plaud:
 
     def wants(self, chat_id: int, media: dict[str, Any]) -> bool:
         """Shu audio yozuvmi: fayl - har doim; ovozli xabar - chat qurollangan yoki chat
-        savoli uchun juda uzun bo'lsa. Qurollanish bir ovozli xabarga ishlaydi."""
+        savoli uchun juda uzun bo'lsa. Qurollanish bir ovozli xabarga ishlaydi. Yozuv xabariga
+        javob bo'lgan ovozli xabar bu yerga kelmaydi (`claims_reply` - qurollanish sarflanmaydi)."""
         if media["kind"] != "voice":
             return True
         with self._lock:
@@ -178,18 +204,40 @@ class Plaud:
         recorded_at = float(msg.get("date") or time.time())
         self._submit(user, lambda: self._handle(chat_id, user, media, recorded_at=recorded_at, progress=progress))
 
-    def on_reply(self, chat_id: int, user: AuthUser, msg: dict[str, Any], text: str) -> bool:
-        """Javob (Reply) yozuv xabariga bo'lsa - yig'ilish bo'yicha savol. `False` - oddiy savol."""
+    def on_reply(self, chat_id: int, user: AuthUser, msg: dict[str, Any], text: str, *,
+                 echo: int | None = None) -> bool:
+        """Javob (Reply) yozuv xabariga bo'lsa - shu yig'ilish chatiga savol. `False` - oddiy savol.
+        Yig'ilishi xotiradan ketgan (qayta ishga tushgan) "💬 Savol berish" so'roviga javob - izoh bilan
+        yutiladi: yozuv haqidagi savol HR yordamchisiga ketmasin. `echo` - ovozli savolning "🎙 matn" xabari
+        (`runner._meeting_voice`): savol qabul qilinsa u ham AYNAN shu topilgan yig'ilishga bog'lanadi (`_link`)."""
         reply = msg.get("reply_to_message")
         if not isinstance(reply, dict):
             return False
         meeting_id = self._meeting_of_reply(chat_id, user, reply)
         if meeting_id is None:
-            return False
+            if not is_prompt(reply):
+                return False
+            self._send(chat_id, STALE_PROMPT, reply_to=msg.get("message_id"))
+            return True
+        self._link(chat_id, echo, meeting_id)
         holder = self._send(chat_id, "⏳ Javob tayyorlanmoqda…", reply_to=msg.get("message_id"))
+        # "⏳" - javobning birinchi bo'lagi bo'ladi: javob kelguncha (yoki tahrir o'tmay "⏳" qolsa) unga
+        # yozilgan savol ham shu suhbatga, HR yordamchisiga emas.
+        self._remember(chat_id, holder, meeting_id)
         question = text.strip()[:QUESTION_CHARS]
         self._submit(user, lambda: self._question(chat_id, user, meeting_id, question, holder))
         return True
+
+    def claims_reply(self, chat_id: int, user: AuthUser, msg: dict[str, Any]) -> bool:
+        """Ovozli xabar yig'ilish chatiga savolmi: u BOT xabariga javob (Reply) va o'sha xabardan yig'ilish
+        topiladi (`_meeting_of_reply`; oldingi ovozli savolning "🎙 matn"i ham - `_link`) yoki u «💬 Savol
+        berish» so'rovi (eskirgani ham - `on_reply` uni izoh bilan yutadi). Shunda ovoz yangi yozuv ham emas
+        (qurollanish sarflanmaydi), HR savoli ham emas: bot uni matnga o'girib (`runner._meeting_voice`)
+        `on_reply` ga beradi. Odamning o'z xabariga javob - yo'q."""
+        reply = msg.get("reply_to_message")
+        if not isinstance(reply, dict) or not (reply.get("from") or {}).get("is_bot"):
+            return False
+        return is_prompt(reply) or self._meeting_of_reply(chat_id, user, reply) is not None
 
     def on_callback(self, cq_id: str, chat_id: int, msg: dict[str, Any], user: AuthUser, data: str) -> None:
         parts = data.split(":")
@@ -204,9 +252,18 @@ class Plaud:
                 self._answer(cq_id, "Tugma eskirgan", alert=True)
                 return
             # EGALIK shu yerda: begona (yoki o'chirilgan) yig'ilish - 404, ish boshlanmaydi.
-            language = str(service.detail(user, meeting_id).get("language") or "uz")
+            view = service.detail(user, meeting_id)
+            language = str(view.get("language") or "uz")
             arg = parts[3] if len(parts) > 3 else ""
-            if op == "t":
+            if op == "q":
+                self._answer(cq_id)
+                self._ask_prompt(chat_id, meeting_id, view.get("title"))
+            elif op == "n":
+                service.chat_reset(user, meeting_id)
+                self._answer(cq_id)
+                # Yangi suhbatning birinchi savoli shu yerdan: tugma ham, javob (Reply) ham shu yig'ilishga.
+                self._remember(chat_id, self._send(chat_id, CHAT_RESET, markup=ask_menu(meeting_id)), meeting_id)
+            elif op == "t":
                 self._answer(cq_id)
                 self._submit(user, lambda: self._tasks(chat_id, user, meeting_id))
             elif op == "s" and not arg:
@@ -394,17 +451,41 @@ class Plaud:
             return None
         return meeting_id
 
+    def _link(self, chat_id: int, message_id: int | None, meeting_id: str) -> None:
+        """Ovozli savolning "🎙 matn" xabari (`on_reply(echo=...)`) shu yig'ilishniki: «💬 Savol berish» tugmasi
+        (`ask_menu` - qayta ishga tushgandan keyin ham belgi) va xotira. Unga javob (Reply) - matn bo'lsa ham,
+        ovoz bo'lsa ham (`claims_reply`) - shu suhbatga savol: HR yordamchisiga ham, yangi yozuvga ham ketmaydi.
+        Tugma qo'yilmasa (Telegram xatosi) - xotiradagi bog'lanish baribir ishlaydi."""
+        if message_id is None:
+            return
+        self._menu(chat_id, message_id, ask_menu(meeting_id))
+        self._remember(chat_id, message_id, meeting_id)
+
+    def _ask_prompt(self, chat_id: int, meeting_id: str, title: Any) -> None:
+        """"💬 Savol berish": ForceReply so'rovi; unga javob - shu yig'ilish chatiga savol (`on_reply`).
+        So'rovda `p:` tugmasi bo'la olmaydi - yig'ilish faqat xotirada eslab qolinadi."""
+        self._remember(chat_id, self._send(chat_id, ask_prompt(title), markup=ASK_REPLY), meeting_id)
+
     def _question(self, chat_id: int, user: AuthUser, meeting_id: str, question: str, holder: int | None) -> None:
+        """Yig'ilish chatiga savol (`service.chat_send`, kanal `telegram`): "⏳" o'rnida javob, OXIRGI
+        xabarida «💬 Yana savol» va «🔄 Yangi suhbat», qolgan bo'laklarida «💬 Savol berish». Tugmalar - qayta
+        ishga tushgandan keyin ham javob (Reply) uchun yig'ilish belgisi, savol qaysi bo'lakka yozilsa ham.
+        Xato bo'lsa - sababi va «💬 Savol berish» (qayta so'rash va o'sha belgi); yozuv yo'q (404) - tugmasiz."""
+        markup = marker = ask_menu(meeting_id)
         try:
             view = service.detail(user, meeting_id)
-            found = service.ask(user, meeting_id, question, None)
+            found = service.chat_send(user, meeting_id, question, None, channel="telegram")
             body = answer_html(found, speakers_of(view["speakers"]), view["language"])
+            markup = chat_menu(meeting_id)
         except MeetingProblem as exc:
             body = esc(f"Javob berib bo'lmadi: {exc.detail}")
+            if exc.status_code == 404:
+                # O'chirilgan yoki begona yozuv: qayta so'rashning ma'nosi yo'q.
+                markup = marker = None
         except Exception:  # noqa: BLE001
             log.exception("Telegram Plaud savoli (%s): kutilmagan xato", meeting_id)
             body = "Javob berib bo'lmadi: ichki xato."
-        for message_id in self._replace(chat_id, holder, body):
+        for message_id in self._replace(chat_id, holder, body, markup=markup, marker=marker):
             self._remember(chat_id, message_id, meeting_id)
 
     # --- tugmalar -------------------------------------------------------------------------------
@@ -603,21 +684,25 @@ class Plaud:
         message_id = sent.get("message_id") if isinstance(sent, dict) else None
         return message_id if isinstance(message_id, int) else None
 
-    def _replace(self, chat_id: int, holder: int | None, text: str) -> list[int]:
-        """"⏳ ..." xabarini natija bilan almashtiradi; sig'masa qolgani - yangi xabarlarda.
-        Qaytaradi: natija turgan xabarlar."""
+    def _replace(self, chat_id: int, holder: int | None, text: str, *, markup: dict[str, Any] | None = None,
+                 marker: dict[str, Any] | None = None) -> list[int]:
+        """"⏳ ..." xabarini natija bilan almashtiradi; sig'masa qolgani - yangi xabarlarda. `markup`
+        (tugmalar) - OXIRGI xabarda, `marker` - qolganlarida (bir necha bo'lak bo'lsa "⏳" o'rnidagisida ham):
+        qayta ishga tushgandan keyin istalgan bo'lakka javob (Reply) yig'ilishni tugmadan topsin.
+        Tahrir o'tmasa, birinchi bo'lak yangi xabar bo'lib ketadi. Qaytaradi: natija turgan xabarlar."""
         pages = render.pack([text])
         ids: list[int] = []
-        if holder is not None:
-            try:
-                self.api.edit_message_text(chat_id, holder, pages[0])
-                ids.append(holder)
-                pages = pages[1:]
-            except TelegramError as exc:
-                if not exc.not_modified:
-                    log.debug("Telegram Plaud: xabar yangilanmadi: %s", exc)
-        for page in pages:
-            sent = self._send(chat_id, page)
+        for n, page in enumerate(pages):
+            keys = markup if n == len(pages) - 1 else marker
+            if n == 0 and holder is not None:
+                try:
+                    self.api.edit_message_text(chat_id, holder, page, reply_markup=keys)
+                    ids.append(holder)
+                    continue
+                except TelegramError as exc:
+                    if not exc.not_modified:
+                        log.debug("Telegram Plaud: xabar yangilanmadi: %s", exc)
+            sent = self._send(chat_id, page, markup=keys)
             if sent is not None:
                 ids.append(sent)
         return ids
@@ -659,12 +744,26 @@ def _btn(text: str, data: str) -> dict[str, str]:
 
 
 def controls(meeting_id: str, language: str, *, retry: str | None = None) -> dict[str, Any]:
-    rows = [[_btn("✅ Vazifalar", f"p:t:{meeting_id}"), _btn("🗂 Boshqa shablon", f"p:s:{meeting_id}")],
+    rows = [[_btn(BTN_ASK, f"p:q:{meeting_id}")],
+            [_btn("✅ Vazifalar", f"p:t:{meeting_id}"), _btn("🗂 Boshqa shablon", f"p:s:{meeting_id}")],
             [_btn("📎 Eksport", f"p:e:{meeting_id}"), _btn("🌐 Boshqa til", f"p:l:{meeting_id}")],
             [_btn("📄 Bayonnoma", f"p:d:{meeting_id}")]]
     if retry:
         rows.append([_btn("🔁 Xulosani qayta urinish", retry)])
     return {"inline_keyboard": rows}
+
+
+def chat_menu(meeting_id: str) -> dict[str, Any]:
+    """Chat javobi ostida: yana savol (ForceReply so'rovi) va yangi suhbat (`service.chat_reset`)."""
+    return {"inline_keyboard": [[_btn("💬 Yana savol", f"p:q:{meeting_id}"),
+                                 _btn("🔄 Yangi suhbat", f"p:n:{meeting_id}")]]}
+
+
+def ask_menu(meeting_id: str) -> dict[str, Any]:
+    """«💬 Savol berish» tugmasi: "Yangi suhbat boshlandi" ostida (birinchi savol shu tugmadan), uzun chat
+    javobining oxirgisidan boshqa bo'laklarida, xato xabarida va ovozli savolning "🎙 matn"ida - yig'ilish
+    belgisi ham (`_MARK`)."""
+    return {"inline_keyboard": [[_btn(BTN_ASK, f"p:q:{meeting_id}")]]}
 
 
 def template_titles() -> dict[str, str]:
@@ -722,6 +821,20 @@ def title_of(media: dict[str, Any], recorded_at: float) -> str:
 def html_of(markdown: str) -> str:
     """Xulosa markdown'i -> Telegram HTML (`render.to_blocks`: sarlavha, ro'yxat, jadval)."""
     return "\n\n".join(render.to_blocks(markdown))
+
+
+def ask_prompt(title: Any) -> str:
+    """"💬 Savol berish" so'rovi (HTML): yozuv nomi (bir qator, 80 belgigacha) va chat qoidasi."""
+    name = export.one_line(title, 80) or "Yozuv"
+    return (f"💬 <b>{esc(name)}</b> bo'yicha {_PROMPT_MARK}.\n"
+            "Barno faqat shu yozuv matni va xulosasiga tayanadi va suhbatni eslab qoladi - keyingi savolni "
+            "javobga «Reply» qilib yozing.")
+
+
+def is_prompt(message: dict[str, Any]) -> bool:
+    """Botning "💬 ... savolingizni yozing" so'rovimi (`ask_prompt`): Telegram javobdagi xabarni teglarsiz beradi."""
+    text = str(message.get("text") or "")
+    return bool((message.get("from") or {}).get("is_bot")) and text.startswith("💬") and _PROMPT_MARK in text
 
 
 def speakers_of(view_speakers: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

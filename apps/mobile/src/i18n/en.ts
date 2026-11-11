@@ -1,4 +1,5 @@
 import { callsPart } from './parts/calls';
+import { meetingChatPart } from './parts/meetingChat';
 import { minutesPart } from './parts/minutes';
 import { nav } from './parts/nav';
 import { recordingsPart } from './parts/recordings';
@@ -131,7 +132,7 @@ export const en: Record<TKey, string> = {
   'detail.tab.summary': 'Summary',
   'detail.tab.transcript': 'Transcript',
   'detail.tab.actions': 'Tasks',
-  'detail.tab.ask': 'Ask',
+  'detail.tab.chat': 'Chat',
   'detail.progress': '{status} - {p}%',
   'detail.languageWarning':
     'The recording seems to be mostly in another language - the text may be wrong. Transcribe again in Russian/English (without speakers)?',
@@ -333,16 +334,12 @@ export const en: Record<TKey, string> = {
   'crm.field.labels': 'Labels',
   'crm.field.type': 'Type',
 
-  'ask.placeholder': 'Ask about the meeting',
-  'ask.send': 'Send',
   'ask.quick.tasks': 'Tasks',
   'ask.quick.tasksQ': 'Who has to do what, and by when?',
   'ask.quick.decisions': 'Decisions',
   'ask.quick.decisionsQ': 'What decisions were made?',
   'ask.quick.followUp': 'Follow-up',
   'ask.quick.followUpQ': 'Write a short follow-up message to the participants.',
-  'ask.history': 'Previous questions',
-  'ask.empty': 'Ask a question - the answer is grounded in the meeting transcript, with sources.',
   'ask.notReady': 'The transcript must be ready before you can ask',
 
   'player.play': 'Play',
@@ -521,4 +518,5 @@ export const en: Record<TKey, string> = {
   ...sharePart.en,
   ...callsPart.en,
   ...minutesPart.en,
+  ...meetingChatPart.en,
 };

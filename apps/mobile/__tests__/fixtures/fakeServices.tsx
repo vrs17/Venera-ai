@@ -6,13 +6,23 @@ import { useState, type ReactNode } from 'react';
 import type { ActionsApi } from '@/api/actions';
 import { ApiClient } from '@/api/client';
 import type { MeetingsApi } from '@/api/meetings';
+import type { ChatRequest } from '@/api/types';
 import type { Session } from '@/features/auth/session';
 import { createTokenStore, memoryKV } from '@/features/auth/tokenStore';
 import { createMemoryQueueStore } from '@/features/upload/queueStore.memory';
 import type { Uploader } from '@/features/upload/uploader';
 import { ServicesProvider, type Services } from '@/services';
 
-import { actionItem, askAnswer, meeting, minutesView, summary, summaryCard, transcript } from './server';
+import { actionItem, chatBackend, chatTurn, meeting, minutesView, summary, summaryCard, transcript } from './server';
+
+/** Xotiradagi chat (`chatBackend`) -> `MeetingsApi` ning uch chat funksiyasi (jest.fn - chaqiruvlar tekshiriladi). */
+export function chatEndpoints(chat: ReturnType<typeof chatBackend> = chatBackend()) {
+  return {
+    chatHistory: jest.fn(async (id: string) => chat.history(id)),
+    sendChat: jest.fn(async (id: string, body: ChatRequest) => chat.send(id, body)),
+    resetChat: jest.fn(async (id: string) => chat.reset(id)),
+  };
+}
 
 export function fakeMeetingsApi(over: Partial<MeetingsApi> = {}): jest.Mocked<MeetingsApi> {
   const api = {
@@ -41,8 +51,8 @@ export function fakeMeetingsApi(over: Partial<MeetingsApi> = {}): jest.Mocked<Me
     addActionItem: jest.fn(async () => ({ ...actionItem, id: 'new', origin: 'user' as const })),
     patchActionItem: jest.fn(async () => ({ ...actionItem, status: 'done' as const })),
     myActionItems: jest.fn(async () => ({ items: [] })),
-    ask: jest.fn(async () => askAnswer),
-    questions: jest.fn(async () => ({ items: [askAnswer] })),
+    // Har API o'z chat xotirasi bilan (testlar bir-biriga aralashmaydi); yozuvda bitta savol-javob bor.
+    ...chatEndpoints(chatBackend({ [meeting().id]: [chatTurn()] })),
     audioUrl: jest.fn((id: string) => `https://x.uz/api/v1/meetings/${id}/audio`),
     actionItemToCrm: jest.fn(async () => ({ status: 'failed' as const, proposal: null, text: null, reason: 'empty', item: null })),
     transcriptExportUrl: jest.fn((id: string, format: string) => `https://x.uz/api/v1/meetings/${id}/transcript/export?format=${format}`),

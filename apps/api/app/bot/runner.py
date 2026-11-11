@@ -197,9 +197,14 @@ _HELP = (
     "<b>Tasdiqlash</b> dan keyin bajariladi.\n"
     "• Javob noto'g'ri bo'lsa - ostidagi ⚑ tugmasi bilan xabar bering.\n"
     "• 🎙 <b>Plaud</b> (pastdagi tugma yoki /plaud): audio yuboring - matn, qisqa xulosa, "
-    "vazifalar, eksport; savolni xulosaga javob (Reply) qilib yozing.\n\n"
+    "vazifalar, eksport; yozuv bo'yicha savol uchun «💬 Savol berish» tugmasini bosing yoki "
+    "xulosaga javob (Reply) qilib yozing (ovozli xabar ham bo'ladi) - Barno suhbatni eslab qoladi.\n\n"
     "/new - yangi suhbat · /plaud - audio → matn · /start - Barnoni ochish · /logout - botdan chiqish"
 )
+#: `telegram_voice_max_sec` dan uzun ovoz (`{minutes}` - chegara): HR savoli va yozuv bo'yicha ovozli savol.
+_VOICE_LONG = "Ovozli xabar juda uzun - {minutes} daqiqagacha yuboring."
+_MEETING_VOICE_LONG = ("Ovozli savol juda uzun - qisqaroq ({minutes} daqiqagacha) yuboring yoki "
+                       "savolni yozib yuboring.")
 
 
 def welcome_text(user: AuthUser, *, again: bool = False) -> str:
@@ -978,12 +983,19 @@ class VeneraBot:
             return
         if self.plaud is not None:
             # "🎙 Plaud" tugmasi, yozuv (audio fayl, qurollangan yoki uzun ovozli xabar) va
-            # yozuv xabariga javob (savol) - HR yordamchisiga ketmaydi (`plaud.py`).
+            # yozuv xabariga javob (savol, matn yoki ovoz) - HR yordamchisiga ketmaydi (`plaud.py`).
             if text == BTN_PLAUD:
                 log.info("Telegram Plaud: tugma (%s)", user.actorId)
                 self.plaud.on_button(chat_id, user)
                 return
             media = self.plaud.media(msg)
+            if media is not None and media["kind"] == "voice" and self.plaud.claims_reply(chat_id, user, msg):
+                # Yozuv xabariga (yoki «💬 Savol berish» so'roviga) ovozli javob - shu yozuv bo'yicha
+                # savol: `wants` dan OLDIN (yangi yozuv bo'lmasin, qurollanish sarflanmasin).
+                log.info("Telegram Plaud (%s): ovozli savol", user.actorId)
+                with bind(user.actorId, "bot"):
+                    self._meeting_voice(chat_id, tg_id, user, msg)
+                return
             if media is not None and self.plaud.wants(chat_id, media):
                 log.info("Telegram Plaud (%s): %s", user.actorId, media["kind"])
                 self.plaud.on_audio(chat_id, user, msg, media)
@@ -1461,16 +1473,41 @@ class VeneraBot:
     # --- ovozli xabar -------------------------------------------------------------
 
     def _voice(self, chat_id: int, tg_id: int, user: AuthUser, msg: dict[str, Any]) -> None:
+        heard = self._hear(chat_id, tg_id, user, msg, too_long=_VOICE_LONG)
+        if heard is not None:
+            text, stt, _ = heard
+            self._ask(chat_id, tg_id, user, text, stt=stt)
+
+    def _meeting_voice(self, chat_id: int, tg_id: int, user: AuthUser, msg: dict[str, Any]) -> None:
+        """Yozuv xabariga yoki «💬 Savol berish» so'roviga OVOZLI javob (`plaud.claims_reply`) - shu yig'ilish
+        chatiga savol: matn HR savolidagi AYNI yo'l bilan (`_hear`: chegaralar, arxiv, xato izohlari), so'ng
+        `plaud.on_reply` (eskirgan so'rovni ham u yutadi). HR yordamchisiga ham, yangi yozuvga ham ketmaydi.
+        "🎙 matn" xabarini `on_reply` shu yig'ilishga bog'laydi: unga javob (matn yoki ovoz) ham shu suhbatga."""
+        heard = self._hear(chat_id, tg_id, user, msg, too_long=_MEETING_VOICE_LONG)
+        if heard is None or self.plaud is None:
+            return
+        text, _, echo = heard
+        if not self.plaud.on_reply(chat_id, user, msg, text, echo=echo):
+            # Ovoz matnga o'girilguncha yozuv o'chirildi - tugmadagi belgi endi hech narsani topmaydi.
+            self._say(chat_id, "Javob berib bo'lmadi: yozuv topilmadi.")
+
+    def _hear(self, chat_id: int, tg_id: int, user: AuthUser, msg: dict[str, Any], *,
+              too_long: str) -> tuple[str, dict[str, Any], int | None] | None:
+        """Ovozli xabar -> matn: HR savoli (`_voice`) va yig'ilish chatidagi ovozli savol (`_meeting_voice`)
+        uchun BITTA yo'l - chegaralar (`telegram_voice_max_sec`, hajm), ovozning o'zi arxivga, STT va xato
+        izohlari, oxirida odamga "🎙 matn". `too_long` - chegaradan uzun ovoz izohi (`{minutes}` - chegara).
+        Natija: (matn, izdagi `stt` nuqtasi, "🎙 matn" xabari - yuborilmagan bo'lsa `None`) yoki `None` -
+        sababi odamga aytildi."""
         voice = msg["voice"]
         most = settings.telegram_voice_max_sec
         size_limit = int(settings.stt_max_upload_mb * 1024 * 1024)
         duration = int(voice.get("duration") or 0)
         if duration > most or int(voice.get("file_size") or 0) > size_limit:
-            self._say(chat_id, f"Ovozli xabar juda uzun - {most // 60} daqiqagacha yuboring.")
-            return
+            self._say(chat_id, too_long.format(minutes=most // 60))
+            return None
         file_id = voice.get("file_id")
         if not isinstance(file_id, str):
-            return
+            return None
         typing = _Typing(self.api, chat_id, self.typing_every).start()
         try:
             try:
@@ -1479,8 +1516,9 @@ class VeneraBot:
             except TelegramError as exc:
                 log.warning("Telegram ovozi olinmadi (%s): %s", user.actorId, exc)
                 self._say(chat_id, "Ovozli xabarni olib bo'lmadi - qaytadan yuboring.")
-                return
-            # Ovozning O'ZI arxivga (matni - `turns` da): ega talabi, hech narsa yo'qolmasin.
+                return None
+            # Ovozning O'ZI arxivga (matni - `turns` da yoki yig'ilish chatida): ega talabi, hech narsa
+            # yo'qolmasin.
             archive.record("telegram", "in", "voice", chat=chat_id, user=tg_id, actor=user.actorId,
                            message=msg.get("message_id"), data=audio, name=f"voice-{msg.get('message_id')}.ogg",
                            mime=str(voice.get("mime_type") or "audio/ogg"), meta={"duration": duration})
@@ -1490,7 +1528,7 @@ class VeneraBot:
             except SttError as exc:
                 log.warning("Telegram STT (%s): %s", user.actorId, exc)
                 self._say(chat_id, _stt_message(exc.status))
-                return
+                return None
             stt_ms = int((time.monotonic() - boshlandi) * 1000)
         finally:
             typing.stop()
@@ -1500,13 +1538,11 @@ class VeneraBot:
         if not text:
             self._send(chat_id, "🎙 Ovozdan matn ajratib bo'lmadi - aniqroq gapirib qayta yuboring.",
                        reply_to=msg.get("message_id"))
-            return
+            return None
         note = "\n<i>(yozuv uzun - boshi olindi)</i>" if result.truncated else ""
-        self._send(chat_id, f"🎙 <i>{esc(text)}</i>{note}", reply_to=msg.get("message_id"))
-        self._ask(chat_id, tg_id, user, text, stt={
-            "durMs": stt_ms, "audioSec": duration, "backend": result.backend or None,
-            "truncated": bool(result.truncated),
-        })
+        echo = self._send(chat_id, f"🎙 <i>{esc(text)}</i>{note}", reply_to=msg.get("message_id"))
+        return text, {"durMs": stt_ms, "audioSec": duration, "backend": result.backend or None,
+                      "truncated": bool(result.truncated)}, echo
 
     # --- tugmalar -------------------------------------------------------------------
 

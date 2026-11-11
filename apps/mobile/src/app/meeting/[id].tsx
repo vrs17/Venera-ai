@@ -1,6 +1,6 @@
 /**
  * Yozuv sahifasi (spec 3.2): sarlavha + meta (sana, davomiylik, holat), belgili
- * tablar (Xulosa | Matn | Vazifalar | Savol), pastda doim turgan pleer. Xulosa tabining
+ * tablar (Xulosa | Matn | Vazifalar | Chat), pastda doim turgan pleer. Xulosa tabining
  * tepasida "Xulosa | Xarita" almashtirgichi (Plaud kabi): xarita 5-tab bo'lganda 360 dp
  * telefonda "Vazifalar 2" va "Transcript" kesilib qolardi.
  * Sarlavhadagi ulashish belgisi - eksport varag'i (PDF, Word, Markdown, matn, subtitr, audio) -
@@ -19,6 +19,10 @@
  * almashadi (telefondagi -> server sahifasi, internet uzilsa server -> telefondagi), pleer
  * esa daraxtda O'SHA joyda qoladi. Aks holda yuklash tugagan lahzada eshitilayotgan
  * yozuv to'xtab, 0:00 ga qaytardi.
+ *
+ * Chat tabi (`ChatView`) - BITTA yozuv bo'yicha Barno bilan suhbat: o'z konteynerida, yozish
+ * maydoni pastda (pleer ustida). Pleer balandligi o'lchanib chatga beriladi - klaviatura
+ * ochilganda maydon pleer ustida emas, klaviatura ustida tursin (pleer uning ostida qoladi).
  */
 import { Stack, useLocalSearchParams } from 'expo-router';
 import {
@@ -28,7 +32,7 @@ import {
   FilePen,
   Languages,
   ListChecks,
-  MessageCircleQuestionMark,
+  MessagesSquare,
   Network,
   Pencil,
   ScrollText,
@@ -37,13 +41,13 @@ import {
   Trash,
 } from 'lucide-react-native';
 import { useCallback, useState, type ReactNode } from 'react';
-import { Alert, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
 import { ApiError } from '@/api/client';
 import type { Lang, Meeting } from '@/api/types';
 import { ActionItemsView } from '@/features/meeting/ActionItemsView';
 import { ActionMenu } from '@/features/meeting/ActionMenu';
-import { AskView } from '@/features/meeting/AskView';
+import { ChatView } from '@/features/meeting/ChatView';
 import { ExportSheet } from '@/features/meeting/ExportSheet';
 import { formatDateTime } from '@/features/meeting/formatDate';
 import { LocalRecording } from '@/features/meeting/LocalRecording';
@@ -70,7 +74,7 @@ import { IconButton } from '@/ui/IconButton';
 import { PromptModal } from '@/ui/modals';
 import { useTheme } from '@/ui/theme';
 
-type Tab = 'summary' | 'transcript' | 'actions' | 'ask';
+type Tab = 'summary' | 'transcript' | 'actions' | 'chat';
 /** Xulosa tabining ko'rinishi: matn (Qisqa xulosa + bo'limlar) yoki aqliy xarita. */
 type SummaryMode = 'text' | 'map';
 
@@ -115,11 +119,14 @@ function RecordingScreen({
   const onSeek = useCallback((sec: number) => setSeek({ t: sec, n: Date.now() }), []);
   const playbackKey = m?.id ?? row?.clientId ?? null;
   const choice = useAudioChoice(m, row, playbackKey);
+  // Pleer balandligi (navigatsiya paneli chekinishi bilan) - chat yozish maydoni klaviaturani shunga qarab kutadi.
+  const [dockHeight, setDockHeight] = useState(0);
+  const onDockLayout = useCallback((e: LayoutChangeEvent) => setDockHeight(e.nativeEvent.layout.height), []);
 
   let body: ReactNode;
   let dock = true;
   if (m) {
-    body = <MeetingBody m={m} localRow={row} choice={choice} seek={seek} onSeek={onSeek} />;
+    body = <MeetingBody m={m} localRow={row} choice={choice} seek={seek} onSeek={onSeek} dockHeight={dockHeight} />;
   } else if (row && (clientId != null || q.isError || q.failureCount > 0)) {
     // Telefondagi sahifa: hali yuklanmagan yozuv, server sahifasi yuklanayotgan lahza
     // (yuklash endi tugadi) yoki internet yo'q - fayl telefonda, uni baribir eshitish mumkin.
@@ -155,7 +162,11 @@ function RecordingScreen({
   return (
     <View style={s.root}>
       {body}
-      {dock ? <AudioDock choice={choice} seek={seek} playbackKey={playbackKey ?? ''} durationHint={m?.durationSec ?? row?.durationSec ?? null} /> : null}
+      {dock ? (
+        <View onLayout={onDockLayout}>
+          <AudioDock choice={choice} seek={seek} playbackKey={playbackKey ?? ''} durationHint={m?.durationSec ?? row?.durationSec ?? null} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -182,12 +193,15 @@ function MeetingBody({
   choice,
   seek,
   onSeek,
+  dockHeight,
 }: {
   m: Meeting;
   localRow: QueueRow | null;
   choice: AudioChoice;
   seek: SeekRequest | null;
   onSeek: (sec: number) => void;
+  /** Pastdagi pleer balandligi (chat yozish maydoni uchun). */
+  dockHeight: number;
 }) {
   const t = useT();
   const th = useTheme();
@@ -247,12 +261,12 @@ function MeetingBody({
       { text: t('common.ok'), onPress: () => muts.retranscribe.mutate({ language, expectedSpeakers: m.expectedSpeakers }) },
     ]);
 
-  // "Vazifalar 2" - BITTA matn (Savol tabidagi "Vazifalar" tezkor chipi bilan adashmasin).
+  // "Vazifalar 2" - BITTA matn (Chat tabidagi "Vazifalar" tezkor chipi bilan adashmasin).
   const tabs = [
     { value: 'summary' as const, label: t('detail.tab.summary'), icon: Sparkles },
     { value: 'transcript' as const, label: t('detail.tab.transcript'), icon: ScrollText },
     { value: 'actions' as const, label: m.openActionItems ? `${t('detail.tab.actions')} ${m.openActionItems}` : t('detail.tab.actions'), icon: ListChecks },
-    { value: 'ask' as const, label: t('detail.tab.ask'), icon: MessageCircleQuestionMark },
+    { value: 'chat' as const, label: t('detail.tab.chat'), icon: MessagesSquare },
   ];
 
   const uploadCard = uploading && localRow ? <UploadStatusCard row={localRow} onDeleted={leaveRecording} /> : null;
@@ -337,11 +351,17 @@ function MeetingBody({
           {uploadCard ? <View style={s.cardGap}>{uploadCard}</View> : null}
           <TranscriptView meeting={m} focus={seek} onSeek={onSeek} />
         </View>
+      ) : tab === 'chat' ? (
+        // Yozish maydoni pastda qotib turadi, ro'yxat o'zi aylanadi - tashqi ScrollView ichiga qo'yilmaydi.
+        <View style={s.root}>
+          {uploadCard ? <View style={[s.cardGap, s.edgeCard]}>{uploadCard}</View> : null}
+          <ChatView key={m.id} meeting={m} speakers={m.speakers} onSeek={onSeek} bottomInset={dockHeight} />
+        </View>
       ) : tab === 'summary' && summaryMode === 'map' ? (
         // Xarita o'zi ikki tomonga aylanadi - tashqi ScrollView ichiga qo'yilmaydi.
         <View style={s.root}>
           <View style={s.mapHead}>{modeSwitch}</View>
-          {uploadCard ? <View style={[s.cardGap, s.mapCard]}>{uploadCard}</View> : null}
+          {uploadCard ? <View style={[s.cardGap, s.edgeCard]}>{uploadCard}</View> : null}
           <MindMapTab meeting={m} summaryId={summaryId} onSeek={onSeek} />
         </View>
       ) : (
@@ -360,7 +380,6 @@ function MeetingBody({
             />
           ) : null}
           {tab === 'actions' ? <ActionItemsView meeting={m} speakers={m.speakers} onSeek={onSeek} /> : null}
-          {tab === 'ask' ? <AskView meeting={m} speakers={m.speakers} onSeek={onSeek} /> : null}
         </ScrollView>
       )}
 
@@ -427,7 +446,8 @@ const s = StyleSheet.create({
   transcript: { flex: 1, paddingHorizontal: 12, paddingTop: 10 },
   scroll: { padding: 12, paddingBottom: 32 },
   cardGap: { marginBottom: 12 },
-  mapCard: { marginHorizontal: 12, marginTop: 10, marginBottom: 0 },
+  // Chetsiz konteyner (xarita, chat) ichidagi yuklash kartasi: o'zi chekinadi.
+  edgeCard: { marginHorizontal: 12, marginTop: 10, marginBottom: 0 },
   modeSwitch: { marginBottom: 10 },
   mapHead: { paddingHorizontal: 12, paddingTop: 12 },
   headerActions: { flexDirection: 'row', alignItems: 'center' },

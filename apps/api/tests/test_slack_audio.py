@@ -169,6 +169,9 @@ def test_mos_kelmaydigan_format_tugmasiz(slack, monkeypatch):
     assert failed["text"] == "Matnga o'girib bo'lmadi: Bu audio formati qo'llab-quvvatlanmaydi (mp3, m4a, aac, wav)."
     assert elements(failed) == []
     assert [d["ts"] for d in client.deleted] == [client.posted[0]["ts"]]      # "⏳" xabari o'chdi
+    # Xato xabari faylni belgilaydi (chatdagi savol bu audioni kutmaydi), yig'ilish belgisi emas.
+    assert render.fail_marked(failed) == "F4" and render.marked(failed) is None
+    assert failed["blocks"][0]["block_id"] == render.fail_mark("F4") == "barno-fail:F4"
 
 
 def test_yuklab_bolmasa_qayta_urinish_tugmasi(slack, monkeypatch, _isolated_meetings):
@@ -182,6 +185,7 @@ def test_yuklab_bolmasa_qayta_urinish_tugmasi(slack, monkeypatch, _isolated_meet
     meeting.handle(client, "D1", None, [AUDIO])
     [retry] = elements(client.visible()[0])
     assert (retry["action_id"], retry["value"]) == ("barno_retry", "f:F1")
+    assert render.fail_marked(client.visible()[0]) == "F1"
 
     monkeypatch.setattr(transcribe, "download", real)
     meeting.on_action(client, {"actions": [retry], "channel": {"id": "D1"}, "message": {}},
@@ -198,6 +202,7 @@ def test_kunlik_limit_tugasa_yozuv_ochiriladi(slack, monkeypatch, _isolated_meet
     [failed] = client.visible()
     assert "limiti tugagan" in failed["text"] and elements(failed) == []
     assert _meetings(_isolated_meetings)[1] == 0
+    assert render.fail_marked(failed) == "F1"
 
 
 def test_hisob_sozlanmagan(slack, monkeypatch):

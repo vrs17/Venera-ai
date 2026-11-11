@@ -33,7 +33,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: 'Barno AI',
   slug: 'venera-yozuv',
-  version: '1.3.8',
+  version: '1.3.9',
   scheme: 'venera-rec',
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
@@ -42,7 +42,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   icon: './assets/icon.png',
   android: {
     package: 'uz.brbtech.venera.meetings',
-    versionCode: 13,
+    versionCode: 14,
     // Adaptive ikonka (Android 8+): oq fon + yulduzcha (qatlamning 50% - har qanday niqobda uchlari kesilmaydi).
     // monochromeImage - Android 13+ "mavzuli ikonkalar" yoqilganda rangni tizim beradi.
     adaptiveIcon: {

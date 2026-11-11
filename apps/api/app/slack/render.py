@@ -20,6 +20,13 @@ SECTION_CHARS = 2900
 MESSAGE_BLOCKS = 45
 #: Yig'ilish belgisi (`block_id`): thread'dagi savol va tugmalar yig'ilishni shundan topadi.
 MARK = "barno:"
+#: Chatdagi (thread'dan tashqaridagi) savol yozuvni faqat shu belgilardan oladi (`meeting.latest`): xulosa kartasi
+#: (tegsiz) va chat javobi (`chat`). Bayonnoma menyusi (`minutes`) kabi tugma natijalari - yo'q: eski kartada bosilgan
+#: tugma keyingi savollarni eski yozuvga burib yubormasin.
+LATEST_TAGS = ("", "chat")
+#: Audio xatosi belgisi (`block_id`, `fail_mark`): "Matnga o'girib bo'lmadi" xabari qaysi fayl haqida - chatdagi savol
+#: (`meeting.latest`) o'sha audioni "tayyorlanmoqda" deb kutmaydi. `MARK` bilan boshlanmaydi - `marked` uni olmaydi.
+FAIL_MARK = "barno-fail:"
 #: Qayta o'girish tillari (`schemas.meetings.Lang`).
 LANG_NAMES = {"uz": "o'zbek", "ru": "rus", "en": "ingliz"}
 #: Eksport menyusi: qiymat -> nom. Transkript TXT - alohida tugmada (`TRANSCRIPT_BUTTON`, 2026-11-11); eski
@@ -31,6 +38,21 @@ EXPORTS = (("transcript_srt", "Transkript (SRT)"), ("summary_md", "Xulosa (MD)")
 TRANSCRIPT_BUTTON = "📥 Transkriptni yuklab olish"
 #: Tugmani bosgan odamga (faqat unga ko'rinadi): fayl qayerda.
 TRANSCRIPT_SENT = "📥 Transkript fayli shu xulosa ostidagi thread'ga yuklandi - thread'ni ochib, faylni yuklab oling."
+#: Xulosa kartasi ostidagi eslatma: chatga (thread'dan tashqarida) yozilgan savol - OXIRGI yozuv chati
+#: (`meeting.on_text`), oldingi yozuvlar - o'z xabarining thread'ida (`meeting.question`).
+CHAT_HINT = ("💬 Savolingizni shu chatga yozing - Barno shu yozuv bo'yicha javob beradi va suhbatni eslab qoladi. "
+             "Oldingi yozuvlar haqida - o'sha yozuv xabarining thread'ida so'rang.")
+#: Javob ostidagi tugma (`chat_actions`): suhbat xotirasini tozalaydi (`meeting.chat_reset`).
+CHAT_RESET_BUTTON = "🔄 Yangi suhbat"
+#: «🔄 Yangi suhbat» bosilgach - tugma turgan joyga (thread yoki chatning o'zi).
+CHAT_RESET_DONE = "🔄 Yangi suhbat boshlandi - keyingi savollar oldingi savol-javoblarni hisobga olmaydi."
+#: Thread'dan tashqaridagi savol, chatdagi oxirgi audio esa hali matnga o'girilmoqda (`meeting.on_text`). O'girib
+#: bo'lmagan yoki o'chirilgan audio "tayyorlanmoqda" emas - savol oldingi yozuvga (`meeting.latest`).
+CHAT_PENDING = "⏳ Oxirgi audio hali tayyorlanmoqda - matn va xulosa chiqqach savol bering."
+#: ... chat tarixini o'qib bo'lmadi (Slack xatosi): yozuv bormi-yo'qmi noma'lum - «🎙 Plaud» yo'riqnomasi emas va
+#: cheklovsiz (har savolga), aks holda ikkinchi savol javobsiz qolardi.
+CHAT_UNREAD = ("Chat tarixini o'qib bo'lmadi - birozdan keyin qayta yozing yoki savolni yozuv xabarining "
+               "thread'ida bering.")
 
 _ID = re.compile(r"[0-9a-f]{32}")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
@@ -105,14 +127,29 @@ def mark(meeting_id: str, tag: str = "") -> str:
     return f"{MARK}{meeting_id}:{tag}" if tag else f"{MARK}{meeting_id}"
 
 
-def marked(message: dict[str, Any] | None) -> str | None:
-    """Xabar bloklaridagi yig'ilish id'si (`mark`) yoki `None`."""
+def marked(message: dict[str, Any] | None, *, tags: tuple[str, ...] | None = None) -> str | None:
+    """Xabar bloklaridagi yig'ilish id'si (`mark`) yoki `None`. `tags` - faqat shu teglisi ("" - tegsiz,
+    `LATEST_TAGS`); `None` - har qanday."""
     for block in (message or {}).get("blocks") or []:
         block_id = str(block.get("block_id") or "")
         if block_id.startswith(MARK):
-            meeting_id = block_id[len(MARK):].split(":", 1)[0]
-            if _ID.fullmatch(meeting_id):
+            meeting_id, _, tag = block_id[len(MARK):].partition(":")
+            if _ID.fullmatch(meeting_id) and (tags is None or tag in tags):
                 return meeting_id
+    return None
+
+
+def fail_mark(file_id: str) -> str:
+    """Audio xatosi xabarining belgisi (`FAIL_MARK`) - Slack fayli id'si bilan."""
+    return f"{FAIL_MARK}{file_id}"
+
+
+def fail_marked(message: dict[str, Any] | None) -> str | None:
+    """Xabar bloklaridagi audio xatosi belgisi (`fail_mark`) - fayl id'si yoki `None`."""
+    for block in (message or {}).get("blocks") or []:
+        block_id = str(block.get("block_id") or "")
+        if block_id.startswith(FAIL_MARK) and len(block_id) > len(FAIL_MARK):
+            return block_id[len(FAIL_MARK):]
     return None
 
 
@@ -129,7 +166,7 @@ def button(text: str, action_id: str, value: str, *, confirm: dict[str, Any] | N
 
 
 def controls(meeting_id: str, language: str, templates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Xulosa ostidagi tugmalar va savol haqida eslatma. Qiymatlarda yig'ilish id'si bor."""
+    """Xulosa ostidagi tugmalar va chat haqida eslatma (`CHAT_HINT`). Qiymatlarda yig'ilish id'si bor."""
     elements = [
         # Birinchi: transkript endi chatda yo'q - uni olishning yagona yo'li shu tugma.
         button(TRANSCRIPT_BUTTON, "barno_transcript", meeting_id),
@@ -156,8 +193,21 @@ def controls(meeting_id: str, language: str, templates: list[dict[str, Any]]) ->
                                        "sarflanadi, eski transkript va xulosa almashtiriladi.")},
                                    "confirm": {"type": "plain_text", "text": "O'girish"},
                                    "deny": {"type": "plain_text", "text": "Bekor qilish"}}))
-    return [{"type": "actions", "block_id": mark(meeting_id), "elements": elements},
-            context("Savol bo'lsa, shu xabarga thread'da yozing.")]
+    return [{"type": "actions", "block_id": mark(meeting_id), "elements": elements}, context(CHAT_HINT)]
+
+
+def chat_actions(meeting_id: str) -> dict[str, Any]:
+    """Chat javobi ostidagi «🔄 Yangi suhbat» (`barno_chat_reset`, qiymati - yig'ilish id'si). `block_id` - yig'ilish
+    belgisi `chat` tegi bilan (`mark`): xabarda takrorlanmaydi, thread'dan tashqaridagi javobda esa keyingi savolni
+    ham shu yozuvga bog'laydi (`meeting.latest`)."""
+    return {"type": "actions", "block_id": mark(meeting_id, "chat"),
+            "elements": [button(CHAT_RESET_BUTTON, "barno_chat_reset", meeting_id)]}
+
+
+def chat_title(title: str) -> str:
+    """Thread'dan tashqaridagi savolga javobning birinchi qatori - qaysi yozuv bo'yicha (`meeting.on_text`)."""
+    name = " ".join(str(title or "").split())[:120] or "Nomsiz yozuv"
+    return f"📼 «{escape(name)}» bo'yicha:"
 
 
 def retry_button(value: str) -> dict[str, Any]:
@@ -171,7 +221,8 @@ MINUTES_PROMPT = "📄 *Bayonnoma* - hujjat tilini tanlang:"
 def minutes_menu(meeting_id: str, default: str) -> list[dict[str, Any]]:
     """Bayonnoma tili tugmalari (`minutes.text.LANGS`): tavsiya etilgani (yig'ilish tilidan
     `default_lang`) BIRINCHI va `primary` - bank hujjati odatda kirillda, lekin tanlov odamniki.
-    Qiymat `yig'ilish|til`; `block_id` yig'ilish belgisini olib yuradi (`mark`)."""
+    Qiymat `yig'ilish|til`; `block_id` yig'ilish belgisini olib yuradi (`mark`, `minutes` tegi - chatdagi savol uni
+    oxirgi yozuv deb olmaydi, `LATEST_TAGS`)."""
     order = [default] + [lang for lang in minutes_text.LANGS if lang != default]
     buttons = []
     for lang in order:

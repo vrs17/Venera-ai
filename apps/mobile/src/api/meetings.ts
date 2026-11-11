@@ -21,8 +21,10 @@ import {
 import type {
   ActionItem,
   AuthUser,
-  AskAnswer,
-  AskRequest,
+  ChatHistory,
+  ChatRequest,
+  ChatReset,
+  ChatTurn,
   ChunkResponse,
   CompleteRequest,
   CreateActionItemRequest,
@@ -198,11 +200,14 @@ export function createMeetingsApi(client: ApiClient) {
     // 25
     myActionItems: (status: 'open' | 'done' | 'all' = 'open', limit = 100) =>
       client.request<{ items: GlobalActionItem[] }>(`${M}/action-items`, { query: { status, limit } }),
-    // 26 - javobni v3 yozadi (o'nlab soniya)
-    ask: (id: string, body: AskRequest) =>
-      client.request<AskAnswer>(`${M}/${enc(id)}/ask`, { method: 'POST', body, timeoutMs: AI_TIMEOUT_MS }),
-    // 27
-    questions: (id: string) => client.request<{ items: AskAnswer[] }>(`${M}/${enc(id)}/questions`),
+    // 26a - yozuv bo'yicha chat (bir martalik Savol #26-27 o'rniga): faol savol-javoblar eskidan yangiga
+    chatHistory: (id: string) => client.request<ChatHistory>(`${M}/${enc(id)}/chat`),
+    // 26b - javobni Claude yozadi: shu yozuv matni, xulosasi va suhbatning oldingi qismi bilan (o'nlab soniya).
+    // `clientId` - idempotentlik kaliti: o'sha kalit bilan qayta yuborish takror savol-javob yaratmaydi.
+    sendChat: (id: string, body: ChatRequest) =>
+      client.request<ChatTurn>(`${M}/${enc(id)}/chat`, { method: 'POST', body, timeoutMs: AI_TIMEOUT_MS }),
+    // 26c - "Yangi suhbat": faol savol-javoblar arxivlanadi (serverda qoladi, modelga boshqa bormaydi)
+    resetChat: (id: string) => client.request<ChatReset>(`${M}/${enc(id)}/chat`, { method: 'DELETE' }),
     // 28 - pleer `{uri, headers: {Authorization}}` bilan o'zi oladi
     audioUrl: (id: string) => client.url(`${M}/${enc(id)}/audio`),
     // 28b - ulashish uchun o'sha audio: `attachment` va odamga tushunarli nom bilan

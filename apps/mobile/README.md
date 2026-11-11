@@ -18,8 +18,11 @@ server mobil kanalni AI dvigatel v3 ("Barno Core") ga yo'naltiradi
 oladi, Barno AI serveriga yuklaydi va natijani ko'rsatadi: spikerlar bo'yicha
 ajratilgan transkript (chat ko'rinishida), xulosa (vazifalar, qarorlar, ochiq
 savollar, xavflar, raqamlar, sanalar va boshqalar; ostida qaysi model yozgani -
-"Xulosa: Barno Core" / "GPT (...)" / "Gemma"), vazifalar ro'yxati va yig'ilish
-bo'yicha savol. Vazifani **CRMga qo'shish** - Barno (v3) CRM vazifasi TAKLIFINI
+"Xulosa: Barno Core" / "GPT (...)" / "Gemma"), vazifalar ro'yxati va **Chat** tabi -
+shu bitta yozuv bo'yicha Barno bilan suhbat (`/meetings/{id}/chat`, javobni Claude yozadi,
+suhbatni eslab qoladi; Telegram'dagi savollar bilan bitta suhbat, Slack'da esa har odamning suhbati
+alohida; "Yangi suhbat" eskisini arxivlaydi; har xabar o'z `clientId` kaliti bilan ketadi - javob yo'lda
+yo'qolsa ham "Qayta yuborish" takror savol-javob yaratmaydi). Vazifani **CRMga qo'shish** - Barno (v3) CRM vazifasi TAKLIFINI
 tayyorlaydi, ilova uni kartada ko'rsatadi va faqat "Tasdiqlash" dan keyin CRM ga
 yoziladi (chatdagi taklif kartalari bilan aynan bir yo'l: `/api/v1/actions`). Unga Sozlamalardagi
 **"Yig'ilish yozuvlari"** qatori va yon tugma (`venera-rec://record`, 6-bo'lim)

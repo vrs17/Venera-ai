@@ -136,10 +136,11 @@ def minutes() -> dict[str, Any]:
 
 
 def for_op(op: str, system: str = "") -> dict[str, Any] | None:
-    """Amal (`op`) -> sxema; noma'lum amal - `None` (oddiy JSON rejimi)."""
+    """Amal (`op`) -> sxema; noma'lum amal - `None` (oddiy JSON rejimi). Yig'ilish chati (`meeting_chat`) -
+    savol-javob bilan bir xil shakl."""
     if op == "meeting_extract":
         return extract(follow_up='"followUpMessage"' in system)
     builders = {"meeting_map": map_part, "meeting_write": writer, "meeting_verify": verify,
-                "meeting_classify": classify, "meeting_ask": ask, "meeting_minutes": minutes}
+                "meeting_classify": classify, "meeting_ask": ask, "meeting_chat": ask, "meeting_minutes": minutes}
     build = builders.get(op)
     return build() if build else None

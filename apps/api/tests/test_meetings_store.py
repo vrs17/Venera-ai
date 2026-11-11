@@ -157,6 +157,79 @@ def test_kvota_odam_va_xizmat(tmp_path):
     st.close_all()
 
 
+def test_chat_navbatlari_sorovchi_boyicha_va_xotiraga_boglangan_saqlash(tmp_path):
+    """Umumiy hisobda (Slack) har so'rovchining (`asker`) suhbati alohida: o'qish, "Yangi suhbat" va eski ro'yxat
+    (`questions` - faqat hisob egasiniki). `add_turn`: javob qurilgan xotira qatorlari kutish paytida arxivga
+    o'tgan bo'lsa, yangi navbat O'SHA vaqt bilan arxivda tug'iladi; xotirasiz yoki tozalashsiz - faol."""
+    st = MeetingStore(tmp_path / "m")
+    mid = _meeting(st, 1)["id"]
+    now = int(time.time())
+
+    def turn(qid: str, asker: str | None = None, used: tuple[str, ...] = ()) -> int | None:
+        return st.add_turn({"id": qid, "meeting_id": mid, "question": qid, "answer": "!", "asker": asker,
+                            "created_at": now}, used=used)["archived_at"]
+
+    assert turn("o1") is None and turn("a1", "slack:U1") is None and turn("b1", "slack:U2") is None
+    assert turn("o2", used=("o1",)) is None and turn("a2", "slack:U1", used=("a1",)) is None
+    assert [q["id"] for q in st.chat_turns(mid)] == ["o1", "o2"]
+    assert [q["id"] for q in st.chat_turns(mid, asker="slack:U1")] == ["a1", "a2"]
+    assert [q["id"] for q in st.chat_turns(mid, 1, asker="slack:U1")] == ["a2"]
+    assert [q["id"] for q in st.questions(mid)] == ["o2", "o1"]                  # faqat egasiniki
+    assert st.archive_questions(mid, now - 5, asker="slack:U1") == 2
+    assert st.chat_turns(mid, asker="slack:U1") == [] and len(st.chat_turns(mid)) == 2
+    assert [q["id"] for q in st.chat_turns(mid, asker="slack:U2")] == ["b1"]
+    # Javob kutilayotganda U1 suhbati tozalangan edi (a1, a2 arxivda): yangi navbat ham arxivda, o'sha vaqt bilan.
+    assert turn("a3", "slack:U1", used=("a1", "a2")) == now - 5
+    assert st.row("SELECT archived_at FROM questions WHERE id='a3'")["archived_at"] == now - 5
+    assert st.chat_turns(mid, asker="slack:U1") == []
+    assert turn("a4", "slack:U1") is None and [q["id"] for q in st.chat_turns(mid, asker="slack:U1")] == ["a4"]
+    assert st.archive_questions(mid, now) == 2 and st.questions(mid) == []      # egasiniki; boshqalar joyida
+    assert [q["id"] for q in st.chat_turns(mid, asker="slack:U2")] == ["b1"]
+    assert st.scalar("SELECT COUNT(*) FROM questions WHERE meeting_id=?", (mid,)) == 7   # yumshoq: hech biri o'chmagan
+    st.close_all()
+
+
+def test_chat_navbati_klient_kaliti_takrori_va_matn_versiyasi(tmp_path):
+    """`add_turn` saqlash tranzaksiyasida: shu so'rovchining shu kalitli FAOL navbati bor - yangisi yozilmaydi, o'sha
+    qaytadi (boshqa so'rovchi, boshqa yig'ilish, kalitsiz yoki arxivdagi navbat band qilmaydi); savol boshidagi
+    `transcript_gen` (transkript butunlay almashgani) o'zgargan yoki transkript endi tayyor emas - navbat HOZIRGI vaqt
+    bilan arxivda tug'iladi; qator tahriri (`transcript_rev`) esa navbatga tegmaydi."""
+    st = MeetingStore(tmp_path / "m")
+    mid = _meeting(st, 1, stt_engine="gapi", transcript_rev=1, transcript_gen=1)["id"]
+    other = _meeting(st, 1, stt_engine="gapi", transcript_rev=1, transcript_gen=1)["id"]
+    now = int(time.time())
+
+    def turn(qid: str, key: str | None = None, *, asker: str | None = None, gen: int | None = 1,
+             meeting: str | None = None) -> dict:
+        return st.add_turn({"id": qid, "meeting_id": meeting or mid, "question": qid, "answer": "!", "asker": asker,
+                            "client_id": key, "created_at": now}, gen=gen)
+
+    first = turn("q1", "k-0000001")
+    assert (first["id"], first["client_id"], first["archived_at"]) == ("q1", "k-0000001", None)
+    assert turn("q2", "k-0000001") == first                                     # takror - yozilmadi
+    assert st.turn_by_client(mid, "k-0000001") == first
+    assert turn("q3", "k-0000001", asker="slack:U1")["id"] == "q3"              # boshqa so'rovchi
+    assert st.turn_by_client(mid, "k-0000001", asker="slack:U1")["id"] == "q3"
+    assert turn("q4", "k-0000001", meeting=other)["id"] == "q4"                 # boshqa yig'ilish
+    assert turn("q5")["id"] == "q5" and turn("q6")["id"] == "q6"                # kalitsiz - har biri yangi
+    assert st.archive_questions(mid, now) == 3 and st.turn_by_client(mid, "k-0000001") is None   # q1, q5, q6
+    assert st.turn_by_client(mid, "k-0000001", asker="slack:U1")["id"] == "q3"
+    assert turn("q7", "k-0000001")["id"] == "q7"                                # arxivdagisi band qilmaydi
+    assert st.scalar("SELECT COUNT(*) FROM questions WHERE id='q2'") == 0
+    # Transkript avlodi: savol boshidagisi bilan bir xil va transkript tayyor - faol; aks holda arxivda tug'iladi.
+    assert turn("r1", gen=1)["archived_at"] is None and turn("r2", gen=None)["archived_at"] is None
+    assert now <= turn("r3", gen=0)["archived_at"] <= int(time.time())          # transkript almashgan
+    st.update_meeting(mid, status="transcribing", stt_engine=None)              # qayta o'girilmoqda
+    assert turn("r4", gen=1)["archived_at"] is not None
+    st.update_meeting(mid, status="summarizing", stt_engine="router")
+    assert turn("r5", gen=1)["archived_at"] is None
+    st.bump_rev(mid)                                                            # qator tahriri / birlashtirish
+    assert turn("r7", gen=1)["archived_at"] is None                             # ... navbatga tegmaydi
+    # Takror (faol navbat bor) matn qoidasidan oldin: o'sha qator qaytadi, yangisi yozilmaydi.
+    assert turn("r6", "k-0000001", gen=0)["id"] == "q7"
+    st.close_all()
+
+
 def test_sqlite_fk_buzilsa_xato(tmp_path):
     st = MeetingStore(tmp_path / "m")
     with pytest.raises(sqlite3.IntegrityError):
@@ -185,7 +258,7 @@ def test_migratsiya_v1_dan_v2_ga_malumot_bilan(tmp_path):
     conn.close()
 
     st = MeetingStore(root)
-    assert st.version() == store_mod.SCHEMA_VERSION == 6
+    assert st.version() == store_mod.SCHEMA_VERSION == 7
     # v4: eski yozuvning GAPI hisobi bo'sh - ya'ni birinchi kalit (`GAPI_API_KEY`).
     assert st.rows("SELECT stt_account FROM meetings WHERE id='m1'")[0]["stt_account"] is None
     summary = st.summary("m1", "s1")
@@ -240,7 +313,7 @@ def test_migratsiya_v6_manba_va_royxatdagi_orni(tmp_path):
     conn.close()
 
     st = MeetingStore(root)
-    assert st.version() == store_mod.SCHEMA_VERSION == 6
+    assert st.version() == store_mod.SCHEMA_VERSION == 7
     stored = {r["id"]: r["origin"] for r in st.rows("SELECT id, origin FROM meetings")}
     assert stored == {mid: ("slack" if mid == "slack" else None) for mid, *_ in rows}
 

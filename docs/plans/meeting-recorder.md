@@ -313,8 +313,8 @@ Declare the static paths (`/meetings/config`, `/meetings/action-items`) **before
 | 23 | `POST /meetings/{id}/action-items` | add a manual item |
 | 24 | `PATCH /meetings/{id}/action-items/{itemId}` | edit an item, mark done or dismiss |
 | 25 | `GET /meetings/action-items?status=open\|done\|all&limit=100` | my items across all meetings |
-| 26 | `POST /meetings/{id}/ask` | grounded Q&A about one meeting |
-| 27 | `GET /meetings/{id}/questions` | Ask history |
+| 26 | `POST /meetings/{id}/ask` | grounded Q&A about one meeting (since 2026-11-11 a chat turn, see 36-38) |
+| 27 | `GET /meetings/{id}/questions` | Ask history (the owner's active chat turns, newest first) |
 | 28 | `GET /meetings/{id}/audio` | playback (m4a, HTTP Range) |
 | 29 | `POST /auth/devices` | register this device and get a device token |
 | 30 | `POST /auth/devices/session` | device token → fresh Venera JWT |
@@ -323,6 +323,9 @@ Declare the static paths (`/meetings/config`, `/meetings/action-items`) **before
 | 33 | `POST /meetings/{id}/minutes` | start a Bayonnoma in the background (202) or get the ready / running one (200) |
 | 34 | `GET /meetings/{id}/minutes/{minutesId}` | Bayonnoma status (poll) and content |
 | 35 | `GET /meetings/{id}/minutes/{minutesId}/export?format=docx\|pdf\|md` | Bayonnoma file |
+| 36 | `GET /meetings/{id}/chat` | the meeting's chat: active turns, oldest first, and the answering model |
+| 37 | `POST /meetings/{id}/chat` | send a chat message (answered with this chat's memory) |
+| 38 | `DELETE /meetings/{id}/chat` | "Yangi suhbat": archive the active turns (soft reset) |
 
 #### 1. `GET /meetings/config` → 200
 
@@ -555,6 +558,8 @@ interface ActionItem {
   ```
   Errors: 429 `rate_limited` (`MEETINGS_ASK_PER_HOUR`); 409 `not_ready`; 503 `llm_unavailable`.
 - `GET /meetings/{id}/questions` → `{"items": [the same objects]}`, newest first.
+- Since 2026-11-11 both are the owner's chat (36-38): `/ask` stores a chat turn and is answered with the chat's
+  memory; `/questions` lists only the owner's active turns. The response shapes are unchanged.
 
 #### 28. `GET /meetings/{id}/audio` → 200 or 206 `audio/mp4`
 
@@ -622,6 +627,56 @@ interface MinutesView {
   `docx_unavailable` / `export_busy` (+ `Retry-After`); 429 `export_busy` (same user already exporting);
   422 for another format.
 
+#### 36-38. Chat (one audio = one conversation, 2026-11-11; service `services/meetings/chat.py`)
+
+```ts
+// the Ask object (26) plus where it was asked, who answered and the message's client key;
+// all null on pre-chat rows (clientId is also null for keyless senders: Slack, Telegram)
+interface ChatTurn { id: string; question: string; answer: string;
+                     citations: { segmentId: number; start: number; speaker: string | null; text: string }[];
+                     followUps: string[]; createdAt: string; channel: string | null; model: string | null;
+                     clientId: string | null }
+```
+- `GET /meetings/{id}/chat` → 200 `{"items": [ChatTurn], "model": "claude-sonnet-5-5"}`: the owner's active
+  turns, oldest first. `model` is the first configured link of the chain a message would use (the brain
+  `agent` link included), `""` if none. No transcript is needed (the list is just empty).
+- `POST /meetings/{id}/chat` with `{message: string (1..1000, not blank), language?: Lang,
+  channel?: 'mobile' | 'web' | 'miniapp' | 'desktop' | 'api', clientId?: string}` → 200 `ChatTurn`. Errors as
+  in Ask: 404, 409 `not_ready`, 429 `rate_limited` (one hourly limiter for chat and Ask,
+  `MEETINGS_ASK_PER_HOUR=60`), 503 `llm_unavailable`, 422.
+- Idempotency (`clientId`, optional; 8..64 chars of `[A-Za-z0-9_-]`, anything else 422): the app gives every
+  message a random key and «Qayta yuborish» resends the SAME key, so a retry after an ambiguous failure (proxy
+  504, dropped connection, timeout) never creates a second turn. The key is scoped by (meeting, asker, key) and
+  checked before the rate limiter and the model:
+  1. an active turn with that key exists → it is returned as is: no model call, no rate token (the message
+     text is not compared);
+  2. the same key is still being answered in this process → the request waits for it (up to
+     `MEETINGS_ASK_DEADLINE` + 15 s) and looks again;
+  3. nothing stored (the first attempt failed) → a normal attempt that stores the key with its turn.
+
+  The insert transaction re-checks the key, so even a parallel attempt never writes a second active row. An
+  archived turn does not hold its key. Bots (Slack, Telegram) send no key. The app reconciles its pending or
+  errored bubble with history by `clientId`.
+- `DELETE /meetings/{id}/chat` → 200 `{"archived": n}`. Ownership only, no transcript needed.
+- Memory: the chat is the meeting's active `questions` rows. A message is answered from this meeting's
+  transcript, its primary summary notes and the last `MEETINGS_CHAT_HISTORY_TURNS` turns (Claude: as
+  user/assistant messages, text only; other chain links: a "Conversation so far" block). Nothing from other
+  meetings.
+- Reset is soft: rows get `archived_at` and leave the memory and every list; nothing is deleted. A
+  re-transcription archives every active turn (old citations would point at new lines). If a reset lands while
+  an answer is being written, the answer is still returned, but its turn is stored already archived: it is tied
+  to the memory rows it was built on (their ids, not the clock, because times have 1-second resolution). The
+  same happens when the transcript changes meanwhile, which also covers a first message with no memory: the
+  insert transaction re-reads `transcript_gen`, `status` and `stt_engine`, and a generation other than the one
+  read when the message started, or a transcript that is no longer ready (re-transcription), stores the turn
+  archived. `meetings.transcript_gen` (v7) is bumped only when the whole transcript is replaced
+  (`replace_transcript`); segment edits and speaker merges bump `transcript_rev` only, keep line ids, and leave
+  an in-flight turn active.
+- Asker scoping (Slack): all Slack users share one account (`SLACK_ACTOR_ID`), so a turn also stores `asker`
+  (`slack:<user id>`; NULL = the owner's own channels: app, web, Telegram). Memory, reset and the in-flight
+  rule are per asker; GET `/chat` and `/questions` show owner rows only. Only server-side channels set it; the
+  HTTP API never takes `asker`. The hourly limit stays per account.
+
 ### 3.3 Processing states
 
 ```
@@ -685,7 +740,9 @@ data/devices.db                            # device tokens (app/services/devices
 - `summary_parts(meeting_id FK CASCADE, transcript_rev INT, prompt_version TEXT, template TEXT, language TEXT, part INT, first_id INT, last_id INT, content_json TEXT, created_at INT, PK(meeting_id,transcript_rev,prompt_version,template,language,part))`
   is the map-step cache, used for crash-safe resume.
 - `action_items(id TEXT PK, meeting_id FK CASCADE, summary_item_id TEXT, task TEXT, owner_speaker TEXT, owner_name TEXT, owner_kind TEXT, due_date TEXT, due_time TEXT, due_raw TEXT, priority TEXT, status TEXT, origin TEXT, edited INT, needs_confirmation INT, source_ids TEXT JSON, quote TEXT, created_at INT, updated_at INT)`
-- `questions(id TEXT PK, meeting_id FK CASCADE, question TEXT, answer TEXT, citations TEXT JSON, follow_ups TEXT JSON, created_at INT)`
+- `questions(id TEXT PK, meeting_id FK CASCADE, question TEXT, answer TEXT, citations TEXT JSON, follow_ups TEXT JSON, created_at INT)`;
+  v7 (chat, 36-38) adds `channel TEXT, model TEXT, language TEXT, archived_at INT, asker TEXT, client_id TEXT`
+  and the index `questions_client(meeting_id, client_id)` (not unique: archived turns may keep a key).
 - `quota_days(day TEXT, actor_id INT, audio_sec REAL, jobs INT, PK(day, actor_id))`, where
   `actor_id=0` is the service total. It is persisted because the Gapi client's counters reset on
   restart.
@@ -1569,12 +1626,13 @@ cd android && ./gradlew assembleRelease   # app/build/outputs/apk/release/app-re
 `MEETINGS_RETENTION_DAYS=180`, `MEETINGS_UPLOAD_TTL_HOURS=72`, `MEETINGS_STT_TIMEOUT=120`,
 `MEETINGS_STT_DEADLINE=3600`, `MEETINGS_LLM_MODEL=""` (→ `ollama_model` gemma4:31b),
 `MEETINGS_LLM_TIMEOUT=180`, `MEETINGS_LLM_NUM_CTX=0`, `MEETINGS_SINGLE_PASS_CHARS=45000`,
-`MEETINGS_MAP_CHARS=24000`, `MEETINGS_VERIFY=true`, `MEETINGS_ASK_PER_HOUR=30`,
-`MEETINGS_SUMMARY_PER_HOUR=10`, `DEVICE_TOKEN_DAYS=30`.
+`MEETINGS_MAP_CHARS=24000`, `MEETINGS_VERIFY=true`, `MEETINGS_ASK_PER_HOUR=60` (30 until 2026-11-11; shared
+by chat and Ask), `MEETINGS_SUMMARY_PER_HOUR=10`, `DEVICE_TOKEN_DAYS=30`. Chat keys (`MEETINGS_CHAT_*`):
+`docs/deploy-api.md`.
 
 ### Backend module map
 
-`app/services/meetings/{__init__.py (start/stop/status singletons), store.py, audio.py, transcribe.py, prompts.py, templates.py, summarize.py, dates.py, ask.py, export.py, worker.py, errors.py}`,
+`app/services/meetings/{__init__.py (start/stop/status singletons), store.py, audio.py, transcribe.py, prompts.py, templates.py, summarize.py, dates.py, ask.py, chat.py, export.py, worker.py, errors.py}`,
 `app/services/devices.py`, `app/schemas/meetings.py`, `app/schemas/devices.py`,
 `app/api/v1/meetings.py`, `app/api/v1/devices.py`, plus one include line each in
 `app/api/v1/__init__.py`. Additive edits only: `integrations/gapi_stt.py`, `integrations/ollama.py`,

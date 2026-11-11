@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from typing import Any
 
 from app.api import deps
@@ -18,7 +20,12 @@ BOT_USER = "UBOT"
 
 
 class FakeSlack:
-    """`WebClient` ning ishlatiladigan metodlari: yuborilgan, yangilangan, o'chirilgan va yuklangan narsalar yoziladi."""
+    """`WebClient` ning ishlatiladigan metodlari: yuborilgan, yangilangan, o'chirilgan va yuklangan narsalar yoziladi.
+
+    Chat tarixi (`conversations_history`) - Slack'dagidek chatning o'zidan (`timeline`): Barno'ning thread'dan
+    tashqaridagi xabarlari (oxirgi tahriri bilan, o'chirilgani yo'q) va odam yozganlari (`say`). `history` da
+    qo'lda berilgan kanal - aynan o'sha ro'yxat. `history_error` - tarix o'qilmaydi: istisno ko'tariladi, lug'at esa
+    Slack javobi sifatida qaytadi (`{"ok": False, ...}`)."""
 
     def __init__(self, files: dict[str, dict] | None = None, parents: dict[str, dict] | None = None,
                  upload_error: Exception | None = None) -> None:
@@ -29,6 +36,11 @@ class FakeSlack:
         self.published: list[dict] = []
         self.ephemeral: list[dict] = []
         self.history: dict[str, list[dict]] = {}
+        #: (kanal, ts) -> xabar, yozilish tartibida (thread'dan tashqaridagilar).
+        self.timeline: dict[tuple[str, str], dict] = {}
+        self.history_reads: list[dict] = []
+        self.history_error: Exception | dict | None = None
+        self.said = 0
         self.files = files or {}
         self.parents = parents or {}
         self.upload_error = upload_error
@@ -36,15 +48,36 @@ class FakeSlack:
     def chat_postMessage(self, **kwargs):
         kwargs["ts"] = f"100.{len(self.posted) + 1}"
         self.posted.append(kwargs)
+        if not kwargs.get("thread_ts"):
+            self.timeline[(kwargs["channel"], kwargs["ts"])] = as_parent(kwargs)
         return {"ok": True, "ts": kwargs["ts"]}
 
     def chat_update(self, **kwargs):
         self.updated.append(kwargs)
+        message = self.timeline.get((kwargs.get("channel"), kwargs.get("ts")))
+        if message is not None:
+            message.update(text=kwargs.get("text"), blocks=kwargs.get("blocks"))
         return {"ok": True}
 
     def chat_delete(self, **kwargs):
         self.deleted.append(kwargs)
+        self.timeline.pop((kwargs.get("channel"), kwargs.get("ts")), None)
         return {"ok": True}
+
+    def say(self, channel: str = "D1", text: str = "", *, user: str = "U1", files: list[dict] | None = None,
+            thread: str | None = None, ago: float = 0.0) -> dict:
+        """Odam chatga yozdi: thread'dan tashqarida bo'lsa - chat tarixiga. `ts` - Slack'dagidek epoch soniya
+        (`ago` soniya oldin; `meeting.AUDIO_PENDING_SEC`). Qaytaradi: Bolt `message` hodisasi."""
+        self.said += 1
+        event = {"type": "message", "channel_type": "im", "channel": channel, "user": user, "text": text,
+                 "ts": f"{int(time.time() - ago)}.{self.said:06d}"}
+        if files:
+            event["files"] = list(files)
+        if thread:
+            event["thread_ts"] = thread
+        else:
+            self.timeline[(channel, event["ts"])] = event
+        return event
 
     def visible(self) -> list[dict]:
         """Chatda QOLGAN xabarlar: jarayon xabari (`intake.Progress`) natija chiqqach o'chiriladi."""
@@ -68,8 +101,17 @@ class FakeSlack:
         self.ephemeral.append(kwargs)
         return {"ok": True}
 
-    def conversations_history(self, channel, **kwargs):
-        return {"messages": list(self.history.get(channel, []))}
+    def conversations_history(self, channel, limit=100, **kwargs):
+        """YANGISI birinchi, `limit` tagacha (Slack kabi)."""
+        self.history_reads.append({"channel": channel, "limit": limit, **kwargs})
+        if isinstance(self.history_error, Exception):
+            raise self.history_error
+        if self.history_error is not None:
+            return self.history_error
+        if channel in self.history:
+            return {"ok": True, "messages": list(self.history[channel])[:limit]}
+        return {"ok": True,
+                "messages": [m for (ch, _), m in reversed(self.timeline.items()) if ch == channel][:limit]}
 
     def conversations_replies(self, channel, ts, **kwargs):
         return {"messages": [self.parents[ts]] if ts in self.parents else []}

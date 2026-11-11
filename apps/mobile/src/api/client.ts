@@ -25,9 +25,9 @@ export const CLIENT_NAME = 'mobile';
 export const JSON_TIMEOUT_MS = 30_000;
 export const CHUNK_TIMEOUT_MS = 120_000;
 /**
- * AI dvigatel v3 javobini kutadigan so'rovlar (Savol, vazifani CRM ga): server o'zi
- * 120 s gacha kutadi (`MEETINGS_CRM_TIMEOUT`, Ask'da v3 deadline) - telefon undan
- * oldin uzib qo'ymasin, aks holda tayyor taklif "timeout" bo'lib ko'rinardi.
+ * AI javobini kutadigan so'rovlar (yozuv chati, vazifani CRM ga): server o'zi 120 s gacha
+ * kutadi (`MEETINGS_CRM_TIMEOUT`, chatda Claude mijozining timeout'i) - telefon undan
+ * oldin uzib qo'ymasin, aks holda tayyor javob "timeout" bo'lib ko'rinardi.
  */
 export const AI_TIMEOUT_MS = 150_000;
 /** Taklifni tasdiqlash: CRM ga yozish bir necha soniya - lekin JSON'dan uzoqroq kutamiz. */

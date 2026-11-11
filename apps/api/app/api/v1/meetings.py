@@ -1,4 +1,4 @@
-"""Yig'ilishlar bo'limi - `/api/v1/meetings` (spetsifikatsiya 3.2, 1-28; bayonnoma 32-35).
+"""Yig'ilishlar bo'limi - `/api/v1/meetings` (spetsifikatsiya 3.2, 1-28; bayonnoma 32-35; chat - `/{id}/chat`).
 
 Router'da MANTIQ YO'Q: har endpoint `services/meetings/service.py` ga (bayonnoma -
 `services/meetings/minutes/` ga) uzatadi.
@@ -265,12 +265,35 @@ def action_item_to_crm(meeting_id: str, item_id: str, body: schemas.CrmRequest |
     return service.action_item_to_crm(user, meeting_id, item_id, body)
 
 
-# --- savol-javob va audio --------------------------------------------------------------------------
+# --- yig'ilish chati (bitta audio - bitta suhbat), savol-javob va audio ----------------------------------
+
+
+@router.get("/{meeting_id}/chat", response_model=schemas.ChatHistory)
+def chat_history(meeting_id: str, user: AuthUser = Depends(meetings_access)) -> dict:
+    """Faol suhbat navbatlari (eskisi birinchi) va javob beradigan model nomi."""
+    return service.chat_history(user, meeting_id)
+
+
+@router.post("/{meeting_id}/chat", response_model=schemas.ChatTurn)
+def chat_send(meeting_id: str, body: schemas.ChatRequest, user: AuthUser = Depends(meetings_access)) -> dict:
+    """Xabar -> Barno javobi (transkript, xulosa va shu suhbat xotirasi bilan). `async` EMAS: modelni kutish
+    (o'nlab soniya) threadpool'da. `clientId` - idempotentlik: o'sha kalit bilan qayta yuborish takror navbat
+    yaratmaydi. Xatolar `/ask` dagidek: 404, 409 `not_ready`, 429, 503 `llm_unavailable`."""
+    return service.chat_send(user, meeting_id, body.message, body.language, channel=body.channel or "api",
+                             client_id=body.clientId)
+
+
+@router.delete("/{meeting_id}/chat", response_model=schemas.ChatReset)
+def chat_reset(meeting_id: str, user: AuthUser = Depends(meetings_access)) -> dict:
+    """Yangi suhbat: faol navbatlar arxivga (yumshoq - bazada qoladi, modelga va ro'yxatga bormaydi)."""
+    return service.chat_reset(user, meeting_id)
 
 
 @router.post("/{meeting_id}/ask", response_model=schemas.AskAnswer)
-def ask(meeting_id: str, body: schemas.AskRequest, user: AuthUser = Depends(meetings_access)) -> dict:
-    return service.ask(user, meeting_id, body.question, body.language)
+def ask(meeting_id: str, body: schemas.AskRequest, request: Request,
+        user: AuthUser = Depends(meetings_access)) -> dict:
+    """Eski ilovalar va web: endi chat navbati (suhbat xotirasi bilan), javob shakli o'zgarmagan."""
+    return service.ask(user, meeting_id, body.question, body.language, channel=channel_of(request))
 
 
 @router.get("/{meeting_id}/questions", response_model=schemas.QuestionList)

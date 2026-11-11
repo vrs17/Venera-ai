@@ -1,4 +1,5 @@
 import { callsPart } from './parts/calls';
+import { meetingChatPart } from './parts/meetingChat';
 import { minutesPart } from './parts/minutes';
 import { nav } from './parts/nav';
 import { recordingsPart } from './parts/recordings';
@@ -131,7 +132,7 @@ export const ru: Record<TKey, string> = {
   'detail.tab.summary': 'Итог',
   'detail.tab.transcript': 'Текст',
   'detail.tab.actions': 'Задачи',
-  'detail.tab.ask': 'Вопрос',
+  'detail.tab.chat': 'Чат',
   'detail.progress': '{status} - {p}%',
   'detail.languageWarning':
     'Похоже, запись в основном на другом языке - текст может быть неточным. Расшифровать заново на русском/английском (без спикеров)?',
@@ -333,16 +334,12 @@ export const ru: Record<TKey, string> = {
   'crm.field.labels': 'Метки',
   'crm.field.type': 'Тип',
 
-  'ask.placeholder': 'Задайте вопрос о встрече',
-  'ask.send': 'Отправить',
   'ask.quick.tasks': 'Задачи',
   'ask.quick.tasksQ': 'Кто что должен сделать и к какому сроку?',
   'ask.quick.decisions': 'Решения',
   'ask.quick.decisionsQ': 'Какие решения были приняты?',
   'ask.quick.followUp': 'Письмо по итогам',
   'ask.quick.followUpQ': 'Напишите короткое письмо участникам по итогам встречи.',
-  'ask.history': 'Предыдущие вопросы',
-  'ask.empty': 'Задайте вопрос - ответ основан на тексте встречи, с указанием источников.',
   'ask.notReady': 'Чтобы задать вопрос, текст должен быть готов',
 
   'player.play': 'Воспроизвести',
@@ -521,4 +518,5 @@ export const ru: Record<TKey, string> = {
   ...sharePart.ru,
   ...callsPart.ru,
   ...minutesPart.ru,
+  ...meetingChatPart.ru,
 };

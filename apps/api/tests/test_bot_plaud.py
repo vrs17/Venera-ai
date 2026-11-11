@@ -1,24 +1,31 @@
 """Telegram "🎙 Plaud" (`app/bot/plaud.py`): tugma, ovozli xabar/audio fayl -> transkript va
-"Qisqa xulosa", tugmalar (vazifalar, shablon, eksport, boshqa til), javob (Reply) bilan savol.
+"Qisqa xulosa", tugmalar (vazifalar, shablon, eksport, boshqa til), yig'ilish chati: «💬 Savol berish»
+(ForceReply so'rovi) yoki javob (Reply) bilan savol - matn yoki ovoz (`runner._meeting_voice`),
+«🔄 Yangi suhbat», javobning har bo'lagida va ovozli savolning "🎙 matn"ida yig'ilish belgisi.
 
-Telegram ham, GAPI ham, model ham soxta (`test_telegram_bot.FakeTelegram`, `meetings_fakes`):
-hech bir test tarmoqqa chiqmaydi. Fon ishchisi yo'q - kutish o'rniga navbat qo'lda yuritiladi.
+Telegram ham, GAPI ham, STT ham, model ham soxta (`test_telegram_bot.FakeTelegram`, `FakeBackend`,
+`meetings_fakes`): hech bir test tarmoqqa chiqmaydi. Fon ishchisi yo'q - kutish o'rniga navbat qo'lda
+yuritiladi.
 """
 
 from __future__ import annotations
 
 import json
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.bot import plaud as plaud_mod
+from app.bot import render
 from app.bot.briefs import REPLY_KEYBOARD, REPLY_KEYBOARD_ADMIN
 from app.bot.plaud import BTN_PLAUD, Plaud
 from app.bot.runner import COMMANDS, VeneraBot
 from app.core.config import settings
 from app.core.security import hash_password
 from app.services import archive
-from app.services.meetings import export, intake, minutes
+from app.services.meetings import export, intake, minutes, service
+from app.services.stt import SttError, Transcript
 from app.services.telegram_links import LinkStore
 from app.services.users import StoredUser, UserStore
 from meetings_fakes import adts_bytes, enable, ogg_opus_bytes, run_all
@@ -29,6 +36,13 @@ from app.services.meetings.errors import MeetingProblem
 OTHER_TG = 5550002
 
 
+class PlaudTelegram(FakeTelegram):
+    """`FakeTelegram` + tahrirdagi tugmalar ham yoziladi: chat javobi "⏳" xabari o'rnida, tugmalari bilan."""
+
+    def edit_message_text(self, chat_id, message_id, text, *, html=True, reply_markup=None):
+        self._rec("edit_message_text", chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup)
+
+
 @pytest.fixture
 def world(tmp_path, monkeypatch, _isolated_meetings):
     enable(monkeypatch)
@@ -36,7 +50,7 @@ def world(tmp_path, monkeypatch, _isolated_meetings):
         "a@b.uz": StoredUser(actor_id=1, email="a@b.uz", full_name="Ali Valiyev", password_hash=hash_password("x")),
         "b@b.uz": StoredUser(actor_id=2, email="b@b.uz", full_name="Vali Aliyev", password_hash=hash_password("x")),
     })
-    tg = FakeTelegram()
+    tg = PlaudTelegram()
     tg.files["voice/v1.oga"] = ogg_opus_bytes(64.0)
     links = LinkStore(tmp_path / "links.json")
     links.link(TG_ID, 1)
@@ -81,6 +95,19 @@ def meeting_of(tg):
     return (card(tg)["reply_markup"]["inline_keyboard"][0][0]["callback_data"]).split(":")[2]
 
 
+def last_edit(tg):
+    return [kw for n, kw in tg.calls if n == "edit_message_text"][-1]
+
+
+def replied(sent):
+    """Odam javob (Reply) qilgan bot xabari - Telegram `reply_to_message` da beradigani: teglarsiz matn va
+    faqat inline tugmalar (ForceReply qaytmaydi). `sent` - yuborilgan yoki tahrirlangan xabar yozuvi."""
+    msg = {"message_id": sent["message_id"], "from": {"is_bot": True}, "text": render.plain(sent["text"])}
+    if "inline_keyboard" in (sent.get("reply_markup") or {}):
+        msg["reply_markup"] = sent["reply_markup"]
+    return msg
+
+
 def test_tugma_va_buyruq_qurollantiradi_va_klaviatura_hammada(world):
     bot, tg, rt, plaud = world
     bot.handle_update(text_update(BTN_PLAUD))
@@ -109,8 +136,8 @@ def test_ovozli_xabar_transkript_va_qisqa_xulosa(world):
     assert summary["text"].endswith(plaud_mod._HINT)
     rows = summary["reply_markup"]["inline_keyboard"]
     mid = meeting_of(tg)
-    assert [b["callback_data"] for row in rows for b in row] == [f"p:t:{mid}", f"p:s:{mid}", f"p:e:{mid}", f"p:l:{mid}",
-                                                               f"p:d:{mid}"]
+    assert [b["callback_data"] for row in rows for b in row] == [f"p:q:{mid}", f"p:t:{mid}", f"p:s:{mid}", f"p:e:{mid}",
+                                                               f"p:l:{mid}", f"p:d:{mid}"]
     # Yozuv ODAMNING hisobida (actor 1), kanal `bot`, OGG sifatida.
     row = rt.store.meeting_any(mid)
     assert row["actor_id"] == 1 and row["channel"] == "bot" and row["content_type"] == "audio/ogg"
@@ -275,6 +302,21 @@ def test_sof_funksiyalar():
     assert Plaud.media({"document": {"file_id": "d", "file_name": "x.M4A"}})["kind"] == "document"
     assert Plaud.media({"document": {"file_id": "d", "file_name": "x.pdf"}}) is None
     assert intake.filename("attachment; filename=\"a.docx\"; filename*=UTF-8''b%20c.docx") == "b c.docx"
+    # Yig'ilish chati (2026-11-11): so'rov - yozuv nomi HTML'dan tozalangan, bir qatorda, 80 belgigacha.
+    prompt = plaud_mod.ask_prompt("Reja <2026>\n& byudjet")
+    assert prompt == ("💬 <b>Reja &lt;2026&gt; &amp; byudjet</b> bo'yicha savolingizni yozing.\n"
+                      "Barno faqat shu yozuv matni va xulosasiga tayanadi va suhbatni eslab qoladi - "
+                      "keyingi savolni javobga «Reply» qilib yozing.")
+    assert plaud_mod.ask_prompt(None).startswith("💬 <b>Yozuv</b> bo'yicha")
+    assert f"<b>{'x' * 79}…</b>" in plaud_mod.ask_prompt("x" * 200)
+    # Javobdagi so'rov (teglarsiz) - faqat BOTNIKI va faqat shu matn bilan.
+    assert plaud_mod.is_prompt({"from": {"is_bot": True}, "text": render.plain(prompt)})
+    assert not plaud_mod.is_prompt({"from": {"is_bot": False}, "text": render.plain(prompt)})
+    assert not plaud_mod.is_prompt({"from": {"is_bot": True}, "text": plaud_mod._HINT})
+    assert not plaud_mod.is_prompt({"text": render.plain(prompt)})
+    # Yangi tugmalar (`q`, `n`) ham javob (Reply) uchun yig'ilish belgisi.
+    for op in ("q", "n"):
+        assert plaud_mod._MARK.match(f"p:{op}:{'ab' * 16}").group(1) == "ab" * 16
 
 
 # --- 📄 Bayonnoma (ega qarori, 2026-11-04) ----------------------------------------------------------
@@ -310,14 +352,16 @@ def _last_markup(tg):
     return [kw for n, kw in tg.calls if n == "edit_reply_markup"][-1]["reply_markup"]
 
 
-def test_bayonnoma_tugmasi_uchinchi_qatorda(world):
+def test_bayonnoma_tugmasi_tortinchi_qatorda(world):
     bot, tg, rt, plaud = world
     mid, _ = _delivered(bot, tg)
     rows = card(tg)["reply_markup"]["inline_keyboard"]
-    assert rows[2] == [{"text": "📄 Bayonnoma", "callback_data": f"p:d:{mid}"}]
+    # Birinchi qator - «💬 Savol berish» (yig'ilish chati, 2026-11-11), bayonnoma - to'rtinchi.
+    assert rows[0] == [{"text": "💬 Savol berish", "callback_data": f"p:q:{mid}"}]
+    assert rows[3] == [{"text": "📄 Bayonnoma", "callback_data": f"p:d:{mid}"}]
     # "Qayta urinish" qatori bo'lsa ham - u OXIRGI.
     retry_rows = plaud_mod.controls(mid, "uz", retry=f"p:r:m:{mid}")["inline_keyboard"]
-    assert retry_rows[2][0]["callback_data"] == f"p:d:{mid}" and retry_rows[-1][0]["callback_data"] == f"p:r:m:{mid}"
+    assert retry_rows[3][0]["callback_data"] == f"p:d:{mid}" and retry_rows[-1][0]["callback_data"] == f"p:r:m:{mid}"
     # Javob (Reply) uchun belgi: natija xabaridagi `p:d:<id>` ham yig'ilishni topadi.
     assert plaud_mod._MARK.match(f"p:d:{mid}").group(1) == mid
 
@@ -500,3 +544,447 @@ def test_jarayon_xabari_foiz_chegara_va_bot_xatosi():
     quiet.show(intake.TRANSCRIBE)                                    # tahrir xatosi - otilmaydi
     quiet.close()                                                    # o'chirish xatosi - otilmaydi
     assert quiet.ref is None
+
+
+# --- 💬 Yig'ilish chati (ega talabi, 2026-11-11): bitta audio - bitta suhbat -----------------------------
+
+
+def _ask_card(bot, tg, question, *, message_id=30):
+    """"Qisqa xulosa" xabariga javob (Reply) qilib savol; -> "⏳" o'rnidagi javob (tahrir)."""
+    bot.handle_update(reply(question, replied(card(tg)), message_id=message_id))
+    return last_edit(tg)
+
+
+def test_savol_berish_tugmasi_forcereply_sorov_va_chat_javobi(world):
+    bot, tg, rt, plaud = world
+    mid, summary_id = _delivered(bot, tg)
+    before = len(tg.calls)
+    bot.handle_update(callback(f"p:q:{mid}", message_id=summary_id))
+    assert [n for n, _ in tg.calls[before:]] == ["answer_callback", "send_message"]
+    assert tg.calls[before][1] == {"id": "cb1", "text": "", "alert": False}
+    prompt = tg.sent()[-1]
+    assert prompt["text"] == plaud_mod.ask_prompt(rt.store.meeting_any(mid)["title"])
+    assert prompt["reply_markup"] == {"force_reply": True, "input_field_placeholder": "Savolingiz…"}
+    assert plaud._messages[(TG_ID, prompt["message_id"])] == mid               # so'rov shu yig'ilishniki
+    # So'rovga javob - shu yig'ilish chatiga savol: "⏳" o'rnida javob, ostida chat tugmalari.
+    bot.handle_update(reply("Kim hisobot yuboradi?", replied(prompt)))
+    holder = tg.sent()[-1]
+    assert holder["text"] == "⏳ Javob tayyorlanmoqda…" and holder["reply_to"] == 30
+    answer = last_edit(tg)
+    assert answer["message_id"] == holder["message_id"] and "📌 <b>Manbalar:</b>" in answer["text"]
+    assert answer["reply_markup"] == {"inline_keyboard": [[
+        {"text": "💬 Yana savol", "callback_data": f"p:q:{mid}"},
+        {"text": "🔄 Yangi suhbat", "callback_data": f"p:n:{mid}"}]]}
+    assert bot.backend.questions == []                                         # HR yordamchisiga ketmadi
+    # Navbat - chatda (mobil ilova ham shuni ko'radi): kanal `telegram`, javob bergan model va til.
+    [turn] = rt.store.chat_turns(mid)
+    assert turn["question"] == "Kim hisobot yuboradi?" and turn["channel"] == "telegram"
+    assert turn["model"] == rt.llm.model and turn["language"] == "uz"
+    # Begona odam tugmani bossa - 404: so'rov yuborilmaydi.
+    before = len(tg.calls)
+    bot.handle_update(callback(f"p:q:{mid}", message_id=summary_id, tg_id=OTHER_TG))
+    assert [n for n, _ in tg.calls[before:]] == ["answer_callback"] and tg.calls[-1][1]["alert"]
+
+
+def test_chat_xotirasi_va_qayta_ishga_tushgandan_keyin(world):
+    bot, tg, rt, plaud = world
+    mid, _ = _delivered(bot, tg)
+    first = _ask_card(bot, tg, "Kim hisobot yuboradi?")
+    # Keyingi savol JAVOBGA javob (Reply): oldingi savol-javob modelga suhbat xotirasi bo'lib boradi.
+    bot.handle_update(reply("U qachon yuboradi?", replied(first), message_id=31))
+    asked = [c["user"] for c in rt.llm.calls if c["op"] == "meeting_ask"]
+    assert len(asked) == 2 and "Kim hisobot yuboradi?" in asked[1]
+    assert [t["question"] for t in rt.store.chat_turns(mid)] == ["Kim hisobot yuboradi?", "U qachon yuboradi?"]
+    # Qayta ishga tushgandan keyin: xotira bo'sh, lekin javob tugmalaridagi `p:q:`/`p:n:` - yig'ilish belgisi.
+    second = last_edit(tg)
+    plaud._messages.clear()
+    bot.handle_update(reply("Yana?", replied(second), message_id=32))
+    assert tg.sent()[-1]["text"] == "⏳ Javob tayyorlanmoqda…" and bot.backend.questions == []
+    assert len(rt.store.chat_turns(mid)) == 3
+
+
+def test_uzun_javob_har_bolagida_belgi_chat_tugmalari_oxirgisida(world, monkeypatch):
+    bot, tg, rt, plaud = world
+    mid, _ = _delivered(bot, tg)
+    calls = []
+
+    def chat_send(user, meeting_id, message, language, *, channel="api"):
+        calls.append((user.actorId, meeting_id, message, language, channel))
+        text = "\n\n".join(f"{n}-band: " + "batafsil izoh " * 40 for n in range(1, 25))
+        return {"id": "q1", "question": message, "answer": text, "citations": [], "followUps": ["a?", "b?", "c?"],
+                "createdAt": "2026-11-11T10:00:00Z", "channel": channel, "model": "claude-sonnet-5-5"}
+
+    monkeypatch.setattr(service, "chat_send", chat_send)
+    first = _ask_card(bot, tg, "Batafsilroq")
+    assert calls == [(1, mid, "Batafsilroq", None, "telegram")]
+    holder = next(kw for kw in reversed(tg.sent()) if kw["text"] == "⏳ Javob tayyorlanmoqda…")
+    # "⏳" o'rnidagi birinchi bo'lak va o'rtadagilari - «💬 Savol berish» (yig'ilish belgisi), oxirgisi - chat tugmalari.
+    assert first["message_id"] == holder["message_id"] and first["reply_markup"] == plaud_mod.ask_menu(mid)
+    rest = [kw for kw in tg.sent() if kw["message_id"] > holder["message_id"]]
+    assert len(rest) >= 2 and all(kw["reply_markup"] == plaud_mod.ask_menu(mid) for kw in rest[:-1])
+    [buttons] = rest[-1]["reply_markup"]["inline_keyboard"]
+    assert [b["callback_data"] for b in buttons] == [f"p:q:{mid}", f"p:n:{mid}"] and rest[-1]["text"].endswith("• c?")
+    # Hamma bo'lak shu yig'ilishniki: savol qaysi bo'lakka javob qilib yozilsa ham.
+    assert all(plaud._messages[(TG_ID, kw["message_id"])] == mid for kw in [holder, *rest])
+
+
+def test_qayta_ishga_tushgandan_keyin_birinchi_bolakka_javob_ham_chatga(world):
+    """Haqiqiy `chat_send` (soxta model): ~3900 belgili javob ikki bo'lakka bo'linadi. Xotira tozalangach
+    (qayta ishga tushdi) birinchi bo'lakka javob (Reply) - tugmadagi belgi orqali shu yig'ilish chatiga."""
+    bot, tg, rt, plaud = world
+    mid, _ = _delivered(bot, tg)
+    ids = [int(s["id"]) for s in rt.store.segments(mid)]
+    para = ("[S1] loyiha bo'yicha muhim qaror qabul qildi: hisobot ertaga soat 10 gacha yuboriladi, "
+            "budjet 15 foizga oshiriladi va mas'ul sifatida [S2] belgilandi. ")
+    answer = "".join(f"{n}. {para}\n" for n in range(1, 60))[:3900]
+    rt.llm.script["meeting_ask"] = [json.dumps({"answer": answer, "citations": ids[:6],
+                                                "followUps": ["Budjet qancha?", "Kim tayyorlaydi?", "Qachon?"]},
+                                               ensure_ascii=False)]
+    page1 = _ask_card(bot, tg, "Batafsil ayt")
+    rest = [kw for kw in tg.sent() if kw["message_id"] > page1["message_id"]]
+    assert len(rest) == 1 and page1["reply_markup"] == plaud_mod.ask_menu(mid)
+    assert rest[-1]["reply_markup"] == plaud_mod.chat_menu(mid)
+    plaud._messages.clear()
+    bot.handle_update(reply("3-band bo'yicha muddat qachon?", replied(page1), message_id=31))
+    assert [t["question"] for t in rt.store.chat_turns(mid)] == ["Batafsil ayt", "3-band bo'yicha muddat qachon?"]
+    assert bot.backend.questions == []                                         # HR yordamchisiga ketmadi
+
+
+def test_chat_xatosi_sababi_va_savol_tugmasi_bilan(world, monkeypatch):
+    bot, tg, rt, plaud = world
+    mid, _ = _delivered(bot, tg)
+    real, fails = service.chat_send, []
+
+    def chat_send(*args, **kwargs):
+        if fails:
+            raise fails.pop()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service, "chat_send", chat_send)
+    fails.append(MeetingProblem(503, "llm_unavailable", "Model hozir javob bera olmayapti - keyinroq urinib ko'ring"))
+    failed = _ask_card(bot, tg, "Kim?")
+    assert failed["text"] == "Javob berib bo'lmadi: Model hozir javob bera olmayapti - keyinroq urinib ko'ring"
+    # Qayta so'rash tugmasi - u yig'ilish belgisi ham: qayta ishga tushgandan keyin xatoga javob ham chatga.
+    assert failed["reply_markup"] == plaud_mod.ask_menu(mid)
+    plaud._messages.clear()
+    bot.handle_update(reply("Kim? (qayta)", replied(failed), message_id=31))
+    assert [t["question"] for t in rt.store.chat_turns(mid)] == ["Kim? (qayta)"] and bot.backend.questions == []
+    # Ichki xato ham - tugma bilan.
+    fails.append(RuntimeError("boom"))
+    broken = _ask_card(bot, tg, "Yana?", message_id=32)
+    assert broken["text"] == "Javob berib bo'lmadi: ichki xato." and broken["reply_markup"] == plaud_mod.ask_menu(mid)
+    # Yozuv yo'q (o'chirilgan yoki begona, 404) - qayta so'rashning ma'nosi yo'q: tugmasiz.
+    fails.append(MeetingProblem(404, "not_found", "Yig'ilish topilmadi"))
+    gone = _ask_card(bot, tg, "Va?", message_id=33)
+    assert gone["text"] == "Javob berib bo'lmadi: Yig'ilish topilmadi" and gone["reply_markup"] is None
+
+
+def test_yangi_suhbat_tugmasi_yumshoq_va_toza_boshlanadi(world):
+    bot, tg, rt, plaud = world
+    mid, _ = _delivered(bot, tg)
+    answer = _ask_card(bot, tg, "Kim hisobot yuboradi?")
+    before = len(tg.calls)
+    bot.handle_update(callback(f"p:n:{mid}", message_id=answer["message_id"]))
+    assert [n for n, _ in tg.calls[before:]] == ["answer_callback", "send_message"]
+    done = tg.sent()[-1]
+    assert done["text"] == "🔄 Yangi suhbat boshlandi - oldingi savol-javoblar endi hisobga olinmaydi."
+    assert done["reply_markup"] == {"inline_keyboard": [[{"text": "💬 Savol berish", "callback_data": f"p:q:{mid}"}]]}
+    assert plaud._messages[(TG_ID, done["message_id"])] == mid
+    # Yumshoq: navbat chatdan ham, eski ro'yxatdan ham ketdi, qator bazada qoldi.
+    assert rt.store.chat_turns(mid) == [] and rt.store.questions(mid) == []
+    assert rt.store.scalar("SELECT COUNT(*) FROM questions WHERE meeting_id=?", (mid,)) == 1
+    # Keyingi savol - toza suhbat: oldingi savol modelga bormaydi.
+    bot.handle_update(reply("Qaror nima?", replied(done), message_id=31))
+    assert "Kim hisobot yuboradi?" not in [c["user"] for c in rt.llm.calls if c["op"] == "meeting_ask"][-1]
+    assert [t["question"] for t in rt.store.chat_turns(mid)] == ["Qaror nima?"]
+    # Begona odam - 404: hech narsa arxivga ketmaydi, faqat ogohlantirish.
+    before = len(tg.calls)
+    bot.handle_update(callback(f"p:n:{mid}", message_id=answer["message_id"], tg_id=OTHER_TG))
+    assert [n for n, _ in tg.calls[before:]] == ["answer_callback"] and tg.calls[-1][1]["alert"]
+    assert len(rt.store.chat_turns(mid)) == 1
+
+
+def test_eskirgan_sorov_yutiladi_hr_yordamchisiga_ketmaydi(world):
+    bot, tg, rt, plaud = world
+    mid, summary_id = _delivered(bot, tg)
+    bot.handle_update(callback(f"p:q:{mid}", message_id=summary_id))
+    prompt = tg.sent()[-1]
+    plaud._messages.clear()                                                    # qayta ishga tushdi
+    llm_calls = len(rt.llm.calls)
+    bot.handle_update(reply("Kim hisobot yuboradi?", replied(prompt)))
+    stale = tg.sent()[-1]
+    assert stale["text"] == "Bu so'rov eskirgan - yozuv ostidagi «💬 Savol berish» tugmasini qayta bosing."
+    assert stale["reply_to"] == 30
+    assert bot.backend.questions == [] and len(rt.llm.calls) == llm_calls and rt.store.chat_turns(mid) == []
+    # "💬" bilan boshlanadigan boshqa bot xabari yoki odamning o'z xabari - so'rov emas: HR yordamchisiga.
+    bot.handle_update(reply("salom", {"message_id": 999, "from": {"is_bot": True}, "text": "💬 Boshqa xabar"},
+                            message_id=31))
+    assert bot.backend.questions[-1][0] == "salom"
+    mine = {**replied(prompt), "message_id": 998, "from": {"is_bot": False}}
+    bot.handle_update(reply("yana", mine, message_id=32))
+    assert bot.backend.questions[-1][0] == "yana"
+
+
+# --- 🎙 Ovozli savol: yozuv xabariga yoki so'rovga ovozli javob (`runner._meeting_voice`) ---------------------
+
+
+def _voice_reply(bot, tg, to, text="Kim hisobot yuboradi?", *, file_id="q1", duration=6, message_id=40):
+    """Bot xabariga OVOZLI javob (Reply); STT soxta (`FakeBackend.transcribe`) - ovoz matni `text`."""
+    tg.files[f"voice/{file_id}.oga"] = b"OggS-savol"
+    bot.backend.transcript = Transcript(text=text, backend="gapi")
+    bot.handle_update(voice(file_id, duration=duration, message_id=message_id, reply_to=to))
+
+
+def _prompt(bot, tg, mid, summary_id):
+    """«💬 Savol berish» -> ForceReply so'rovi."""
+    bot.handle_update(callback(f"p:q:{mid}", message_id=summary_id))
+    return tg.sent()[-1]
+
+
+def _counts(rt):
+    """Yozuvlar soni va GAPI'ga yuborilgan audiolar - ovozli savol yangi yozuv bo'lmasligini tekshirish uchun."""
+    return rt.store.scalar("SELECT COUNT(*) FROM meetings"), len(rt.gapi.submits)
+
+
+def test_sorovga_ovozli_javob_yigilish_chatiga_savol(world):
+    bot, tg, rt, plaud = world
+    mid, summary_id = _delivered(bot, tg)                      # qurollanish shu yozuvga sarflandi
+    prompt = _prompt(bot, tg, mid, summary_id)
+    counts, before = _counts(rt), len(tg.calls)
+    _voice_reply(bot, tg, replied(prompt))
+    # Matn HR savolidagi AYNI STT yo'li bilan: ovoz o'girildi, matni ovozli xabarga javob qilib ko'rsatildi.
+    assert bot.backend.audio == [(b"OggS-savol", "audio/ogg")]
+    echo, holder = [kw for n, kw in tg.calls[before:] if n == "send_message"]
+    assert echo["text"] == "🎙 <i>Kim hisobot yuboradi?</i>" and echo["reply_to"] == 40
+    assert holder["text"] == "⏳ Javob tayyorlanmoqda…" and holder["reply_to"] == 40
+    answer = last_edit(tg)
+    assert answer["message_id"] == holder["message_id"] and answer["reply_markup"] == plaud_mod.chat_menu(mid)
+    # Savol shu yig'ilish chatida; HR yordamchisi ham, yangi yozuv ham yo'q.
+    [turn] = rt.store.chat_turns(mid)
+    assert turn["question"] == "Kim hisobot yuboradi?" and turn["channel"] == "telegram"
+    assert bot.backend.questions == [] and _counts(rt) == counts
+    # Ovozning o'zi arxivda - HR savolidagi kabi.
+    [row] = [r for r in archive.get().rows(channel="telegram") if r["kind"] == "voice"]
+    assert (row["direction"], row["message_id"], row["actor_id"]) == ("in", "40", 1)
+
+
+def test_qurollangan_chatda_ham_sorovga_ovozli_javob_yozuv_bolmaydi(world):
+    bot, tg, rt, plaud = world
+    mid, summary_id = _delivered(bot, tg)
+    bot.handle_update(text_update(BTN_PLAUD))                  # yana qurollandi: 15 daqiqa ovoz - yozuv
+    prompt = _prompt(bot, tg, mid, summary_id)
+    meetings, submits = _counts(rt)
+    _voice_reply(bot, tg, replied(prompt), "Qaror nima?")
+    assert [t["question"] for t in rt.store.chat_turns(mid)] == ["Qaror nima?"] and bot.backend.questions == []
+    assert _counts(rt) == (meetings, submits)
+    # Qurollanish SARFLANMADI: keyingi oddiy (javob emas) ovozli xabar - yangi yozuv.
+    tg.files["voice/v2.oga"] = ogg_opus_bytes(64.0)
+    bot.handle_update(voice("v2", duration=8, message_id=41))
+    assert _counts(rt) == (meetings + 1, submits + 1) and bot.backend.questions == []
+
+
+def test_javobga_ovozli_javob_suhbatni_davom_ettiradi(world):
+    bot, tg, rt, plaud = world
+    mid, _ = _delivered(bot, tg)
+    first = _ask_card(bot, tg, "Kim hisobot yuboradi?")
+    _voice_reply(bot, tg, replied(first), "U qachon yuboradi?")
+    asked = [c["user"] for c in rt.llm.calls if c["op"] == "meeting_ask"]
+    assert len(asked) == 2 and "Kim hisobot yuboradi?" in asked[1]           # suhbat xotirasi bilan
+    # Qayta ishga tushgandan keyin ham: javob tugmalaridagi belgi orqali.
+    plaud._messages.clear()
+    _voice_reply(bot, tg, replied(last_edit(tg)), "Muddat qachon?", file_id="q2", message_id=41)
+    assert [t["question"] for t in rt.store.chat_turns(mid)] == [
+        "Kim hisobot yuboradi?", "U qachon yuboradi?", "Muddat qachon?"]
+    assert bot.backend.questions == []
+
+
+def test_ovozli_savol_stt_xatosi_hr_yordamchisiga_ketmaydi(world, monkeypatch):
+    bot, tg, rt, plaud = world
+    mid, summary_id = _delivered(bot, tg)
+    prompt = _prompt(bot, tg, mid, summary_id)
+    counts = _counts(rt)
+    tg.files["voice/q1.oga"] = b"OggS-savol"
+    bot.backend.transcript = SttError("band", status=503)
+    bot.handle_update(voice("q1", duration=6, message_id=40, reply_to=replied(prompt)))
+    assert tg.texts()[-1] == "Ovoz xizmati band, biroz kutib qayta urinib ko'ring"
+    # Ovozdan matn chiqmadi.
+    bot.backend.transcript = Transcript(text="  ")
+    bot.handle_update(voice("q1", duration=6, message_id=41, reply_to=replied(prompt)))
+    assert tg.texts()[-1] == "🎙 Ovozdan matn ajratib bo'lmadi - aniqroq gapirib qayta yuboring."
+    # Telegram faylni bermadi.
+    real = tg.download
+    monkeypatch.setattr(tg, "download", lambda *a, **k: (_ for _ in ()).throw(TelegramError("yo'q")))
+    bot.handle_update(voice("q1", duration=6, message_id=42, reply_to=replied(prompt)))
+    assert tg.texts()[-1] == "Ovozli xabarni olib bo'lmadi - qaytadan yuboring."
+    # Hech biri HR yordamchisiga, yig'ilish chatiga yoki yangi yozuvga ketmadi.
+    assert bot.backend.questions == [] and rt.store.chat_turns(mid) == [] and _counts(rt) == counts
+    assert not any(t.startswith("⏳ Javob") for t in tg.texts())
+    # Qayta yuborilgan ovoz o'tadi - va yana shu yig'ilish chatiga.
+    monkeypatch.setattr(tg, "download", real)
+    _voice_reply(bot, tg, replied(prompt), message_id=43)
+    assert [t["question"] for t in rt.store.chat_turns(mid)] == ["Kim hisobot yuboradi?"]
+    assert bot.backend.questions == []
+
+
+def test_ovoz_ogirilguncha_yozuv_ochirilsa_savol_yutiladi(world):
+    bot, tg, rt, plaud = world
+    mid, _ = _delivered(bot, tg)
+    plaud._messages.clear()                                    # qayta ishga tushdi: yig'ilish faqat tugmadan
+    hear = bot.backend.transcribe
+
+    def transcribe(audio, content_type):
+        service.delete(SimpleNamespace(actorId=1), mid)        # odam shu paytda yozuvni ilovada o'chirdi
+        return hear(audio, content_type)
+
+    bot.backend.transcribe = transcribe
+    meetings, _ = _counts(rt)
+    _voice_reply(bot, tg, replied(card(tg)))
+    assert tg.texts()[-1] == "Javob berib bo'lmadi: yozuv topilmadi."
+    assert bot.backend.questions == [] and _counts(rt)[0] == meetings - 1
+    assert not any(t.startswith("⏳ Javob") for t in tg.texts())
+
+
+def test_uzun_ovozli_savol_yutiladi_yozuv_ham_hr_ham_emas(world):
+    bot, tg, rt, plaud = world
+    mid, _ = _delivered(bot, tg)
+    counts = _counts(rt)
+    tg.files["voice/long.oga"] = ogg_opus_bytes(64.0)
+    # Qurollanmagan uzun ovoz odatda yozuv bo'ladi - lekin bu xulosaga javob, ya'ni savol.
+    bot.handle_update(voice("long", duration=settings.telegram_voice_max_sec + 1, message_id=40,
+                            reply_to=replied(card(tg))))
+    most = settings.telegram_voice_max_sec // 60
+    assert tg.texts()[-1] == (f"Ovozli savol juda uzun - qisqaroq ({most} daqiqagacha) yuboring yoki "
+                              "savolni yozib yuboring.")
+    assert bot.backend.audio == [] and bot.backend.questions == [] and rt.store.chat_turns(mid) == []
+    assert _counts(rt) == counts
+
+
+def test_eskirgan_sorovga_ovozli_javob_ham_yutiladi_va_boshqa_ovoz_avvalgidek(world):
+    bot, tg, rt, plaud = world
+    mid, summary_id = _delivered(bot, tg)
+    prompt = _prompt(bot, tg, mid, summary_id)
+    plaud._messages.clear()                                    # qayta ishga tushdi: so'rov yig'ilishi noma'lum
+    llm_calls = len(rt.llm.calls)
+    _voice_reply(bot, tg, replied(prompt))
+    stale = tg.sent()[-1]
+    assert stale["text"] == plaud_mod.STALE_PROMPT and stale["reply_to"] == 40
+    assert bot.backend.questions == [] and rt.store.chat_turns(mid) == [] and len(rt.llm.calls) == llm_calls
+    # Yig'ilish belgisisiz bot xabariga (HR javobi) ovozli javob - avvalgidek HR savoli.
+    _voice_reply(bot, tg, {"message_id": 999, "from": {"is_bot": True}, "text": "Javob muhim."},
+                 "ta'til necha kun?", file_id="q2", message_id=41)
+    assert bot.backend.questions[-1][0] == "ta'til necha kun?"
+    # Odamning o'z xabariga ovozli javob ham - HR savoli (faqat bot xabarlari yozuvniki bo'la oladi).
+    _voice_reply(bot, tg, voice()["message"], "Bugun nima bor?", file_id="q3", message_id=42)
+    assert bot.backend.questions[-1][0] == "Bugun nima bor?" and rt.store.chat_turns(mid) == []
+
+
+def _echo(tg, text):
+    """Ovozli savolning "🎙 matn" xabari - Telegram javobda (`reply_to_message`) beradigan holatida: keyin
+    qo'shilgan tugmasi (`edit_reply_markup`) bilan."""
+    sent = next(kw for kw in reversed(tg.sent()) if kw["text"] == f"🎙 <i>{text}</i>")
+    marks = [kw["reply_markup"] for n, kw in tg.calls
+             if n == "edit_reply_markup" and kw["message_id"] == sent["message_id"]]
+    return {**sent, "reply_markup": marks[-1] if marks else sent["reply_markup"]}
+
+
+def test_ovozli_savol_matniga_javob_ham_yigilish_chatiga_hr_ga_emas(world):
+    bot, tg, rt, plaud = world
+    mid, summary_id = _delivered(bot, tg)
+    _voice_reply(bot, tg, replied(_prompt(bot, tg, mid, summary_id)))
+    # "🎙 matn" shu yig'ilishniki: «💬 Savol berish» tugmasi (qayta ishga tushgandan keyin ham belgi) va xotira.
+    echo = _echo(tg, "Kim hisobot yuboradi?")
+    assert echo["reply_markup"] == plaud_mod.ask_menu(mid) and plaud._messages[(TG_ID, echo["message_id"])] == mid
+    # Odam o'z savolining matniga javob (Reply) qilib aniqlashtiradi - shu suhbatga, xotira bilan.
+    bot.handle_update(reply("Yo'q, muddatini so'rayapman", replied(echo), message_id=41))
+    holder = tg.sent()[-1]
+    assert holder["text"] == "⏳ Javob tayyorlanmoqda…" and holder["reply_to"] == 41
+    assert last_edit(tg)["message_id"] == holder["message_id"]
+    assert last_edit(tg)["reply_markup"] == plaud_mod.chat_menu(mid)
+    assert [t["question"] for t in rt.store.chat_turns(mid)] == ["Kim hisobot yuboradi?", "Yo'q, muddatini so'rayapman"]
+    asked = [c["user"] for c in rt.llm.calls if c["op"] == "meeting_ask"]
+    assert len(asked) == 2 and "Kim hisobot yuboradi?" in asked[1]           # suhbat xotirasi bilan
+    assert bot.backend.questions == []                                         # HR yordamchisiga hech narsa
+    # Qayta ishga tushgandan keyin ham: xotira bo'sh, "🎙 matn"dagi tugma - yig'ilish belgisi.
+    plaud._messages.clear()
+    bot.handle_update(reply("Yana?", replied(echo), message_id=42))
+    assert len(rt.store.chat_turns(mid)) == 3 and bot.backend.questions == []
+
+
+def test_qurollangan_chatda_ovozli_savol_matniga_ovozli_javob_yozuv_bolmaydi(world):
+    bot, tg, rt, plaud = world
+    mid, summary_id = _delivered(bot, tg)
+    bot.handle_update(text_update(BTN_PLAUD))                  # yana qurollandi: 15 daqiqa ovoz - yozuv
+    _voice_reply(bot, tg, replied(_prompt(bot, tg, mid, summary_id)))
+    meetings, submits = _counts(rt)
+    _voice_reply(bot, tg, replied(_echo(tg, "Kim hisobot yuboradi?")), "Muddat qachon?", file_id="q2",
+                 message_id=41)
+    assert [t["question"] for t in rt.store.chat_turns(mid)] == ["Kim hisobot yuboradi?", "Muddat qachon?"]
+    assert bot.backend.questions == [] and _counts(rt) == (meetings, submits)
+    # Qayta ishga tushgandan keyin ham - "🎙 matn"dagi tugma orqali (bu ovozning "🎙 matn"i ham bog'landi).
+    plaud._messages.clear()
+    _voice_reply(bot, tg, replied(_echo(tg, "Muddat qachon?")), "Kim tayyorlaydi?", file_id="q3", message_id=42)
+    assert len(rt.store.chat_turns(mid)) == 3 and bot.backend.questions == [] and _counts(rt) == (meetings, submits)
+    # Qurollanish SARFLANMADI: keyingi oddiy (javob emas) ovozli xabar - yangi yozuv.
+    tg.files["voice/v2.oga"] = ogg_opus_bytes(64.0)
+    bot.handle_update(voice("v2", duration=8, message_id=43))
+    assert _counts(rt) == (meetings + 1, submits + 1) and bot.backend.questions == []
+
+
+def test_hr_ovozi_va_eskirgan_sorov_matni_yigilishga_boglanmaydi(world):
+    bot, tg, rt, plaud = world
+    mid, summary_id = _delivered(bot, tg)
+    # Oddiy (javob emas, qurollanmagan) ovoz - avvalgidek HR savoli: "🎙 matn" tugmasiz, xotirada yo'q, unga
+    # javob ham HR yordamchisiga.
+    _voice_reply(bot, tg, None, "ta'til necha kun?", file_id="h1", message_id=40)
+    hr = _echo(tg, "ta'til necha kun?")
+    assert hr["reply_markup"] is None and (TG_ID, hr["message_id"]) not in plaud._messages
+    bot.handle_update(reply("yana bir savol", replied(hr), message_id=41))
+    assert [q for q, *_ in bot.backend.questions] == ["ta'til necha kun?", "yana bir savol"]
+    # Eskirgan so'rovga ovozli javob: yig'ilish noma'lum - "🎙 matn" ham bog'lanmaydi.
+    prompt = _prompt(bot, tg, mid, summary_id)
+    plaud._messages.clear()
+    _voice_reply(bot, tg, replied(prompt), "Qaror nima?", file_id="q2", message_id=42)
+    assert tg.sent()[-1]["text"] == plaud_mod.STALE_PROMPT
+    stale = _echo(tg, "Qaror nima?")
+    assert stale["reply_markup"] is None and (TG_ID, stale["message_id"]) not in plaud._messages
+    assert rt.store.chat_turns(mid) == [] and tg.sent("edit_reply_markup") == []
+
+
+def test_tahrir_otmasa_ham_har_bolakda_belgi_va_kutish_xabari_yigilishniki(world, monkeypatch):
+    """"⏳" tahrirlanmasa birinchi bo'lak yangi xabar bo'lib ketadi - u ham belgili, oxirgisida chat tugmalari.
+    O'zgarmay qolgan "⏳" ham shu yig'ilishniki: javob kelguncha unga yozilgan savol ham shu suhbatga."""
+    bot, tg, rt, plaud = world
+    mid, _ = _delivered(bot, tg)
+    real = service.chat_send
+
+    def chat_send(user, meeting_id, message, language, *, channel="api"):
+        text = "\n\n".join(f"{n}-band: " + "batafsil izoh " * 40 for n in range(1, 25))
+        return {"id": "q1", "question": message, "answer": text, "citations": [], "followUps": ["a?", "b?", "c?"],
+                "createdAt": "2026-11-11T10:00:00Z", "channel": channel, "model": "claude-sonnet-5-5"}
+
+    def broken(*args, **kwargs):
+        raise TelegramError("Bad Request: message to edit not found")
+
+    monkeypatch.setattr(service, "chat_send", chat_send)
+    monkeypatch.setattr(tg, "edit_message_text", broken)
+    bot.handle_update(reply("Batafsil", replied(card(tg)), message_id=30))
+    holder = next(kw for kw in reversed(tg.sent()) if kw["text"] == "⏳ Javob tayyorlanmoqda…")
+    pages = [kw for kw in tg.sent() if kw["message_id"] > holder["message_id"]]
+    assert len(pages) >= 2 and all(kw["reply_markup"] == plaud_mod.ask_menu(mid) for kw in pages[:-1])
+    assert pages[-1]["reply_markup"] == plaud_mod.chat_menu(mid)
+    assert all(plaud._messages[(TG_ID, kw["message_id"])] == mid for kw in [holder, *pages])
+    # "⏳" ga javob - shu suhbatga (haqiqiy `chat_send`), HR yordamchisiga emas.
+    monkeypatch.setattr(service, "chat_send", real)
+    bot.handle_update(reply("Qisqaroq ayt", replied(holder), message_id=31))
+    assert [t["question"] for t in rt.store.chat_turns(mid)] == ["Qisqaroq ayt"] and bot.backend.questions == []
+
+
+def test_yordam_matnida_yigilish_chati_va_ovozli_savol(world):
+    bot, tg, rt, plaud = world
+    bot.handle_update(text_update("/help"))
+    text = tg.sent()[-1]["text"]
+    [line] = [line for line in text.splitlines() if "<b>Plaud</b>" in line]
+    assert "«💬 Savol berish»" in line and "javob (Reply)" in line and "ovozli xabar ham" in line
+    assert "eslab qoladi" in line
+    # HTML yaroqli: teglar juft, teglardan tashqarida `<`, `>`, `&` yo'q.
+    assert render._balanced(text) and not any(c in render._TAG.sub("", text) for c in "<>&")

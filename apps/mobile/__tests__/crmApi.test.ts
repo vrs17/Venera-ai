@@ -7,7 +7,7 @@
 import { QueryClient } from '@tanstack/react-query';
 
 import { createActionsApi, isExpiredError } from '@/api/actions';
-import { ACTION_TIMEOUT_MS, AI_TIMEOUT_MS, ApiClient, ApiError, type FetchLike, type TokenProvider } from '@/api/client';
+import { ACTION_TIMEOUT_MS, AI_TIMEOUT_MS, ApiClient, ApiError, JSON_TIMEOUT_MS, type FetchLike, type TokenProvider } from '@/api/client';
 import { createMeetingsApi } from '@/api/meetings';
 import type { ActionItem, CrmResult, GlobalActionItem } from '@/api/types';
 import { createCrmController, useCrmStore } from '@/features/crm/crmStore';
@@ -60,10 +60,12 @@ describe('CRM API wrappers', () => {
     expect(s.timeouts.slice(0, 2)).toEqual([ACTION_TIMEOUT_MS, ACTION_TIMEOUT_MS]);
   });
 
-  it('ask also waits for v3 (long timeout)', async () => {
+  it('a recording chat message also waits for the model (long AI timeout); history and "new chat" are plain JSON calls', async () => {
     const s = setup(() => ({ json: {} }));
-    await s.meetings.ask(MID, { question: 'q' });
-    expect(s.timeouts).toEqual([AI_TIMEOUT_MS]);
+    await s.meetings.sendChat(MID, { message: 'q', language: 'uz', channel: 'mobile' });
+    await s.meetings.chatHistory(MID);
+    await s.meetings.resetChat(MID);
+    expect(s.timeouts).toEqual([AI_TIMEOUT_MS, JSON_TIMEOUT_MS, JSON_TIMEOUT_MS]);
   });
 
   it('404 and 410 mean "expired", other errors do not', async () => {

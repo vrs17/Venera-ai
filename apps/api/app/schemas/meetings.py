@@ -139,6 +139,33 @@ class AskRequest(BaseModel):
     language: Lang | None = None
 
 
+#: Chat xabari qaysi klientdan (`questions.channel`). Slack va Telegram bu yerda yo'q - ular HTTP'dan emas,
+#: server ichidan (`service.chat_send(..., channel=...)`) keladi.
+ChatChannel = Literal["mobile", "web", "miniapp", "desktop", "api"]
+
+
+class ChatRequest(BaseModel):
+    """`POST /meetings/{id}/chat` tanasi - yig'ilish chatiga xabar (bitta audio - bitta suhbat)."""
+
+    message: str = Field(min_length=1, max_length=1000)
+    #: Javob tili. `null` - yig'ilish tilida.
+    language: Lang | None = None
+    #: `null` - `api`.
+    channel: ChatChannel | None = None
+    #: Xabarning klient kaliti (IDEMPOTENTLIK): ilova har xabarga tasodifiy kalit beradi va «Qayta yuborish»da
+    #: O'SHANI yuboradi. Shu yig'ilishda shu kalitli FAOL navbat bor - o'sha qaytadi (modelga so'rov ham, soatlik
+    #: chegara ham yo'q); shu kalitli xabar hali javob kutyapti - birinchisi kutiladi. Xabar matni solishtirilmaydi.
+    #: `null` - kalitsiz (har so'rov yangi navbat). 8-64 belgi, faqat `A-Z a-z 0-9 _ -`; boshqasi - 422.
+    clientId: str | None = Field(default=None, min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+
+    @field_validator("message")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Xabar bo'sh bo'lmasin")
+        return value
+
+
 class CrmRequest(BaseModel):
     """`POST /meetings/{id}/action-items/{itemId}/crm` tanasi - ixtiyoriy."""
 
@@ -445,6 +472,32 @@ class AskAnswer(BaseModel):
 
 class QuestionList(BaseModel):
     items: list[AskAnswer]
+
+
+class ChatTurn(AskAnswer):
+    """Yig'ilish chatining bitta navbati: savol (`question`) va Barno javobi - `AskAnswer` maydonlari bilan."""
+
+    #: Qaysi klientdan: mobile | web | miniapp | desktop | api | slack | telegram; `null` - chatdan oldingi qator.
+    channel: str | None = None
+    #: Javobni yozgan model (masalan `claude-sonnet-5-5`); `null` - chatdan oldingi qator.
+    model: str | None = None
+    #: Xabarning klient kaliti (`ChatRequest.clientId`) - ilova kutilayotgan xabarini shu bilan tanib oladi;
+    #: `null` - kalitsiz (botlar, eski qator).
+    clientId: str | None = None
+
+
+class ChatHistory(BaseModel):
+    """`GET /meetings/{id}/chat`: faol navbatlar, ESKISI birinchi ("Yangi suhbat" dan keyingilari)."""
+
+    items: list[ChatTurn]
+    #: Hozir javob beradigan model (zanjirdagi birinchi sozlangani); `""` - sozlanmagan.
+    model: str
+
+
+class ChatReset(BaseModel):
+    """`DELETE /meetings/{id}/chat` ("Yangi suhbat"): nechta navbat arxivga o'tdi (qatorlar o'chmaydi)."""
+
+    archived: int
 
 
 #: Bayonnoma (rasmiy hujjat) tili - `minutes.LANGS`; xulosa tilidan (`Lang`) farqli, o'zbekcha ikki yozuvda.

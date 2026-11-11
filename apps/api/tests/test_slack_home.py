@@ -16,6 +16,9 @@ def test_bosh_chat_ochilganda_xush_kelibsiz_tugma_bilan():
     home.on_open(client, {"type": "app_home_opened", "user": "U1", "tab": "messages", "channel": "D1"})
     [sent] = client.posted
     assert sent["channel"] == "D1" and sent["text"].startswith("🎙 *Plaud*")
+    # Savol qoidasi (Home'dagi bilan bir xil): chatga - oxirgi yozuv bo'yicha, oldingi yozuv - o'z thread'ida.
+    assert "shu chatga yozing" in sent["text"] and "oxirgi yuborilgan yozuv" in sent["text"]
+    assert "thread'ida so'rang" in sent["text"] and "suhbatni eslab qoladi" in sent["text"]
     [button] = next(b for b in sent["blocks"] if b["type"] == "actions")["elements"]
     assert button["action_id"] == home.PLAUD_ACTION and button["text"]["text"] == "🎙 Plaud"
     # Chat bo'sh emas - qayta yozilmaydi.
@@ -57,6 +60,15 @@ def test_home_varagi():
     blocks = published["view"]["blocks"]
     assert published["user_id"] == "U1" and blocks[0]["text"]["text"] == "Barno AI" and home.TAGLINE in blocks[1]["text"]["text"]
     assert next(b for b in blocks if b["type"] == "actions")["elements"][0]["action_id"] == home.PLAUD_ACTION
+    # Imkoniyatlar ro'yxatida chat: oxirgi yozuv bo'yicha, eskisi - thread'da, suhbat xotirasi va «🔄 Yangi suhbat»;
+    # suhbat har odamniki (Slack'dagi hamma bitta hisobda, lekin bir-birining savolini ko'rmaydi).
+    features = next(b["text"]["text"] for b in blocks if "Nimalar qila oladi" in (b.get("text") or {}).get("text", ""))
+    assert "*💬 Chat*" in features and "suhbatni eslab qoladi" in features and "🔄 Yangi suhbat" in features
+    assert "oxirgi yuborilgan yozuv" in features and "thread'ida so'rang" in features
+    assert "har bir odamga alohida" in features
+    # Eski "thread'dan tashqaridagi matnga javob bermaydi" endi yolg'on - chatdagi matn oxirgi yozuv bo'yicha savol.
+    notes = blocks[-1]["elements"][0]["text"]
+    assert "javob bermaydi" not in notes and "oxirgi yozuv bo'yicha" in notes
 
 
 def test_slack_xatosi_odamni_toxtatmaydi(monkeypatch):

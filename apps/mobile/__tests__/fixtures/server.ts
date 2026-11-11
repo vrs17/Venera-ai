@@ -7,6 +7,10 @@ import type {
   ActionItem,
   ActionProposal,
   AskAnswer,
+  ChatHistory,
+  ChatRequest,
+  ChatReset,
+  ChatTurn,
   GlobalActionItem,
   LoginResponse,
   Meeting,
@@ -348,6 +352,57 @@ export const askAnswer = {
   followUps: ['Qachon?', 'Qaysi format?', 'Kimga?'],
   createdAt: '2026-10-09T07:05:00Z',
 } satisfies AskAnswer;
+
+/** Chatdagi savol-javob (backend `ChatTurn`): `AskAnswer` + kanal, javob bergan model va xabar kaliti. */
+export function chatTurn(over: Partial<ChatTurn> = {}): ChatTurn {
+  return { ...askAnswer, channel: 'mobile', model: 'claude-sonnet-5-5', clientId: null, ...over } satisfies ChatTurn;
+}
+
+/**
+ * `/meetings/{id}/chat` GET/POST/DELETE - xotirada, backend qoidasi bilan: har yozuvning O'Z
+ * suhbati (eskidan yangiga), POST savol-javobni oxiriga qo'shadi, DELETE ("Yangi suhbat") faol
+ * qatorlarni arxivlaydi - ro'yxatdan chiqadi, lekin `archived` da qoladi (o'chirilmaydi).
+ * Javob savoldan yasaladi: `[S2]` tokeni, bitta manba va aynan 3 ta keyingi savol.
+ *
+ * `clientId` (R3-1 idempotentlik): shu yozuvda shu kalitli FAOL savol-javob bo'lsa POST yangisini
+ * yaratmaydi - o'shani qaytaradi. Arxivlangani hisobga olinmaydi, boshqa yozuvniki ham.
+ */
+export function chatBackend(seed: Record<string, ChatTurn[]> = {}) {
+  const live = new Map<string, ChatTurn[]>(Object.entries(seed).map(([id, turns]) => [id, [...turns]]));
+  const archived: ChatTurn[] = [];
+  const model = 'claude-sonnet-5-5';
+  let n = 0;
+  return {
+    archived,
+    history(id: string): ChatHistory {
+      return { items: [...(live.get(id) ?? [])], model };
+    },
+    send(id: string, body: ChatRequest): ChatTurn {
+      const same = body.clientId ? (live.get(id) ?? []).find((x) => x.clientId === body.clientId) : undefined;
+      if (same) return same;
+      n += 1;
+      const turn = chatTurn({
+        id: `t${n}`.padEnd(32, '0'),
+        question: body.message,
+        answer: `[S2] javobi: ${body.message}`,
+        citations: [{ segmentId: 3, start: 9.5, speaker: 'S2', text: 'Men ertaga hisobotni yuboraman.' }],
+        followUps: [`Taklif ${n}a`, `Taklif ${n}b`, `Taklif ${n}c`],
+        channel: body.channel ?? 'api',
+        model,
+        clientId: body.clientId ?? null,
+        createdAt: `2026-10-09T08:${String(n).padStart(2, '0')}:00Z`,
+      });
+      live.set(id, [...(live.get(id) ?? []), turn]);
+      return turn;
+    },
+    reset(id: string): ChatReset {
+      const turns = live.get(id) ?? [];
+      archived.push(...turns);
+      live.set(id, []);
+      return { archived: turns.length };
+    },
+  };
+}
 
 export const loginResponse = {
   token: 'jwt-1',

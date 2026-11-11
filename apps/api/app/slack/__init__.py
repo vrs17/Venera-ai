@@ -1,10 +1,11 @@
 """Slack ilovasi "Barno AI" - Venera'ning Slack'dagi klienti (`app/bot/` ning o'xshashi).
 
 Odam Barno AI ga shaxsiy xabarda AUDIO yuborsa, u matnga o'giriladi (`transcribe.py`),
-keyin chatning O'ZIGA transkript, "Qisqa xulosa" va tugmalar yoziladi (vazifalar, boshqa
-shablon, eksport, boshqa tilda qayta o'girish); xabar ostidagi thread'dagi savolga
-yig'ilish bo'yicha javob beriladi (`meeting.py`). Audio thread ichida yuborilgan bo'lsa -
-hammasi o'sha thread'da. Thread'siz matnli xabarlar hozircha javobsiz qoladi.
+keyin chatning O'ZIGA "Qisqa xulosa" va tugmalar yoziladi (transkript fayli, vazifalar, boshqa
+shablon, eksport, boshqa tilda qayta o'girish). Savol - yozuv chati (`meeting.py`, suhbat xotirasi
+bilan): chatga yozilgan matn - chatdagi OXIRGI yozuv bo'yicha, yozuv xabarining thread'idagi savol -
+o'sha (eski ham) yozuv bo'yicha. Audio thread ichida yuborilgan bo'lsa - hammasi o'sha thread'da.
+Chatda hali yozuv bo'lmasa, matnga «🎙 Plaud» yo'riqnomasi qaytadi (`home.py`).
 
 NEGA SOCKET MODE. Server ichki tarmoqda - Slack bizga HTTP so'rov yubora olmaydi.
 Socket Mode'da ulanishni biz ochamiz (chiquvchi WebSocket, TCP 443): ochiq domen va
@@ -125,9 +126,10 @@ def _connect() -> None:
 def _on_message(event: dict[str, Any], client: Any, context: Any) -> None:
     """Bolt tinglovchisi. Navbatga qo'yadi: o'girish va javob daqiqalab davom etadi. Faqat
     audioning jarayon xabari shu yerda, darhol (`meeting.acknowledge`): navbat band bo'lsa ham
-    odam audiosi qabul qilinganini ko'radi. Thread'dan tashqaridagi oddiy matn - «🎙 Plaud»
-    yo'riqnomasi (`home.py`). Har xabar (matn, audio bo'lmagan fayl) qo'shimcha ravishda
-    arxivga (`keep.py`)."""
+    odam audiosi qabul qilinganini ko'radi. Thread'dan tashqaridagi oddiy matn - oxirgi yozuv
+    chati, chatda yozuv bo'lmasa «🎙 Plaud» yo'riqnomasi (`meeting.on_text`): chat tarixi ham
+    navbatda o'qiladi, Bolt ipi Slack'ka murojaat qilmaydi. Har xabar (matn, audio bo'lmagan fayl)
+    qo'shimcha ravishda arxivga (`keep.py`)."""
     from . import home, keep, meeting
 
     pool = _pool
@@ -135,12 +137,12 @@ def _on_message(event: dict[str, Any], client: Any, context: Any) -> None:
         return
     if keep.wants(event):
         pool.submit(keep.record, event)
+    bot_user = context.get("bot_user_id")
     if meeting.wants(event):
         shown = meeting.acknowledge(client, event)
-        pool.submit(meeting.on_message, client, event, sleep=_sleep, bot_user=context.get("bot_user_id"),
-                    shown=shown)
+        pool.submit(meeting.on_message, client, event, sleep=_sleep, bot_user=bot_user, shown=shown)
     elif home.is_text(event):
-        pool.submit(home.on_text, client, event)
+        pool.submit(meeting.on_text, client, event, bot_user=bot_user)
 
 
 def _on_command(ack: Any, body: dict[str, Any], client: Any) -> None:

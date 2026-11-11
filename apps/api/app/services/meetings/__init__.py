@@ -7,7 +7,8 @@
     templates.py   shablonlar va bo'lim sarlavhalari
     summarize.py   xulosa quvuri: bir o'tish / map-reduce, tekshiruv, yakun
     dates.py       muddatlarni kod hal qiladi
-    ask.py         yig'ilish bo'yicha savol-javob (manbali)
+    ask.py         yig'ilish bo'yicha savol-javob (manbali), model zanjiri bo'yicha
+    chat.py        yig'ilish CHATI: bitta audio - bitta suhbat, Claude'ga ko'p navbatli xabarlar
     export.py      Markdown/TXT/SRT
     worker.py      fon ishchisi: ijara, qayta urinish, kvota, tozalash
     service.py     endpointlar mantig'i (router'da mantiq yo'q)
@@ -149,19 +150,21 @@ def _temperature(raw: Any) -> float | None:
         return None
 
 
-def _claude(max_concurrent: int, timeout: float, retries: int = 0) -> Any:
+def _claude(max_concurrent: int, timeout: float, retries: int = 0, *, model: str = "", effort: str = "",
+            fallbacks: bool = False) -> Any:
     """Claude (Anthropic SDK). EGA QARORI (2026-11-04): xulosa va bayonnoma gemma4:31b o'rniga
     Claude Sonnet 5.5. Kalit `claude_key_now` bilan JONLI (`.env` dagi `CLAUDE_API_KEY` - kalit
     qo'yilgach restartsiz ishlaydi), model, manzil, javob chegarasi va `effort` - sozlamadan.
-    Xulosa klienti (1 slot, uzun kutish, SDK qayta urinishlari) va savol-javob klienti (2 slot,
-    qisqa kutish, qayta urinishsiz - odam kutib turibdi) alohida, OpenAI/Ollama kabi."""
+    Xulosa klienti (1 slot, uzun kutish, SDK qayta urinishlari) va savol-javob/chat klienti
+    (`MEETINGS_CHAT_CONCURRENCY` slot, qisqa kutish, qayta urinishsiz - odam kutib turibdi) alohida,
+    OpenAI/Ollama kabi. `model` / `effort` bo'sh - xulosaniki; `fallbacks` - chatdagi rad-zahirasi."""
     from .llm import ClaudeChat
 
-    return ClaudeChat(claude_key_now, settings.meetings_claude_model, base_url=settings.claude_base_url,
+    return ClaudeChat(claude_key_now, model or settings.meetings_claude_model, base_url=settings.claude_base_url,
                       timeout=timeout, max_concurrent=max_concurrent,
                       max_output_tokens=settings.meetings_claude_max_output_tokens,
-                      effort=settings.meetings_claude_effort, retries=retries,
-                      workspace_id=claude_workspace_now)
+                      effort=effort or settings.meetings_claude_effort, retries=retries,
+                      workspace_id=claude_workspace_now, fallbacks=fallbacks)
 
 
 def _devices():
@@ -196,9 +199,12 @@ def runtime() -> Runtime:
                 openai=_openai(1, settings.meetings_openai_timeout, settings.meetings_openai_retries),
                 ask_openai=_openai(2, 120.0),
                 # Claude (ega qarori 2026-11-04): xulosa va bayonnoma - uzun kutish, SDK qayta
-                # urinishlari; savol - 2 slot, qisqa, qayta urinishsiz (odam kutib turibdi).
+                # urinishlari; savol-javob va yig'ilish chati - chat modeli, `effort`i va slotlari, qisqa,
+                # qayta urinishsiz (odam kutib turibdi), rad-zahirasi bilan.
                 claude=_claude(1, settings.meetings_claude_timeout, settings.meetings_claude_retries),
-                ask_claude=_claude(2, 120.0, 0),
+                ask_claude=_claude(settings.meetings_chat_concurrency, 120.0, 0, model=settings.meetings_chat_model,
+                                   effort=settings.meetings_chat_effort,
+                                   fallbacks=settings.meetings_chat_fallbacks),
             )
         return _runtime
 
