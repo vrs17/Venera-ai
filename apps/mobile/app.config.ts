@@ -33,13 +33,23 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: 'Barno AI',
   slug: 'venera-yozuv',
-  version: '1.3.6',
+  version: '1.3.7',
   scheme: 'venera-rec',
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
+  // Ikonka: Barno AI yulduzchasi - Slack/Telegram'dagi Barno AI ikonkasi va web favicon.svg bilan bir xil
+  // shakl, rang theme.ts `brand` (#EE5A24). Ilgari ikonka berilmagan edi - APK'da Android'ning standart robotchasi turardi.
+  icon: './assets/icon.png',
   android: {
     package: 'uz.brbtech.venera.meetings',
-    versionCode: 11,
+    versionCode: 12,
+    // Adaptive ikonka (Android 8+): oq fon + yulduzcha (qatlamning 50% - har qanday niqobda uchlari kesilmaydi).
+    // monochromeImage - Android 13+ "mavzuli ikonkalar" yoqilganda rangni tizim beradi.
+    adaptiveIcon: {
+      foregroundImage: './assets/adaptive-icon.png',
+      monochromeImage: './assets/adaptive-icon-mono.png',
+      backgroundColor: '#FFFFFF',
+    },
     // Yozuvlar va tokenlar Google zaxirasiga tushmasligi kerak (spec 2.3, 4.4).
     allowBackup: false,
     // Mikrofon/bildirishnoma ruxsatlarini expo-audio plagini qo'shadi.
@@ -84,6 +94,16 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   plugins: [
     'expo-router',
+    [
+      // Ochilish ekrani: theme.ts fonlari (#FFFFFF / #0E0E0F) va brend rangidagi yulduzcha.
+      'expo-splash-screen',
+      {
+        image: './assets/splash-icon.png',
+        imageWidth: 120,
+        backgroundColor: '#FFFFFF',
+        dark: { image: './assets/splash-icon-dark.png', backgroundColor: '#0E0E0F' },
+      },
+    ],
     [
       'expo-audio',
       {
