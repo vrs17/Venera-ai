@@ -438,9 +438,10 @@ export interface Transcript {
   backend: string
 }
 
-/* ── Connectors (HRM / CRM - the user's own account) ───────────────────── */
+/* ── Connectors (HRM - the user's own account) ─────────────────────────── */
 
-export type ConnectorId = 'hrm' | 'crm'
+/** Odam o'zi boshqaradigan ulanishlar. CRM bu yerda yo'q: u SSO kirishda o'zi ulanadi. */
+export type ConnectorId = 'hrm'
 /** disconnected: hech qachon ulanmagan yoki uzilgan; expired: qayta kirish kerak. */
 export type ConnectorState = 'disconnected' | 'connected' | 'expired'
 
@@ -453,9 +454,10 @@ export interface ConnectorStatus {
   state: ConnectorState
   /** Ulangan hisobning logini. */
   login: string | null
-  /** Ulangan tizim chatda ishlatiladi (kalit). */
+  /** Eski kalit maydoni: server yuboradi, lekin endi hech narsani hal qilmaydi -
+   *  ulangan tizim doim ishlatiladi. */
   enabled: boolean
-  /** HRM tokenining muddati (ISO-8601). CRM da null - u o'zi yangilanadi. */
+  /** HRM tokenining muddati (ISO-8601). */
   expiresAt: string | null
 }
 
@@ -468,11 +470,6 @@ export interface ConnectorsResponse {
 export interface ConnectRequest {
   username: string
   password: string
-}
-
-/** schemas/connectors.py: ConnectorUpdate */
-export interface ConnectorUpdate {
-  enabled: boolean
 }
 
 /* ── Write actions: the assistant proposes, the person confirms ─────────── */

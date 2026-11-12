@@ -56,8 +56,9 @@ import SourcesRow from './SourcesRow.vue'
  * i (Mini App yopilmaydi).
  *
  * XATO KARTASI tinch (qizil faqat belgida - qizil fon xavfli amal uchun saqlanadi).
- * HRM/CRM tokeni yo'q bo'lsa "Qayta urinish" o'rniga "Qayta ulash": takror so'rash
- * tokenni paydo qilmaydi, qayta kirish esa qiladi.
+ * HRM/CRM tokeni yo'q bo'lsa "Qayta urinish" o'rniga "Veb ilovani ochish": takror so'rash
+ * tokenni paydo qilmaydi - ulanish veb ilovada tiklanadi (HRM - "+" menyusida, CRM -
+ * BRB-Tech ID bilan kirishda o'zi).
  *
  * `landed` - javob shu sessiyada jonli keldi: manbalar va amallar qatori 4px pastdan
  * "ko'tarilib" chiqadi (tarixdan ochilganda - jim).

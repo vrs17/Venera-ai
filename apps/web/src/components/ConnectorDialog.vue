@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
-import { ArrowLeft, CircleAlert, Eye, EyeOff, KeyRound, SquareKanban, UserRound, Users } from 'lucide-vue-next'
+import { ArrowLeft, CircleAlert, Eye, EyeOff, KeyRound, UserRound, Users } from 'lucide-vue-next'
 import { localizeApiError } from '../api/errors'
 import { ApiError } from '../api/http'
 import { useConnectors } from '../composables/useConnectors'
@@ -11,18 +11,19 @@ import VButton from '../ui/VButton.vue'
 import VDialog from '../ui/VDialog.vue'
 import VIconButton from '../ui/VIconButton.vue'
 import VInput from '../ui/VInput.vue'
-import VSwitch from '../ui/VSwitch.vue'
 import { fmtTime } from '../ui/format'
-import { toast } from '../ui/useToast'
 import { useId } from '../ui/composables/useId'
 import ConnectorList from './ConnectorList.vue'
-import PlatformList from './PlatformList.vue'
-import { usePlatforms } from '../composables/usePlatforms'
 
 /**
- * Ulanishlar oynasi (spec §4.3): HRM / CRM ro'yxati, kirish shakli va hisob - bitta
+ * Ulanishlar oynasi (spec §4.3): ulanishlar ro'yxati, kirish shakli va hisob - bitta
  * VDialog ichida uch ko'rinish. Fokus tuzog'i, Esc, sahifa qulfi, fokusni ochgan
  * tugmaga qaytarish va telefonda pastki sheet - VDialog'da.
+ *
+ * FAQAT HRM (ega qarori, 2026-11-12). HRM hali SSO sessiyasini qabul qilmaydi - odam uni
+ * shu yerda login va parol bilan ulaydi, holatini ko'radi, muddati tugasa qayta ulaydi,
+ * xohlasa uzadi. CRM bu oynada YO'Q: u BRB-Tech ID bilan kirishda o'zi ulanadi. Yoqish /
+ * o'chirish kaliti ham yo'q - ulangan tizim ishlatiladi.
  *
  * Kirish saytning o'zida: parol serverga ketadi (`POST /api/v1/connectors/{id}/connect`),
  * server platformaga kiradi va tokenni O'ZIDA saqlaydi - brauzer uni ko'rmaydi. Parol
@@ -33,32 +34,19 @@ import { usePlatforms } from '../composables/usePlatforms'
  *
  * `connectorId` berilsa - ro'yxatsiz, to'g'ridan-to'g'ri o'sha tizim uchun ochiladi
  * (masalan, chat "HRM ulanmagan" desa) va ish bitgach o'zi yopiladi.
- *
- * MANBALAR (2026-10-10): ro'yxat ko'rinishida hisoblar ostida - Barno foydalanadigan
- * platformalar va ularning kalitlari (PlatformList, yordamchining o'z kalitlari, bizning
- * proksi orqali). Ular yuklangach HRM/CRM qatoridagi eski kalit (`hideSwitch`) VA hisob
- * ko'rinishidagi "Chatda ishlatish" kaliti yashiriladi - HRM uchun BITTA kalit qolsin
- * (UX ko'rigi, 2026-10-10). Platforma kalitini yoqish token kalitini ham yoqadi, token
- * o'chiq qolgan bo'lsa - "Manbalar" da ogohlantirish va "Yoqish" (PlatformList).
- * Platformalar yuklanmasa (yoki to'g'ridan-to'g'ri kirish shakli) - avvalgidek.
  */
 const props = defineProps<{ connectorId?: ConnectorId | null }>()
 const open = defineModel<boolean>('open', { default: false })
 
 const { t } = useI18n({ useScope: 'global' })
-const { connectors, load, connect, disconnect, toggle } = useConnectors()
-const platformStore = usePlatforms()
-/** Platforma kalitlari ko'rinib turibdimi (HRM/CRM ham) - unda hisob qatorida kalit yo'q. */
-const platformsShown = computed(
-  () => platformStore.status.value === 'ready' && platformStore.platforms.value.some((p) => p.id === 'hrm' || p.id === 'crm'),
-)
+const { connectors, load, connect, disconnect } = useConnectors()
 
 type View = 'list' | 'connect' | 'account'
 const view = ref<View>('list')
 const activeId = ref<ConnectorId>('hrm')
 const direct = ref(false)
 
-const ICONS: Record<ConnectorId, Component> = { hrm: Users, crm: SquareKanban }
+const ICONS: Record<ConnectorId, Component> = { hrm: Users }
 const connector = computed(() => connectors.find((c) => c.id === activeId.value) ?? connectors[0])
 const connected = computed(() => connector.value.state === 'connected')
 const expired = computed(() => connector.value.state === 'expired')
@@ -160,9 +148,6 @@ watch(
     }
     // Har ochilishda holat serverdan: HRM sessiyasi 10 soatda tugaydi.
     void load()
-    // Platforma kalitlari - faqat ro'yxat ko'rinishi uchun (to'g'ridan-to'g'ri kirish
-    // shaklida kerak emas). Ko'rinishlar almashganda qayta yuklanmaydi.
-    if (!props.connectorId) void platformStore.load()
     direct.value = !!props.connectorId
     if (props.connectorId) {
       const c = connectors.find((x) => x.id === props.connectorId)
@@ -212,10 +197,6 @@ async function onDisconnect() {
   }
 }
 
-async function onToggle() {
-  if (!(await toggle(activeId.value))) toast.error(t('composer.toggleFailed'))
-}
-
 function setConfirming(value: boolean) {
   formError.value = ''
   confirming.value = value
@@ -250,18 +231,12 @@ function cancel() {
       </div>
     </template>
 
-    <div v-if="view === 'list'" class="cdlg__lists">
-      <section class="cdlg__section" :aria-label="t('assistant.platforms.accounts')">
-        <h3 class="cdlg__section-title">{{ t('assistant.platforms.accounts') }}</h3>
-        <ConnectorList
-          ref="listRef"
-          :hide-switch="platformsShown"
-          @connect="go('connect', $event)"
-          @manage="go('account', $event)"
-        />
-      </section>
-      <PlatformList :store="platformStore" />
-    </div>
+    <ConnectorList
+      v-if="view === 'list'"
+      ref="listRef"
+      @connect="go('connect', $event)"
+      @manage="go('account', $event)"
+    />
 
     <form v-else-if="view === 'connect'" :id="formId" class="cdlg__form" novalidate @submit.prevent="onSubmit">
       <p v-if="formError" class="cdlg__error" role="alert">
@@ -313,14 +288,6 @@ function cancel() {
           <span v-if="sessionText" class="cdlg__meta">{{ sessionText }}</span>
         </span>
       </div>
-      <VSwitch
-        v-if="connected && !confirming && !platformsShown"
-        class="cdlg__use"
-        label-first
-        :label="t('composer.useInChat')"
-        :model-value="connector.enabled"
-        @update:model-value="onToggle"
-      />
       <p v-if="formError" class="cdlg__error" role="alert">
         <CircleAlert :size="16" :stroke-width="1.75" aria-hidden="true" />
         <span>{{ formError }}</span>
@@ -381,18 +348,6 @@ function cancel() {
   text-wrap: pretty;
 }
 
-.cdlg__lists {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-5);
-}
-.cdlg__section-title {
-  color: var(--text);
-  font-size: var(--fs-body-sm);
-  line-height: var(--lh-body-sm);
-  font-weight: 600;
-}
-
 .cdlg__form {
   display: flex;
   flex-direction: column;
@@ -440,10 +395,6 @@ function cancel() {
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
   font-variant-numeric: tabular-nums;
-}
-.cdlg__use {
-  padding-top: var(--s-4);
-  border-top: 1px solid var(--line);
 }
 
 .cdlg__error {

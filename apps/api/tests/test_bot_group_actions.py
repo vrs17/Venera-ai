@@ -162,6 +162,22 @@ def test_crm_ulanmagan_odamga_izoh(w):
     send(w, gmsg(f"@{BOT} crmga kiritib qo'y", user=ISLOM))
     [note] = group_sent(w)
     assert note["text"] == NO_CRM and w.backend.group_questions == []
+    # CRM qo'lda ulanmaydi (2026-11-12): yo'l - vebga BRB-Tech ID bilan kirish.
+    assert "BRB-Tech ID" in NO_CRM and "veb" in NO_CRM
+    assert "CRM hisobingizga" not in NO_CRM and "menyu" not in NO_CRM
+    # Manzil sozlanmagan - tugma yo'q: shaxsiy chat tugmasi CRM ni ulamaydigan joyga olib borardi.
+    assert not note.get("reply_markup")
+
+
+def test_crm_ulanmagan_izohida_veb_tugmasi(w, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "sso_app_url", "https://llm.test/")
+    w.backend.crm_actors = {2}
+    send(w, gmsg(f"@{BOT} crmga kiritib qo'y", user=ISLOM))
+    [note] = group_sent(w)
+    [button] = all_buttons(note["reply_markup"])
+    assert button["url"] == "https://llm.test" and "t.me" not in button["url"]
 
 
 def test_oddiy_savol_avvalgidek(w):

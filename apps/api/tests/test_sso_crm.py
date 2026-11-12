@@ -1,16 +1,20 @@
 """CRM ulanishi SSO sessiyasidan (`services/integrations/crm_sso.py`, 2026-11-12).
 
 Kirgan odamning Keycloak sessiyasi (bizning client'ga berilgan tokenlar) CRM
-ulanishiga aylanadi - "+" menyusiga kirmasdan. Keycloak ham, CRM ham soxta
-(`tests/sso_fake.py`): Keycloak HAQIQIY imzoli token beradi, CRM esa
+ulanishiga aylanadi - bu CRM ga ulanishning yagona yo'li. Keycloak ham, CRM ham
+soxta (`tests/sso_fake.py`): Keycloak HAQIQIY imzoli token beradi, CRM esa
 `GET /api/auth/me` da tokenni "qabul qiladi" yoki rad etadi.
 
 Tekshiriladigan va'dalar:
-  * CRM qabul qilsa - ulanadi; rad etsa yoki javob bermasa - mavjud ulanishga
-    TEGILMAYDI va kirish baribir ishlaydi;
+  * CRM qabul qilsa - ulanadi; rad etsa yoki javob bermasa - mavjud (eski, qo'lda
+    ulangan) ulanishga TEGILMAYDI va kirish baribir ishlaydi;
   * access tokenni CRM emas, KEYCLOAK yangilaydi; sessiya o'lsa holat "expired";
-  * uzish sessiyani Keycloak'da bekor qiladi; SSO -> SSO almashtirishda eskisi
-    bekor QILINMAYDI (bitta offline sessiyani bo'lishishi mumkin);
+  * CRM HAR DOIM YOQIQ: kalit yo'q, eski `enabled: false` tokenni to'xtatmaydi va
+    qayta kirishdan keyin yozuvda ham qolmaydi;
+  * odam CRM ni KO'RMAYDI va boshqarmaydi: `GET /connectors` da CRM qatori yo'q,
+    `crm` uchun ulash / kalit / uzish - 404. Uzish - admin panelda, va u
+    sessiyani Keycloak'da bekor qiladi; SSO -> SSO almashtirishda eskisi bekor
+    QILINMAYDI (bitta offline sessiyani bo'lishishi mumkin);
   * token API javobiga tushmaydi.
 """
 
@@ -39,7 +43,7 @@ from tests.sso_fake import (  # noqa: F401 - fiksturalar
     net,
     sso_login,
 )
-from tests.test_connectors import CRM, HRM, IDP, PASSWORD, STATUS_FIELDS
+from tests.test_connectors import CRM, HRM, IDP, STATUS_FIELDS, legacy_crm
 
 ME_URL = f"{CRM}/api/auth/me"
 CRM_REFRESH_URL = f"{CRM}/api/auth/refresh"
@@ -65,7 +69,16 @@ def _uid(body: dict) -> str:
 
 
 def _crm(hub: ConnectorHub, uid: str) -> dict:
+    """CRM qatori - admin panel ko'radigan holat (odamning ro'yxatida u yo'q)."""
     return next(item for item in hub.status(uid) if item["id"] == "crm")
+
+
+def _new_person(client, net) -> str:
+    """Shaxs yaratiladi (birinchi kirish), lekin CRM ulanmaydi - CRM sessiyani rad etdi."""
+    net.crm_accepts = False
+    uid = _uid(sso_login(client, net))
+    net.crm_accepts = True
+    return uid
 
 
 def _auth(body: dict) -> dict:
@@ -151,18 +164,17 @@ def test_crm_rad_etsa_ulanmaydi_kirish_ishlaydi(client, hub, net, caplog):
     assert net.me_calls[0].removeprefix("Bearer ") not in text
 
 
-def test_crm_rad_etsa_qolda_ulangan_crm_qoladi(client, hub, net):
-    body = sso_login(client, net)          # 1-kirish: SSO sessiyasi ulandi
-    uid = _uid(body)
-    hub.connect(uid, "crm", USERNAME, PASSWORD)   # odam "+" menyusidan qo'lda uladi
+def test_crm_rad_etsa_eski_ulanish_qoladi(client, hub, net):
+    uid = _new_person(client, net)
+    legacy_crm(hub, uid, USERNAME)         # odamning eski, qo'lda ulangan CRM i
     manual = dict(hub.store.get(uid)["crm"])
     assert "via" not in manual
 
     net.crm_accepts = False
-    sso_login(client, net)                 # 2-kirish: CRM endi rad etadi
+    sso_login(client, net)                 # kirish: CRM sessiyani rad etadi
     assert hub.store.get(uid)["crm"] == manual
     assert _crm(hub, uid)["state"] == "connected"
-    assert CRM_LOGOUT_URL not in net.urls()[-3:]
+    assert CRM_LOGOUT_URL not in net.urls()
 
 
 def test_crm_javob_bermasa_mavjud_ulanishga_tegilmaydi(client, hub, net):
@@ -171,7 +183,7 @@ def test_crm_javob_bermasa_mavjud_ulanishga_tegilmaydi(client, hub, net):
     uid = _uid(body)
     assert _crm(hub, uid)["state"] == "disconnected"
 
-    hub.connect(uid, "crm", USERNAME, PASSWORD)
+    legacy_crm(hub, uid, USERNAME)
     manual = dict(hub.store.get(uid)["crm"])
     sso_login(client, net)
     assert hub.store.get(uid)["crm"] == manual
@@ -251,11 +263,12 @@ def test_keycloak_vaqtincha_yiqilsa_ulanish_qoladi(client, hub, net):
 
 
 def test_uzish_sessiyani_keycloakda_bekor_qiladi(client, hub, net):
-    body = sso_login(client, net)
+    """Uzish faqat admin panelda (`DELETE /admin/users/{id}/connectors/crm`)."""
+    body = sso_login(client, net, roles=["admin"])
     uid = _uid(body)
     stored = hub.store.get(uid)["crm"]["refresh_token"]
 
-    response = client.delete("/api/v1/connectors/crm", headers=_auth(body))
+    response = client.delete(f"/api/v1/admin/users/{uid}/connectors/crm", headers=_auth(body))
     assert response.status_code == 200, response.text
     assert response.json()["state"] == "disconnected"
     assert net.revoked == [stored]
@@ -281,54 +294,97 @@ def test_qayta_kirish_eski_sso_sessiyasini_bekor_qilmaydi(client, hub, net):
     assert _crm(hub, uid)["state"] == "connected"
 
 
-def test_sso_sessiyasi_qolda_ulangan_crm_ni_almashtiradi(client, hub, net):
-    body = sso_login(client, net)
-    uid = _uid(body)
-    hub.connect(uid, "crm", USERNAME, PASSWORD)          # qo'lda (crm-client sessiyasi)
+def test_sso_sessiyasi_eski_qolda_ulangan_crm_ni_almashtiradi(client, hub, net):
+    uid = _new_person(client, net)
+    legacy_crm(hub, uid, USERNAME)                       # eski (crm-client sessiyasi) ...
+    hub.store.set(uid, "crm", {**hub.store.get(uid)["crm"], "enabled": False})   # ... va o'chirilgan
     manual_refresh = hub.store.get(uid)["crm"]["refresh_token"]
 
     sso_login(client, net)                               # CRM qabul qiladi -> SSO sessiyasi
     entry = hub.store.get(uid)["crm"]
     assert entry["via"] == "sso" and entry["refresh_token"] != manual_refresh
+    assert entry["enabled"] is True, "eski kalit yangi ulanishga o'tmaydi"
     # Eski qo'lda ulangan kredensial CRM da bekor qilindi (to'planib qolmasin).
     assert (CRM_LOGOUT_URL, {"refresh_token": manual_refresh}) in net.calls
 
 
-def test_qolda_ulash_sso_belgisini_olib_tashlaydi(client, hub, net):
-    body = sso_login(client, net)
-    uid = _uid(body)
-    hub.connect(uid, "crm", USERNAME, PASSWORD)
-    assert "via" not in hub.store.get(uid)["crm"]
+def test_eski_yozuvni_crm_yangilaydi_keycloak_emas(client, hub, net):
+    """SSO manbasi bor markazda ham `via` siz (eski) yozuv CRM ning o'zida yangilanadi."""
+    uid = _new_person(client, net)
+    legacy_crm(hub, uid, USERNAME)
     hub._crm_cache.pop(uid)
-    hub.tokens(uid)
-    # Endi yangilash yana CRM orqali.
+    assert hub.tokens(uid)["crm"].startswith("access-")
     assert CRM_REFRESH_URL in net.urls()
     assert _refresh_calls(net) == []
 
 
-def test_kalit_ochirilgan_bolsa_qayta_kirish_yoqmaydi(client, hub, net):
+def test_ochirilgan_crm_baribir_ishlaydi_va_qayta_kirishda_yoqiladi(client, hub, net):
+    """CRM har doim yoqiq. Eski kod yozgan `enabled: false` (odam bir paytlar kalitni
+    o'chirgan) tokenni to'xtatmaydi; qayta kirishdan keyin yozuvda ham qolmaydi."""
     body = sso_login(client, net)
     uid = _uid(body)
-    hub.set_enabled(uid, "crm", False)
+    hub.store.set(uid, "crm", {**hub.store.get(uid)["crm"], "enabled": False})
+
+    assert hub.tokens(uid)["crm"].startswith("ey"), "qayta kirmasdan ham ishlaydi"
+    assert _crm(hub, uid)["enabled"] is True
+
     sso_login(client, net)
-    assert _crm(hub, uid)["enabled"] is False
-    assert hub.tokens(uid) == {}
+    entry = hub.store.get(uid)["crm"]
+    assert entry["enabled"] is True and entry["via"] == "sso"
+    assert _crm(hub, uid)["enabled"] is True
+    assert hub.tokens(uid)["crm"].startswith("ey")
 
 
 # --- API javobi ----------------------------------------------------------------------------
 
 
-def test_api_javobida_token_yoq(client, hub, net):
+def test_api_royxatida_crm_yoq_va_token_yoq(client, hub, net):
+    """CRM ulangan, lekin odamga ko'rsatilmaydi: ro'yxatda faqat HRM qatori."""
     body = sso_login(client, net)
+    assert _crm(hub, _uid(body))["state"] == "connected"
     response = client.get("/api/v1/connectors", headers=_auth(body))
     assert response.status_code == 200, response.text
     items = response.json()["connectors"]
-    crm = next(item for item in items if item["id"] == "crm")
-    assert set(crm) == STATUS_FIELDS
-    assert crm["state"] == "connected" and crm["login"] == USERNAME
+    assert [item["id"] for item in items] == ["hrm"]
+    assert set(items[0]) == STATUS_FIELDS
     raw = response.text
+    assert "crm" not in raw.lower() and USERNAME not in raw
     assert hub.store.get(_uid(body))["crm"]["refresh_token"] not in raw
     assert net.me_calls[0].removeprefix("Bearer ") not in raw
+
+
+def test_api_odam_crm_ni_boshqara_olmaydi(client, hub, net):
+    """`crm` uchun ulash / kalit / uzish - 404: sessiya joyida, Keycloak'da hech narsa
+    bekor qilinmagan, token berilaveradi."""
+    body = sso_login(client, net)
+    uid = _uid(body)
+    before = hub.store.get(uid)["crm"]
+    calls_before = len(net.calls)
+
+    responses = [
+        client.post("/api/v1/connectors/crm/connect", headers=_auth(body),
+                    json={"username": USERNAME, "password": "parol"}),
+        client.patch("/api/v1/connectors/crm", headers=_auth(body), json={"enabled": False}),
+        client.delete("/api/v1/connectors/crm", headers=_auth(body)),
+    ]
+    assert [r.status_code for r in responses] == [404, 404, 404]
+    assert hub.store.get(uid)["crm"] == before
+    assert net.revoked == [] and len(net.calls) == calls_before
+    assert _crm(hub, uid)["enabled"] is True
+    assert hub.tokens(uid)["crm"].startswith("ey")
+
+
+def test_health_crm_ulanishi_sso_yolidan(client, auth, hub, net, monkeypatch):
+    """`/api/health/detail` -> `connectors.crm`: SSO kirishida CRM ulanishi ochila
+    oladimi (SSO + `CRM_BASE_URL` + `SSO_CRM_CONNECT`), eski `crm-client` sozlamasi emas."""
+    body = client.get("/api/health/detail", headers=auth).json()
+    assert body["connectors"]["crm"] is True
+    assert not [w for w in body["warnings"] if "CRM ulanishi" in w]
+
+    monkeypatch.setattr(settings, "sso_crm_connect", False)
+    body = client.get("/api/health/detail", headers=auth).json()
+    assert body["connectors"]["crm"] is False
+    assert [w for w in body["warnings"] if "CRM ulanishi" in w and "SSO_CRM_CONNECT" in w]
 
 
 def test_sso_manbasi_yoq_markazda_sso_yozuvi_token_bermaydi(tmp_path, net):

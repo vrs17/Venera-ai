@@ -21,9 +21,11 @@ KIRISH IKKI YO'L BILAN:
 
 OLDINGI YO'L - login+parolni Keycloak'ga ilovaning o'zi yuborishi (parol
 granti) va o'sha parol bilan HRM ga kirish - OLIB TASHLANDI (2026-11): SSO
-ning ma'nosi ilova parolni ko'rmasligi. HRM/CRM ulanishlari endi kirishda
-o'zi ochilmaydi - "+" menyusida (`api/v1/connectors.py`); HRM Keycloak
-tokenini qabul qilgan kuni u ham SSO sessiyasidan ochiladi.
+ning ma'nosi ilova parolni ko'rmasligi. HRM ulanishi endi kirishda o'zi
+ochilmaydi - odam uni "+" menyusida qo'lda ulaydi (`api/v1/connectors.py`);
+HRM Keycloak tokenini qabul qilgan kuni u ham SSO sessiyasidan ochiladi. CRM
+ulanishi esa SSO sessiyasining o'zidan ochiladi (`_connect_crm`) - odam uni
+ko'rmaydi va boshqarmaydi.
 
 Frontend (`apps/web/src/api/auth.api.ts`). `signup` va `change-password`
 ATAYLAB 501: hisob va parol Keycloak'da.
@@ -169,9 +171,13 @@ def _connect_crm(oidc: KeycloakOidc, actor_id: int, username: str, tokens: Token
 
     Qoida: sessiya faqat CRM uni QABUL QILGANDA ulanishga aylanadi (eski
     ulanish almashtiriladi). CRM rad etsa yoki javob bermasa odamning
-    mavjud ulanishiga TEGILMAYDI - ishlab turgan (masalan qo'lda ulangan)
-    CRM ni tekshirilmagan sessiya bilan almashtirmaymiz va menyuda "ulangan"
-    deb yolg'on ko'rsatmaymiz. Keyingi kirishda yana sinaladi.
+    mavjud ulanishiga TEGILMAYDI - ishlab turgan (masalan eski, qo'lda
+    ulangan) CRM ni tekshirilmagan sessiya bilan almashtirmaymiz. Keyingi
+    kirishda yana sinaladi.
+
+    CRM HAR DOIM YOQIQ (2026-11-12, ega qarori): kalit yo'q, odam CRM ni
+    ko'rmaydi ham. Yangi yozuv `enabled: true` bilan saqlanadi - bir paytlar
+    o'chirib qo'yilgan CRM qayta kirishdan keyin o'chiq qolmaydi.
     """
     if not settings.sso_crm_connect:
         return
@@ -195,7 +201,7 @@ def _connect_crm(oidc: KeycloakOidc, actor_id: int, username: str, tokens: Token
             )
             return
         hub.adopt_crm(str(actor_id), username, tokens.access_token, tokens.refresh_token,
-                      tokens.expires_in, keep_enabled=True, revoke_old=True, via="sso")
+                      tokens.expires_in, revoke_old=True, via="sso")
     except Exception:  # noqa: BLE001 - CRM kirishga to'siq bo'lmasin
         log.exception("SSO: CRM ulanishini ochishda xato (%s) - kirish davom etadi", username)
 
@@ -492,7 +498,8 @@ def logout(
     kompyuterda bu xavfli.
 
     Ulanishlar (HRM/CRM) QOLADI - ular sessiya emas, odamning saqlangan
-    ulanishi; uzish "+" menyusida. Xotiradagi HRM paroli esa o'chiriladi.
+    ulanishi: HRM ni odam "+" menyusida uzadi, CRM ni - admin panel.
+    Xotiradagi HRM paroli esa o'chiriladi.
     """
     _connectors.hub.forget_password(str(user.actorId))
     sso_url: str | None = None

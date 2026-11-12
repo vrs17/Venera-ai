@@ -265,7 +265,7 @@ def _reset() -> None:
 
 @pytest.fixture
 def hub(tmp_path, net, monkeypatch):
-    """Sozlangan ulanishlar markazi (HRM + CRM) - "+" menyusi testlari uchun."""
+    """Sozlangan ulanishlar markazi (HRM; CRM - faqat eski yozuvlar uchun, SSO manbasisiz)."""
     built = ConnectorHub(
         ConnectorStore(tmp_path / "connectors" / "tokens.json"),
         HrmAuth(HRM),

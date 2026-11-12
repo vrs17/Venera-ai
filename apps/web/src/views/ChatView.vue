@@ -465,13 +465,16 @@ function streamedResponse(answer: string): PipelineResponse {
 // The service's text is documented as user-safe and written in the
 // language of the QUESTION. Our own string stays as the fallback for when
 // no text arrives at all.
+// Xizmatning O'Z matni yutadi - BITTA istisno: CRM tokeni yo'qligi. Xizmat u yerda
+// "«+» menyusidan ulang" deydi, lekin CRM odam tomonidan ulanmaydi: u BRB-Tech ID bilan
+// kirilganda o'zi ulanadi («+» -> Ulanishlar da faqat HRM bor). Qaysi tizim - xizmat
+// matnidan: faqat CRM tilga olingan bo'lsa CRM (Mini App'dagi qoida, `tg/chat/useTgChat.ts`).
 function errorText(frame: ChatFrame): string {
   const own = frame.text?.trim()
+  const auth = frame.code === 'auth_missing' || frame.code === 'auth_expired'
+  if (auth && own && /CRM/i.test(own) && !/HRM/i.test(own)) return t('chatCrmNotConnected')
   if (own) return own
-  if (frame.code === 'auth_missing' || frame.code === 'auth_expired') {
-    return t('chatNotConnected')
-  }
-  return t('chatFailed')
+  return auth ? t('chatNotConnected') : t('chatFailed')
 }
 
 // Run (or re-run) the question for an existing exchange. Shared by send and

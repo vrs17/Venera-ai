@@ -389,18 +389,6 @@ def test_yangilash_paytida_uzilgan_ulanish_tirilmaydi(client, hub, net, monkeypa
     assert next(s for s in hub.status(uid) if s["id"] == "crm")["state"] == "disconnected"
 
 
-def test_yangilash_paytida_ochirilgan_kalit_saqlanadi(client, hub, net, monkeypatch):
-    uid = str(sso_login(client, net)["user"]["actorId"])
-    before = hub.store.get(uid)["crm"]["refresh_token"]
-    hub._crm_cache.pop(uid)
-    _during_refresh(hub, monkeypatch, lambda: hub.set_enabled(uid, "crm", False))
-
-    hub.tokens(uid)
-    entry = hub.store.get(uid)["crm"]
-    assert entry["enabled"] is False                       # odamning qarori yo'qolmadi
-    assert entry["refresh_token"] != before and entry["via"] == "sso"   # rotatsiya ham saqlandi
-
-
 def test_yangilash_paytidagi_qayta_kirish_ustun(client, hub, net, monkeypatch):
     uid = str(sso_login(client, net)["user"]["actorId"])
     hub._crm_cache.pop(uid)
@@ -429,8 +417,8 @@ def test_olgan_sessiya_xabari_yangi_ulanishni_buzmaydi(client, hub, net, monkeyp
 
 def test_bekor_qilish_yiqilsa_ham_uzish_bajariladi(client, hub, net, monkeypatch):
     """Keycloak yoki oldidagi proksi buzuq javob bersa (`HTTPException`) ham "uzish" yarim
-    yo'lda qolmaydi: ulanish o'chirilgan, API 200."""
-    body = sso_login(client, net)
+    yo'lda qolmaydi: ulanish o'chirilgan, API 200. CRM ni faqat admin panel uzadi."""
+    body = sso_login(client, net, roles=["admin"])
     uid = str(body["user"]["actorId"])
     original = net.__class__.__call__
 
@@ -440,22 +428,20 @@ def test_bekor_qilish_yiqilsa_ham_uzish_bajariladi(client, hub, net, monkeypatch
         return original(self, request, timeout)
 
     monkeypatch.setattr(net.__class__, "__call__", broken)
-    response = client.delete("/api/v1/connectors/crm", headers=_bearer(body))
+    response = client.delete(f"/api/v1/admin/users/{uid}/connectors/crm", headers=_bearer(body))
     assert response.status_code == 200 and response.json()["state"] == "disconnected"
     assert "crm" not in hub.store.get(uid) and hub.tokens(uid) == {}
 
 
-def test_kalit_va_rotatsiya_bir_birini_yoqotmaydi(client, hub, net):
-    """`set_enabled` endi o'qib-yozmaydi (maydonni joyida yangilaydi): undan keyingi
-    yangilash kalitni, kalit esa yangi refresh tokenni saqlaydi."""
+def test_yangilash_faqat_osha_sessiyaga_yoziladi(client, hub, net):
+    """Rotatsiya yozuvning boshqa maydonlariga tegmaydi, `replace_if` esa boshqa sessiya
+    (boshqa refresh token) yoki yo'q yozuv ustiga hech narsa yozmaydi."""
     uid = str(sso_login(client, net)["user"]["actorId"])
-    hub.set_enabled(uid, "crm", False)
-    hub.set_enabled(uid, "crm", True)
     before = hub.store.get(uid)["crm"]["refresh_token"]
     hub._crm_cache.pop(uid)
     hub.tokens(uid)
     after = hub.store.get(uid)["crm"]
     assert after["refresh_token"] != before and after["enabled"] is True and after["via"] == "sso"
-    assert hub.store.patch("yoq-odam", "crm", enabled=False) is None
+    assert hub.store.replace_if("yoq-odam", "crm", before, expired=True) is False
     assert hub.store.replace_if(uid, "crm", "boshqa-token", expired=True) is False
     assert hub.store.get(uid)["crm"]["expired"] is False

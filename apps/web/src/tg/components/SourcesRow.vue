@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
-import { Activity, BookOpen, BookOpenText, FileText, Landmark } from 'lucide-vue-next'
+import { Activity, BookOpen, FileText, Landmark } from 'lucide-vue-next'
 import { platformIcon } from '../../components/chat/platforms'
 import type { SourceItem } from '../chat/sources'
 
@@ -14,17 +14,17 @@ import type { SourceItem } from '../chat/sources'
  * barmoq bilan surilganda chetdan chetga oqadi.
  *
  * Jonli so'rov chipida "T1" yo'q - "CRM · Vazifa ma'lumoti" (sources.ts): ichki
- * belgi xodimga hech narsa demaydi. Belgi - platformaniki (HRM odamlar, DWH ombor,
- * Biznes 24/7 portfel...): bir qarashda qaysi tizimdan ekani ko'rinadi.
+ * belgi xodimga hech narsa demaydi. Belgi - platformaniki (HRM odamlar, CRM kanban):
+ * bir qarashda qaysi tizimdan ekani ko'rinadi.
  */
 defineProps<{ items: SourceItem[] }>()
 const emit = defineEmits<{ open: [marker: string | null] }>()
 const { t } = useI18n({ useScope: 'global' })
 
-const ICON = { doc: FileText, law: Landmark, guide: BookOpenText, lookup: Activity }
+const ICON = { doc: FileText, law: Landmark, lookup: Activity }
 
 function iconOf(item: SourceItem): Component {
-  return (item.kind === 'lookup' || item.kind === 'guide') && item.platform ? platformIcon(item.platform) : ICON[item.kind]
+  return item.kind === 'lookup' && item.platform ? platformIcon(item.platform) : ICON[item.kind]
 }
 </script>
 

@@ -79,10 +79,12 @@ class Settings(BaseSettings):
     #: client scopes" ro'yxatida `offline_access` bo'lishi kerak (yangi
     #: client'da odatda bor); (2) kirgan odamning sessiyasi CRM da
     #: tekshiriladi (`GET /api/auth/me`) va qabul qilinsa uning CRM ulanishi
-    #: bo'ladi - "+" menyusiga kirish shart emas. CRM rad etsa ulanish
+    #: bo'ladi. Bu CRM ga ulanishning YAGONA yo'li: odam CRM ni ko'rmaydi va
+    #: qo'lda ulamaydi (2026-11-12, ega qarori). CRM rad etsa ulanish
     #: ochilmaydi, kirish esa ishlayveradi. `false` - kirish faqat shaxsni
-    #: beradi, CRM "+" menyusida qo'lda ulanadi. `CRM_BASE_URL` bo'sh bo'lsa
-    #: bu sozlamaning ta'siri yo'q (scope'dan tashqari).
+    #: beradi va odamning O'Z CRM ulanishi bo'lmaydi (chat umumiy agent
+    #: hisobiga tushadi, guruh va yig'ilish CRM i ishlamaydi). `CRM_BASE_URL`
+    #: bo'sh bo'lsa bu sozlamaning ta'siri yo'q (scope'dan tashqari).
     sso_crm_connect: bool = True
     #: SSO bilan kirganlar: Keycloak `sub` -> `actor_id`
     #: (`services/identities.py`). Sir yo'q, lekin `data/` da, 600.
@@ -415,9 +417,10 @@ class Settings(BaseSettings):
 
     # --- Ulanishlar: foydalanuvchining O'Z HRM / CRM hisobi ---
     #: Yuqoridagi agent sessiyasidan FARQI: u yerda bitta umumiy hisob, bu
-    #: yerda har bir odam "+" menyusidan o'z logini va paroli bilan kiradi
-    #: va chatga uning O'Z tokeni beriladi. Mantiq:
-    #: `services/integrations/connectors.py`.
+    #: yerda har bir odamning O'Z ulanishi va chatga uning O'Z tokeni
+    #: beriladi: HRM ga odam "+" menyusidan o'z logini va paroli bilan
+    #: kiradi, CRM esa SSO kirishida o'zi ulanadi (`sso_crm_connect`).
+    #: Mantiq: `services/integrations/connectors.py`.
     #:
     #: HRM API manzili (`POST /api/authenticate`). BO'SH bo'lsa HRM ulanishi
     #: o'chiq - menyuda "serverda sozlanmagan" ko'rinadi.
@@ -438,10 +441,14 @@ class Settings(BaseSettings):
     #: savol-javob bir necha daqiqa cho'zilishi mumkin, token esa javob
     #: OXIRIGACHA yaroqli turishi kerak.
     hrm_token_margin: float = 300.0
-    #: CRM uchun Keycloak token manzili - parol bilan kirish shu yerda
-    #: (`grant_type=password`, `offline_access`). BO'SH bo'lsa CRM
-    #: ulanishi o'chiq. `crm_base_url` (yuqorida) esa yangilash uchun
-    #: kerak: `POST /api/auth/refresh` CRM ning o'zida.
+    #: ESKI CRM ulanishlari uchun (`crm_idp_token_url`, `crm_client_id`,
+    #: `crm_client_secret`). 2026-11-12 gacha odam CRM ga parol bilan qo'lda
+    #: ulanardi (Keycloak parol granti) - bu yo'l OLIB TASHLANDI, shu uch
+    #: qiymat endi hech qayerga yuborilmaydi. Ular faqat shart bo'lib qoldi:
+    #: uchalasi va `crm_base_url` to'liq bo'lsagina saqlangan eski ulanishlar
+    #: yangilanadi (`POST /api/auth/refresh`, CRM ning o'zida) - odam SSO
+    #: bilan qayta kirib, SSO sessiyasiga o'tguncha. Bo'shatilsa o'sha odamlar
+    #: keyingi SSO kirishigacha o'z CRM tokenisiz qoladi.
     crm_idp_token_url: str = ""
     crm_client_id: str = "crm-client"
     #: Ilova siri - FAQAT `.env` da, brauzerga hech qachon bermaydi.
@@ -454,7 +461,7 @@ class Settings(BaseSettings):
     crm_token_margin: float = 180.0
     #: Foydalanuvchilar tokenlari (HRM token, CRM refresh_token) shu faylda.
     #: `data/` gitignore'da, fayl 600 huquq bilan atomik yoziladi. PAROL BU
-    #: YERDA YO'Q - u faqat login so'roviga ketadi.
+    #: YERDA YO'Q - u faqat HRM login so'roviga ketadi.
     connectors_file: Path = BASE_DIR / "data" / "connectors" / "tokens.json"
 
     # --- Telegram bot: savol-javob Telegram chatining O'ZIDA ---

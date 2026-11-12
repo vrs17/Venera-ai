@@ -1,33 +1,27 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
-import { Settings, SquareKanban, Users } from 'lucide-vue-next'
+import { Settings, Users } from 'lucide-vue-next'
 import { useConnectors } from '../composables/useConnectors'
 import type { ConnectorId, ConnectorStatus } from '../composables/useConnectors'
 import VBadge from '../ui/VBadge.vue'
 import VButton from '../ui/VButton.vue'
 import VIconButton from '../ui/VIconButton.vue'
 import VSkeleton from '../ui/VSkeleton.vue'
-import VSwitch from '../ui/VSwitch.vue'
-import { toast } from '../ui/useToast'
 
-// HRM / CRM qatorlari (ulanishlar oynasining ichida). Qator = platforma belgisi, nomi,
-// bitta jim holat qatori va BITTA asosiy boshqaruv: ulangan bo'lsa - kalit (chatda
-// ishlatish), aks holda "Ulanish" / "Qayta ulanish". Tishli g'ildirak - hisob
-// (sessiya muddati, uzish). Qaysi ko'rinish ochilishi ota komponentning ishi:
-// `connect` - kirish shakli, `manage` - hisob.
+// Ulanish qatori (ulanishlar oynasining ichida; hozir bitta - HRM). Qator = platforma
+// belgisi, nomi, bitta jim holat qatori va boshqaruv: ulanmagan yoki muddati tugagan
+// bo'lsa - "Ulanish" / "Qayta ulanish"; ulangan yoki muddati tugagan bo'lsa - tishli
+// g'ildirak (hisob: sessiya muddati, uzish). Qaysi ko'rinish ochilishi ota komponentning
+// ishi: `connect` - kirish shakli, `manage` - hisob.
 //
-// `hideSwitch` (2026-10-10): oynada platforma kalitlari (PlatformList - "Barno shu
-// manbadan foydalansinmi", HRM va CRM ham) chiqqanda qatordagi kalit yashiriladi - bir
-// ekranda HRM uchun ikki kalit odamni chalg'itardi. Hisob ko'rinishidagi "Chatda
-// ishlatish" kaliti joyida qoladi; platformalar yuklanmasa - qator avvalgidek.
-const props = withDefaults(defineProps<{ hideSwitch?: boolean }>(), { hideSwitch: false })
+// KALIT YO'Q (ega qarori, 2026-11-12): ulangan tizim ishlatiladi.
 const emit = defineEmits<{ connect: [id: ConnectorId]; manage: [id: ConnectorId] }>()
 const { t } = useI18n({ useScope: 'global' })
-const { connectors, loading, loaded, loadFailed, toggle } = useConnectors()
+const { connectors, loading, loaded, loadFailed } = useConnectors()
 
-const ICONS: Record<ConnectorId, Component> = { hrm: Users, crm: SquareKanban }
-const HINTS = { hrm: 'connectorHrmHint', crm: 'connectorCrmHint' } as const
+const ICONS: Record<ConnectorId, Component> = { hrm: Users }
+const HINTS: Record<ConnectorId, string> = { hrm: 'connectorHrmHint' }
 
 function statusText(c: ConnectorStatus): string {
   if (!c.configured) return t('connectorUnavailable')
@@ -38,10 +32,6 @@ function statusText(c: ConnectorStatus): string {
 }
 function connectLabel(c: ConnectorStatus): string {
   return c.state === 'expired' ? t('reconnect') : t('connectTo', { name: c.label })
-}
-
-async function onToggle(id: ConnectorId) {
-  if (!(await toggle(id))) toast.error(t('composer.toggleFailed'))
 }
 </script>
 
@@ -86,15 +76,8 @@ async function onToggle(id: ConnectorId) {
             size="sm"
             @click="emit('manage', c.id)"
           />
-          <VSwitch
-            v-if="c.state === 'connected' && !props.hideSwitch"
-            class="clist__switch"
-            :model-value="c.enabled"
-            :aria-label="c.label"
-            @update:model-value="onToggle(c.id)"
-          />
           <VButton
-            v-else-if="c.state !== 'connected'"
+            v-if="c.state !== 'connected'"
             data-role="connect"
             size="sm"
             :variant="c.state === 'expired' ? 'primary' : 'secondary'"
@@ -174,14 +157,6 @@ async function onToggle(id: ConnectorId) {
   align-items: center;
   gap: var(--s-2);
   flex-shrink: 0;
-}
-/* Barmoq uchun kalitning bosish maydoni kattaroq - ko'rinishi o'zgarmaydi. */
-@media (pointer: coarse) {
-  .clist__switch :deep(.v-switch__track)::after {
-    content: '';
-    position: absolute;
-    inset: -12px -6px;
-  }
 }
 
 .clist__row.is-unavailable .clist__glyph,

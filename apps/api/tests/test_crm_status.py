@@ -135,6 +135,8 @@ def test_crm_ulanmagan_izohi():
     items = [item("Hisobot")]
     report = CrmChecker(Agent({"answer": "", "sources": [], "error": {"code": "auth_missing"}})).check(USER, items)
     assert report.found == 0 and report.note.startswith("CRM ulanmagan")
+    # CRM qo'lda ulanmaydi: yo'l - vebga BRB-Tech ID bilan kirish, "CRM ga kiring" emas.
+    assert "BRB-Tech ID" in report.note and "CRM ga kiring" not in report.note
 
 
 def test_guruhda_aytilgan_kalit_boshqa_bolsa_rad_etiladi():

@@ -754,25 +754,35 @@ qolgan (nginx `location` ini tekshiring).
 
 Yordamchi 3.3 odam haqida uzoq muddatli XOTIRA saqlaydi ("eslab qol ...",
 so'rashidan o'rganilgan odatlar, tasdiqlangan CRM vazifalaridan o'rganilgan
-tartib) va har odamga 7 ta platforma (HRM, CRM, DWH, Biznes 24/7, Superapp,
-Biznes 24/7 qo'llanmalari, Biznes Help) uchun "foydalanilsinmi" kalitini
-beradi. Ikkalasi ham yordamchida turadi; Barno faqat proksi
-(`app/api/v1/assistant_extras.py`):
+tartib) va har odamga platformalar uchun "foydalanilsinmi" kalitini beradi.
+Ikkalasi ham yordamchida turadi; Barno faqat proksi
+(`app/api/v1/assistant_extras.py`).
+
+**Platformalardan faqat HRM qoldi (2026-11-12, ega qarori).** Yordamchi
+ro'yxatida CRM va vaqtinchalik namoyish manbalari (DWH, Biznes 24/7, Superapp,
+Biznes 24/7 qo'llanmalari, Biznes Help) hali bo'lishi mumkin, lekin Barno
+ularni odamga ko'rsatmaydi va kalitini almashtirmaydi: ro'yxatdan faqat `hrm`
+qatori o'tadi, boshqa `id` ga `PUT` yordamchiga BORMASDAN 404
+`platform_not_found` oladi. CRM har doim yoqiq (SSO kirishida o'zi ulanadi),
+namoyish manbalari esa endi taklif qilinmaydi. Ilovada kalitlar yo'q - bu ikki
+yo'l eski klientlar (mobil ilova) uchun qoldi. To'liq kelishuv:
+`docs/auth-sso.md`, "Ulanishlar: odam faqat HRM ni boshqaradi".
 
 | Barno | Yordamchi | Nima |
 |---|---|---|
 | `GET /api/v1/assistant/memory` | `GET /api/memory` | odamning xotirasi |
 | `DELETE /api/v1/assistant/memory/{item_id}` | `DELETE /api/memory/{item_id}` | bitta bandni unutish |
 | `DELETE /api/v1/assistant/memory?confirm=forget-all` | `DELETE /api/memory` | HAMMASINI unutish |
-| `GET /api/v1/assistant/platforms` | `GET /api/connectors` | platformalar va odamning kalitlari |
-| `PUT /api/v1/assistant/platforms/{id}` `{"enabled": bool}` | `PUT /api/connectors/{id}` | yoqish / o'chirish |
+| `GET /api/v1/assistant/platforms` | `GET /api/connectors` | faqat HRM qatori va odamning kaliti |
+| `PUT /api/v1/assistant/platforms/hrm` `{"enabled": bool}` | `PUT /api/connectors/hrm` | eski klientlar uchun: yordamchiga har doim `enabled: true` ketadi (kalitlar yo'q - ulangan degani ishlatiladi); boshqa `id` - 404, yordamchiga bormaydi |
 
 * **Kimlik faqat sessiyadan** - `venera:{actorId}`, chat bilan bir xil.
   So'rovdagi `user_id` e'tiborsiz (PUT tanasida esa 422): boshqa odamning
   xotirasini o'qish yoki o'chirish bitta parametr bo'lmasin.
 * **"Platforms", "connectors" emas**: `/api/v1/connectors` bizda odamning
-  HRM/CRM LOGIN tokenlari ("+" menyusi). Yordamchining `connectors` i - boshqa
-  narsa: "Barno shu manbadan foydalansinmi".
+  HRM LOGIN tokeni ("+" menyusi; CRM u yerda yo'q - SSO kirishida o'zi
+  ulanadi). Yordamchining `connectors` i - boshqa narsa: "Barno shu manbadan
+  foydalansinmi".
 * **Hammasini unutish** aniq `?confirm=forget-all` siz 400 `confirm_required`
   va yordamchiga bormaydi; odamga soatiga 5 marta. Yordamchi nosozligi
   (502/503/504) urinishni chegaradan QAYTARADI - agent qayta ishga
@@ -798,7 +808,8 @@ beradi. Ikkalasi ham yordamchida turadi; Barno faqat proksi
   bizning ilova siri, sessiya emas) 502 `upstream_error`; ulanib bo'lmadi
   yoki yordamchi 503 - 503 `upstream_unavailable`; vaqt tugadi - 504
   `upstream_timeout`; kredensial yo'q - 503 `not_configured`; yo'q band /
-  platforma - 404 `memory_not_found` / `platform_not_found`.
+  platforma - 404 `memory_not_found` / `platform_not_found` (`hrm` dan boshqa
+  har qanday platforma kaliti ham shu 404 - yaroqsiz nom ham, chegarani yemaydi).
 * **Xotira matni jurnalga yozilmaydi** - faqat kalit va soni; xato matnida
   ham yordamchi javobining tanasi yo'q (beshala yo'lda - platformalarda ham). Hisob (`api_calls`): `memory.list`,
   `memory.delete`, `memory.clear`, `platforms.list`, `platforms.set`.
@@ -824,8 +835,9 @@ kifoya (boshqa yo'llarga ta'sir qilmaydi). Web shu holatda kodsiz 404 ni
 "xizmat ishlamayapti" deb ko'rsatadi ("unutildi" EMAS) - faqat
 `memory_not_found` kodli 404 "allaqachon unutilgan" deb o'qiladi.
 
-TARTIB: avval API, keyin web. Web oldin chiqsa, Xotira va Manbalar "Barno
-hozir javob bermayapti" ko'rsatadi (zarar yo'q, lekin chalg'itadi).
+TARTIB: avval API, keyin web. Web oldin chiqsa, Xotira "Barno hozir javob
+bermayapti" ko'rsatadi (zarar yo'q, lekin chalg'itadi). "Manbalar" bo'limi
+2026-11-12 dan ilovada yo'q.
 
 ### Miya agentga ko'chishi: flag'lar, shadow, hold (2026-10-10)
 

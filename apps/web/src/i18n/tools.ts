@@ -2,13 +2,13 @@
 // "Vazifa maʼlumoti"). Web chat, Mini App va (kelajakda) boshqa yuzalar uchun BITTA lug'at.
 //
 // NEGA UMUMIY (2026-10-10, UX ko'rigi): avval bu lug'at faqat Mini App'da (`tg.tools`) edi,
-// web esa xom asbob nomini ko'rsatardi ("DWH · Branch kpi", "Biznes 24/7 · Kpi"). Endi
-// ikkala yuzada bitta qoida (`components/chat/sources.ts` `lookupTitle`): tarjimasi bor
-// asbob - "CRM · Vazifa maʼlumoti", yo'q - faqat platforma nomi ("DWH"), natija qisqasi
-// (`digest`) ostida. Xom nom (slug) foydalanuvchiga HECH QACHON ko'rinmaydi - u admin izida.
+// web esa xom asbob nomini ko'rsatardi ("CRM · Issue get"). Endi ikkala yuzada bitta qoida
+// (`components/chat/sources.ts` `lookupTitle`): tarjimasi bor asbob - "CRM · Vazifa
+// maʼlumoti", yo'q - faqat platforma nomi ("CRM"), natija qisqasi (`digest`) ostida. Xom
+// nom (slug) foydalanuvchiga HECH QACHON ko'rinmaydi - u admin izida.
 //
-// Yangi asbob (DWH, Biznes 24/7, Superapp...) - agent jamoasi aniq nomlarni bergach shu
-// yerga bitta qator (4 tilda). `en` - kalitlar manbai, qolganlari `Mirror<typeof en>`.
+// Yangi asbob - agent jamoasi aniq nomlarni bergach shu yerga bitta qator (4 tilda).
+// `en` - kalitlar manbai, qolganlari `Mirror<typeof en>`.
 
 import type { Mirror } from './ui'
 

@@ -3,8 +3,8 @@
     GET    /assistant/memory                       odamning uzoq muddatli xotirasi
     DELETE /assistant/memory/{item_id}             bitta bandni unutish
     DELETE /assistant/memory?confirm=forget-all    HAMMASINI unutish
-    GET    /assistant/platforms                    7 platforma va odamning kalitlari
-    PUT    /assistant/platforms/{platform_id}      {"enabled": true|false}
+    GET    /assistant/platforms                    faqat HRM qatori (eski klientlar uchun)
+    PUT    /assistant/platforms/{platform_id}      {"enabled": true|false} - faqat `hrm`
 
 MA'LUMOT BU YERDA SAQLANMAYDI. Xotira ham, kalitlar ham yuqoridagi xizmatda
 (HR Assistant 3.3, `/api/memory`, `/api/connectors`) `(ilova, user_id)`
@@ -16,9 +16,16 @@ chat, suhbatlar tarixi va amallar bilan AYNAN bir xil kalit. So'rovdagi
 boshqa odamning xotirasini o'qish yoki o'chirish bitta parametr bo'lardi.
 
 "CONNECTORS" EMAS, "PLATFORMS": bizning `/api/v1/connectors` - odamning
-HRM/CRM LOGIN tokenlari ("+" menyusi). Xizmatning `/api/connectors` i esa
+HRM LOGIN tokeni ("+" menyusi). Xizmatning `/api/connectors` i esa
 "Barno shu manbadan foydalansinmi" kalitlari. Bir xil nom ikki xil narsani
 anglatmasin deb bizda ular `platforms`.
+
+PLATFORMALARDAN FAQAT HRM QOLDI (2026-11-12, ega qarori). Xizmat ro'yxatida
+yana CRM va vaqtinchalik namoyish manbalari (DWH, Biznes 24/7, Superapp,
+qo'llanmalar, Biznes Help) bo'lishi mumkin - ular odamga ko'rsatilmaydi va
+ularning kaliti almashtirilmaydi: ro'yxat `USER_PLATFORMS` gacha qisqartiriladi,
+boshqa `id` ga `PUT` esa xizmatga BORMASDAN 404 `platform_not_found` oladi. Bu
+ikki yo'lni eski klientlar (mobil ilova) hali chaqiradi - shuning uchun qoldi.
 
 XOTIRA MATNI JURNALGA YOZILMAYDI: faqat kalitlar va soni. Xato matnida ham
 xizmat javobining tanasi yo'q (`AssistantClient._json(quiet=True)`).
@@ -42,6 +49,7 @@ from ...schemas.assistant_extras import (
 )
 from ...schemas.auth import AuthUser
 from ...services.integrations.assistant import AssistantError
+from ...services.integrations.connectors import USER_PLATFORMS
 from ...services.reports import RateLimiter
 from . import chat as _chat
 from ..deps import current_user
@@ -66,7 +74,7 @@ _write = RateLimiter(*WRITE_LIMIT)
 _forget_all = RateLimiter(*FORGET_ALL_LIMIT)
 
 _ITEM_ID = Path(max_length=128, description="Xotira bandi kaliti (`GET /assistant/memory` dagi `id`)")
-_PLATFORM_ID = Path(max_length=40, description="Platforma kaliti: hrm, crm, dwh, biznes247, ...")
+_PLATFORM_ID = Path(max_length=40, description="Platforma kaliti: faqat `hrm`")
 
 #: Foydalanuvchiga ko'rinadigan xabarlar - `code` bo'yicha. UI matnni o'zi
 #: tarjima qiladi (`code` ga qarab), bu - zahira. Ichki manzil va sir bu
@@ -234,10 +242,13 @@ def normalize_platform(entry: Any) -> Platform | None:
 
 
 def normalize_platforms(result: dict[str, Any]) -> PlatformList:
-    """Xizmatning `connectors` ro'yxati -> bizning `platforms`. Tartib xizmatniki."""
+    """Xizmatning `connectors` ro'yxati -> bizning `platforms`: FAQAT odam
+    boshqaradigan platformalar (`USER_PLATFORMS` - HRM). CRM va namoyish
+    manbalari xizmat ro'yxatida bo'lsa ham tashlanadi (modul izohi)."""
     raw = result.get("connectors")
     items = raw if isinstance(raw, list) else []
-    return PlatformList(platforms=[p for p in map(normalize_platform, items) if p is not None])
+    return PlatformList(platforms=[p for p in map(normalize_platform, items)
+                                   if p is not None and p.id in USER_PLATFORMS])
 
 
 # --- xotira -----------------------------------------------------------------------
@@ -301,7 +312,7 @@ def forget_all(
 
 @router.get("/platforms", response_model=PlatformList)
 def list_platforms(user: AuthUser = Depends(current_user)) -> PlatformList:
-    """Barno javob berishda o'qiydigan platformalar va shu odamning kalitlari."""
+    """Odam boshqaradigan platformalar - faqat HRM qatori (`normalize_platforms`)."""
     _limit(_read, user)
     result = _run(
         lambda timeout: _chat._assistant.list_platforms(user_id=_user_id(user), timeout=timeout),
@@ -313,12 +324,21 @@ def list_platforms(user: AuthUser = Depends(current_user)) -> PlatformList:
 @router.put("/platforms/{platform_id}", response_model=Platform)
 def set_platform(body: PlatformToggle, platform_id: str = _PLATFORM_ID,
                  user: AuthUser = Depends(current_user)) -> Platform:
-    """Platformani shu odam uchun yoqish/o'chirish. Javob - platformaning
-    YANGI holati (`enabled`): server o'chirgan platforma (`available: false`)
-    odam yoqsa ham `enabled: false` qoladi - UI shunga qarab kalitni qaytaradi."""
+    """Eski klientlar uchun qoldirilgan (mobil ilova): kalitlar olib tashlangan -
+    ULANGAN DEGANI ISHLATILADI. So'rov qabul qilinadi, lekin xizmatga har doim
+    `enabled: true` yuboriladi: eski klient HRM ni o'chirib qo'ya olmaydi (uni qayta
+    yoqadigan joy endi yo'q), ilgari o'chirilgan bo'lsa esa shu so'rov uni qayta
+    yoqadi. Javob - platformaning YANGI holati: server o'chirgan platforma
+    (`available: false`) baribir `enabled: false` qoladi.
+
+    Boshqa har qanday `id` (CRM, namoyish manbalari, notanish yoki yaroqsiz
+    nom) - 404 `platform_not_found`, xizmatga BORMASDAN va chegarani yemasdan:
+    eski klient CRM ni yoki olib tashlangan manbani o'chirib qo'ya olmasin."""
+    if platform_id not in USER_PLATFORMS:
+        raise AssistantProblem(404, "platform_not_found")
     result = _run_limited(_write, user, lambda: _run(
         lambda timeout: _chat._assistant.set_platform(
-            platform_id, user_id=_user_id(user), enabled=body.enabled, timeout=timeout),
+            platform_id, user_id=_user_id(user), enabled=True, timeout=timeout),
         user, "platforma kaliti", not_found="platform_not_found",
     ))
     platform = normalize_platform(result)

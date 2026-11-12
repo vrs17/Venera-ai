@@ -398,6 +398,13 @@ def _sso_configured() -> bool:
     return KeycloakOidc(settings.sso_issuer, settings.sso_client_id, settings.sso_client_secret).configured
 
 
+def _crm_connect_ready(hub) -> bool:
+    """Odamning CRM ulanishi ochila oladimi: u faqat SSO kirishida ochiladi
+    (`api/v1/auth._connect_crm`) - kalit (`sso_crm_connect`) yoqiq va SSO
+    manbasi (Keycloak + `CRM_BASE_URL`) sozlangan bo'lishi kerak."""
+    return bool(settings.sso_crm_connect) and hub.configured("crm")
+
+
 def _diagnostics() -> dict:
     """To'liq tashxis. FAQAT sessiya bilan ko'rsatiladi (pastga qara).
 
@@ -488,9 +495,11 @@ def _diagnostics() -> dict:
     if crm_note:
         warnings.append(crm_note)
 
-    # Foydalanuvchilarning o'z HRM/CRM ulanishlari. Sozlanmagan bo'lsa "+"
-    # menyusidagi tugma "serverda sozlanmagan" deydi - sababi shu yerda.
+    # Foydalanuvchilarning o'z ulanishlari. HRM ni odam "+" menyusida ulaydi:
+    # sozlanmagan bo'lsa tugma "serverda sozlanmagan" deydi - sababi shu yerda.
+    # CRM odamga ko'rinmaydi - u SSO kirishida o'zi ulanadi (`_connect_crm`).
     hub = connector_hub()
+    crm_ready = _crm_connect_ready(hub)
     # Kirish yo'li: SSO (Keycloak, brauzer orqali - `SSO_ISSUER`/`SSO_CLIENT_SECRET`,
     # `services/oidc.py`) yoki zahira (`users.yaml`). Ikkalasi ham yo'q bo'lsa
     # HECH KIM kira olmaydi - va bu `/api/health` da aytilmasa faqat login
@@ -505,10 +514,11 @@ def _diagnostics() -> dict:
         warnings.append("SSO_ISSUER / SSO_CLIENT_SECRET bo'sh - Keycloak orqali kirish o'chiq, faqat users.yaml")
     if not hub.hrm.configured:
         warnings.append("hrm_base_url bo'sh - HRM ulanishi (foydalanuvchi hisobi) o'chiq")
-    if not hub.crm.configured:
+    if not crm_ready:
         warnings.append(
-            "crm_idp_token_url / crm_client_secret / crm_base_url to'liq emas - "
-            "CRM ulanishi (foydalanuvchi hisobi) o'chiq"
+            "CRM ulanishi (foydalanuvchi hisobi) o'chiq: u SSO kirishida o'zi ochiladi - "
+            "SSO (SSO_ISSUER/SSO_CLIENT_ID/SSO_CLIENT_SECRET), CRM_BASE_URL va "
+            "SSO_CRM_CONNECT=true kerak"
         )
 
     # TTS navbatidagi band joylar. KO'RSATILADI, chunki bu bir marta
@@ -610,10 +620,10 @@ def _diagnostics() -> dict:
         # TOKEN QIYMATI YO'Q - faqat holat va muddat.
         "crm_session": crm,
         # Foydalanuvchi ulanishlari: sozlanganmi va nechta odam ulangan.
-        # TOKEN YO'Q.
+        # `crm` - SSO kirishida CRM ulanishi ochila oladimi. TOKEN YO'Q.
         "connectors": {
             "hrm": hub.hrm.configured,
-            "crm": hub.crm.configured,
+            "crm": crm_ready,
             "users": hub.store.user_count(),
         },
         # Kirish: SSO sozlanganmi, zahira ochiqmi, SSO bilan nechta odam kirgan.

@@ -14,18 +14,28 @@
 // nusxasida esa `url` maydoni bor. Ikkalasi ham faqat `https://` bo'lsa havola bo'ladi.
 
 import { safeHttps } from '../../components/chat/sources'
-import { isPlatformId, KNOWLEDGE_PLATFORMS, LIVE_PLATFORMS, PLATFORM_IDS } from '../../components/chat/platforms'
+import { PLATFORM_IDS } from '../../components/chat/platforms'
 import type { AnswerSource } from '../../types'
 import type { TurnSource } from '../types'
+
+// ESKI IZLAR (2026-11-12). Namoyish manbalari mahsulotdan olib tashlandi va umumiy
+// ro'yxatda (`chat/platforms.ts`) endi yo'q, lekin jurnalda ularning savollari qoldi.
+// Admin o'sha izlarni avvalgidek o'qishi uchun turlari FAQAT shu yerda: jonlilari - vosita
+// chaqiruvi, qo'llanmalari - tashqi sahifa. Yangi izlarda bu turlar uchramaydi.
+const RETIRED_LIVE_KINDS = ['dwh', 'biznes247', 'superapp']
+const RETIRED_GUIDE_KINDS = ['biznes247_kb', 'biznes247_help']
+const GUIDE_KINDS: ReadonlySet<string> = new Set(RETIRED_GUIDE_KINDS)
+/** Chip turi bo'la oladigan platformalar (hozirgi va eski). */
+const TOOL_PLATFORMS: readonly string[] = [...PLATFORM_IDS, ...RETIRED_LIVE_KINDS, ...RETIRED_GUIDE_KINDS]
 
 export function isLawSource(kind: string | null | undefined): boolean {
   return String(kind ?? '').toLowerCase() === 'law'
 }
 
-/** Qo'llanma maqolasi (`biznes247_kb`, `biznes247_help`) - qonun kabi tashqi sahifa:
- *  `docUrl` yo'q, "Hujjatni ochish" emas - havola (faqat https). */
+/** Qo'llanma maqolasi (eski izlarda) - qonun kabi tashqi sahifa: `docUrl` yo'q, "Hujjatni
+ *  ochish" emas - havola (faqat https). */
 export function isGuideKind(kind: string | null | undefined): boolean {
-  return KNOWLEDGE_PLATFORMS.has(String(kind ?? '').toLowerCase())
+  return GUIDE_KINDS.has(String(kind ?? '').toLowerCase())
 }
 
 /** Tashqi sahifa (qonun yoki qo'llanma) - ko'ruvchida ochilmaydi. */
@@ -38,10 +48,10 @@ export function turnLawUrl(s: TurnSource): string | null {
   return safeHttps(s.ref)
 }
 
-/** Hujjat emas, platforma chaqiruvi (HRM/CRM/boshqa vosita). 2026-10-10: DWH, Biznes 24/7,
- *  Superapp ham (`platforms.ts`) - aks holda ular hujjat bo'lib, mavjud bo'lmagan faylga
- *  "Hujjatni ochish" tugmasi chiqardi. */
-const TOOL_KINDS = new Set([...LIVE_PLATFORMS, 'tool'])
+/** Hujjat emas, platforma chaqiruvi (HRM/CRM/boshqa vosita). Eski izlardagi jonli manbalar
+ *  ham - aks holda ular hujjat bo'lib, mavjud bo'lmagan faylga "Hujjatni ochish" tugmasi
+ *  chiqardi. */
+const TOOL_KINDS = new Set<string>([...PLATFORM_IDS, ...RETIRED_LIVE_KINDS, 'tool'])
 
 export function isToolSource(kind: string | null | undefined): boolean {
   return TOOL_KINDS.has(String(kind ?? '').toLowerCase())
@@ -53,14 +63,14 @@ export function docUrl(docId: string | null | undefined, page?: number | null): 
   return page && page > 0 ? `${base}#page=${page}` : base
 }
 
-/** Vosita nomidan platforma (`hrm_today_late` -> `hrm`, `biznes247_kpi` -> `biznes247`) -
- *  chip turi va belgisi shunga qarab. Eng uzun mos prefiks; topilmasa - `hrm` (avvalgidek). */
+/** Vosita nomidan platforma (`hrm_today_late` -> `hrm`) - chip turi va belgisi shunga
+ *  qarab. Eng uzun mos prefiks; topilmasa - `hrm` (avvalgidek). */
 function toolKind(kind: string | null | undefined, tool: string | null | undefined): string {
   const k = String(kind ?? '').toLowerCase()
-  if (isPlatformId(k)) return k
+  if (TOOL_PLATFORMS.includes(k)) return k
   const name = String(tool ?? '').toLowerCase()
   let best = ''
-  for (const id of PLATFORM_IDS) if (name.startsWith(id) && id.length > best.length) best = id
+  for (const id of TOOL_PLATFORMS) if (name.startsWith(id) && id.length > best.length) best = id
   return best || 'hrm'
 }
 

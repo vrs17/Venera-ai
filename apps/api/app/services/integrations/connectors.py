@@ -1,11 +1,21 @@
 """Foydalanuvchining O'Z HRM / CRM hisobi: ulanish, saqlash, yangilash.
 
 `crm_auth.py` dagi agent sessiyasidan FARQI: u yerda BITTA umumiy hisob
-(agentniki), bu yerda esa HAR BIR foydalanuvchi "+" menyusidan o'z logini va
-paroli bilan kiradi, va yuqoridagi xizmatga uning O'Z tokeni beriladi. Shunda
-"men bugun kechikdimmi?" degan savol haqiqatan o'sha odam haqida bo'ladi -
-umumiy token bilan esa javob token EGASI haqida bo'lardi (`core/config.py`,
-`hrm_token`).
+(agentniki), bu yerda esa HAR BIR foydalanuvchining O'Z ulanishi turadi va
+yuqoridagi xizmatga uning O'Z tokeni beriladi. Shunda "men bugun
+kechikdimmi?" degan savol haqiqatan o'sha odam haqida bo'ladi - umumiy token
+bilan esa javob token EGASI haqida bo'lardi (`core/config.py`, `hrm_token`).
+
+KIM NIMANI BOSHQARADI (2026-11-12, ega qarori):
+
+  * HRM ni odam O'ZI ulaydi ("+" menyusi, login + parol) - HRM hali SSO
+    sessiyasini qabul qilmaydi: ulash, holat, muddati tugasa qayta ulash,
+    uzish (`USER_PLATFORMS`, `/api/v1/connectors`).
+  * CRM odamga KO'RINMAYDI va uni odam boshqarmaydi: ulanish SSO kirishida
+    o'zi ochiladi (`api/v1/auth.py`, `crm_sso.py`). Uni ombor va admin panel
+    biladi (`PLATFORMS`); odamning endpointlarida `crm` - 404.
+  * KALIT YO'Q: ulangan tizim har doim ishlatiladi. Yozuvdagi `enabled`
+    maydoni eski formatdan qolgan va hech narsani hal qilmaydi (`tokens`).
 
 IKKI PLATFORMA, IKKI XIL SHAKL:
 
@@ -18,19 +28,24 @@ IKKI PLATFORMA, IKKI XIL SHAKL:
         savol-javob bir necha daqiqa cho'zilishi mumkin va token javob
         OXIRIGACHA yaroqli turishi kerak. Kam qolsa holat "expired".
 
-  CRM   Keycloak parol granti (`offline_access`) -> refresh_token (doimiy),
-        keyin CRM `POST /api/auth/refresh` -> access_token, 300 SEKUND.
-        Har savol oldidan tekshiriladi: muddati `crm_margin` dan kam
-        qolgan bo'lsa yangilanadi. ROTATSIYA: javobda yangi refresh_token
-        kelsa o'sha saqlanadi. Refresh 400/401 bersa token o'lgan - holat
-        "expired", odam qayta kiradi.
+  CRM   refresh_token (doimiy) -> access_token, 300 SEKUND. Har savol
+        oldidan tekshiriladi: muddati `crm_margin` dan kam qolgan bo'lsa
+        yangilanadi. ROTATSIYA: javobda yangi refresh_token kelsa o'sha
+        saqlanadi. Refresh 400/401 bersa token o'lgan - holat "expired",
+        odam vebga BRB-Tech ID bilan qayta kiradi. refresh_token ning
+        manbasi ikki xil:
 
-  CRM, SSO sessiyasidan (`via: "sso"`, 2026-11-12). Brauzer orqali SSO da
-        parol bizga kelmaydi - CRM ulanishi Keycloak SESSIYASINING o'zi
-        (`barno-ai` client'iga berilgan refresh_token, `offline_access`).
-        Farqi bitta: access_token ni CRM emas, KEYCLOAK yangilaydi va
-        bekor qilish ham o'sha yerda (`crm_sso.py`) - qolgan hamma narsa
-        (kesh, oyna, rotatsiya, "expired") yuqoridagi bilan bir xil.
+        SSO sessiyasidan (`via: "sso"`, 2026-11-12) - HOZIRGI YAGONA YO'L.
+        Brauzer orqali SSO da parol bizga kelmaydi: CRM ulanishi Keycloak
+        SESSIYASINING o'zi (`barno-ai` client'iga berilgan refresh_token,
+        `offline_access`). access_token ni KEYCLOAK yangilaydi va bekor
+        qilish ham o'sha yerda (`crm_sso.py`).
+
+        ESKI yozuvlar (`via` yo'q). 2026-11-12 gacha odam CRM ga login +
+        parol bilan qo'lda ulanardi (Keycloak parol granti, `crm-client`).
+        Yangi bunday ulanish OCHILMAYDI, saqlanganlari esa ishlayveradi:
+        ularni CRM o'zi yangilaydi (`POST /api/auth/refresh`) va bekor
+        qiladi (`CrmUserAuth`) - odamning keyingi SSO kirishigacha.
 
 SAQLASH. `refresh_token` PAROLDAN FARQI YO'Q - uni qo'lga kiritgan odam o'sha
 foydalanuvchi nomidan cheksiz token yasay oladi. HRM tokeni ham 10 soatlik
@@ -67,7 +82,6 @@ import tempfile
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 
 from datetime import datetime, timezone
@@ -79,14 +93,18 @@ from .crm_auth import CrmAuthError, _safe, post_json
 
 log = logging.getLogger(__name__)
 
+#: Ombor va admin panel biladigan platformalar.
 PLATFORMS: tuple[str, ...] = ("hrm", "crm")
+#: Odam O'ZI boshqaradigan platformalar (`/api/v1/connectors`): ulaydi, holatini
+#: ko'radi, uzadi. CRM bu yerda YO'Q - u SSO kirishida o'zi ulanadi va odamga
+#: ko'rinmaydi (modul izohi).
+USER_PLATFORMS: tuple[str, ...] = ("hrm",)
 LABELS = {"hrm": "HRM", "crm": "CRM"}
 
 #: HRM tokeni `exp` siz kelsa (kutilmaydi) - hujjatdagi 10 soat.
 _HRM_DEFAULT_TTL = 10 * 3600.0
 #: CRM `expires_in` yo'q yoki aqldan tashqari bo'lsa - hujjatdagi 300 s.
 _CRM_DEFAULT_TTL = 300.0
-_CRM_SCOPE = "openid profile email offline_access"
 
 #: Foydalanuvchiga ko'rinadigan xabar. ATAYLAB UMUMIY: qaysi biri xato
 #: ekanini aytsak, qaysi loginlar borligini aniqlash mumkin bo'lardi.
@@ -166,9 +184,9 @@ def _send(request: urllib.request.Request, timeout: float, *, what: str,
     """So'rovni yuboradi. 2xx -> tahlil qilingan tana + sarlavhalar; HTTP
     xato -> `_HttpFailure`; tarmoq -> `ConnectorError` (502).
 
-    Hisob (`api_calls`): `service`/`op` - masalan `hrm`/`authenticate`,
-    `keycloak`/`token`. Parol so'rov tanasida - u hisobga HECH QACHON
-    tushmaydi: xato matni faqat javobdagi kod va tavsifdan yasaladi.
+    Hisob (`api_calls`): `service`/`op` - masalan `hrm`/`authenticate`.
+    Parol so'rov tanasida - u hisobga HECH QACHON tushmaydi: xato matni
+    faqat javobdagi kod va tavsifdan yasaladi.
     """
     call = begin(service or what.lower(), op)
     try:
@@ -348,7 +366,15 @@ class HrmAuth:
 
 
 class CrmUserAuth:
-    """CRM: Keycloak parol granti -> refresh_token; CRM refresh -> access_token."""
+    """CRM, ESKI (qo'lda ulangan) yozuvlar: CRM refresh -> access_token, uzishda logout.
+
+    YANGI ULANISH BU YERDAN OCHILMAYDI (2026-11-12): parol bilan kirish
+    (Keycloak parol granti) olib tashlandi - CRM SSO kirishida ulanadi
+    (`crm_sso.py`). `token_url`, `client_id` va `client_secret` endi hech
+    qayerga yuborilmaydi; ular faqat `configured` shartida qoldi - eski
+    yozuvlar avvalgidek AYNAN shu to'rt sozlama to'liq bo'lgandagina
+    yangilanadi (sozlamalarni olib tashlash - deploy bilan birga, alohida).
+    """
 
     def __init__(self, token_url: str, client_id: str, client_secret: str,
                  base_url: str, *, timeout: float = 10.0) -> None:
@@ -361,36 +387,6 @@ class CrmUserAuth:
     @property
     def configured(self) -> bool:
         return bool(self.token_url and self.client_id and self._client_secret and self.base_url)
-
-    def login(self, username: str, password: str) -> tuple[str, str, float]:
-        """-> (access_token, refresh_token, access muddati soniyada)."""
-        form = urllib.parse.urlencode({
-            "grant_type": "password",
-            "client_id": self.client_id,
-            "client_secret": self._client_secret,
-            "username": username,
-            "password": password,
-            "scope": _CRM_SCOPE,
-        }).encode("utf-8")
-        request = urllib.request.Request(
-            self.token_url,
-            data=form,
-            headers={"Content-Type": "application/x-www-form-urlencoded",
-                     "Accept": "application/json"},
-            method="POST",
-        )
-        try:
-            payload = _send(request, self.timeout, what="CRM", service="keycloak",
-                            op="token").payload
-        except _HttpFailure as exc:
-            raise self._error(exc) from None
-        if not isinstance(payload, dict):
-            raise ConnectorError("CRM javobi obyekt emas", status=502, code="BAD_RESPONSE")
-        access = str(payload.get("access_token") or "")
-        refresh = str(payload.get("refresh_token") or "")
-        if not access or not refresh:
-            raise ConnectorError("CRM javobida token yo'q", status=502, code="BAD_RESPONSE")
-        return access, refresh, _ttl(payload.get("expires_in"), _CRM_DEFAULT_TTL)
 
     def refresh(self, refresh_token: str) -> tuple[str, str, float]:
         """-> (access_token, yangi refresh_token yoki "", muddati).
@@ -417,27 +413,6 @@ class CrmUserAuth:
             post_json(f"{self.base_url}/api/auth/logout", {"refresh_token": refresh_token}, self.timeout)
         except CrmAuthError as exc:
             log.warning("CRM logout: %s", _safe(str(exc)))
-
-    @staticmethod
-    def _error(exc: _HttpFailure) -> ConnectorError:
-        code = str(exc.payload.get("error") or "")
-        desc = _safe(str(exc.payload.get("error_description") or ""))
-        if exc.status in (400, 401) and code == "invalid_grant":
-            # "Invalid user credentials" - parol. Boshqa sabab (masalan
-            # "Account is not fully set up") odamga AYTILADI: bu uning
-            # parolida emas, hisobida, va CRM administratori tuzatadi.
-            if not desc or "credential" in desc.lower():
-                return ConnectorError(MSG_BAD_CREDENTIALS, status=400, code=code)
-            return ConnectorError(f"CRM hisobga kirishni rad etdi: {desc}", status=400, code=code)
-        if code in ("invalid_client", "unauthorized_client"):
-            # Bizning `client_secret` noto'g'ri - odam hech narsa qila olmaydi.
-            log.error("CRM client rad etildi (%s) - CRM_CLIENT_ID/SECRET ni tekshiring", code)
-            return ConnectorError("CRM ulanishi serverda noto'g'ri sozlangan", status=503, code=code)
-        if exc.status == 429:
-            return ConnectorError("CRM band, biroz kutib qayta urinib ko'ring",
-                                  status=503, code="RATE_LIMIT")
-        return ConnectorError(f"CRM kirish xizmati javob bermadi ({exc.status})",
-                              status=502, code=code or f"HTTP_{exc.status}")
 
 
 # --- saqlash --------------------------------------------------------------
@@ -476,25 +451,13 @@ class ConnectorStore:
                 user[platform] = copy.deepcopy(entry)
             self._write()
 
-    def patch(self, user_id: str, platform: str, **fields: Any) -> dict[str, Any] | None:
-        """Mavjud yozuvning ayrim maydonlarini BITTA qulf ostida yangilaydi va yangi
-        nusxani qaytaradi; yozuv yo'q bo'lsa `None`. `get` + `set` emas: ular orasida
-        boshqa ip yozgan narsa (masalan yangilangan `refresh_token`) yo'qolardi."""
-        with self._lock:
-            self._reload()
-            entry = (self._data.get(user_id) or {}).get(platform)
-            if entry is None:
-                return None
-            entry.update(copy.deepcopy(fields))
-            self._write()
-            return copy.deepcopy(entry)
-
     def replace_if(self, user_id: str, platform: str, expected: str, /, **fields: Any) -> bool:
-        """`patch`, lekin FAQAT yozuv hali o'sha sessiya bo'lsa (saqlangan
-        `refresh_token` == `expected`): tekshiruv va yozish bitta qulf ostida. Shu
-        orada odam uzgan yoki qayta kirgan bo'lsa hech narsa yozilmaydi va `False`
-        qaytadi. `expected` faqat pozitsion - `fields` ichida ham `refresh_token`
-        (yangi qiymat) kelishi mumkin."""
+        """Mavjud yozuvning ayrim maydonlarini yangilaydi, lekin FAQAT yozuv hali
+        o'sha sessiya bo'lsa (saqlangan `refresh_token` == `expected`): tekshiruv va
+        yozish bitta qulf ostida. `get` + `set` emas - ular orasida boshqa ip yozgan
+        narsa yo'qolardi. Shu orada ulanish uzilgan yoki odam qayta kirgan bo'lsa
+        hech narsa yozilmaydi va `False` qaytadi. `expected` faqat pozitsion -
+        `fields` ichida ham `refresh_token` (yangi qiymat) kelishi mumkin."""
         with self._lock:
             self._reload()
             entry = (self._data.get(user_id) or {}).get(platform)
@@ -565,16 +528,17 @@ def _iso(epoch: float) -> str:
 
 
 class ConnectorHub:
-    """Holat, ulanish, uzish, kalit - va chat uchun yaroqli tokenlar."""
+    """Holat, ulanish, uzish - va chat uchun yaroqli tokenlar."""
 
     def __init__(self, store: ConnectorStore, hrm: HrmAuth, crm: CrmUserAuth, *,
                  hrm_margin: float = 300.0, crm_margin: float = 180.0,
                  sso: Any | None = None) -> None:
         self.store = store
         self.hrm = hrm
+        #: ESKI (qo'lda ulangan) CRM yozuvlarini yangilash va bekor qilish uchun.
         self.crm = crm
         #: SSO sessiyasidan ochilgan CRM ulanishlari uchun (`crm_sso.CrmSso`):
-        #: `configured`, `refresh`, `revoke`. Yo'q bo'lsa bunday ulanish
+        #: `configured`, `refresh`, `revoke`. Yo'q bo'lsa CRM ulanishi
         #: ochilmaydi, borlari esa token bermaydi.
         self.sso = sso
         self.hrm_margin = hrm_margin
@@ -618,39 +582,38 @@ class ConnectorHub:
 
     # --- tashqi yuz -------------------------------------------------------
 
-    def status(self, user_id: str) -> list[dict[str, Any]]:
+    def status(self, user_id: str, platforms: tuple[str, ...] = PLATFORMS) -> list[dict[str, Any]]:
+        """Holat. Sukut bo'yicha HAMMA platforma (admin panel); odamning o'ziga
+        faqat `USER_PLATFORMS` ko'rsatiladi (`api/v1/connectors.py`)."""
         data = self.store.get(user_id)
-        return [self._entry_status(p, data.get(p), user_id=user_id) for p in PLATFORMS]
+        return [self._entry_status(p, data.get(p), user_id=user_id) for p in platforms]
 
-    def connect(self, user_id: str, platform: str, username: str, password: str,
-                *, keep_enabled: bool = False) -> dict[str, Any]:
+    def connect(self, user_id: str, platform: str, username: str, password: str) -> dict[str, Any]:
         """Login + parol -> ulanish. Parol shu yerdan nariga o'tmaydi.
 
-        `keep_enabled` - kirishda avtomatik ulanish uchun (`api/v1/auth.py`):
-        odam kalitni o'chirib qo'ygan bo'lsa qayta kirganda u o'chiq
-        qoladi. "+" menyusidan qo'lda ulash esa har doim yoqadi.
+        Faqat odam o'zi boshqaradigan platforma (`USER_PLATFORMS` - HRM). CRM ga
+        parol bilan kirilmaydi: u SSO kirishida ulanadi (`adopt_crm`).
         """
-        self._check(platform)
+        self._check(platform, USER_PLATFORMS)
+        if not self.hrm.configured:
+            raise ConnectorError("HRM ulanishi serverda sozlanmagan", status=503,
+                                 code="NOT_CONFIGURED")
         username = username.strip()
-        if platform == "hrm":
-            token, expires_at = self.hrm.login(username, password)
-            return self.adopt_hrm(user_id, username, token, expires_at, keep_enabled=keep_enabled)
-        access, refresh, ttl = self.crm.login(username, password)
-        return self.adopt_crm(user_id, username, access, refresh, ttl, keep_enabled=keep_enabled)
+        token, expires_at = self.hrm.login(username, password)
+        return self.adopt_hrm(user_id, username, token, expires_at)
 
-    def adopt_hrm(self, user_id: str, username: str, token: str, expires_at: float,
-                  *, keep_enabled: bool = False) -> dict[str, Any]:
-        """Tayyor HRM sessiyasini saqlaydi - `connect` yoki SSO kirishi bergan."""
+    def adopt_hrm(self, user_id: str, username: str, token: str,
+                  expires_at: float) -> dict[str, Any]:
+        """Tayyor HRM sessiyasini saqlaydi (`connect`)."""
+        # `enabled` - eski format maydoni (modul izohi): har doim `True` yoziladi.
         entry = {"login": username, "token": token, "expires_at": expires_at,
-                 "enabled": self._enabled_after(user_id, "hrm", keep_enabled),
-                 "connected_at": time.time()}
+                 "enabled": True, "connected_at": time.time()}
         self.store.set(user_id, "hrm", entry)
         log.info("Ulanish: %s -> hrm", user_id)
         return self._entry_status("hrm", entry, user_id=user_id)
 
     def adopt_crm(self, user_id: str, username: str, access: str, refresh: str, ttl: float,
-                  *, keep_enabled: bool = False, revoke_old: bool = False,
-                  via: str = "") -> dict[str, Any]:
+                  *, revoke_old: bool = False, via: str = "") -> dict[str, Any]:
         """Tayyor Keycloak sessiyasini CRM ulanishi sifatida saqlaydi.
 
         SSO kirishida (`api/v1/auth.py`) Keycloak javobi ikki ish qiladi:
@@ -661,9 +624,11 @@ class ConnectorHub:
         uni CRM emas, Keycloak yangilaydi va bekor qiladi (modul izohi).
         """
         old = self.store.get(user_id).get("crm")
+        # `enabled` har doim `True` yoziladi: kalit yo'q, va eski yozuvdagi
+        # `enabled: false` (odam bir paytlar CRM ni o'chirib qo'ygan) qayta
+        # kirishdan keyin qolmaydi.
         entry = {"login": username, "refresh_token": refresh, "expired": False,
-                 "enabled": self._enabled_after(user_id, "crm", keep_enabled, old),
-                 "connected_at": time.time()}
+                 "enabled": True, "connected_at": time.time()}
         if via:
             entry["via"] = via
         with self._lock:
@@ -675,7 +640,7 @@ class ConnectorHub:
         # bo'ladi va `offline_access` tokenlari uning ichida BITTA offline
         # sessiyani bo'lishadi - eskisini bekor qilish hozirgina olingan yangi
         # tokenni ham o'ldirardi. Ishlatilmagan offline sessiyani Keycloak o'zi
-        # tozalaydi (Offline Session Idle); "uzish" tugmasi esa bekor qiladi.
+        # tozalaydi (Offline Session Idle); uzish (`disconnect`) esa bekor qiladi.
         same_session_kind = via == "sso" and (old or {}).get("via") == "sso"
         if revoke_old and stale and stale != refresh and not same_session_kind:
             self._revoke_crm(old, stale)
@@ -684,8 +649,8 @@ class ConnectorHub:
 
     def _crm_source(self, entry: dict[str, Any] | None) -> Any | None:
         """Shu ulanishning tokenini KIM yangilaydi va bekor qiladi: SSO
-        sessiyasi - Keycloak (`self.sso`), qo'lda ulangani - CRM (`self.crm`).
-        Sozlanmagan bo'lsa `None`."""
+        sessiyasi - Keycloak (`self.sso`), eski qo'lda ulangani - CRM
+        (`self.crm`). Sozlanmagan bo'lsa `None`."""
         source = self.sso if (entry or {}).get("via") == "sso" else self.crm
         return source if source is not None and source.configured else None
 
@@ -700,16 +665,12 @@ class ConnectorHub:
         else:
             source.revoke(refresh_token)
 
-    def _enabled_after(self, user_id: str, platform: str, keep: bool,
-                       old: dict[str, Any] | None = None) -> bool:
-        if not keep:
-            return True
-        if old is None:
-            old = self.store.get(user_id).get(platform)
-        return bool(old.get("enabled", True)) if old else True
-
-    def disconnect(self, user_id: str, platform: str) -> dict[str, Any]:
-        self._check(platform, need_configured=False)
+    def disconnect(self, user_id: str, platform: str,
+                   *, among: tuple[str, ...] = PLATFORMS) -> dict[str, Any]:
+        """Uzish. Sukut bo'yicha har qanday platforma (admin panel CRM ni ham
+        uzadi); odamning o'zi faqat `USER_PLATFORMS` ni uzadi - endpoint shuni
+        `among` ga beradi."""
+        self._check(platform, among)
         entry = self.store.get(user_id).get(platform)
         # AVVAL ombordan o'chiriladi: bundan keyin hech bir yangilash uni qayta
         # yoza olmaydi (`replace_if`), va bekor qilish (tarmoq) yiqilsa ham uzish
@@ -732,15 +693,25 @@ class ConnectorHub:
         log.info("Uzish: %s -> %s", user_id, platform)
         return self._entry_status(platform, None, user_id=user_id)
 
-    def set_enabled(self, user_id: str, platform: str, enabled: bool) -> dict[str, Any]:
-        self._check(platform, need_configured=False)
-        entry = self.store.patch(user_id, platform, enabled=bool(enabled))
+    def connected(self, user_id: str, platform: str) -> dict[str, Any]:
+        """Odam boshqaradigan platformaning holati; ulanmagan bo'lsa 409.
+
+        ESKI KLIENTLAR UCHUN (`PATCH /connectors/hrm`: mobil ilova, eski Mini
+        App). Kalit yo'q - ulangan tizim har doim ishlatiladi: so'rov hech
+        narsani o'zgartirmaydi, javob esa haqiqiy holat (`enabled: true`).
+        """
+        self._check(platform, USER_PLATFORMS)
+        entry = self.store.get(user_id).get(platform)
         if not entry:
             raise ConnectorError(f"{LABELS[platform]} ulanmagan", status=409, code="NOT_CONNECTED")
         return self._entry_status(platform, entry, user_id=user_id)
 
     def tokens(self, user_id: str) -> dict[str, str]:
-        """Chat uchun: FAQAT ulangan, yoqilgan va yaroqli tokenlar.
+        """Chat uchun: FAQAT ulangan va yaroqli tokenlar.
+
+        KALIT YO'Q (2026-11-12): ulangan tizim har doim ishlatiladi. Yozuvdagi
+        eski `enabled: false` e'tiborga OLINMAYDI - aks holda kalitsiz ilovada
+        odam uni hech qachon qayta yoqa olmasdi.
 
         Yo'q platforma xaritada BO'LMAYDI - chaqiruvchi o'z zahirasini
         (umumiy `.env` tokeni, agent sessiyasi) ishlatishi mumkin.
@@ -749,7 +720,7 @@ class ConnectorHub:
         data = self.store.get(user_id)
 
         hrm = data.get("hrm")
-        if hrm and hrm.get("enabled", True):
+        if hrm:
             token = str(hrm.get("token") or "")
             if token and self._hrm_left(hrm) > self.hrm_margin:
                 out["hrm"] = token
@@ -765,7 +736,7 @@ class ConnectorHub:
                              "yuborilmaydi, qayta kirish kerak", user_id)
 
         crm = data.get("crm")
-        if crm and crm.get("enabled", True) and crm.get("refresh_token"):
+        if crm and crm.get("refresh_token"):
             access = self._crm_access(user_id, crm)
             if access:
                 out["crm"] = access
@@ -809,13 +780,19 @@ class ConnectorHub:
 
     # --- ichki ------------------------------------------------------------
 
-    def _check(self, platform: str, *, need_configured: bool = True) -> None:
-        if platform not in PLATFORMS:
+    @staticmethod
+    def _check(platform: str, among: tuple[str, ...] = PLATFORMS) -> None:
+        """`among` da yo'q platforma - 404. Odamning amallarida `among` =
+        `USER_PLATFORMS`: CRM notanish nom bilan BIR XIL javob oladi."""
+        if platform not in among:
             raise ConnectorError("Bunday platforma yo'q", status=404, code="UNKNOWN_PLATFORM")
-        auth = self.hrm if platform == "hrm" else self.crm
-        if need_configured and not auth.configured:
-            raise ConnectorError(f"{LABELS[platform]} ulanishi serverda sozlanmagan",
-                                 status=503, code="NOT_CONFIGURED")
+
+    def configured(self, platform: str) -> bool:
+        """Shu platformaga ulanish OCHILA oladimi: HRM - login manzili bor,
+        CRM - SSO manbasi sozlangan (CRM faqat SSO kirishida ulanadi)."""
+        if platform == "hrm":
+            return self.hrm.configured
+        return self.sso is not None and bool(self.sso.configured)
 
     @staticmethod
     def _hrm_left(entry: dict[str, Any]) -> float:
@@ -827,11 +804,10 @@ class ConnectorHub:
     def _entry_status(self, platform: str, entry: dict[str, Any] | None,
                       *, user_id: str = "") -> dict[str, Any]:
         """API javobi. TOKEN YO'Q - faqat holat."""
-        auth = self.hrm if platform == "hrm" else self.crm
         status: dict[str, Any] = {
             "id": platform,
             "label": LABELS[platform],
-            "configured": auth.configured,
+            "configured": self.configured(platform),
             "state": "disconnected",
             "login": None,
             "enabled": False,
@@ -840,7 +816,10 @@ class ConnectorHub:
         if not entry:
             return status
         status["login"] = entry.get("login") or None
-        status["enabled"] = bool(entry.get("enabled", True))
+        # Kalit yo'q: ulangan = ishlatiladi. Maydon eski klientlar uchun qoldi
+        # (mobil ilova undan "Chatda ishlatish" ni chizadi); yozuvdagi eski
+        # `enabled: false` ko'rsatilmaydi - u hech narsani o'chirmaydi.
+        status["enabled"] = True
         if platform == "hrm":
             left = self._hrm_left(entry)
             status["expiresAt"] = _iso(time.time() + left) if entry.get("expires_at") else None
@@ -894,13 +873,13 @@ class ConnectorHub:
                 log.warning("CRM refresh (%s): %s", user_id, exc)
                 return cached[0] if cached and now < cached[1] else ""
             # Yangilash davomida (tarmoq - soniyalar) ulanish O'ZGARGAN bo'lishi
-            # mumkin: odam qayta kirdi, uzdi yoki kalitni o'chirdi - ular bu qulfni
+            # mumkin: odam qayta kirdi yoki ulanish uzildi - ular bu qulfni
             # olmaydi. Natija ESKI nusxa ustiga yozilsa uzilgan ulanish tirilardi,
             # yangi sessiya esa o'lgan tokenga almashardi. Shuning uchun natija
             # faqat omborda hali O'SHA `refresh_token` turgan bo'lsa yoziladi -
             # tekshiruv va yozish bitta qulf ostida (`replace_if`). ROTATSIYA: yangi
             # refresh_token kelsa o'sha saqlanadi - eskisi egasida bekor bo'lgan
-            # bo'lishi mumkin; boshqa maydonlar (masalan `enabled`) tegilmaydi.
+            # bo'lishi mumkin; boshqa maydonlar tegilmaydi.
             sent = entry["refresh_token"]
             if not self.store.replace_if(user_id, "crm", sent,
                                          refresh_token=refresh or sent, expired=False):

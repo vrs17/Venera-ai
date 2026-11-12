@@ -160,8 +160,9 @@ def session(
     Kirish qoidalari `/auth/login` niki: admin bloki (403), sessiya versiyasi
     ("hamma joydan chiqarish" dan keyingi token yangi versiya bilan), har
     urinish `auth_events` ga (`method="telegram"`). HRM/CRM ulanishlari bu yerda
-    YANGILANMAYDI - parol yo'q; Keycloak tokeni o'lgan bo'lsa `GET /connectors`
-    `expired` ko'rsatadi va odam parol bilan qayta kiradi.
+    YANGILANMAYDI - parol ham, Keycloak sessiyasi ham yo'q: HRM muddati tugasa
+    `GET /connectors` `expired` ko'rsatadi va odam uni vebda qayta ulaydi; CRM
+    (odamga ko'rinmaydi) vebga BRB-Tech ID bilan keyingi kirishda yangilanadi.
 
     `async def` EMAS: fayllar va analitika ombori bloklaydi - threadpool'da.
     """

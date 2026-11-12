@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 class ConnectorStatus(BaseModel):
     """types.ts: ConnectorStatus"""
 
+    #: Odamga faqat `hrm` qaytadi (`USER_PLATFORMS`); `crm` - admin panel qatorida.
     id: str                      # hrm | crm
     label: str                   # HRM | CRM
     #: Serverda sozlanganmi (`.env`). Sozlanmagan bo'lsa "+" bosilmaydi.
@@ -21,7 +22,8 @@ class ConnectorStatus(BaseModel):
     state: str
     #: Ulangan hisobning logini - qatorda ko'rsatish uchun.
     login: str | None = None
-    #: Ulangan tizim chatda ishlatiladi (kalit).
+    #: Kalit yo'q: yozuv bor bo'lsa har doim `true` (ulangan = ishlatiladi).
+    #: Maydon eski klientlar (mobil ilova) uchun qoldi.
     enabled: bool = False
     #: HRM tokenining muddati (ISO-8601 UTC). CRM da yo'q - u o'zi yangilanadi.
     expiresAt: str | None = None
@@ -41,6 +43,7 @@ class ConnectRequest(BaseModel):
 
 
 class ConnectorUpdate(BaseModel):
-    """types.ts: ConnectorUpdate"""
+    """`PATCH /connectors/{platform}` tanasi - eski klientlar uchun. `enabled`
+    qabul qilinadi, lekin hech narsani hal qilmaydi (kalit yo'q)."""
 
     enabled: bool

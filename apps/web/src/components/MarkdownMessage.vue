@@ -8,7 +8,7 @@ import type { AnswerSource } from '../types'
 import VTooltip from '../ui/VTooltip.vue'
 import { hasToolMarks, splitTaskKeys, stripToolMarks } from './chat/answerMarks'
 import { markNotes, separateNotes } from './chat/answerNotes'
-import { isGuideSource, isLookupSource } from './chat/platforms'
+import { isLookupSource } from './chat/platforms'
 import { isLaw, lawTitle, lawUrl } from './chat/sources'
 
 /**
@@ -68,7 +68,7 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
 const docs = computed(() => {
   const map = new Map<number, AnswerSource>()
   for (const s of props.sources ?? []) {
-    // Jonli so'rovlar (HRM, CRM, DWH, Biznes 24/7, ...) - `[T1]`, hujjat raqamlashiga kirmaydi.
+    // Jonli so'rovlar (HRM, CRM) - `[T1]`, hujjat raqamlashiga kirmaydi.
     if (!isLookupSource(s) && s.citation_index != null) map.set(s.citation_index, s)
   }
   return map
@@ -136,9 +136,7 @@ function chipify(doc: Document) {
       const before = value.slice(last, m.index).replace(/[ \u00a0]+$/, '')
       if (before) frag.appendChild(doc.createTextNode(before))
       const next = prevChip && !before.trim()
-      // Qo'llanma maqolasi (Biznes 24/7 qo'llanmalari, Biznes Help) ham tashqi sahifa -
-      // qonun kabi havola (faqat `https://`), ko'ruvchida emas.
-      const law = isLaw(source) || isGuideSource(source)
+      const law = isLaw(source)
       const href = law ? lawUrl(source) : null
       // Qonun havolasi - DOMPurify'dan KEYIN qo'yiladi, shuning uchun manzil shu yerda
       // tekshirilgan (`lawUrl`: faqat https) bo'lishi shart.
@@ -485,7 +483,7 @@ watch(
 .vmd :deep(p.vmd-note:first-child) { margin-top: 0; }
 .vmd :deep(p.vmd-note strong) { color: var(--text-2); }
 
-/* "Manba: DWH, Biznes 24/7" - hikoya javobining oxirgi qatori (answerNotes.ts): "N manba"
+/* "Manba: HRM, CRM" - hikoya javobining oxirgi qatori (answerNotes.ts): "N manba"
    tugmasini takrorlaydi, shuning uchun javob bilan bahslashmaydigan kichik izoh, qutisiz. */
 .vmd :deep(p.vmd-source) {
   margin-top: var(--s-3);

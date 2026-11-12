@@ -49,7 +49,7 @@ function openDoc(s: TurnSource) {
 const toolName = (s: TurnSource) => lookupLabel(fromTurnSource(s), s.ref ?? '', t)
 
 /** Qonun / qo'llanma qatori uchun: havola (yoki null) va izoh ("LEX.UZ · qonunchilik" yoki
- *  platforma nomi - "Biznes 24/7 qo'llanmalari"). */
+ *  manba nomi; eski izdagi qo'llanma - umumiy nom). */
 function law(s: TurnSource): { url: string | null; caption: string } {
   const url = turnLawUrl(s)
   if (isGuideKind(s.kind)) return { url, caption: platformName(s.kind, t) }
@@ -80,7 +80,7 @@ function toolStatus(s: TurnSource): { status: string; label?: string } | null {
             <p class="ts-title">{{ s.title || s.ref || t('sourceDocument') }}</p>
             <template v-if="isExternalSource(s.kind)">
               <p class="ts-meta ts-law">
-                <!-- Qo'llanma - platforma belgisi (kitob, qutqaruv halqasi), qonun - tarozi. -->
+                <!-- Qo'llanma (eski iz) - umumiy belgi, qonun - tarozi. -->
                 <component :is="isGuideKind(s.kind) ? platformIcon(s.kind) : Scale" :size="13" :stroke-width="1.75" aria-hidden="true" />
                 <span>{{ law(s).caption }}</span>
               </p>

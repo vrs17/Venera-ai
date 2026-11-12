@@ -490,12 +490,13 @@ def assistant_user_id(user: AuthUser) -> str:
 def _live_tokens(user: AuthUser) -> dict[str, str]:
     """Yuboriladigan platforma token'lari.
 
-    USTUNLIK: foydalanuvchining O'Z ulanishi (`/api/v1/connectors`, "+"
-    menyusi) HAMMASIDAN USTUN. U HRM yoki CRM ga o'z logini bilan kirgan
-    va kalit yoqiq bo'lsa, o'sha platforma uchun FAQAT uning tokeni ketadi
-    - shunda "men" degani haqiqatan o'sha odam. Kalit o'chiq, ulanmagan
-    yoki muddati tugagan bo'lsa platforma xaritada bo'lmaydi va pastdagi
-    UMUMIY manbalar ishlaydi (ular VAQTINCHALIK, `core/config.py`).
+    USTUNLIK: foydalanuvchining O'Z ulanishi HAMMASIDAN USTUN: HRM ("+"
+    menyusida qo'lda ulanadi, `/api/v1/connectors`) va CRM (SSO kirishida
+    o'zi ulanadi). Ulangan bo'lsa o'sha platforma uchun FAQAT uning tokeni
+    ketadi - shunda "men" degani haqiqatan o'sha odam; kalit yo'q, ulangan
+    tizim har doim ishlatiladi. Ulanmagan yoki muddati tugagan bo'lsa
+    platforma xaritada bo'lmaydi va pastdagi UMUMIY manbalar ishlaydi (ular
+    VAQTINCHALIK, `core/config.py`).
 
     Umumiy CRM tokeni ikki manbadan kelishi mumkin, va sozlangan bo'lsa
     `CrmAuth` UNI TO'LIQ EGALLAYDI:
@@ -1214,8 +1215,9 @@ def _record_pipeline(rec: TurnRecorder, result: PipelineResponse) -> None:
 
 
 def has_own_crm(user: AuthUser) -> bool:
-    """Odamning O'Z CRM ulanishi bormi (yoqilgan, muddati o'tmagan) - tarmoqsiz.
-    Guruhdagi CRM so'rovi faqat shunday odamdan qabul qilinadi."""
+    """Odamning O'Z CRM ulanishi bormi (muddati o'tmagan) - tarmoqsiz. Guruhdagi
+    CRM so'rovi faqat shunday odamdan qabul qilinadi. Kalit yo'q: yozuvdagi
+    eski `enabled: false` e'tiborga olinmaydi (`ConnectorHub.tokens` kabi)."""
     entry = (_connectors.hub.store.get(str(user.actorId)) or {}).get("crm") or {}
-    return bool(entry.get("refresh_token")) and entry.get("enabled", True) and not entry.get("expired")
+    return bool(entry.get("refresh_token")) and not entry.get("expired")
 

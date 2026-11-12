@@ -13,10 +13,9 @@
  * lahzasidagi chaqiruv, shuning uchun nomi va qisqa natijasi ko'rsatiladi. Qonun
  * moddasi (v2, `kind: "law"`) - LEX.UZ ga tashqi havola, yangi oynada.
  *
- * PLATFORMALAR (2026-10-10): so'rov qatorida "T1" o'rniga platforma belgisi (HRM, CRM,
- * DWH, Biznes 24/7, Superapp...) va tarjima qilingan nom (`components/chat/platforms.ts`).
- * Qo'llanma maqolasi (`biznes247_kb` / `biznes247_help`, `[n]` bilan) - qonun kabi tashqi
- * sahifa, izohida platforma nomi.
+ * PLATFORMALAR (2026-10-10): so'rov qatorida "T1" o'rniga platforma belgisi (HRM, CRM) va
+ * nomi (`components/chat/platforms.ts`). Eski javobdagi notanish tizim - umumiy belgi va
+ * nom bilan (2026-11-12 da namoyish manbalari olib tashlangan).
  */
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -28,7 +27,7 @@ import { useDocViewer } from '../composables/useDocViewer'
 import VButton from '../ui/VButton.vue'
 import { useId } from '../ui/composables/useId'
 import { isLaw, isLookup, lawSite, lawTitle, lawUrl, lookupMarker, lookupTitle } from './chat/sources'
-import { isGuideSource, platformIcon, platformName, platformOfSource } from './chat/platforms'
+import { platformIcon, platformOfSource } from './chat/platforms'
 
 const props = defineProps<{
   sources?: AnswerSource[]
@@ -73,16 +72,10 @@ function docMeta(source: AnswerSource): string {
     .filter(Boolean)
     .join(' · ')
 }
-/** Qonun moddasi / qo'llanma qatori: havola (faqat `https://`) va izoh ("LEX.UZ ·
- *  qonunchilik" yoki "Biznes 24/7 qo'llanmalari"). */
+/** Qonun moddasi qatori: havola (faqat `https://`) va izoh ("LEX.UZ · qonunchilik"). */
 function lawRow(source: AnswerSource): { url: string | null; caption: string } {
   const url = lawUrl(source)
-  if (isGuideSource(source)) return { url, caption: platformName(platformOfSource(source), t) }
   return { url, caption: t('chat.lawCaption', { site: lawSite(url) }) }
-}
-/** Tashqi sahifa izohining belgisi: qonun - tarozi, qo'llanma - platformaniki. */
-function extIcon(source: AnswerSource) {
-  return isGuideSource(source) ? platformIcon(platformOfSource(source)) : Scale
 }
 
 /** Parcha matni - xizmat yuborsa (hozircha ixtiyoriy maydon). */
@@ -162,7 +155,7 @@ async function take(kind: string, url: string) {
           <li v-for="(source, i) in docs" :key="`${source.doc_id ?? source.url ?? ''}-${source.citation_index ?? i}`">
             <!-- Qonun moddasi: ko'ruvchida EMAS, LEX.UZ da (yangi oynada) - `/doc/...` faqat
                  `doc_id` uchun. Havola faqat `https://` bo'lsa; aks holda oddiy matn. -->
-            <template v-if="isLaw(source) || isGuideSource(source)">
+            <template v-if="isLaw(source)">
               <a
                 v-if="lawRow(source).url"
                 class="proof__item is-link"
@@ -175,7 +168,7 @@ async function take(kind: string, url: string) {
                 <span class="proof__body">
                   <span class="proof__name">{{ lawTitle(source, t('sourceDocument')) }}</span>
                   <span class="proof__meta">
-                    <component :is="extIcon(source)" class="proof__law-icon" :size="13" :stroke-width="1.75" aria-hidden="true" />{{ lawRow(source).caption }}
+                    <Scale class="proof__law-icon" :size="13" :stroke-width="1.75" aria-hidden="true" />{{ lawRow(source).caption }}
                   </span>
                 </span>
                 <ArrowUpRight class="proof__ext" :size="16" :stroke-width="1.75" aria-hidden="true" />
@@ -186,7 +179,7 @@ async function take(kind: string, url: string) {
                 <span class="proof__body">
                   <span class="proof__name">{{ lawTitle(source, t('sourceDocument')) }}</span>
                   <span class="proof__meta">
-                    <component :is="extIcon(source)" class="proof__law-icon" :size="13" :stroke-width="1.75" aria-hidden="true" />{{ lawRow(source).caption }}
+                    <Scale class="proof__law-icon" :size="13" :stroke-width="1.75" aria-hidden="true" />{{ lawRow(source).caption }}
                   </span>
                 </span>
               </div>

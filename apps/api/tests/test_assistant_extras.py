@@ -6,6 +6,10 @@ saqlanadi. Shu tufayli asosiy kafolatni haqiqiy ko'rinishda tekshirsa
 bo'ladi - odam faqat O'Z xotirasini ko'radi va o'chiradi, chunki `user_id`
 FAQAT sessiyadan olinadi (so'rovdagi `user_id` e'tiborsiz yoki 422).
 
+PLATFORMALAR (2026-11-12, ega qarori): xizmat ro'yxatida CRM va namoyish
+manbalari ham bor, lekin odamga FAQAT HRM qatori qaytadi, boshqa `id` ga `PUT`
+esa xizmatga bormasdan 404 `platform_not_found` oladi.
+
 Qolgani: "hammasini unutish" tasdiqsiz xizmatga bormaydi; xizmat xatolari
 502/503/504 + `code` ga tushadi (401 - ham 502: sessiya joyida); sozlamalar
 chegarasi (`HRM_ASSISTANT_SETTINGS_TIMEOUT`) klientga yetadi; chegaradan
@@ -49,7 +53,14 @@ PLATFORM_FIELDS = {"id", "name", "description", "kind", "needs_login", "availabl
                    "user_enabled", "enabled"}
 ERROR_FIELDS = {"timestamp", "status", "error", "message", "path", "code"}
 
+#: XIZMAT (soxta yordamchi) qaytaradigan ro'yxat - CRM va namoyish manbalari bilan.
 PLATFORM_IDS = ["hrm", "crm", "dwh", "biznes247", "superapp", "biznes247_kb", "biznes247_help"]
+#: Barno odamga ko'rsatadigani va almashtirishga ruxsat beradigani.
+SHOWN_IDS = ["hrm"]
+#: Odamga ko'rinmaydigan va `PUT` da rad etiladigan kalitlar: CRM (har doim yoqiq),
+#: namoyish manbalari, notanish va yaroqsiz nomlar.
+HIDDEN_IDS = ["crm", "dwh", "biznes247", "superapp", "biznes247_kb", "biznes247_help",
+              "telegram", "HRM", "a.b"]
 
 
 def _platform(pid: str, *, available: bool = True, user_enabled: bool = True) -> dict:
@@ -420,35 +431,68 @@ def test_api_hammasini_unutish_tanadagi_tasdiq_yetmaydi(api, auth, agent):
 
 
 def test_api_platformalar_royxati(api, auth, agent):
+    """Xizmat 7 ta qator beradi - odamga faqat HRM qaytadi (CRM ham, namoyish
+    manbalari ham yo'q)."""
     response = api.get("/api/v1/assistant/platforms", headers=auth)
     assert response.status_code == 200, response.text
     body = response.json()
     assert set(body) == PLATFORM_LIST_FIELDS
-    assert [p["id"] for p in body["platforms"]] == PLATFORM_IDS, "tartib xizmatniki"
+    assert [p["id"] for p in body["platforms"]] == SHOWN_IDS
     assert all(set(p) == PLATFORM_FIELDS for p in body["platforms"])
-    superapp = next(p for p in body["platforms"] if p["id"] == "superapp")
-    assert (superapp["available"], superapp["user_enabled"], superapp["enabled"]) == (False, True, False)
     hrm = body["platforms"][0]
     assert hrm["needs_login"] is True and hrm["kind"] == "live"
+    assert (hrm["available"], hrm["user_enabled"], hrm["enabled"]) == (True, True, True)
     assert agent.calls[0]["query"] == {"user_id": ADMIN_ID}
+    for hidden in ("crm", "dwh", "biznes", "superapp"):
+        assert hidden not in response.text.lower(), hidden
 
 
 def test_api_platforma_kaliti_faqat_ozida(api, auth, user_auth, agent):
-    response = api.put("/api/v1/assistant/platforms/biznes247", headers=auth, json={"enabled": False})
+    """Kalitlar yo'q - ulangan degani ishlatiladi: eski klient HRM ni O'CHIRISHNI so'rasa ham
+    xizmatga `enabled: true` ketadi (o'chirilganini qayta yoqadigan joy endi yo'q)."""
+    response = api.put("/api/v1/assistant/platforms/hrm", headers=auth, json={"enabled": False})
     assert response.status_code == 200, response.text
     body = response.json()
     assert set(body) == PLATFORM_FIELDS
-    assert (body["id"], body["user_enabled"], body["enabled"]) == ("biznes247", False, False)
+    assert (body["id"], body["user_enabled"], body["enabled"]) == ("hrm", True, True)
     call = agent.calls[0]
     assert (call["method"], call["path"], call["query"], call["body"]) == (
-        "PUT", "/api/connectors/biznes247", {"user_id": ADMIN_ID}, {"enabled": False})
+        "PUT", "/api/connectors/hrm", {"user_id": ADMIN_ID}, {"enabled": True})
     demo = api.get("/api/v1/assistant/platforms", headers=user_auth).json()
-    assert next(p for p in demo["platforms"] if p["id"] == "biznes247")["enabled"] is True
+    assert [(p["id"], p["enabled"]) for p in demo["platforms"]] == [("hrm", True)]
 
 
 def test_api_server_ochirgan_platforma_yoqilmaydi(api, auth, agent):
-    body = api.put("/api/v1/assistant/platforms/superapp", headers=auth, json={"enabled": True}).json()
+    agent.unavailable = {"hrm"}
+    body = api.put("/api/v1/assistant/platforms/hrm", headers=auth, json={"enabled": True}).json()
     assert (body["available"], body["user_enabled"], body["enabled"]) == (False, True, False)
+
+
+@pytest.mark.parametrize("platform_id", HIDDEN_IDS)
+def test_api_hrm_dan_boshqa_kalit_xizmatga_bormaydi(api, auth, agent, platform_id):
+    """CRM (har doim yoqiq), namoyish manbalari, notanish va yaroqsiz nom - bir xil
+    404 `platform_not_found`, xizmat CHAQIRILMAYDI: eski klient CRM ni o'chirib
+    qo'ya olmaydi (yoqa ham olmaydi - kalit yo'q)."""
+    for enabled in (False, True):
+        response = api.put(f"/api/v1/assistant/platforms/{platform_id}", headers=auth,
+                           json={"enabled": enabled})
+        assert response.status_code == 404, response.text
+        body = response.json()
+        assert set(body) == ERROR_FIELDS and body["code"] == "platform_not_found"
+    assert agent.calls == []
+    assert agent.switches == {}
+
+
+def test_api_rad_etilgan_kalit_chegarani_yemaydi(api, auth, agent, monkeypatch):
+    """Xizmatga bormagan 404 yozish chegarasidan joy olmaydi: eski klient olib tashlangan
+    manbalarni ketma-ket bossa ham HRM kaliti va xotira amallari ishlayveradi."""
+    monkeypatch.setattr(extras, "_write", RateLimiter(1, 60.0))
+    for platform_id in ("crm", "dwh", "biznes247"):
+        assert api.put(f"/api/v1/assistant/platforms/{platform_id}", headers=auth,
+                       json={"enabled": False}).status_code == 404
+    assert api.put("/api/v1/assistant/platforms/hrm", headers=auth,
+                   json={"enabled": False}).status_code == 200
+    assert [c["path"] for c in agent.calls] == ["/api/connectors/hrm"]
 
 
 @pytest.mark.parametrize("payload", [
@@ -466,16 +510,13 @@ def test_api_platforma_tanasi_qattiq(api, auth, agent, payload):
     assert agent.calls == []
 
 
-def test_api_nomalum_platforma_404(api, auth, agent):
-    response = api.put("/api/v1/assistant/platforms/telegram", headers=auth, json={"enabled": False})
+def test_api_xizmat_hrm_ni_bilmasa_404(api, auth, agent):
+    """Xizmatning o'z 404 i (`hrm` u yerda yo'q) ham `platform_not_found` bo'lib qaytadi."""
+    agent.fail = 404
+    response = api.put("/api/v1/assistant/platforms/hrm", headers=auth, json={"enabled": False})
     assert response.status_code == 404
     assert response.json()["code"] == "platform_not_found"
-
-
-def test_api_yaroqsiz_platforma_kaliti_400(api, auth, agent):
-    response = api.put("/api/v1/assistant/platforms/a.b", headers=auth, json={"enabled": False})
-    assert response.status_code == 400 and response.json()["code"] == "invalid_id"
-    assert agent.calls == []
+    assert len(agent.calls) == 1
 
 
 # --- API: xizmat javobining shakli -------------------------------------------------------
@@ -509,13 +550,21 @@ def test_api_bosh_matnli_band_tashlanadi(api, auth, agent):
 
 
 def test_api_platforma_maydonlari_toldiriladi(api, auth, agent):
-    agent.payload = {"connectors": [{"id": "dwh", "available": True, "user_enabled": False},
-                                    {"name": "kalitsiz"}, 7]}
+    agent.payload = {"connectors": [{"id": "dwh", "available": True, "user_enabled": True},
+                                    {"id": "hrm", "available": True, "user_enabled": False},
+                                    {"id": "crm"}, {"name": "kalitsiz"}, 7]}
     body = api.get("/api/v1/assistant/platforms", headers=auth).json()
     assert body["platforms"] == [{
-        "id": "dwh", "name": "dwh", "description": "", "kind": "", "needs_login": False,
+        "id": "hrm", "name": "hrm", "description": "", "kind": "", "needs_login": False,
         "available": True, "user_enabled": False, "enabled": False,
     }]
+
+
+def test_api_xizmat_hrm_bermasa_royxat_bosh(api, auth, agent):
+    """Xizmat HRM ni qaytarmasa (faqat boshqa manbalar) - bo'sh ro'yxat, xato emas."""
+    agent.payload = {"connectors": [{"id": "crm"}, {"id": "dwh"}]}
+    response = api.get("/api/v1/assistant/platforms", headers=auth)
+    assert response.status_code == 200 and response.json() == {"platforms": []}
 
 
 def test_api_kalit_javobida_platforma_yoq_502(api, auth, agent):
@@ -661,7 +710,7 @@ def test_hisobga_yoziladi_matnsiz(api, auth, agent):
     api.delete("/api/v1/assistant/memory/m1", headers=auth)
     api.delete("/api/v1/assistant/memory?confirm=forget-all", headers=auth)
     api.get("/api/v1/assistant/platforms", headers=auth)
-    api.put("/api/v1/assistant/platforms/dwh", headers=auth, json={"enabled": False})
+    api.put("/api/v1/assistant/platforms/hrm", headers=auth, json={"enabled": False})
     agent.fail = 500
     agent.fail_body = {"detail": PRIVATE}
     api.get("/api/v1/assistant/memory", headers=auth)
@@ -683,7 +732,7 @@ def test_platforma_xatosida_ham_tana_yozilmaydi(api, auth, agent, caplog):
     agent.fail = 500
     agent.fail_body = {"detail": PRIVATE}
     assert api.get("/api/v1/assistant/platforms", headers=auth).status_code == 502
-    assert api.put("/api/v1/assistant/platforms/dwh", headers=auth,
+    assert api.put("/api/v1/assistant/platforms/hrm", headers=auth,
                    json={"enabled": False}).status_code == 502
     assert "Malika" not in caplog.text
     calls = _rows("SELECT error FROM api_calls WHERE service = 'assistant' ORDER BY id")

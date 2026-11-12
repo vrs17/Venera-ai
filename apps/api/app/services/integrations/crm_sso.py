@@ -18,9 +18,13 @@ Oldingi yo'ldan IKKI farq:
     `aud` yoki `azp` ni tekshirsa rad etadi. Shuning uchun ulanish kirish
     paytida TEKSHIRILADI (`accepts`: `GET <CRM>/api/auth/me`). CRM "yo'q"
     desa ulanish OCHILMAYDI va odamning eski (qo'lda ulangan) CRM ulanishiga
-    tegilmaydi - menyuda "ulangan" deb yolg'on ko'rsatishdan ko'ra halol.
+    tegilmaydi - ishlamaydigan sessiyani "ulangan" deb saqlashdan ko'ra halol.
     Rad etilsa yechim Keycloak tomonda: `barno-ai` client'iga `crm-client`
     uchun "Audience" mapper (`docs/auth-sso.md`).
+
+BU - CRM GA ULANISHNING YAGONA YO'LI (2026-11-12, ega qarori): odam CRM ni
+ko'rmaydi, qo'lda ulamaydi va o'chirib qo'ymaydi; ulanish har doim ishlatiladi.
+Uzish faqat admin panelda (`ConnectorHub.disconnect`).
 
 Token shu yerda ham jurnalga, xato matniga va API javobiga TUSHMAYDI.
 """
@@ -104,6 +108,6 @@ class CrmSso:
         return tokens.access_token, tokens.refresh_token, tokens.expires_in
 
     def revoke(self, refresh_token: str) -> None:
-        """Saqlangan sessiyani Keycloak'da bekor qiladi - "uzish" tugmasi va
-        yangi kirish eskisini almashtirganda. Eng yaxshi harakat."""
+        """Saqlangan sessiyani Keycloak'da bekor qiladi - uzishda (admin panel)
+        va yangi kirish eskisini almashtirganda. Eng yaxshi harakat."""
         self._oidc().revoke(refresh_token)

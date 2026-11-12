@@ -1,20 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Brain, ChevronRight, CircleAlert, CircleCheck, CircleDashed, Clock, LogOut, PlugZap, RefreshCw, SquareKanban, Users, Volume2 } from 'lucide-vue-next'
-import type { Platform } from '../../api/assistant.api'
-import { listConnectors, updateConnector } from '../../api/connectors.api'
-import { loginIssue, platformIcon, platformName, platformPurpose } from '../../components/chat/platforms'
-import type { LoginIssue } from '../../components/chat/platforms'
-import { usePlatforms } from '../../composables/usePlatforms'
+import { Brain, ChevronRight, CircleCheck, CircleDashed, Clock, LogOut, Users, Volume2 } from 'lucide-vue-next'
+import { listConnectors } from '../../api/connectors.api'
 import { LOCALES, setLocale } from '../../i18n'
 import type { Locale } from '../../i18n'
 import type { AuthUser, ConnectorStatus } from '../../types'
 import VAvatar from '../../ui/VAvatar.vue'
 import VSheet from '../../ui/VSheet.vue'
 import VSwitch from '../../ui/VSwitch.vue'
-import { toast } from '../../ui/useToast'
 import { usePrefs } from '../prefs'
 import MemorySheet from './MemorySheet.vue'
 import { useTgSheet } from '../sheet'
@@ -30,15 +24,10 @@ import { haptic, nativePopup } from '../telegram'
  *     mavzu Telegram'ga ergashadi (tanlov YO'Q - Mini App Telegram ichida yashaydi);
  *   - javobni ovoz bilan o'qish - default O'CHIQ;
  *   - "Xotira" (2026-10-10) - Barno nimani eslab qolgani; alohida oyna (MemorySheet);
- *   - ulanishlar (HRM / CRM) - FAQAT HOLAT: Keycloak login ularni o'zi ulaydi, "+"
- *     menyusi yoki parol so'rash yo'q (foydalanuvchi qarori);
- *   - manbalar (2026-10-10) - Barno foydalanadigan 7 platforma va har birining kaliti
- *     (yordamchining o'z kalitlari, bizning proksi orqali). Kalit optimistik: darhol
- *     o'zgaradi, server rad etsa qaytadi va xabar chiqadi. Izoh kartadan OLDIN (avval
- *     nima ekanini bilib, keyin kalitni ko'radi). HRM/CRM yoqiq, lekin Barno hisobdan
- *     foydalana olmasa - qator ostida ogohlantirish (web PlatformList bilan bir qoida,
- *     `loginIssue`); "Chatda ishlatish" o'chiq bo'lsa - "Yoqish". Platformani yoqish
- *     token kalitini ham yoqadi (HRM uchun bitta kalit);
+ *   - ulanishlar - HRM qatori, FAQAT HOLAT (ega qarori, 2026-11-12): HRM veb ilovada
+ *     login va parol bilan ulanadi ("+" -> Ulanishlar), bu yerda parol so'ralmaydi -
+ *     ostidagi izoh shuni aytadi. CRM ko'rsatilmaydi: u BRB-Tech ID bilan kirishda
+ *     o'zi ulanadi. Kalit yo'q - ulangan tizim ishlatiladi;
  *   - chiqish - alohida kartada oddiy qizil matnli qator (katta qizil "plita" emas);
  *     oqibati ("keyingi safar parol so'raladi") tasdiq oynasida - Telegram'ning o'z
  *     `showPopup` i qizil "Chiqish" tugmasi bilan, bo'lmasa sahifa ichidagisi.
@@ -76,81 +65,31 @@ function openMemory() {
   memoryOpen.value = true
 }
 
-/* ── Manbalar (platforma kalitlari) ── */
-const platformStore = usePlatforms()
-const platforms = computed(() => platformStore.platforms.value)
-const platformsStatus = computed(() => platformStore.status.value)
-const nameOf = (p: Platform) => platformName(p.id, t, p.name)
-function descOf(p: Platform): string {
-  const purpose = platformPurpose(p.id, t, p.description)
-  return p.available ? purpose : [purpose, t('assistant.platforms.unavailable')].filter(Boolean).join(' · ')
-}
-async function onPlatform(p: Platform) {
-  if (platformStore.pending.has(p.id)) return
-  haptic.select()
-  const turningOn = !p.user_enabled
-  if (!(await platformStore.toggle(p.id))) {
-    haptic.notify('error')
-    toast.error(t('assistant.platforms.toggleFailed', { name: nameOf(p) }))
-    return
-  }
-  // Platformani yoqqan odam Barno undan foydalanishini kutadi - token kaliti ham yoqiladi.
-  if (turningOn) await enableForChat(p)
-}
-
-const connectorOf = (p: Platform) => connectors.value?.find((c) => String(c.id) === p.id)
-function issueOf(p: Platform): LoginIssue {
-  return loginIssue(p, connectorOf(p))
-}
-/** "Chatda ishlatish" (bizning token kaliti) - ulangan, lekin o'chiq bo'lsa yoqadi. */
-const enabling = ref<string | null>(null)
-async function enableForChat(p: Platform) {
-  const c = connectorOf(p)
-  if (!c || c.state !== 'connected' || c.enabled || enabling.value) return
-  enabling.value = p.id
-  try {
-    const next = await updateConnector(c.id, { enabled: true })
-    if (connectors.value) connectors.value = connectors.value.map((x) => (x.id === next.id ? next : x))
-  } catch {
-    haptic.notify('error')
-    toast.error(t('assistant.platforms.toggleFailed', { name: nameOf(p) }))
-  } finally {
-    enabling.value = null
-  }
-}
-
-/* ── Ulanishlar - faqat holat ── */
-const connectors = ref<ConnectorStatus[] | null>(null)
-const connectorsFailed = ref(false)
+/* ── HRM ulanishi - faqat holat ── */
+const hrm = ref<ConnectorStatus | null>(null)
+const hrmFailed = ref(false)
 watch(open, async (on) => {
   if (!on) {
     confirming.value = false
     memoryOpen.value = false
     return
   }
-  void platformStore.load()
   try {
-    connectors.value = (await listConnectors()).connectors
-    connectorsFailed.value = false
+    hrm.value = (await listConnectors()).connectors.find((c) => c.id === 'hrm') ?? null
+    // Javobda HRM yo'q - holat noma'lum: bo'sh karta emas, "yuklanmadi".
+    hrmFailed.value = !hrm.value
   } catch {
-    connectorsFailed.value = true
+    hrmFailed.value = true
   }
 })
 
-const CONNECTOR_ICON: Record<string, Component> = { hrm: Users, crm: SquareKanban }
-function iconOf(c: ConnectorStatus): Component {
-  return CONNECTOR_ICON[String(c.id).toLowerCase()] ?? PlugZap
-}
-
-function stateOf(c: ConnectorStatus): { label: string; tone: 'good' | 'warn' | 'muted' } {
-  if (!c.configured) return { label: t('tg.settings.unavailable'), tone: 'muted' }
-  // Ulangan, lekin "Chatda ishlatish" o'chiq - Barno bu hisobdan foydalanmaydi: "Ulangan"
-  // (yashil) deyish chalg'itardi.
-  if (c.state === 'connected' && !c.enabled) return { label: t('assistant.platforms.offForChat'), tone: 'warn' }
+const hrmState = computed<{ label: string; tone: 'good' | 'warn' | 'muted' }>(() => {
+  const c = hrm.value
+  if (!c || !c.configured) return { label: t('tg.settings.unavailable'), tone: 'muted' }
   if (c.state === 'connected') return { label: t('tg.settings.connected'), tone: 'good' }
   if (c.state === 'expired') return { label: t('tg.settings.expired'), tone: 'warn' }
   return { label: t('tg.settings.notConnected'), tone: 'muted' }
-}
+})
 
 const login = computed(() => props.user?.email ?? '')
 const role = computed(() => [props.user?.position, props.user?.department].filter(Boolean).join(' · '))
@@ -165,17 +104,13 @@ async function askLogout() {
     ],
   })
   if (native) {
-    if ((await native) === 'out') {
-      platformStore.reset()
-      emit('logout')
-    }
+    if ((await native) === 'out') emit('logout')
     return
   }
   confirming.value = true
 }
 function confirmLogout() {
   confirming.value = false
-  platformStore.reset()
   emit('logout')
 }
 </script>
@@ -240,79 +175,25 @@ function confirmLogout() {
       <section class="set__group">
         <h3 class="set__label">{{ t('tg.settings.connections') }}</h3>
         <div class="set__card">
-          <template v-if="connectors">
-            <div v-for="c in connectors" :key="c.id" class="set__row">
-              <span class="set__icon" aria-hidden="true"><component :is="iconOf(c)" :size="18" :stroke-width="1.75" /></span>
-              <div class="set__row-text">
-                <p class="set__row-title">{{ c.label || c.id.toUpperCase() }}</p>
-                <p v-if="c.login" class="set__row-sub">{{ c.login }}</p>
-              </div>
-              <span class="set__state" :class="`is-${stateOf(c).tone}`">
-                <CircleCheck v-if="stateOf(c).tone === 'good'" :size="14" :stroke-width="2" aria-hidden="true" />
-                <Clock v-else-if="c.state === 'expired'" :size="14" :stroke-width="2" aria-hidden="true" />
-                <CircleAlert v-else-if="stateOf(c).tone === 'warn'" :size="14" :stroke-width="2" aria-hidden="true" />
-                <CircleDashed v-else :size="14" :stroke-width="2" aria-hidden="true" />
-                {{ stateOf(c).label }}
-              </span>
+          <div v-if="hrm" class="set__row">
+            <span class="set__icon" aria-hidden="true"><Users :size="18" :stroke-width="1.75" /></span>
+            <div class="set__row-text">
+              <p class="set__row-title">{{ hrm.label || 'HRM' }}</p>
+              <p v-if="hrm.login" class="set__row-sub">{{ hrm.login }}</p>
             </div>
-          </template>
-          <p v-else-if="connectorsFailed" class="set__row set__row-sub">{{ t('connectorsLoadFailed') }}</p>
+            <span class="set__state" :class="`is-${hrmState.tone}`">
+              <CircleCheck v-if="hrmState.tone === 'good'" :size="14" :stroke-width="2" aria-hidden="true" />
+              <Clock v-else-if="hrmState.tone === 'warn'" :size="14" :stroke-width="2" aria-hidden="true" />
+              <CircleDashed v-else :size="14" :stroke-width="2" aria-hidden="true" />
+              {{ hrmState.label }}
+            </span>
+          </div>
+          <p v-else-if="hrmFailed" class="set__row set__row-sub">{{ t('connectorsLoadFailed') }}</p>
           <div v-else class="set__row" aria-hidden="true">
             <span class="tg-skel set__skel" />
           </div>
         </div>
-        <p class="set__caption">{{ t('tg.settings.viaLogin') }}</p>
-      </section>
-
-      <!-- Manbalar: Barno javob berishda foydalanadigan platformalar va kalitlari. Izoh kartadan
-           OLDIN: kalitlarni ko'rishdan avval ular nima qilishini bilsin. -->
-      <section class="set__group">
-        <h3 id="set-platforms" class="set__label">{{ t('assistant.platforms.title') }}</h3>
-        <p class="set__caption set__caption--lead">{{ t('assistant.platforms.lead') }}</p>
-        <div class="set__card" role="group" aria-labelledby="set-platforms">
-          <template v-if="platformsStatus === 'ready' && platforms.length">
-            <div v-for="p in platforms" :key="p.id" class="set__pitem" :data-platform="p.id">
-              <div class="set__row set__row--switch set__platform" :class="{ 'is-off': !p.available }">
-                <span class="set__icon" aria-hidden="true"><component :is="platformIcon(p.id)" :size="18" :stroke-width="1.75" /></span>
-                <VSwitch
-                  class="set__switch"
-                  label-first
-                  :label="nameOf(p)"
-                  :description="descOf(p)"
-                  :model-value="p.available && p.user_enabled"
-                  :disabled="!p.available"
-                  :aria-busy="platformStore.pending.has(p.id) ? 'true' : undefined"
-                  @update:model-value="onPlatform(p)"
-                />
-              </div>
-              <p v-if="p.available && issueOf(p)" class="set__warn">
-                <CircleAlert :size="14" :stroke-width="2" aria-hidden="true" />
-                <span>{{ issueOf(p) === 'offForChat' ? t('assistant.platforms.offForChat') : t('assistant.platforms.needsLogin') }}</span>
-                <button
-                  v-if="issueOf(p) === 'offForChat'"
-                  type="button"
-                  class="set__fix"
-                  :disabled="enabling === p.id"
-                  @click="enableForChat(p)"
-                >
-                  {{ t('assistant.platforms.turnOn') }}
-                </button>
-              </p>
-            </div>
-          </template>
-          <!-- Javob keldi, lekin ro'yxat bo'sh - xato emas, oddiy izoh. -->
-          <p v-else-if="platformsStatus === 'ready'" class="set__row set__row-sub">{{ t('assistant.platforms.empty') }}</p>
-          <div v-else-if="platformsStatus === 'error'" class="set__row">
-            <span class="set__row-text set__row-sub">{{ t('assistant.platforms.loadFailed') }}</span>
-            <button type="button" class="set__retry" @click="platformStore.load()">
-              <RefreshCw :size="16" :stroke-width="1.75" aria-hidden="true" />
-              {{ t('assistant.platforms.retry') }}
-            </button>
-          </div>
-          <div v-else class="set__row" aria-hidden="true">
-            <span class="tg-skel set__skel" />
-          </div>
-        </div>
+        <p class="set__caption">{{ t('tg.settings.hrmViaWeb') }}</p>
       </section>
 
       <section class="set__card">
@@ -528,52 +409,6 @@ function confirmLogout() {
 .set__chev {
   flex-shrink: 0;
   color: var(--text-4);
-}
-/* Server o'chirgan platforma - kulrang (kalit ham bosilmaydi). */
-.set__platform.is-off .set__icon {
-  color: var(--text-4);
-}
-/* Platforma qatori + (bo'lsa) ogohlantirish bitta element: chiziq elementlar orasida. */
-.set__pitem + .set__pitem {
-  border-top: 1px solid var(--line);
-}
-.set__caption--lead {
-  margin-top: calc(-1 * var(--s-1));
-  text-wrap: pretty;
-}
-/* "Hisob ulanmagan" / "Chatda ishlatish o'chiq" - kalit matni bilan bir chiziqda (belgi
-   36px + oraliq 12px + chekka 16px). */
-.set__warn {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 6px;
-  margin-top: calc(-1 * var(--s-1));
-  padding: 0 var(--s-4) var(--s-3) calc(var(--s-4) + 36px + var(--s-3));
-  color: var(--warn-text);
-  font-size: var(--fs-body-sm);
-  line-height: var(--lh-body-sm);
-}
-.set__fix {
-  min-height: 32px;
-  padding: 0 var(--s-1);
-  color: var(--text);
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.set__fix:disabled {
-  opacity: 0.5;
-}
-.set__retry {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-1_5);
-  flex-shrink: 0;
-  min-height: 44px;
-  color: var(--text);
-  font-size: var(--fs-body-sm);
-  font-weight: 600;
 }
 .set__logout {
   width: 100%;

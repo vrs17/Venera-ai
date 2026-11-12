@@ -49,6 +49,7 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Callable
 
+from ..core.config import settings
 from ..schemas.auth import AuthUser
 from ..services.analytics import TurnRecorder
 from ..services.integrations.assistant import AssistantError
@@ -91,8 +92,9 @@ _QUOTES = str.maketrans({"ʻ": "'", "ʼ": "'", "‘": "'", "’": "'", "`": "'"}
 
 NOT_LINKED = ("CRM bilan ishlash uchun avval Barno hisobingizni ulang - shaxsiy chatda /start. "
               "Vazifa sizning CRM ulanishingiz bilan yaratiladi.")
-NO_CRM = ("CRM ulanmagan: vazifa sizning nomingizdan yaratiladi. Barno ilovasida CRM hisobingizga "
-          "kiring, keyin qayta so'rang.")
+#: CRM qo'lda ulanmaydi (2026-11-12): u vebga BRB-Tech ID (SSO) bilan kirishda o'zi ulanadi.
+NO_CRM = ("CRM ulanmagan: vazifa sizning nomingizdan yaratiladi. Barno veb ilovasiga BRB-Tech ID "
+          "bilan kiring - CRM o'zi ulanadi, keyin qayta so'rang.")
 NOT_YOURS = "Bu so'rovni {name} davom ettira oladi. O'zingiz uchun Barnoga «crmga kiritib qo'y» deb yozing."
 ONLY_OWNER = "Faqat {name} tasdiqlay oladi"
 WORKING = "⏳ CRM bilan ishlanmoqda…"
@@ -321,7 +323,7 @@ class GroupActions:
             self._send(chat_id, esc(NOT_YOURS.format(name=replied.name)), reply_to=message_id, thread=thread)
             return
         if not self.backend.own_crm(user):
-            self._send(chat_id, esc(NO_CRM), reply_to=message_id, thread=thread, markup=self._open_button())
+            self._send(chat_id, esc(NO_CRM), reply_to=message_id, thread=thread, markup=self._web_button())
             return
         follow = replied is not None and replied.actor_id == user.actorId
         conversation = self._conversation(chat_id, user)
@@ -647,6 +649,13 @@ class GroupActions:
                     self._tokens.popitem(last=False)
 
     # --- yuborish ------------------------------------------------------------------------
+
+    def _web_button(self) -> dict[str, Any] | None:
+        """`NO_CRM` ostidagi tugma: CRM faqat vebga BRB-Tech ID bilan kirganda ulanadi - shaxsiy chat
+        yoki Mini App'da uni ulab bo'lmaydi, shuning uchun tugma veb ilovaga olib boradi. Manzil
+        sozlanmagan bo'lsa tugma yo'q (noto'g'ri joyga yuborgandan ko'ra)."""
+        url = (settings.sso_app_url or "").strip().rstrip("/")
+        return render.url_button("Barno veb ilovasini ochish", url) if url.startswith("https://") else None
 
     def _open_button(self) -> dict[str, Any] | None:
         name = self._username()

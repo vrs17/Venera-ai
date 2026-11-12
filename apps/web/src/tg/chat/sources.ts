@@ -7,18 +7,16 @@
 //
 // NOMLAR XODIM TILIDA. "T1" va "CRM · Issue get" (xom asbob nomi) odamga hech narsa
 // demaydi: `[T1]` matnda ko'rinmaydi (2026-10-10), ro'yxatda - "CRM · Vazifa
-// ma'lumoti" (`tools.*`). Notanish asbob - faqat platforma nomi ("DWH"), natijasi
+// ma'lumoti" (`tools.*`). Notanish asbob - faqat platforma nomi ("CRM"), natijasi
 // ostida: web bilan BITTA qoida (`lookupTitle`, components/chat/sources.ts).
 // "3.4" bo'limi - "3.4-band": yalang'och raqam sana yoki summa bo'lib o'qilardi.
 //
-// PLATFORMALAR (2026-10-10): HRM/CRM dan tashqari DWH, Biznes 24/7, Superapp va
-// qo'llanmalar (`components/chat/platforms.ts`). Nom tarjimadan ("Biznes 24/7
-// qo'llanmalari"), belgi - platformaniki (`platform` maydoni). Qo'llanma `[n]` bilan
-// kelsa - iqtibos (`guide`), havolasi bo'lsa tashqi sahifa (qonun kabi).
+// PLATFORMALAR - HRM va CRM (`components/chat/platforms.ts`): nom tarjimadan, belgi -
+// platformaniki (`platform` maydoni). Eski javobdagi notanish tizim - umumiy nom va belgi.
 
 import type { AnswerSource } from '../../types'
 import { isLaw, isLookup, lawSite, lawTitle, lawUrl, lookupMarker, lookupTitle } from '../../components/chat/sources'
-import { isGuideSource, platformName, platformOfSource } from '../../components/chat/platforms'
+import { platformName, platformOfSource } from '../../components/chat/platforms'
 import type { PlatformId } from '../../components/chat/platforms'
 import { uzApostrophes } from './polish'
 
@@ -27,8 +25,8 @@ type Translate = (key: string, named?: Record<string, unknown>) => string
 export interface SourceItem {
   /** Matndagi belgi: "1", "T1" - chip va oyna shu bilan bog'lanadi. */
   marker: string
-  kind: 'doc' | 'law' | 'guide' | 'lookup'
-  /** So'rov va qo'llanma: qaysi platformadan (chip belgisi shunga qarab). */
+  kind: 'doc' | 'law' | 'lookup'
+  /** So'rov: qaysi platformadan (chip belgisi shunga qarab); notanish tizim - `null`. */
   platform: PlatformId | null
   /** Odamga ko'rinadigan qisqa belgi: hujjat/qonun - raqam, so'rov - "HRM"/"CRM". */
   badge: string
@@ -37,25 +35,20 @@ export interface SourceItem {
   meta: string
   /** Xizmat yuborsa - hujjatdan parcha (jonli xizmatda bo'lmasligi mumkin). */
   snippet: string
-  /** Qonun va qo'llanma: tekshirilgan `https://` havola. */
+  /** Qonun: tekshirilgan `https://` havola. */
   url: string | null
   failed: boolean
   source: AnswerSource
 }
 
-/** So'rov tizimi: "HRM", "CRM", "Biznes 24/7" (`kind`, bo'lmasa asbob prefiksi). Notanish
- *  tur - katta harfda (avvalgidek). */
-export function connectorOf(source: AnswerSource, t?: Translate): string {
-  const platform = platformOfSource(source)
-  if (platform && t) return platformName(platform, t)
-  const kind = String(source.kind ?? '').trim()
-  if (kind) return kind.toUpperCase()
-  const prefix = source.tool?.split('_')[0] ?? ''
-  return prefix.toUpperCase() || 'HRM'
+/** So'rov tizimi: "HRM", "CRM" (`kind`, bo'lmasa asbob prefiksi). Notanish tur - umumiy
+ *  nom (`platformName`), xom kalit emas. */
+export function connectorOf(source: AnswerSource, t: Translate): string {
+  return platformName(platformOfSource(source), t)
 }
 
 /** "CRM · Vazifa ma'lumoti" - tanish asbob tarjimadan; notanishi - faqat platforma nomi
- *  ("DWH"), qo'llanmada - maqola nomi bilan. Web bilan bir xil (`lookupTitle`). */
+ *  ("CRM"). Web bilan bir xil (`lookupTitle`). */
 export function toolLabel(source: AnswerSource, t: Translate): string {
   return lookupTitle(source, t)
 }
@@ -89,22 +82,6 @@ export function sourceItems(sources: AnswerSource[] | undefined, t: Translate, u
     }
     const marker = String(source.citation_index ?? i + 1)
     const snippet = String((source as { snippet?: unknown }).snippet ?? '').trim()
-    if (isGuideSource(source)) {
-      const platform = platformOfSource(source)
-      cites.push({
-        marker,
-        kind: 'guide',
-        platform,
-        badge: marker,
-        title: source.title?.trim() || platformName(platform, t),
-        meta: platformName(platform, t),
-        snippet,
-        url: lawUrl(source),
-        failed: false,
-        source,
-      })
-      return
-    }
     if (isLaw(source)) {
       const url = lawUrl(source)
       cites.push({

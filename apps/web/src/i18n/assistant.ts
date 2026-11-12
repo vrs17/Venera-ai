@@ -1,5 +1,5 @@
-// `assistant.*` - Barno XOTIRASI, PLATFORMA kalitlari va platforma nomlari (yordamchi 3.3,
-// 2026-10-10). Web va Mini App bir xil matnni ishlatadi (Mini App umumiy i18n'ni oladi).
+// `assistant.*` - Barno XOTIRASI va platforma nomlari (yordamchi 3.3, 2026-10-10). Web va
+// Mini App bir xil matnni ishlatadi (Mini App umumiy i18n'ni oladi).
 //
 // `en` - kalitlar manbai; qolgan tillar `Mirror<typeof en>`: bitta kalit yetishmasa ham
 // kompilyatsiya xatosi.
@@ -8,7 +8,8 @@
 // narsa", "manba". O'chirish so'zi - "unutish" (chatdagi "... ni unut" bilan bir xil).
 // Qaytarib bo'lmasligi doim aytiladi. Rus tilida Barno uchun o'tgan zamon fe'li yo'q
 // ("запомнила/запомнил") - jinsiga bog'lanmaslik uchun neytral jumla.
-// Brend nomlari (HRM, CRM, DWH, Biznes 24/7, Superapp, Biznes Help) tarjima qilinmaydi.
+// Brend nomlari (HRM, CRM) tarjima qilinmaydi. `platform.other` - eski javobdagi notanish
+// tizim uchun umumiy nom (`components/chat/platforms.ts`): xom kalit odamga ko'rinmaydi.
 //
 // vue-i18n sintaksisi: `{x}` - o'rniga qo'yiladi; `|` - ko'plik (faqat inglizchada); `@` ishlatmang.
 
@@ -48,27 +49,10 @@ const en = {
     loadFailed: 'Couldn’t load memory',
     retry: 'Try again',
   },
-  platforms: {
-    title: 'Sources',
-    accounts: 'Sign-in',
-    lead: 'Barno uses these sources when answering. Turn one off and Barno won’t use it.',
-    unavailable: 'Not available yet',
-    needsLogin: 'Account not connected',
-    offForChat: 'Off for chat',
-    turnOn: 'Turn on',
-    empty: 'No sources to set up yet',
-    toggleFailed: 'Couldn’t switch {name}. Try again.',
-    loadFailed: 'Couldn’t load sources',
-    retry: 'Try again',
-  },
   platform: {
-    hrm: { name: 'HRM', purpose: 'Attendance, leave, schedule and colleagues' },
-    crm: { name: 'CRM', purpose: 'Your tasks, projects and sprints' },
-    dwh: { name: 'DWH', purpose: 'Bank data warehouse: figures and reports' },
-    biznes247: { name: 'Biznes 24/7', purpose: 'Business banking app KPIs' },
-    superapp: { name: 'Superapp', purpose: 'Customer mobile app figures' },
-    biznes247_kb: { name: 'Biznes 24/7 guides', purpose: 'Step-by-step how-tos for the app' },
-    biznes247_help: { name: 'Biznes Help', purpose: 'Help articles for business clients' },
+    hrm: 'HRM',
+    crm: 'CRM',
+    other: 'Other source',
   },
   errors: {
     unavailable: 'Barno isn’t responding right now. Try again in a minute.',
@@ -111,27 +95,10 @@ const uz: Mirror<typeof en> = {
     loadFailed: 'Xotirani yuklab boʻlmadi',
     retry: 'Qayta urinish',
   },
-  platforms: {
-    title: 'Manbalar',
-    accounts: 'Tizimga kirish',
-    lead: 'Barno javob berishda shu manbalardan foydalanadi. Oʻchirsangiz, Barno undan foydalanmaydi.',
-    unavailable: 'Hozircha mavjud emas',
-    needsLogin: 'Hisob ulanmagan',
-    offForChat: 'Chatda ishlatish oʻchiq',
-    turnOn: 'Yoqish',
-    empty: 'Hozircha sozlanadigan manba yoʻq',
-    toggleFailed: '{name}: oʻzgartirib boʻlmadi. Qayta urinib koʻring.',
-    loadFailed: 'Manbalarni yuklab boʻlmadi',
-    retry: 'Qayta urinish',
-  },
   platform: {
-    hrm: { name: 'HRM', purpose: 'Davomat, taʼtil, ish jadvali va hamkasblar' },
-    crm: { name: 'CRM', purpose: 'Vazifalar, loyihalar va sprintlar' },
-    dwh: { name: 'DWH', purpose: 'Bankning maʼlumotlar ombori: koʻrsatkichlar va hisobotlar' },
-    biznes247: { name: 'Biznes 24/7', purpose: 'Biznes mijozlari ilovasi koʻrsatkichlari (KPI)' },
-    superapp: { name: 'Superapp', purpose: 'Mijozlar mobil ilovasi koʻrsatkichlari' },
-    biznes247_kb: { name: 'Biznes 24/7 qoʻllanmalari', purpose: 'Ilovada ishlash boʻyicha qadamma-qadam koʻrsatmalar' },
-    biznes247_help: { name: 'Biznes Help', purpose: 'Biznes mijozlari uchun yordam maqolalari' },
+    hrm: 'HRM',
+    crm: 'CRM',
+    other: 'Boshqa manba',
   },
   errors: {
     unavailable: 'Barno hozir javob bermayapti. Birozdan soʻng urinib koʻring.',
@@ -174,27 +141,10 @@ const uzCyrl: Mirror<typeof en> = {
     loadFailed: 'Хотирани юклаб бўлмади',
     retry: 'Қайта уриниш',
   },
-  platforms: {
-    title: 'Манбалар',
-    accounts: 'Тизимга кириш',
-    lead: 'Барно жавоб беришда шу манбалардан фойдаланади. Ўчирсангиз, Барно ундан фойдаланмайди.',
-    unavailable: 'Ҳозирча мавжуд эмас',
-    needsLogin: 'Ҳисоб уланмаган',
-    offForChat: 'Чатда ишлатиш ўчиқ',
-    turnOn: 'Ёқиш',
-    empty: 'Ҳозирча созланадиган манба йўқ',
-    toggleFailed: '{name}: ўзгартириб бўлмади. Қайта уриниб кўринг.',
-    loadFailed: 'Манбаларни юклаб бўлмади',
-    retry: 'Қайта уриниш',
-  },
   platform: {
-    hrm: { name: 'HRM', purpose: 'Давомат, таътил, иш жадвали ва ҳамкасблар' },
-    crm: { name: 'CRM', purpose: 'Вазифалар, лойиҳалар ва спринтлар' },
-    dwh: { name: 'DWH', purpose: 'Банкнинг маълумотлар омбори: кўрсаткичлар ва ҳисоботлар' },
-    biznes247: { name: 'Biznes 24/7', purpose: 'Бизнес мижозлари иловаси кўрсаткичлари (KPI)' },
-    superapp: { name: 'Superapp', purpose: 'Мижозлар мобил иловаси кўрсаткичлари' },
-    biznes247_kb: { name: 'Biznes 24/7 қўлланмалари', purpose: 'Иловада ишлаш бўйича қадамма-қадам кўрсатмалар' },
-    biznes247_help: { name: 'Biznes Help', purpose: 'Бизнес мижозлари учун ёрдам мақолалари' },
+    hrm: 'HRM',
+    crm: 'CRM',
+    other: 'Бошқа манба',
   },
   errors: {
     unavailable: 'Барно ҳозир жавоб бермаяпти. Бироздан сўнг уриниб кўринг.',
@@ -237,27 +187,10 @@ const ru: Mirror<typeof en> = {
     loadFailed: 'Не удалось загрузить память',
     retry: 'Повторить',
   },
-  platforms: {
-    title: 'Источники',
-    accounts: 'Вход в системы',
-    lead: 'Барно использует эти источники в ответах. Выключите источник — и Барно не будет к нему обращаться.',
-    unavailable: 'Пока недоступно',
-    needsLogin: 'Аккаунт не подключён',
-    offForChat: 'Отключено для чата',
-    turnOn: 'Включить',
-    empty: 'Пока нет источников для настройки',
-    toggleFailed: 'Не удалось переключить {name}. Попробуйте ещё раз.',
-    loadFailed: 'Не удалось загрузить источники',
-    retry: 'Повторить',
-  },
   platform: {
-    hrm: { name: 'HRM', purpose: 'Посещаемость, отпуска, график и коллеги' },
-    crm: { name: 'CRM', purpose: 'Задачи, проекты и спринты' },
-    dwh: { name: 'DWH', purpose: 'Хранилище данных банка: показатели и отчёты' },
-    biznes247: { name: 'Biznes 24/7', purpose: 'KPI приложения для бизнес-клиентов' },
-    superapp: { name: 'Superapp', purpose: 'Показатели мобильного приложения для клиентов' },
-    biznes247_kb: { name: 'Руководства Biznes 24/7', purpose: 'Пошаговые инструкции по работе в приложении' },
-    biznes247_help: { name: 'Biznes Help', purpose: 'Справочные статьи для бизнес-клиентов' },
+    hrm: 'HRM',
+    crm: 'CRM',
+    other: 'Другой источник',
   },
   errors: {
     unavailable: 'Барно сейчас не отвечает. Попробуйте через минуту.',

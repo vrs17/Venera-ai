@@ -2,7 +2,7 @@
 import { nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Component } from 'vue'
-import { Activity, ArrowUpRight, BookOpenText, FileText, Landmark } from 'lucide-vue-next'
+import { Activity, ArrowUpRight, FileText, Landmark } from 'lucide-vue-next'
 import { platformIcon } from '../../components/chat/platforms'
 import { localizeApiError } from '../../api/errors'
 import VSheet from '../../ui/VSheet.vue'
@@ -20,7 +20,6 @@ import { haptic, openLink } from '../telegram'
  * tinchroq va bosish maydoni katta.
  *   hujjat - imzolangan havola tashqi brauzerda (chat/files.ts);
  *   qonun  - LEX.UZ, Telegram'ning `openLink` i bilan (Mini App yopilmaydi);
- *   qo'llanma (Biznes 24/7, Biznes Help) - o'z sahifasi, xuddi qonun kabi;
  *   jonli so'rov - ochiladigan narsa yo'q, faqat nima tekshirilgani (karta - matn).
  *
  * Matndagi [2] yoki qatordagi chip bosilib ochilsa - o'sha manba belgilanadi: fon
@@ -38,16 +37,16 @@ const busy = ref<string | null>(null)
 const list = ref<HTMLElement | null>(null)
 const flash = ref<string | null>(null)
 
-const ICON = { doc: FileText, law: Landmark, guide: BookOpenText, lookup: Activity }
+const ICON = { doc: FileText, law: Landmark, lookup: Activity }
 
-/** So'rov va qo'llanma - platforma belgisi (DWH, Biznes 24/7...), qolgani - tur belgisi. */
+/** So'rov - platforma belgisi (HRM, CRM), qolgani - tur belgisi. */
 function iconOf(item: SourceItem): Component {
-  return (item.kind === 'lookup' || item.kind === 'guide') && item.platform ? platformIcon(item.platform) : ICON[item.kind]
+  return item.kind === 'lookup' && item.platform ? platformIcon(item.platform) : ICON[item.kind]
 }
 
 async function openItem(item: SourceItem) {
   if (busy.value) return
-  if (item.kind === 'law' || item.kind === 'guide') {
+  if (item.kind === 'law') {
     if (item.url) openLink(item.url)
     return
   }
@@ -65,7 +64,7 @@ async function openItem(item: SourceItem) {
 }
 
 function canOpen(item: SourceItem): boolean {
-  return ((item.kind === 'law' || item.kind === 'guide') && !!item.url) || (item.kind === 'doc' && !!item.source.doc_id)
+  return (item.kind === 'law' && !!item.url) || (item.kind === 'doc' && !!item.source.doc_id)
 }
 
 let flashTimer = 0

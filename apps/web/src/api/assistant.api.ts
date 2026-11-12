@@ -1,20 +1,18 @@
-// Barno XOTIRASI va PLATFORMA KALITLARI (yordamchi 3.3, 2026-10-10) - faqat HTTP.
+// Barno XOTIRASI (yordamchi 3.3, 2026-10-10) - faqat HTTP.
 //
 // Brauzer yordamchiga HECH QACHON to'g'ridan-to'g'ri bormaydi: bizning backend proksi
 // qiladi (`/api/v1/assistant/*`) va `user_id` ni O'ZI qo'yadi (sessiyadan). Shuning
 // uchun bu yerda `user_id` yo'q va bo'lishi ham kerak emas - boshqa odamning xotirasini
 // so'rashning yo'li yo'q.
 //
-// NOMLAR. Bizda `/api/v1/connectors` allaqachon BAND - u odamning HRM/CRM LOGIN
-// tokenlari (`connectors.api.ts`). Yordamchining `/api/connectors` i esa boshqa narsa:
-// "Barno shu manbadan foydalansinmi" kalitlari. Chalkashmasin deb bizda ular
-// PLATFORMALAR (`/api/v1/assistant/platforms`).
+// SHAKLLAR - yordamchining o'z sxemasi (MemoryItem; snake_case), backend ularni
+// o'zgartirmay uzatadi. Shunga qaramay javob "tolerant" o'qiladi (`toMemoryItem`): maydon
+// `created_at` yoki `createdAt` - backend tomonda nom o'zgarsa ekran bo'sh qolmasin, buzuq
+// yozuv esa jim tashlansin (butun ro'yxatni yiqitmasin). Kontrakt BITTA joyda - shu faylda.
 //
-// SHAKLLAR - yordamchining o'z sxemasi (MemoryItem, ConnectorItem; snake_case), backend
-// ularni o'zgartirmay uzatadi. Shunga qaramay javob "tolerant" o'qiladi (`toMemoryItem`,
-// `toPlatform`): ro'yxat kaliti `platforms` yoki `connectors`, maydon `user_enabled` yoki
-// `userEnabled` - backend tomonda nom o'zgarsa ekran bo'sh qolmasin, buzuq yozuv esa
-// jim tashlansin (butun ro'yxatni yiqitmasin). Kontrakt BITTA joyda - shu faylda.
+// Platforma kalitlari 2026-11-12 da olib tashlandi (ega qarori): endi kalit yo'q, ulangan
+// tizim ishlatiladi. Proksining `/assistant/platforms` yo'li faqat eski mobil ilova uchun
+// qoldi - web va Mini App uni chaqirmaydi.
 
 import { ApiError, apiFetch } from './http'
 
@@ -24,8 +22,6 @@ import { ApiError, apiFetch } from './http'
 export const ASSISTANT_ROUTES = {
   memory: '/api/v1/assistant/memory',
   memoryItem: (id: string) => `/api/v1/assistant/memory/${encodeURIComponent(id)}`,
-  platforms: '/api/v1/assistant/platforms',
-  platform: (id: string) => `/api/v1/assistant/platforms/${encodeURIComponent(id)}`,
 } as const
 
 /** Upstream `MemoryItem`. `kind`/`source` ochiq: xizmat yangi qiymat qo'shsa ham chiziladi. */
@@ -54,26 +50,6 @@ export interface MemoryDeleteResult {
   status: 'deleted' | 'empty' | (string & {})
 }
 
-/** Upstream `ConnectorItem` - bizda "platforma". */
-export interface Platform {
-  /** "hrm", "crm", "dwh", "biznes247", "superapp", "biznes247_kb", "biznes247_help". */
-  id: string
-  /** Ko'rsatiladigan nom ("Biznes 24/7") - bizda tarjima bo'lmasa ishlatiladi. */
-  name: string
-  /** Sozlamalar uchun bir qator (o'zbekcha) - bizda tarjima bo'lmasa ishlatiladi. */
-  description: string
-  /** `live` - odamning o'z hisobi, `data` - bank raqamlari, `knowledge` - qo'llanmalar. */
-  kind: 'live' | 'data' | 'knowledge' | (string & {})
-  /** Chatda shu tizim tokeni kerak (HRM/CRM) - login holati "Tizimga kirish" bo'limida. */
-  needs_login: boolean
-  /** Serverda yoqilgan. `false` - kulrang, odam yoqa olmaydi. */
-  available: boolean
-  /** Odamning o'z kaliti (o'chirmaguncha `true`). */
-  user_enabled: boolean
-  /** available && user_enabled - Barno shu odam uchun ishlatadi. */
-  enabled: boolean
-}
-
 /** "Hammasini unutish" tasdig'i (`?confirm=forget-all`, backend `assistant_extras.FORGET_ALL`).
  *  Backend usiz chaqiruvni 400 `confirm_required` bilan RAD ETADI va xizmatga bormaydi:
  *  umumiy DELETE yordamchisi yoki tasodifiy so'rov xotirani o'chirib yubormasin. `true`
@@ -86,7 +62,6 @@ type Raw = Record<string, unknown>
 
 const isObj = (v: unknown): v is Raw => !!v && typeof v === 'object' && !Array.isArray(v)
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null)
-const bool = (v: unknown, fallback: boolean): boolean => (typeof v === 'boolean' ? v : fallback)
 
 export function toMemoryItem(raw: unknown): MemoryItem | null {
   if (!isObj(raw)) return null
@@ -100,24 +75,6 @@ export function toMemoryItem(raw: unknown): MemoryItem | null {
     source: str(raw.source) ?? 'learned',
     created_at: str(raw.created_at) ?? str(raw.createdAt),
     updated_at: str(raw.updated_at) ?? str(raw.updatedAt),
-  }
-}
-
-export function toPlatform(raw: unknown): Platform | null {
-  if (!isObj(raw)) return null
-  const id = str(raw.id)
-  if (!id) return null
-  const available = bool(raw.available, true)
-  const userEnabled = bool(raw.user_enabled ?? raw.userEnabled, true)
-  return {
-    id: id.trim().toLowerCase(),
-    name: str(raw.name) ?? id,
-    description: str(raw.description) ?? '',
-    kind: str(raw.kind) ?? 'live',
-    needs_login: bool(raw.needs_login ?? raw.needsLogin, false),
-    available,
-    user_enabled: userEnabled,
-    enabled: bool(raw.enabled, available && userEnabled),
   }
 }
 
@@ -147,29 +104,12 @@ export async function forgetAllMemory(): Promise<MemoryDeleteResult> {
   return toDeleteResult(raw)
 }
 
-export async function listPlatforms(): Promise<Platform[]> {
-  const raw = await apiFetch<unknown>(ASSISTANT_ROUTES.platforms)
-  const o = isObj(raw) ? raw : {}
-  const list = Array.isArray(o.platforms) ? o.platforms : Array.isArray(o.connectors) ? o.connectors : Array.isArray(raw) ? raw : []
-  return list.map(toPlatform).filter((x): x is Platform => x !== null)
-}
-
-/** Kalit. Tana FAQAT `{enabled}` (backend ortiqcha maydonni 422 bilan rad etadi - kimlik
- *  so'rovdan olinmaydi). Javob - yangilangan platforma (bo'lmasa `null`). */
-export async function setPlatform(id: string, enabled: boolean): Promise<Platform | null> {
-  const raw = await apiFetch<unknown>(ASSISTANT_ROUTES.platform(id), {
-    method: 'PUT',
-    body: JSON.stringify({ enabled }),
-  })
-  return toPlatform(raw)
-}
-
 /* ── Xatolar ────────────────────────────────────────────────────────────── */
 
 export type AssistantErrorKind = 'unavailable' | 'rateLimited' | 'network' | 'notFound' | 'generic'
 
-/** Backend "bunday narsa yo'q" degan 404 kodlari (`assistant_extras._MESSAGES`). */
-const NOT_FOUND_CODES: ReadonlySet<string> = new Set(['memory_not_found', 'platform_not_found'])
+/** Backend "bunday narsa yo'q" degan 404 kodi (`assistant_extras._MESSAGES`). */
+const NOT_FOUND_CODE = 'memory_not_found'
 
 /**
  * Xato turi - ekran o'z tilidagi matnni ko'rsatadi (`assistant.errors.*`). Backend
@@ -185,7 +125,7 @@ const NOT_FOUND_CODES: ReadonlySet<string> = new Set(['memory_not_found', 'platf
 export function assistantErrorKind(err: unknown): AssistantErrorKind {
   if (err instanceof ApiError) {
     const status = err.status ?? Number(/\((\d{3})\)\s*$/.exec(err.message)?.[1] ?? 0)
-    if (status === 404) return NOT_FOUND_CODES.has(err.body?.code ?? '') ? 'notFound' : 'unavailable'
+    if (status === 404) return err.body?.code === NOT_FOUND_CODE ? 'notFound' : 'unavailable'
     if (status === 429) return 'rateLimited'
     if (status === 501 || status >= 500) return 'unavailable'
     return 'generic'

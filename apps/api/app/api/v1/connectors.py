@@ -1,9 +1,17 @@
-"""Ulanishlar: foydalanuvchining O'Z HRM / CRM hisobi.
+"""Ulanishlar: odam O'ZI boshqaradigan hisob - faqat HRM (`USER_PLATFORMS`).
 
-    GET    /connectors                     holat (ikkala platforma)
+    GET    /connectors                     holat (faqat HRM qatori)
     POST   /connectors/{platform}/connect  login + parol -> ulanish
-    PATCH  /connectors/{platform}          chatda ishlatish kaliti
-    DELETE /connectors/{platform}          uzish (CRM da refresh_token bekor qilinadi)
+    PATCH  /connectors/{platform}          eski klientlar uchun: hech narsani o'zgartirmaydi
+    DELETE /connectors/{platform}          uzish
+
+CRM BU YERDA YO'Q (2026-11-12, ega qarori): u SSO kirishida o'zi ulanadi
+(`api/v1/auth.py`) va har doim ishlatiladi - odam uni ko'rmaydi va boshqarmaydi.
+`crm` uchala yo'lda ham notanish platforma bilan bir xil 404 oladi; CRM ni
+ko'rish va uzish faqat admin panelda (`api/v1/admin_users.py`).
+
+KALIT YO'Q: ulangan tizim har doim ishlatiladi. `PATCH` mobil ilova va eski
+Mini App uchun qabul qilinadi, lekin `enabled` hech narsani hal qilmaydi.
 
 Mantiq `services/integrations/connectors.py` da, bu yerda faqat HTTP.
 TOKENLAR JAVOBGA TUSHMAYDI - klient faqat holatni ko'radi. Chat esa
@@ -26,6 +34,7 @@ from ...schemas.connectors import (
     ConnectRequest,
 )
 from ...services.integrations.connectors import (
+    USER_PLATFORMS,
     ConnectorError,
     ConnectorHub,
     ConnectorStore,
@@ -45,6 +54,7 @@ router = APIRouter(prefix="/connectors", tags=["connectors"])
 hub = ConnectorHub(
     ConnectorStore(settings.connectors_file),
     HrmAuth(settings.hrm_base_url, timeout=settings.hrm_timeout),
+    # Faqat ESKI (qo'lda ulangan) CRM yozuvlarini yangilash va bekor qilish uchun.
     CrmUserAuth(
         settings.crm_idp_token_url,
         settings.crm_client_id,
@@ -60,7 +70,7 @@ hub = ConnectorHub(
                timeout=min(settings.crm_timeout, 5.0)),
 )
 
-_PLATFORM = Path(max_length=16, description="hrm | crm")
+_PLATFORM = Path(max_length=16, description="hrm")
 
 
 def _uid(user: AuthUser) -> str:
@@ -76,8 +86,8 @@ def _fail(exc: ConnectorError, user: AuthUser, platform: str, what: str):
 
 @router.get("", response_model=ConnectorsResponse)
 def list_connectors(user: AuthUser = Depends(current_user)) -> ConnectorsResponse:
-    """Ikkala platformaning holati - "+" menyusi shuni ko'rsatadi."""
-    return ConnectorsResponse(connectors=hub.status(_uid(user)))
+    """Odam boshqaradigan platformalar holati (faqat HRM) - "+" menyusi shuni ko'rsatadi."""
+    return ConnectorsResponse(connectors=hub.status(_uid(user), USER_PLATFORMS))
 
 
 @router.post("/{platform}/connect", response_model=ConnectorStatus)
@@ -86,18 +96,17 @@ def connect(
     platform: str = _PLATFORM,
     user: AuthUser = Depends(current_user),
 ) -> ConnectorStatus:
-    """Platformaning O'Z logini va paroli bilan kirish.
+    """HRM ning O'Z logini va paroli bilan kirish. `crm` - 404 (modul izohi).
 
     `async def` EMAS: platformaga `urllib` bilan boriladi (bloklaydi), FastAPI
     oddiy `def` ni threadpool'da bajaradi.
     """
     try:
         status = ConnectorStatus(**hub.connect(_uid(user), platform, body.username, body.password))
-        if platform == "hrm":
-            # Parol XOTIRADA qoladi - HRM tokeni 10 soatda o'ladi va uni
-            # yangilashning boshqa yo'li yo'q (`services/integrations/
-            # connectors.py` moduli izohi). Diskka yozilmaydi.
-            hub.remember_password(_uid(user), body.password)
+        # Parol XOTIRADA qoladi - HRM tokeni 10 soatda o'ladi va uni
+        # yangilashning boshqa yo'li yo'q (`services/integrations/
+        # connectors.py` moduli izohi). Diskka yozilmaydi.
+        hub.remember_password(_uid(user), body.password)
         return status
     except ConnectorError as exc:
         raise _fail(exc, user, platform, "rad etildi") from exc
@@ -109,9 +118,14 @@ def update(
     platform: str = _PLATFORM,
     user: AuthUser = Depends(current_user),
 ) -> ConnectorStatus:
-    """Kalit: ulangan tizimni chatda ishlatish / vaqtincha ishlatmaslik."""
+    """ESKI KLIENTLAR UCHUN (mobil ilova, eski Mini App) - kalit endi yo'q.
+
+    So'rov qabul qilinadi, lekin `enabled` hech narsani o'zgartirmaydi: ulangan
+    HRM har doim ishlatiladi va javob haqiqiy holatni aytadi (`enabled: true`).
+    Ulanmagan bo'lsa avvalgidek 409, `crm` - 404.
+    """
     try:
-        return ConnectorStatus(**hub.set_enabled(_uid(user), platform, body.enabled))
+        return ConnectorStatus(**hub.connected(_uid(user), platform))
     except ConnectorError as exc:
         raise _fail(exc, user, platform, "kaliti") from exc
 
@@ -121,8 +135,9 @@ def disconnect(
     platform: str = _PLATFORM,
     user: AuthUser = Depends(current_user),
 ) -> ConnectorStatus:
-    """Uzish: saqlangan token o'chiriladi, CRM da refresh_token bekor qilinadi."""
+    """Uzish: saqlangan HRM tokeni va xotiradagi parol o'chiriladi. `crm` - 404:
+    odam CRM ni uzmaydi (uni admin panel uzadi)."""
     try:
-        return ConnectorStatus(**hub.disconnect(_uid(user), platform))
+        return ConnectorStatus(**hub.disconnect(_uid(user), platform, among=USER_PLATFORMS))
     except ConnectorError as exc:
         raise _fail(exc, user, platform, "uzish") from exc

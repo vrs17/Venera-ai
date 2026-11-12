@@ -4,7 +4,7 @@ Maydon nomlari yuqoridagi xizmatnikidek (snake_case, `schemas/chats.py`
 dagi kabi): javob o'sha xizmatdan keladi va mobil ilova ham xizmat
 hujjatiga qarab yoziladi - nomlarni almashtirish ikki lug'at yaratardi.
 Bitta istisno: xizmatning `connectors` ro'yxati bizda `platforms` -
-`/api/v1/connectors` nomi bizda HRM/CRM LOGIN tokenlariga band.
+`/api/v1/connectors` nomi bizda HRM LOGIN tokeniga band.
 
 Xizmat javobi bu modellarga TO'G'RIDAN-TO'G'RI quyilmaydi: u yerda
 `created_at: ""` yoki yetishmagan maydon bo'lsa 500 chiqardi. Avval
@@ -50,18 +50,18 @@ class MemoryDeleted(BaseModel):
 
 
 class Platform(BaseModel):
-    """Barno javob berishda o'qiydigan bitta platforma va odamning kaliti."""
+    """Barno javob berishda o'qiydigan bitta platforma va odamning kaliti.
+    Odamga faqat `hrm` qaytadi (`api/v1/assistant_extras.py` moduli izohi)."""
 
-    #: hrm | crm | dwh | biznes247 | superapp | biznes247_kb | biznes247_help
+    #: hrm
     id: str
-    #: Ko'rsatiladigan nom ("Biznes 24/7"). UI o'z tarjimasini ishlatadi,
-    #: notanish `id` uchun shu nom.
+    #: Ko'rsatiladigan nom ("HRM"). UI o'z tarjimasini ishlatadi.
     name: str
     #: Bir qator izoh (xizmatniki - o'zbekcha).
     description: str = ""
-    #: live (odamning o'z hisobi) | data (bank raqamlari) | knowledge (qo'llanmalar)
+    #: live (odamning o'z hisobi); xizmat boshqa tur bersa - o'zgarmasdan o'tadi
     kind: str = ""
-    #: Chat so'rovida odamning shu platforma tokeni kerak (HRM/CRM - "+" menyusidagi
+    #: Chat so'rovida odamning shu platforma tokeni kerak (HRM - "+" menyusidagi
     #: login, `/api/v1/connectors`).
     needs_login: bool = False
     #: Serverda yoqilgan. `false` - kulrang, odam yoqa olmaydi.

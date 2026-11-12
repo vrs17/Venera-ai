@@ -389,6 +389,18 @@ def test_haqiqiy_imzo_bot_kanali_bilan(monkeypatch):
 # --- ulanmagan odam ---------------------------------------------------------------------
 
 
+def test_token_yoq_xatosi_crm_ni_ulashga_yubormaydi():
+    """`auth_missing` zaxira matni: HRM qo'lda ulanadi, CRM esa vebga BRB-Tech ID bilan
+    kirganda o'zi ulanadi - "CRM ga kiring / ulang" degan yo'l endi yo'q. Xizmatning
+    o'z matni kelsa - o'sha yutadi."""
+    for code in ("auth_missing", "auth_expired"):
+        text = render.frame_error({"type": "error", "code": code})
+        assert "BRB-Tech ID" in text and "HRM" in text and "CRM" in text
+        assert "CRM ga kiring" not in text and "CRM hisobingizga" not in text
+    assert render.frame_error({"code": "auth_missing", "text": "Xizmat matni"}) == "Xizmat matni"
+    assert render.frame_error({"code": "boshqa"}) == "Javob berilmadi"
+
+
 def test_ulanmagan_odamga_bitta_xabar_va_ilova_tugmasi(world):
     bot, tg, links, backend = world
     bot.handle_update(text_update("salom"))

@@ -21,7 +21,7 @@
 // bo'lib qolmasin. Shuning uchun izoh faqat oldida boshqa mazmun (xatboshi, sarlavha,
 // ro'yxat, jadval) bo'lsa belgilanadi; javob eslatma bilan BOSHLANSA - oddiy matn.
 //
-// MANBA QATORI (3.3 "hikoya" javoblari): oxirgi xatboshi "Manba: DWH, Biznes 24/7" -
+// MANBA QATORI (3.3 "hikoya" javoblari): oxirgi xatboshi "Manba: HRM, CRM" -
 // u "N manba" tugmasini takrorlaydi va javob bilan bahslashadi. U `vmd-source` - kichik,
 // xira izoh (qutisiz). Faqat javob OXIRIDA (undan keyin faqat eslatma izohi bo'lishi
 // mumkin - "Manba: ..." keyin "Eslatma: ...") va oldida mazmun bo'lsa.

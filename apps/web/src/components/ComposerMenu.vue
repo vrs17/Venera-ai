@@ -23,8 +23,8 @@ const { t } = useI18n({ useScope: 'global' })
 const menuOpen = ref(false)
 const connectorsOpen = ref(false)
 
-// Har ochilishda holat serverdan yangilanadi: HRM sessiyasi 10 soatda tugaydi, CRM
-// refresh rad etilishi mumkin - oynadagi ro'yxat buni ko'rsatishi kerak.
+// Har ochilishda holat serverdan yangilanadi: HRM sessiyasi 10 soatda tugaydi -
+// oynadagi qator buni ko'rsatishi kerak.
 const { load } = useConnectors()
 watch(menuOpen, (open) => open && void load())
 </script>

@@ -169,14 +169,19 @@ async function logout(): Promise<void> {
   phase.value = 'login'
 }
 
-/** HRM/CRM ulanmagan (javob kartasidagi tugma). SSO dan beri kirish HRM/CRM ni
- *  o'zi ulamaydi - parol Barno'ga kelmaydi; ular veb ilovaning "+" (Ulanishlar)
- *  menyusida ulanadi va token shu odamning HAMMA kanaliga (Mini App, bot) xizmat
- *  qiladi. Shuning uchun sessiya YOPILMAYDI (avval yopilardi va odam Keycloak
- *  paroli endi ishlamaydigan kirish ekranida qolardi) - veb ilova tashqi
+/** HRM yoki CRM ulanmagan (javob kartasidagi tugma). Ikkalasi ham VEB ilovada
+ *  tiklanadi: HRM - "+" (Ulanishlar) menyusida login va parol bilan, CRM - BRB-Tech ID
+ *  bilan kirishning o'zida (o'zi ulanadi). Token shu odamning HAMMA kanaliga (Mini App,
+ *  bot) xizmat qiladi. Shuning uchun sessiya YOPILMAYDI (avval yopilardi va odam
+ *  Keycloak paroli endi ishlamaydigan kirish ekranida qolardi) - veb ilova tashqi
  *  brauzerda ochiladi. */
 async function reconnect(): Promise<void> {
-  openLink(`${window.location.origin}/`)
+  // SSO yoqilgan bo'lsa havola vebda BRB-Tech ID kirishini BOSHLAYDI (`/auth/sso/start`): odam vebga
+  // allaqachon kirgan bo'lsa ham kirish qaytadan o'tadi va CRM shu kirishda o'zi ulanadi - ilovaning
+  // bosh sahifasini ochish esa hech narsani ulamasdi. HRM uchun ham to'g'ri joy: kirgach «+» -> Ulanishlar.
+  const sso = await useAuth().loadSsoConfig()
+  const origin = window.location.origin
+  openLink(sso.enabled ? `${origin}${sso.startPath}?channel=web` : `${origin}/`)
 }
 
 /** Ish paytida 401 keldi (sessiya serverda bekor qilingan yoki hisob bloklangan):

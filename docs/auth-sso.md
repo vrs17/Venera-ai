@@ -142,7 +142,9 @@ qarang).
   da tekshirilgan) - HRM jamoasi buni qo'shguncha shunday qoladi. HRM tokeni
   10 soatlik; parol faqat xotirada turadi, API qayta ishga tushsa odam HRM ni
   qayta ulaydi.
-- CRM ulanishi SSO sessiyasidan O'ZI ochiladi (2026-11-12, pastdagi bo'lim).
+- CRM ulanishi SSO sessiyasidan O'ZI ochiladi (2026-11-12, pastdagi bo'lim) va
+  odamga ko'rinmaydi: «Ulanishlar» da faqat HRM qoldi ("Ulanishlar: odam faqat
+  HRM ni boshqaradi" bo'limi).
 - Token imzosi endi TEKSHIRILADI (`PyJWT[crypto]`, Keycloak JWKS).
 - `POST /auth/login` faqat zahira (`users.yaml`); `LOCAL_LOGIN_ENABLED=false`
   bo'lsa 403.
@@ -179,17 +181,18 @@ qarang).
   `roles` maydoni (realm va `crm-client` rollari; rollback'da eski kod uni qayta
   yozishi mumkin) o'qilmaydi - odam veb'da SSO bilan bir marta kirguncha rollari
   bo'sh.
-- **"CRM ni uzish" faqat Barno ruxsatini bekor qiladi** (`/revoke`, RFC 7009).
+- **CRM ni uzish faqat Barno ruxsatini bekor qiladi** (`/revoke`, RFC 7009).
   `/logout` ishlatilmaydi: u odamni shu brauzerdagi CRM va boshqa SSO
-  tizimlaridan ham chiqarib yuborardi.
+  tizimlaridan ham chiqarib yuborardi. Uzish endi faqat admin panelda
+  (foydalanuvchi varag'i) - odamning o'zida CRM qatori yo'q.
 - **Chiqishda Keycloak manzili faqat brauzer SSO sessiyasiga beriladi** (Barno
   tokenidagi `sso` belgisi). Telegram, qurilma va zahira sessiyalari Keycloak'ga
   yuborilmaydi - Telegram WebView Mini App'dan chiqib ketmasin.
 - **Mini App'da "ulanmagan" tugmasi** endi sessiyani yopmaydi: veb ilovani ochadi
   (HRM u yerda "+" menyusidan ulanadi).
-- CRM tokenini yangilash shu orada o'zgargan ulanishni (uzish, kalit, qayta
-  kirish) buzmaydi - ombordagi yozuv bitta qulf ostida tekshirib yoziladi
-  (`ConnectorStore.replace_if` / `patch`); "uzish" avval ombordan o'chiradi,
+- CRM tokenini yangilash shu orada o'zgargan ulanishni (uzish, qayta kirish)
+  buzmaydi - ombordagi yozuv bitta qulf ostida tekshirib yoziladi
+  (`ConnectorStore.replace_if`); "uzish" avval ombordan o'chiradi,
   keyin tokenni bekor qiladi. JWKS so'rovi yiqilsa keyingi kirish darhol qayta
   so'raydi; `offline_access` berilmasa kirish sahifasi "sozlama" sababini
   ko'rsatadi; kirish sahifasi sozlamani o'qiy olmasa o'zi qayta so'raydi.
@@ -208,6 +211,25 @@ Testlar: `tests/test_sso_hardening.py`.
 - **HRM** Mini App va botdan qayta ulanmaydi (u yerda "+" yo'q, "Qayta ulash"
   qayta kirishga yuborardi): HRM veb'da "+" menyusidan ulanadi, token o'sha
   odamning hamma kanaliga xizmat qiladi; API qayta ishga tushsa yana ulash kerak.
+- **CRM faqat VEB'dagi SSO kirishida ulanadi** - boshqa yo'l yo'q (qo'lda ulash
+  olib tashlangan). Vebga BRB-Tech ID bilan hech kirmagan odamning (faqat
+  Telegram, mobil ilova yoki `users.yaml` hisobi) O'Z CRM ulanishi bo'lmaydi -
+  ilgari qo'lda ulangan eski yozuvi qolgan bo'lmasa. Unda chatdagi CRM savoliga
+  umumiy agent hisobi javob beradi (sozlangan bo'lsa, `CRM_USERNAME`), guruhdagi
+  CRM va "yig'ilishdan CRM ga" (`MEETINGS_CRM_OWN_TOKENS=true`) esa ishlamaydi.
+  Yechim bitta: vebga BRB-Tech ID bilan kirish - bot ham shuni aytadi. Ulanish
+  yo'qligini (CRM sessiyani rad etdi, offline sessiya o'ldi,
+  `SSO_CRM_CONNECT=false`) odam ilovada ko'rmaydi - admin panel (foydalanuvchi
+  varag'i), `/api/health/detail` va jurnal ko'rsatadi.
+- **Yordamchidagi eski CRM kaliti.** Odam bir paytlar "Manbalar" da CRM ni
+  o'chirgan bo'lsa, bu tanlov yordamchining O'Z omborida turadi (Barno'da emas)
+  va uni Barno tozalamaydi: yordamchi o'sha odamga CRM savolida "o'chirilgan"
+  deb javob berishi mumkin, ilovada esa endi kalit yo'q. Yechim yordamchi
+  tomonda (`crm` ni kalitsiz qilish va saqlangan qatorlarni o'chirish).
+  2026-11-12 da yordamchi omborida o'chirilgan qator YO'Q edi (bitta odam,
+  hammasi yoqiq). HRM uchun bunday holat yuz bermaydi: eski mobil ilova
+  `PUT /assistant/platforms/hrm` bilan o'chirishni so'rasa ham yordamchiga
+  `enabled: true` ketadi.
 - **Keycloak'dagi rol - kirish paytidagi nusxa.** Rol olib tashlansa yoki hisob
   o'chirilsa, bu odamning keyingi VEB kirishigacha Barno'ga yetmaydi (Telegram
   va qurilma sessiyalari saqlangan nusxadan yashaydi). Darhol to'xtatish:
@@ -220,6 +242,49 @@ Testlar: `tests/test_sso_hardening.py`.
   Keycloak'da shunday nomli yangi hisob o'sha zahira hisobning `actor_id` sini
   oladi - `users.yaml` da keraksiz hisob qoldirilmasin.
 
+## Ulanishlar: odam faqat HRM ni boshqaradi (2026-11-12, ega qarori)
+
+- **HRM** - «Ulanishlar» dagi yagona qator: ulash (login + parol), holat,
+  muddati tugasa qayta ulash, uzish. HRM hali SSO sessiyasini qabul qilmaydi.
+- **CRM odamga ko'rinmaydi va uni odam boshqarmaydi.** U SSO kirishida o'zi
+  ulanadi (pastdagi bo'lim) va HAR DOIM ishlatiladi: chat, Telegram bot,
+  guruhdagi CRM, "yig'ilishdan CRM ga".
+- **Kalit (yoqish / o'chirish) yo'q**: ulangan = ishlatiladi. Ombordagi eski
+  `enabled: false` o'qilmaydi (`ConnectorHub.tokens`, `chat.has_own_crm`).
+- **DWH, Biznes 24/7, Superapp, "Biznes 24/7 qo'llanmalari", "Biznes Help"** -
+  vaqtinchalik namoyish manbalari edi; endi taklif qilinmaydi (qator ham,
+  kalit ham yo'q). Javob manbalari filtri (`services/answer_sources.py`) bu
+  turlarni ATAYLAB hali taniydi: yordamchi ularni yana bir muddat yuborishi
+  mumkin va eski suhbatlar tarixida ular bor - jonli so'rov yashiriladi,
+  `[n]` raqamli qo'llanma maqolasi ko'rsatiladi (veb unga umumiy yorliq beradi).
+
+Kod: `services/integrations/connectors.py` (`USER_PLATFORMS` - odamniki,
+`PLATFORMS` - ombor va admin panel), `api/v1/connectors.py`,
+`api/v1/assistant_extras.py`. Testlar: `tests/test_connectors.py`,
+`tests/test_sso_crm.py`, `tests/test_assistant_extras.py`.
+
+| Yo'l | Javob |
+|---|---|
+| `GET /api/v1/connectors` | `{"connectors": [...]}` - FAQAT HRM qatori (shakli o'zgarmagan) |
+| `POST /api/v1/connectors/hrm/connect`, `DELETE /api/v1/connectors/hrm` | avvalgidek |
+| `PATCH /api/v1/connectors/hrm` `{"enabled": bool}` | eski klientlar (mobil ilova, eski Mini App) uchun qabul qilinadi, lekin hech narsani o'zgartirmaydi: javobda `enabled: true`, token ishlatilaveradi; ulanmagan bo'lsa 409 |
+| `POST /api/v1/connectors/crm/connect`, `PATCH` / `DELETE /api/v1/connectors/crm` | 404 - notanish platforma bilan bir xil |
+| `GET /api/v1/assistant/platforms` | faqat `hrm` qatori (yordamchi nechta qaytarsa ham) |
+| `PUT /api/v1/assistant/platforms/{id}` | `hrm` - qabul qilinadi, lekin yordamchiga HAR DOIM `enabled: true` ketadi (eski klient HRM ni o'chirib qo'ya olmaydi, ilgari o'chirilgani qayta yoqiladi); boshqa har qanday `id` - 404 `platform_not_found`, yordamchiga BORMASDAN |
+| `DELETE /api/v1/admin/users/{actorId}/connectors/{hrm\|crm}` | o'zgarmagan: admin panel CRM qatorini ko'radi va uza oladi |
+
+CRM ulanmagan bo'lsa yechim - vebga BRB-Tech ID bilan kirish: bot (guruhdagi
+CRM, brif, `auth_missing` zaxira matni) shuni aytadi. `/api/health/detail` da
+`connectors.crm` endi "SSO kirishida CRM ulanishi ochila oladimi" degani (SSO
+sozlangan + `CRM_BASE_URL` + `SSO_CRM_CONNECT=true`); yo'q bo'lsa `warnings`
+da sababi turadi.
+
+Eski klientlar buzilmaydi, lekin farqni ko'rsatadi: yangilanmagan klient
+(e'lon qilingan mobil ilova, eski Mini App) CRM qatorini o'zi chizishi mumkin -
+u "ulanmagan" ko'rinadi, ulash yoki kalit urinishi 404 oladi; CRM esa
+ishlayveradi. Namoyish manbalari kaliti ham 404 oladi - eski ilova kalitni
+joyiga qaytaradi.
+
 ## CRM ulanishi SSO sessiyasidan (2026-11-12)
 
 Kod: `services/integrations/crm_sso.py`, `ConnectorHub` (`via: "sso"`),
@@ -229,8 +294,10 @@ Kirishda (`SSO_CRM_CONNECT=true`, default):
 1. Keycloak'dan `offline_access` ham so'raladi - usiz sessiya 30 daqiqa
    harakatsizlikda o'lardi va CRM kuniga bir necha marta uzilardi.
 2. Odamning access tokeni bilan CRM dan so'raladi: `GET <CRM_BASE_URL>/api/auth/me`.
-3. CRM QABUL QILSA - sessiya odamning CRM ulanishi bo'ladi ("+" menyusida
-   "ulangan"), eski qo'lda ulangan sessiya CRM da bekor qilinadi.
+3. CRM QABUL QILSA - sessiya odamning CRM ulanishi bo'ladi (odam buni
+   ko'rmaydi; admin panelda "ulangan"), eski qo'lda ulangan sessiya CRM da
+   bekor qilinadi. Yozuv har doim `enabled: true` bilan saqlanadi - bir
+   paytlar o'chirib qo'yilgan CRM qayta kirishdan keyin o'chiq qolmaydi.
 4. CRM RAD ETSA (401/403) yoki javob bermasa - ulanish ochilmaydi, mavjud
    ulanishga tegilmaydi, KIRISH BARIBIR ISHLAYDI. Jurnalda:
    `SSO: CRM sessiyani RAD ETDI (...) Token: azp=... aud=[...] clientlar=[...]`.
@@ -240,6 +307,14 @@ yangilaydi (`POST <CRM>/api/auth/refresh` faqat `crm-client` ga berilgan tokenni
 yangilay oladi), "uzish" ham sessiyani Keycloak'da bekor qiladi. Qayta kirganda
 oldingi SSO sessiyasi bekor QILINMAYDI: brauzerdagi Keycloak sessiyasi tirik
 bo'lsa ikkala token bitta offline sessiyani bo'lishadi.
+
+Parol bilan (qo'lda) CRM ga ulanish OLIB TASHLANGAN - yangi bunday ulanish
+ochilmaydi. Ilgari shunday ulangan odamlarning saqlangan yozuvlari (`via` siz)
+ishlayveradi: ularni CRM o'zi yangilaydi, odam vebga SSO bilan kirganda esa
+SSO sessiyasiga almashadi. Shart avvalgidek: `CRM_IDP_TOKEN_URL`,
+`CRM_CLIENT_ID`, `CRM_CLIENT_SECRET` va `CRM_BASE_URL` to'liq bo'lishi kerak
+(bu qiymatlar endi hech qayerga yuborilmaydi - faqat shart; ularni `.env` dan
+olib tashlash eski yozuvlarni keyingi SSO kirishigacha tokensiz qoldiradi).
 
 CRM rad etsa nima qilinadi: jurnaldagi `aud` da `crm-client` bo'lmasa -
 Keycloak'da bizning client'ga mapper qo'shiladi (Clients -> client -> Mappers ->

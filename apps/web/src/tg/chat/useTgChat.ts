@@ -27,10 +27,10 @@ import { useTgSession } from '../useTgSession'
 
 /** Mini App'ning savol-javobi: umumiy `ChatExchange` + xato KODI. Kod bo'yicha karta
  *  boshqa yo'l taklif qiladi: `auth_missing`/`auth_expired` da "Qayta urinish" foyda
- *  bermaydi (token yo'q) - "Qayta ulash" (qayta kirish, Keycloak HRM/CRM ni ulaydi). */
+ *  bermaydi (token yo'q) - "Veb ilovani ochish": ulanish o'sha yerda tiklanadi. */
 export type TgExchange = ChatExchange & { errorCode?: string | null }
 
-/** HRM/CRM tokeni yo'q yoki eskirgan - qayta kirish kerak. */
+/** HRM/CRM tokeni yo'q yoki eskirgan - ulanishni veb ilovada tiklash kerak. */
 export function isAuthCode(code: string | null | undefined): boolean {
   return code === 'auth_missing' || code === 'auth_expired'
 }
@@ -82,13 +82,17 @@ export function useTgChat() {
   }
 
   /** Xizmatning O'Z matni yutadi - BITTA istisno: token yo'qligi. Xizmat u yerda
-   *  "«+» menyusidan ulang" deydi, Mini App'da esa «+» yo'q (Keycloak HRM/CRM ni o'zi
-   *  ulaydi). Qaysi tizim - xizmat matnidan: faqat CRM tilga olingan bo'lsa CRM. */
+   *  "«+» menyusidan ulang" deydi, Mini App'da esa «+» yo'q, yo'l ham tizimga qarab har xil:
+   *    HRM - veb ilovada qo'lda ulanadi («+» -> Ulanishlar);
+   *    CRM - odam ulamaydi: vebda BRB-Tech ID bilan kirilganda o'zi ulanadi (ro'yxatda
+   *          CRM qatori yo'q, shuning uchun unga «+» ni ko'rsatish odamni adashtirardi).
+   *  Qaysi tizim - xizmat matnidan: faqat CRM tilga olingan bo'lsa CRM, aks holda HRM. */
   function errorText(frame: ChatFrame): string {
     const own = frame.text?.trim() ?? ''
     if (isAuthCode(frame.code)) {
-      const system = /\bCRM\b/i.test(own) && !/\bHRM\b/i.test(own) ? 'CRM' : 'HRM'
-      return t('tg.chat.notConnected', { system })
+      // So'z chegarasisiz: o'zbekcha qo'shimcha bilan ham topilsin ("CRMga", "CRMni").
+      const crmOnly = /CRM/i.test(own) && !/HRM/i.test(own)
+      return crmOnly ? t('tg.chat.crmNotConnected') : t('tg.chat.notConnected', { system: 'HRM' })
     }
     return own || t('chatFailed')
   }

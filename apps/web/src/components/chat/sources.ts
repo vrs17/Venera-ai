@@ -2,14 +2,11 @@
 
 import type { AnswerSource } from '../../types'
 import { KNOWN_TOOLS } from '../../i18n/tools'
-import { isLookupSource, platformName, platformOfSource, KNOWLEDGE_PLATFORMS, LIVE_PLATFORMS } from './platforms'
+import { isLookupSource, platformName, platformOfSource } from './platforms'
 
-/** HUJJAT emas, JONLI SO'ROV bo'lgan turlar. `crm` 2026-09-14 da qo'shildi - undan
- *  oldin CRM manbasi hujjatlar ro'yxatiga tushib, mavjud bo'lmagan fayl sifatida
- *  "ochiladigan" bo'lib chiqardi. 2026-10-10: DWH, Biznes 24/7, Superapp (jonli) va
- *  qo'llanmalar (raqamsiz kelsa) - ro'yxat `platforms.ts` da, bu yerda faqat qayta eksport. */
-export const LOOKUP_KINDS: ReadonlySet<string> = LIVE_PLATFORMS
-
+/** HUJJAT emas, JONLI SO'ROV (HRM, CRM yoki eski javobdagi notanish tizim). Qoida
+ *  `platforms.ts` da: so'rov hujjatlar ro'yxatiga tushsa, mavjud bo'lmagan fayl sifatida
+ *  "ochiladigan" bo'lib chiqardi. */
 export function isLookup(source: AnswerSource): boolean {
   return isLookupSource(source)
 }
@@ -23,25 +20,22 @@ export function lookupMarker(source: AnswerSource, index: number): string {
  * FOYDALANUVCHIGA ko'rinadigan so'rov nomi - web chat va Mini App uchun BITTA qoida
  * (2026-10-10, UX ko'rigi):
  *   * asbob nomining tarjimasi bor (`tools.*`) - "CRM · Vazifa maʼlumoti";
- *   * yo'q - faqat platforma nomi ("DWH", "Biznes 24/7"); nima topilgani ostida (`digest`).
- * Xom asbob nomi ("Branch kpi", "Users") HECH QACHON - u dasturchi tili, admin izida qoladi
- * (`lookupLabel`). Platforma ham noma'lum bo'lsa - `kind` katta harfda (avvalgidek).
+ *   * yo'q - faqat platforma nomi ("HRM", "CRM"); nima topilgani ostida (`digest`).
+ * Xom asbob nomi ("Issue get", "Users") HECH QACHON - u dasturchi tili, admin izida qoladi
+ * (`lookupLabel`). Platforma ham notanish bo'lsa (eski javob) - umumiy nom (`platformName`),
+ * xom `kind` emas.
  */
 export function lookupTitle(source: AnswerSource, t: (key: string) => string): string {
-  const platform = platformOfSource(source)
-  const name = platform ? platformName(platform, t) : String(source.kind ?? '').trim().toUpperCase() || 'HRM'
+  const name = platformName(platformOfSource(source), t)
   const tool = source.tool?.trim().toLowerCase() ?? ''
-  if (KNOWN_TOOLS.has(tool)) return `${name} · ${t(`tools.${tool}`)}`
-  // Qo'llanmadan raqamsiz so'rov: maqola nomi odam tilida - u ko'rsatiladi (xom nom emas).
-  const title = platform && KNOWLEDGE_PLATFORMS.has(platform) ? source.title?.trim() : ''
-  return title ? `${name} · ${title}` : name
+  return KNOWN_TOOLS.has(tool) ? `${name} · ${t(`tools.${tool}`)}` : name
 }
 
 /**
  * ADMIN izi uchun so'rov nomi (asbob nomi ko'rinadi): `hrm_today_late` -> "HRM · Today late",
- * `biznes247_kb_search` -> "Biznes 24/7 qo'llanmalari · Search". Platforma `kind` dan
- * (bo'lmasa asbob prefiksidan); `t` berilsa - tarjima qilingan nom (`assistant.platform.*`),
- * berilmasa - id katta harfda. Xom asbob nomi - dasturchi tili; to'liq nom admin izida.
+ * `crm_issue_get` -> "CRM · Issue get". Platforma `kind` dan (bo'lmasa asbob prefiksidan);
+ * `t` berilsa - tarjima qilingan nom (`assistant.platform.*`), berilmasa - id katta harfda.
+ * Xom asbob nomi - dasturchi tili; to'liq nom admin izida.
  */
 export function lookupLabel(source: AnswerSource, fallback = '', t?: (key: string) => string): string {
   const tool = source.tool?.trim() ?? ''

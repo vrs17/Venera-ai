@@ -602,11 +602,12 @@ def test_ollama_tasnifi_hisoblanadi(monkeypatch, db):
     assert KEY not in all_text(db)
 
 
-def test_crm_hrm_keycloak_kirishlari_hisoblanadi(monkeypatch, db):
+def test_crm_hrm_kirishlari_hisoblanadi(monkeypatch, db):
     from app.services.integrations import connectors as conn
     from app.services.integrations.crm_auth import CrmAuthError, post_json
 
     jwt = "eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE5OTk5OTk5OTl9.c2ln"
+    hrm_logins = iter(("ok", "rad"))
 
     def fake(request, timeout=None):
         url = request.full_url
@@ -615,11 +616,11 @@ def test_crm_hrm_keycloak_kirishlari_hisoblanadi(monkeypatch, db):
         if url.endswith("/api/auth/logout"):
             raise _http_error(url, 400, b'{"error":{"code":"AUTH_FAILED","message":"bekor"}}')
         if url.endswith("/api/authenticate"):
-            return _Http(json.dumps({"id_token": jwt}).encode())
-        if url.endswith("/openid-connect/token"):
+            if next(hrm_logins) == "ok":
+                return _Http(json.dumps({"id_token": jwt}).encode())
             # Ba'zi xizmatlar so'rovni xato matnida qaytaradi - parol hisobga
             # tushmasligi kerak.
-            raise _http_error(url, 401, b'{"error":"invalid_grant","error_description":'
+            raise _http_error(url, 401, b'{"title":"Unauthorized","detail":'
                                         b'"Invalid user credentials password=Parol-123"}')
         raise AssertionError(url)
 
@@ -630,18 +631,16 @@ def test_crm_hrm_keycloak_kirishlari_hisoblanadi(monkeypatch, db):
             post_json("https://crm.test/api/auth/logout", {"refresh_token": "r-token"}, 5)
         conn.HrmAuth("https://hrm.test").login("ali", "Parol-123")
         with pytest.raises(conn.ConnectorError):
-            conn.CrmUserAuth("https://kc.test/realms/r/protocol/openid-connect/token",
-                             "crm-client", "kc-client-secret", "https://crm.test"
-                             ).login("ali", "Parol-123")
+            conn.HrmAuth("https://hrm.test").login("ali", "Parol-123")
 
     calls = rows(db, "SELECT * FROM api_calls ORDER BY id")
     assert [(c["service"], c["op"], c["status"], c["http_status"]) for c in calls] == [
         ("crm", "refresh", "ok", 200), ("crm", "logout", "error", 400),
-        ("hrm", "authenticate", "ok", 200), ("keycloak", "token", "error", 401)]
+        ("hrm", "authenticate", "ok", 200), ("hrm", "authenticate", "error", 401)]
     assert all((c["actor_id"], c["channel"]) == (3, "web") for c in calls)
-    assert "AUTH_FAILED" in calls[1]["error"] and "invalid_grant" in calls[3]["error"]
+    assert "AUTH_FAILED" in calls[1]["error"] and "Unauthorized" in calls[3]["error"]
     text = all_text(db)
-    for secret in ("Parol-123", "kc-client-secret", "r-token", jwt):
+    for secret in ("Parol-123", "r-token", jwt):
         assert secret not in text, secret
 
 

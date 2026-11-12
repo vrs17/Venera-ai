@@ -122,7 +122,8 @@ class CrmReport:
     tools: set[str] = field(default_factory=set)
 
 
-_NOT_LINKED = "CRM ulanmagan - CRM holati ko'rsatilmadi (Barno ilovasida CRM ga kiring)"
+#: CRM qo'lda ulanmaydi: u vebga BRB-Tech ID (SSO) bilan kirishda o'zi ulanadi.
+_NOT_LINKED = "CRM ulanmagan - CRM holati ko'rsatilmadi (Barno veb ilovasiga BRB-Tech ID bilan kiring)"
 _FAILED = "CRM tekshiruvi bo'lmadi"
 _NO_CRM = "agent CRM ni o'qimadi - CRM holati ko'rsatilmadi"
 
