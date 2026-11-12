@@ -490,9 +490,8 @@ def assistant_user_id(user: AuthUser) -> str:
 def _live_tokens(user: AuthUser) -> dict[str, str]:
     """Yuboriladigan platforma token'lari.
 
-    USTUNLIK: foydalanuvchining O'Z ulanishi HAMMASIDAN USTUN: HRM ("+"
-    menyusida qo'lda ulanadi, `/api/v1/connectors`) va CRM (SSO kirishida
-    o'zi ulanadi). Ulangan bo'lsa o'sha platforma uchun FAQAT uning tokeni
+    USTUNLIK: foydalanuvchining O'Z ulanishi HAMMASIDAN USTUN: HRM va CRM
+    (ikkalasi ham BRB-Tech ID kirishida o'zi ulanadi, `api/v1/auth._connect_sso`). Ulangan bo'lsa o'sha platforma uchun FAQAT uning tokeni
     ketadi - shunda "men" degani haqiqatan o'sha odam; kalit yo'q, ulangan
     tizim har doim ishlatiladi. Ulanmagan yoki muddati tugagan bo'lsa
     platforma xaritada bo'lmaydi va pastdagi UMUMIY manbalar ishlaydi (ular

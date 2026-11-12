@@ -1,9 +1,10 @@
 """Ulanishlar: odam O'ZI boshqaradigan hisob - faqat HRM (`USER_PLATFORMS`).
 
-    GET    /connectors                     holat (faqat HRM qatori)
-    POST   /connectors/{platform}/connect  login + parol -> ulanish
+    GET    /connectors                     holat (faqat HRM qatori) - Mini App, mobil ilova
+    POST   /connectors/{platform}/connect  410: qo'lda ulash yo'q (2026-11-12) - HRM ham
+                                           BRB-Tech ID kirishida o'zi ulanadi (`api/v1/auth.py`)
     PATCH  /connectors/{platform}          eski klientlar uchun: hech narsani o'zgartirmaydi
-    DELETE /connectors/{platform}          uzish
+    DELETE /connectors/{platform}          uzish (qayta ulash - BRB-Tech ID bilan qayta kirish)
 
 CRM BU YERDA YO'Q (2026-11-12, ega qarori): u SSO kirishida o'zi ulanadi
 (`api/v1/auth.py`) va har doim ishlatiladi - odam uni ko'rmaydi va boshqarmaydi.
@@ -31,9 +32,9 @@ from ...schemas.connectors import (
     ConnectorStatus,
     ConnectorUpdate,
     ConnectorsResponse,
-    ConnectRequest,
 )
 from ...services.integrations.connectors import (
+    MSG_SSO_ONLY,
     USER_PLATFORMS,
     ConnectorError,
     ConnectorHub,
@@ -93,25 +94,17 @@ def list_connectors(user: AuthUser = Depends(current_user)) -> ConnectorsRespons
 
 
 @router.post("/{platform}/connect", response_model=ConnectorStatus)
-def connect(
-    body: ConnectRequest,
-    platform: str = _PLATFORM,
-    user: AuthUser = Depends(current_user),
-) -> ConnectorStatus:
-    """HRM ning O'Z logini va paroli bilan kirish. `crm` - 404 (modul izohi).
-
-    `async def` EMAS: platformaga `urllib` bilan boriladi (bloklaydi), FastAPI
-    oddiy `def` ni threadpool'da bajaradi.
-    """
+def connect(platform: str = _PLATFORM, user: AuthUser = Depends(current_user)) -> ConnectorStatus:
+    """ESKI KLIENTLAR UCHUN: login + parol bilan HRM ga ulash 2026-11-12 da olib
+    tashlandi (ega so'rovi) - HRM BRB-Tech ID kirishida o'zi ulanadi. Tana
+    o'qilmaydi (parol serverga kelsa ham hech qayerga ketmaydi): `hrm` - 410 va
+    nima qilish kerakligi, boshqa nom - 404 (`crm` ham)."""
     try:
-        status = ConnectorStatus(**hub.connect(_uid(user), platform, body.username, body.password))
-        # Parol XOTIRADA qoladi - HRM tokeni 10 soatda o'ladi va uni
-        # yangilashning boshqa yo'li yo'q (`services/integrations/
-        # connectors.py` moduli izohi). Diskka yozilmaydi.
-        hub.remember_password(_uid(user), body.password)
-        return status
+        if platform not in USER_PLATFORMS:
+            raise ConnectorError("Bunday platforma yo'q", status=404, code="UNKNOWN_PLATFORM")
+        raise ConnectorError(MSG_SSO_ONLY, status=410, code="SSO_ONLY")
     except ConnectorError as exc:
-        raise _fail(exc, user, platform, "rad etildi") from exc
+        raise _fail(exc, user, platform, "qo'lda ulash so'raldi") from exc
 
 
 @router.patch("/{platform}", response_model=ConnectorStatus)
@@ -137,8 +130,8 @@ def disconnect(
     platform: str = _PLATFORM,
     user: AuthUser = Depends(current_user),
 ) -> ConnectorStatus:
-    """Uzish: saqlangan HRM tokeni va xotiradagi parol o'chiriladi. `crm` - 404:
-    odam CRM ni uzmaydi (uni admin panel uzadi)."""
+    """Uzish: HRM ulanishi o'chiriladi (SSO sessiyasini boshqa tizim ishlatmasa -
+    u ham, Keycloak'da). `crm` - 404: odam CRM ni uzmaydi (uni admin panel uzadi)."""
     try:
         return ConnectorStatus(**hub.disconnect(_uid(user), platform, among=USER_PLATFORMS))
     except ConnectorError as exc:

@@ -507,10 +507,8 @@ def logout(
     kompyuterda bu xavfli.
 
     Ulanishlar (HRM/CRM) QOLADI - ular sessiya emas, odamning saqlangan
-    ulanishi: HRM ni odam "+" menyusida uzadi, CRM ni - admin panel.
-    Xotiradagi HRM paroli esa o'chiriladi.
+    ulanishi (BRB-Tech ID sessiyasi): uni admin panel uzadi.
     """
-    _connectors.hub.forget_password(str(user.actorId))
     sso_url: str | None = None
     oidc = _oidc()
     # Keycloak manzili faqat BRAUZER SSO kirishidan ochilgan sessiyaga beriladi

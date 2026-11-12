@@ -869,13 +869,6 @@ def update_user(admin: AuthUser, actor_id: int, identities: Any, users: Any, *,
     except (sqlite3.Error, OSError) as exc:
         raise _write_failed(exc) from exc
 
-    if blocking and hub is not None:
-        # Xotiradagi HRM paroli faqat o'zini yangilash uchun turardi -
-        # bloklangan odam uchun u endi kerak emas (`/auth/logout` kabi).
-        try:
-            hub.forget_password(str(actor_id))
-        except Exception:                                   # noqa: BLE001
-            log_limited("admin_users.forget", "HRM paroli xotiradan o'chirilmadi", exc_info=True)
     log.info("Admin (%s): foydalanuvchi %s o'zgartirildi", admin.actorId, actor_id)
     since, until = parse_range(None, None, now=now)
     return admin_user(person, new, _range_stats(db, since, until, actor_id).get(actor_id))
@@ -920,11 +913,6 @@ def signout(admin: AuthUser, actor_id: int, identities: Any, users: Any, *, link
             slack.unlink_actor(actor_id)
         except OSError:
             log_limited("admin_users.slack", "Slack ulanishi uzilmadi", exc_info=True)
-    if hub is not None:
-        try:
-            hub.forget_password(str(actor_id))
-        except Exception:                                   # noqa: BLE001
-            log_limited("admin_users.forget", "HRM paroli xotiradan o'chirilmadi", exc_info=True)
     log.info("Admin (%s): foydalanuvchi %s hamma sessiyalardan chiqarildi", admin.actorId, actor_id)
     return new.token_version
 

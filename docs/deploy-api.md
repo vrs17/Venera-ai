@@ -766,7 +766,7 @@ qatori o'tadi, boshqa `id` ga `PUT` yordamchiga BORMASDAN 404
 `platform_not_found` oladi. CRM har doim yoqiq (SSO kirishida o'zi ulanadi),
 namoyish manbalari esa endi taklif qilinmaydi. Ilovada kalitlar yo'q - bu ikki
 yo'l eski klientlar (mobil ilova) uchun qoldi. To'liq kelishuv:
-`docs/auth-sso.md`, "Ulanishlar: odam faqat HRM ni boshqaradi".
+`docs/auth-sso.md`, "Ulanishlar: hech narsa qo'lda ulanmaydi".
 
 | Barno | Yordamchi | Nima |
 |---|---|---|

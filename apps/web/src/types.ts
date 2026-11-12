@@ -469,12 +469,6 @@ export interface ConnectorsResponse {
   connectors: ConnectorStatus[]
 }
 
-/** schemas/connectors.py: ConnectRequest - platformaning O'Z logini va paroli. */
-export interface ConnectRequest {
-  username: string
-  password: string
-}
-
 /* ── Write actions: the assistant proposes, the person confirms ─────────── */
 
 /** One field the proposed action would change. */

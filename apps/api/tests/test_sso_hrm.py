@@ -7,8 +7,8 @@ BITTA sessiya, BITTA token, bitta yangilash (`sso` yozuvi). Keycloak, CRM va HRM
 rad etadi.
 
 Va'dalar:
-  * HRM qabul qilsa - kirishda o'zi ulanadi, qo'lda ulangan HRM almashtiriladi va
-    xotiradagi paroli o'chadi; rad etsa yoki javob bermasa - mavjud HRM ga TEGILMAYDI,
+  * HRM qabul qilsa - kirishda o'zi ulanadi, eski qo'lda ulangan HRM almashtiriladi;
+    rad etsa yoki javob bermasa - mavjud HRM ga TEGILMAYDI,
     jurnalda sabab (HRM'ning `error_description` i, tokenning `aud`/`azp` i), token yo'q;
   * CRM rad etsa ham HRM ulanadi (va aksincha) - har tizim o'zi hal qiladi;
   * ikkala tizim BIR XIL tokenni oladi, yangilash bitta; sessiya o'lsa ikkalasi "expired";
@@ -29,7 +29,7 @@ from app.services.integrations.connectors import ConnectorHub, ConnectorStore, C
 from app.services.integrations.crm_sso import CrmSso, HrmSso, SsoSession
 from app.services.oidc import from_settings as oidc_from_settings
 from tests.sso_fake import REVOKE_URL, USERNAME, net, sso_login  # noqa: F401 - fikstura
-from tests.test_connectors import CRM, HRM, IDP, PASSWORD, STATUS_FIELDS
+from tests.test_connectors import CRM, HRM, IDP, STATUS_FIELDS, legacy_hrm
 
 
 @pytest.fixture
@@ -100,20 +100,19 @@ def test_kirishda_hrm_va_crm_bitta_sessiyadan_ulanadi(client, hub, net):
     assert token not in response.text and stored["sso"]["refresh_token"] not in response.text
 
 
-def test_qolda_ulangan_hrm_almashtiriladi_parol_unutiladi(client, hub, net):
+def test_qolda_ulangan_eski_hrm_almashtiriladi(client, hub, net):
     uid = _new_person(client, net)
-    hub.connect(uid, "hrm", USERNAME, PASSWORD)
-    hub.remember_password(uid, PASSWORD)
+    legacy_hrm(hub, uid, USERNAME)
     assert _state(hub, uid, "hrm")["via"] is None
 
     sso_login(client, net)
-    assert _state(hub, uid, "hrm")["via"] == "sso"
-    assert not hub.has_password(uid), "SSO dan keyin parol xotirada qolmaydi"
+    entry = hub.store.get(uid)["hrm"]
+    assert entry["via"] == "sso" and "token" not in entry
 
 
 def test_hrm_rad_etsa_qolda_ulangan_hrm_qoladi_sabab_jurnalda(client, hub, net, caplog):
     uid = _new_person(client, net)
-    hub.connect(uid, "hrm", USERNAME, PASSWORD)
+    legacy_hrm(hub, uid, USERNAME)
     manual = dict(hub.store.get(uid)["hrm"])
 
     net.hrm_accepts = False

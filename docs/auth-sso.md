@@ -140,14 +140,10 @@ qarang).
 - Oldingi "login + parolni Keycloak'ga ilovaning o'zi yuborishi" (parol
   granti, `services/sso.py`) OLIB TASHLANDI. U parolni ko'rar va o'sha
   parol bilan HRM ga ham kirar edi - SSO ning ma'nosiga zid.
-- Natija: HRM ulanishi kirishda o'zi ochilmaydi - "+" menyusida (Ulanishlar)
-  qo'lda ulanadi (SSO sessiyasidan ulash hali qurilmagan - "Keyingi bosqichlar",
-  3-band: HRM Keycloak tokenini tekshiradi, eski "o'z JWT'si" yozuvi noto'g'ri edi). HRM tokeni
-  10 soatlik; parol faqat xotirada turadi, API qayta ishga tushsa odam HRM ni
-  qayta ulaydi.
-- CRM ulanishi SSO sessiyasidan O'ZI ochiladi (2026-11-12, pastdagi bo'lim) va
-  odamga ko'rinmaydi: «Ulanishlar» da faqat HRM qoldi ("Ulanishlar: odam faqat
-  HRM ni boshqaradi" bo'limi).
+- CRM va HRM ulanishi SSO sessiyasidan O'ZI ochiladi (2026-11-12, pastdagi
+  bo'limlar). Login + parol bilan qo'lda ulash ikkalasida ham YO'Q: vebdagi
+  «Ulanishlar» oynasi va «+» menyusidagi bandi olib tashlandi, xotiradagi HRM
+  paroli ham ("Ulanishlar: hech narsa qo'lda ulanmaydi" bo'limi).
 - Token imzosi endi TEKSHIRILADI (`PyJWT[crypto]`, Keycloak JWKS).
 - `POST /auth/login` faqat zahira (`users.yaml`); `LOCAL_LOGIN_ENABLED=false`
   bo'lsa 403.
@@ -159,9 +155,8 @@ qarang).
    -> `barnoai://sso?sso=<kod>` -> `exchange` (`SSO_MOBILE_REDIRECT`).
 2. Telegram Mini App: kirish ekraniga SSO tugmasi (hozir u yerda faqat parol
    shakli - pastdagi "Ma'lum cheklovlar").
-3. HRM - SSO sessiyasidan o'zi ulanishi QURILDI ("HRM ham SSO sessiyasidan" bo'limi). Jonli
-   sinov (`barno-ai` tokeni bilan `GET /api/account` -> 200) o'tgach «Ulanishlar» dagi login +
-   parol olib tashlanadi.
+3. HRM - SSO sessiyasidan o'zi ulanadi va jonli tekshirildi (2026-11-12); qo'lda ulash olib
+   tashlandi.
 4. Jonli sayt uchun prod Keycloak'da `barno-ai` client'i, `SSO_*` prod `.env` da,
    `pip install -e .` (`cryptography`), `venera-api` ni qayta ishga tushirish.
 
@@ -213,13 +208,11 @@ Testlar: `tests/test_sso_hardening.py`.
   va Telegram'ga allaqachon ulangan hisoblar (`/telegram/session`, bot). Yangi
   Telegram foydalanuvchisi yoki "Chiqish" bosgan odam Mini App'ga qayta kira
   olmaydi (veb'dagi SSO sessiyasi Telegram WebView'ga o'tmaydi).
-- **HRM** Mini App va botdan qayta ulanmaydi (u yerda "+" yo'q, "Qayta ulash"
-  qayta kirishga yuborardi): HRM veb'da "+" menyusidan ulanadi, token o'sha
-  odamning hamma kanaliga xizmat qiladi; API qayta ishga tushsa yana ulash kerak.
-- **CRM faqat VEB'dagi SSO kirishida ulanadi** - boshqa yo'l yo'q (qo'lda ulash
-  olib tashlangan). Vebga BRB-Tech ID bilan hech kirmagan odamning (faqat
-  Telegram, mobil ilova yoki `users.yaml` hisobi) O'Z CRM ulanishi bo'lmaydi -
-  ilgari qo'lda ulangan eski yozuvi qolgan bo'lmasa. Unda chatdagi CRM savoliga
+- **HRM va CRM faqat VEB'dagi SSO kirishida ulanadi** - boshqa yo'l yo'q (qo'lda
+  ulash olib tashlangan). Ulanish o'sha odamning hamma kanaliga (veb, Mini App,
+  bot, Slack) xizmat qiladi. Vebga BRB-Tech ID bilan hech kirmagan odamning (faqat
+  Telegram, mobil ilova yoki `users.yaml` hisobi) O'Z HRM/CRM ulanishi bo'lmaydi -
+  ilgari qo'lda ulangan eski yozuvi qolgan bo'lmasa (HRM niki 10 soatda tugaydi). Unda chatdagi CRM savoliga
   umumiy agent hisobi javob beradi (sozlangan bo'lsa, `CRM_USERNAME`), guruhdagi
   CRM va "yig'ilishdan CRM ga" (`MEETINGS_CRM_OWN_TOKENS=true`) esa ishlamaydi.
   Yechim bitta: vebga BRB-Tech ID bilan kirish - bot ham shuni aytadi. Ulanish
@@ -247,12 +240,16 @@ Testlar: `tests/test_sso_hardening.py`.
   Keycloak'da shunday nomli yangi hisob o'sha zahira hisobning `actor_id` sini
   oladi - `users.yaml` da keraksiz hisob qoldirilmasin.
 
-## Ulanishlar: odam faqat HRM ni boshqaradi (2026-11-12, ega qarori)
+## Ulanishlar: hech narsa qo'lda ulanmaydi (2026-11-12, ega qarori)
 
-- **HRM** - «Ulanishlar» dagi yagona qator: holat, uzish. SSO kirishida o'zi
-  ulanadi (agar HRM tokenni qabul qilsa - "HRM ham SSO sessiyasidan" bo'limi;
-  qatorda "<login> · BRB-Tech ID orqali"); aks holda - vaqtinchalik zahira:
-  ulash (login + parol), muddati tugasa qayta ulash.
+- **HRM** SSO kirishida o'zi ulanadi ("HRM ham SSO sessiyasidan" bo'limi). Login
+  + parol bilan ulash olib tashlandi: vebda «+» -> «Ulanishlar» yo'q,
+  `POST /connectors/hrm/connect` - 410 ("BRB-Tech ID bilan qayta kiring"),
+  xotiradagi HRM paroli va u bilan qayta kirish ham yo'q. `GET /connectors`
+  holatni beradi (Mini App sozlamalari, mobil ilova), `DELETE` uzadi. Ilgari
+  qo'lda ulanganlarning yozuvi tokeni tugaguncha ishlaydi, keyin "expired".
+  Chat va Mini App'da "ulanmagan" xabari endi "BRB-Tech ID bilan qayta kiring"
+  deydi (HRM uchun ham).
 - **CRM odamga ko'rinmaydi va uni odam boshqarmaydi.** U SSO kirishida o'zi
   ulanadi (pastdagi bo'lim) va HAR DOIM ishlatiladi: chat, Telegram bot,
   guruhdagi CRM, "yig'ilishdan CRM ga".
@@ -382,10 +379,9 @@ granti). "HRM o'z JWT'sini beradi" degan eski yozuv (2026-09-29) noto'g'ri edi.
 Kirishda (`SSO_HRM_CONNECT=true`, default; `HRM_BASE_URL` bo'lishi kerak) CRM
 tekshiruvi bilan PARALLEL: `GET <HRM_BASE_URL>/api/account` odamning access
 tokeni bilan.
-- 200 - HRM ulanadi (`via: "sso"`, qatorda "BRB-Tech ID orqali"); qo'lda ulangan
-  HRM almashtiriladi va xotiradagi paroli o'chadi.
-- 401/403 yoki boshqa javob - ulanish ochilmaydi, qo'lda ulangan HRM joyida,
-  kirish ishlaydi. Jurnalda sabab:
+- 200 - HRM ulanadi (`via: "sso"`); eski qo'lda ulangan HRM almashtiriladi.
+- 401/403 yoki boshqa javob - ulanish ochilmaydi (eski qo'lda ulangan HRM bo'lsa -
+  tokeni tugaguncha joyida), kirish ishlaydi. Jurnalda sabab:
   `SSO: HRM sessiyani RAD ETDI (...) [HTTP 401: <HRM'ning error_description i>] ... aud=[...]`.
   "Invalid audience" bo'lsa - Keycloak'da `barno-ai` client'iga `account`
   auditoriyasi kerak (Audience mapper, Included Client Audience `account`) yoki
@@ -398,7 +394,7 @@ tokenni oladi va u har savol oldidan BITTA joyda yangilanadi (muddati
 `CRM_TOKEN_MARGIN` dan kam qolsa). Ikki nusxa refresh tokenni alohida aylantirsa,
 Keycloak'ning "Revoke Refresh Token" sozlamasida biri ikkinchisini o'ldirardi.
 Sessiya o'lsa ikkala holat "expired" - odam qayta kiradi. Bitta tizim uzilsa
-(admin panelda CRM, «Ulanishlar» da HRM) sessiya qoladi; oxirgisi uzilganda
+(admin panelda) sessiya qoladi; oxirgisi uzilganda
 Keycloak'da bekor qilinadi. Avvalgi fayl (sessiya CRM yozuvining ichida) o'qilganda
 o'zi yangi shaklga o'tadi. `/api/health/detail`: `connectors.hrmSso`.
 

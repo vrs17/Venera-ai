@@ -309,17 +309,17 @@ def frame_error(frame: dict[str, Any]) -> str:
     """Oqimdagi `error` kadrining matni - mini app'dagi `frameError` nusxasi.
 
     Xizmatning O'Z matni yutadi: savol qaysi platformani talab qilganini u
-    biladi, biz bilmaymiz. Shuning uchun zaxira matn ikkala tizimning
-    yo'lini aytadi: HRM qo'lda ulanadi, CRM esa vebga BRB-Tech ID (SSO) bilan
-    kirganda o'zi ulanadi - CRM ni "ulash" tugmasi hech qayerda yo'q.
+    biladi, biz bilmaymiz. Zaxira matn: HRM ham, CRM ham vebga BRB-Tech ID
+    (SSO) bilan kirganda o'zi ulanadi - "ulash" tugmasi hech qayerda yo'q
+    (HRM ni qo'lda ulash 2026-11-12 da olib tashlandi).
     """
     own = str(frame.get("text") or "").strip()
     if own:
         return own
     if frame.get("code") in ("auth_missing", "auth_expired"):
         return ("Bu savol uchun jonli ma'lumot kerak, o'sha tizim esa hisobingizga hali "
-                "ulanmagan. HRM Barno veb ilovasida «+» menyusidan ulanadi; CRM vebga BRB-Tech ID "
-                "bilan kirganda o'zi ulanadi. Qoidalar va hujjatlar bo'yicha savollar ishlaydi.")
+                "ulanmagan. HRM va CRM Barno vebiga BRB-Tech ID bilan kirganingizda o'zi "
+                "ulanadi. Qoidalar va hujjatlar bo'yicha savollar ishlaydi.")
     return "Javob berilmadi"
 
 

@@ -6,12 +6,13 @@ HRM va CRM ning O'ZI chaqirilmaydi - almashtirish nuqtasi
 javobga tushmasligi) haqiqiy kod bo'lib qoladi.
 
 KELISHUV (2026-11-12, ega qarori):
-  * odam faqat HRM ni boshqaradi - `GET /connectors` faqat HRM qatorini
-    beradi, `crm` uchun ulash / kalit / uzish - 404;
-  * CRM ga parol bilan ulanib bo'lmaydi (u SSO kirishida ulanadi,
-    `test_sso_crm.py`); bu yerda faqat ESKI, qo'lda ulangan yozuvlar
-    sinaladi - ular ishlashda davom etishi kerak;
-  * kalit yo'q: yozuvdagi `enabled: false` hech narsani o'chirmaydi.
+  * HRM va CRM ga login + parol bilan ulanib bo'lmaydi - ikkalasi SSO
+    kirishida o'zi ulanadi (`test_sso_crm.py`, `test_sso_hrm.py`).
+    `POST /connectors/hrm/connect` - 410, `crm` - 404; bu yerda faqat ESKI,
+    qo'lda ulangan yozuvlar sinaladi - ular tokeni tugaguncha ishlaydi;
+  * `GET /connectors` faqat HRM qatorini beradi (Mini App, mobil ilova);
+  * kalit yo'q: yozuvdagi `enabled: false` hech narsani o'chirmaydi;
+  * parol hech qayerda yo'q - na diskda, na xotirada.
 """
 
 from __future__ import annotations
@@ -38,7 +39,6 @@ from app.services.integrations.connectors import (
     ConnectorStore,
     CrmUserAuth,
     HrmAuth,
-    jwt_exp,
 )
 
 HRM = "https://hrm.test"
@@ -76,14 +76,11 @@ def _http_error(url: str, code: int, payload: dict) -> urllib.error.HTTPError:
 
 
 class FakeNet:
-    """HRM `/api/authenticate`, CRM refresh/logout. Keycloak parol granti YO'Q:
-    unga so'rov ketsa - "kutilmagan so'rov" (CRM ga parol bilan kirilmaydi)."""
+    """CRM refresh/logout (eski, qo'lda ulangan yozuvlar uchun). HRM ga login va
+    Keycloak parol granti YO'Q: ularga so'rov ketsa - "kutilmagan so'rov"."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
-        self.hrm_exp = time.time() + 10 * 3600
-        #: HRM javobining shakli - hujjatlashtirilmagan, bir nechtasi sinaladi.
-        self.hrm_shape = "id_token"
         self.serial = 0
         #: refresh 400 beradi - token bekor qilingan.
         self.refresh_dead = False
@@ -99,24 +96,6 @@ class FakeNet:
             body = json.loads(raw) if raw else {}
         self.calls.append((url, body))
 
-        if url == f"{HRM}/api/authenticate":
-            if body.get("password") != PASSWORD:
-                # JONLI HRM shunday qaytaradi: 500, ichida 401 (2026-09-15).
-                raise _http_error(url, 500, {
-                    "type": "https://www.brbtech.uz/problem/problem-with-message",
-                    "title": "Internal Server Error", "status": 500,
-                    "detail": "401 Unauthorized: [no body]", "message": "error.http.500"})
-            jwt = make_jwt(self.hrm_exp)
-            if self.hrm_shape == "camel_nested":
-                return _Response(json.dumps({"success": True, "data": {
-                    "user": {"login": "y.m"}, "accessToken": jwt}}).encode())
-            if self.hrm_shape == "header":
-                return _Response(b'{"status":"ok"}', {"Authorization": f"Bearer {jwt}"})
-            if self.hrm_shape == "unknown_key":
-                return _Response(json.dumps({"payload": {"sessionJwt": jwt}}).encode())
-            if self.hrm_shape == "none":
-                return _Response(json.dumps({"status": "ok", "user": {"login": "y.m"}}).encode())
-            return _Response(json.dumps({"id_token": jwt}).encode())
         if url == f"{CRM}/api/auth/refresh":
             if self.refresh_fail:
                 raise _http_error(url, *self.refresh_fail)
@@ -170,203 +149,64 @@ def legacy_crm(hub: ConnectorHub, uid: str = "1", login: str = "y.m") -> None:
     hub.adopt_crm(uid, login, "access-0", "refresh-0", 300.0)
 
 
-# --- HRM ---------------------------------------------------------------------
+def legacy_hrm(hub: ConnectorHub, uid: str = "1", login: str = "y.m", *, left: float = 10 * 3600) -> str:
+    """ESKI, qo'lda ulangan HRM yozuvi - 2026-11-12 gacha odam HRM ga login + parol
+    bilan ulanganda shunday saqlanardi (HRM bergan 10 soatlik token). Yangisi
+    ochilmaydi, borlari tokeni tugaguncha ishlaydi. Qaytaradi: token."""
+    exp = time.time() + left
+    token = make_jwt(exp)
+    hub.store.set(uid, "hrm", {"login": login, "token": token, "expires_at": exp,
+                               "enabled": True, "connected_at": time.time()})
+    return token
 
 
-def test_hrm_ulanish_token_beradi(hub, net):
-    status = hub.connect("1", "hrm", "y.m", PASSWORD)
-    assert status["state"] == "connected"
-    assert status["login"] == "y.m"
-    assert status["enabled"] is True
+# --- HRM: qo'lda ulash yo'q, eski yozuvlar tokeni tugaguncha ishlaydi ---------------
+
+
+def test_eski_qolda_ulangan_hrm_token_beradi(hub, net):
+    token = legacy_hrm(hub)
+    status = hub.status("1")[0]
+    assert (status["state"], status["login"], status["enabled"], status["via"]) == ("connected", "y.m", True, None)
     assert set(status) == STATUS_FIELDS, "holatda token yoki ortiqcha maydon bor"
-    assert net.urls() == [f"{HRM}/api/authenticate"]
-    assert net.calls[0][1] == {"username": "y.m", "password": PASSWORD}
-    tokens = hub.tokens("1")
-    assert set(tokens) == {"hrm"}
-    assert jwt_exp(tokens["hrm"]) == pytest.approx(net.hrm_exp, abs=1)
+    assert hub.tokens("1") == {"hrm": token}
+    assert net.calls == [], "HRM ga hech qanday so'rov ketmaydi"
 
 
-def test_parol_saqlanmaydi_va_fayl_600(hub, net):
-    hub.connect("1", "hrm", "y.m", PASSWORD)
+def test_eski_hrm_muddati_yaqin_bolsa_yuborilmaydi_va_yangilanmaydi(hub, net):
+    """Savol-javob bir necha daqiqa cho'zilishi mumkin: 300 s dan kam qolgan token
+    javob o'rtasida o'lardi. Qayta kirish (parol bilan) yo'q - odam BRB-Tech ID bilan
+    qayta kiradi."""
+    legacy_hrm(hub, left=200)
+    assert hub.status("1")[0]["state"] == "expired"
+    assert hub.tokens("1") == {}
+    assert net.calls == []
+
+
+def test_qolda_ulash_va_parol_xotirasi_yoq(hub):
+    for gone in ("connect", "adopt_hrm", "remember_password", "forget_password", "has_password", "_renew_hrm"):
+        assert not hasattr(hub, gone), gone
+    assert not hasattr(hub.hrm, "login")
+
+
+def test_tokenlar_fayli_600_va_parolsiz(hub, net):
+    legacy_hrm(hub)
+    legacy_crm(hub)
     raw = hub.store.path.read_text()
-    assert PASSWORD not in raw, "PAROL DISKKA TUSHDI"
+    assert "password" not in raw.lower()
     mode = stat.S_IMODE(hub.store.path.stat().st_mode)
     assert mode == 0o600, f"tokenlar fayli huquqi {oct(mode)}"
-
-
-@pytest.mark.parametrize("shape", ["camel_nested", "header", "unknown_key"])
-def test_hrm_javob_shakli_har_xil(hub, net, shape):
-    """HRM javobining shakli hujjatlashtirilmagan: camelCase, ichma-ich,
-    sarlavhada - hammasidan token topiladi."""
-    net.hrm_shape = shape
-    assert hub.connect("1", "hrm", "y.m", PASSWORD)["state"] == "connected"
-    assert jwt_exp(hub.tokens("1")["hrm"]) == pytest.approx(net.hrm_exp, abs=1)
-
-
-def test_hrm_tokensiz_javob_502(hub, net):
-    net.hrm_shape = "none"
-    with pytest.raises(ConnectorError) as exc:
-        hub.connect("1", "hrm", "y.m", PASSWORD)
-    assert exc.value.status == 502
-
-
-def test_hrm_muddati_yaqin_bolsa_yuborilmaydi(hub, net):
-    """Savol-javob bir necha daqiqa cho'zilishi mumkin: 300 s dan kam
-    qolgan token javob o'rtasida o'lardi."""
-    net.hrm_exp = time.time() + 200
-    status = hub.connect("1", "hrm", "y.m", PASSWORD)
-    assert status["state"] == "expired"
-    assert hub.tokens("1") == {}
-
-
-# --- HRM o'zini yangilaydi (xotiradagi parol bilan) -------------------------
-#
-# HRM da refresh YO'Q va token 10 soatda o'ladi (2026-09-29 da jonli HRM da
-# o'lchangan: "meni eslab qol" maydoni ham ishlamaydi). Shuning uchun parol
-# XOTIRADA tutiladi va muddati yaqinlashganda qayta kiriladi. Bu testlar
-# aynan shu kelishuvni qo'riqlaydi - ayniqsa parolning diskka TUSHMASLIGINI.
-
-
-def test_parolsiz_yangilanmaydi(hub, net):
-    """Parol eslab qolinmagan bo'lsa - eski xatti-harakat: token
-    yuborilmaydi va odam qayta kiradi."""
-    net.hrm_exp = time.time() + 200
-    hub.connect("1", "hrm", "y.m", PASSWORD)
-    assert hub.tokens("1") == {}
-    assert net.urls().count(f"{HRM}/api/authenticate") == 1, "qayta login qilinmadi"
-
-
-def test_parol_bilan_ozi_yangilanadi(hub, net):
-    """Muddati yaqin token - savol oldidan jimgina yangilanadi."""
-    net.hrm_exp = time.time() + 200
-    hub.connect("1", "hrm", "y.m", PASSWORD)
-    hub.remember_password("1", PASSWORD)
-
-    net.hrm_exp = time.time() + 10 * 3600        # HRM endi yangi token beradi
-    assert hub.tokens("1").get("hrm"), "token yangilanmadi"
-    assert net.urls().count(f"{HRM}/api/authenticate") == 2, "qayta login bo'lishi kerak"
-    assert hub.status("1")[0]["state"] == "connected"
-
-
-def test_yangilangan_token_saqlanadi(hub, net):
-    """Yangilangandan keyin keyingi savollar QAYTA login qilmaydi."""
-    net.hrm_exp = time.time() + 200
-    hub.connect("1", "hrm", "y.m", PASSWORD)
-    hub.remember_password("1", PASSWORD)
-    net.hrm_exp = time.time() + 10 * 3600
-    first = hub.tokens("1")["hrm"]
-    second = hub.tokens("1")["hrm"]
-    assert first == second
-    assert net.urls().count(f"{HRM}/api/authenticate") == 2, "ikkinchi savol login qilmasligi kerak"
-
-
-def test_parol_ozgarsa_unutiladi(hub, net, monkeypatch):
-    """HRM "login yoki parol noto'g'ri" desa - saqlangan parol o'chadi.
-
-    Aks holda har savolda noto'g'ri parol bilan urinib, hisobni
-    bloklatib qo'yish mumkin edi.
-    """
-    net.hrm_exp = time.time() + 200
-    hub.connect("1", "hrm", "y.m", PASSWORD)
-    hub.remember_password("1", "eski-parol")
-    assert hub.has_password("1")
-
-    assert hub.tokens("1") == {}
-    assert not hub.has_password("1"), "noto'g'ri parol xotirada qolmasligi kerak"
-    # Keyingi savol QAYTA urinmaydi.
-    before = len(net.urls())
-    hub.tokens("1")
-    assert len(net.urls()) == before
-
-
-def test_parol_diskka_tushmaydi(hub, net, tmp_path):
-    """ENG MUHIMI: parol faylda ham, API javobida ham bo'lmaydi."""
-    hub.connect("1", "hrm", "y.m", PASSWORD)
-    hub.remember_password("1", PASSWORD)
-    raw = (tmp_path / "connectors" / "tokens.json").read_text(encoding="utf-8")
-    assert PASSWORD not in raw, "parol diskka yozilgan"
-    assert "password" not in raw.lower()
-    assert PASSWORD not in json.dumps(hub.status("1"), ensure_ascii=False)
-
-
-def test_holat_yangilanadigan_ulanishni_ulangan_deydi(hub, net):
-    """Muddati o'tgan, lekin O'ZI YANGILANADIGAN ulanish "ulangan" deyiladi.
-
-    Aks holda odam menyuda "muddati tugagan" ni ko'rib, qo'lda qayta
-    ulardi - avtomatik yangilashdan foyda qolmasdi.
-    """
-    net.hrm_exp = time.time() + 100
-    hub.connect("1", "hrm", "y.m", PASSWORD)
-    assert hub.status("1")[0]["state"] == "expired", "parolsiz - muddati tugagan"
-    hub.remember_password("1", PASSWORD)
-    assert hub.status("1")[0]["state"] == "connected", "parol bilan - o'zi yangilanadi"
-
-
-def test_uzish_parolni_ochiradi(hub, net):
-    hub.connect("1", "hrm", "y.m", PASSWORD)
-    hub.remember_password("1", PASSWORD)
-    hub.disconnect("1", "hrm")
-    assert not hub.has_password("1")
-
-
-def test_parol_odamlar_orasida_aralashmaydi(hub, net):
-    hub.connect("1", "hrm", "y.m", PASSWORD)
-    hub.remember_password("1", PASSWORD)
-    assert hub.has_password("1")
-    assert not hub.has_password("2"), "boshqa odamning paroli ko'rinmasligi kerak"
-
-
-def test_hrm_notogri_parol(hub, net):
-    """HRM 500 ichida 401 beradi - bu PAROL xatosi, "javob bermadi" emas."""
-    with pytest.raises(ConnectorError) as exc:
-        hub.connect("1", "hrm", "y.m", "xato")
-    assert exc.value.status == 400
-    assert "parol" in str(exc.value).lower()
-    assert hub.status("1")[0]["state"] == "disconnected"
-
-
-def test_hrm_haqiqiy_500_javob_bermadi(hub, net, monkeypatch):
-    """401 siz 500 - HRM ning o'z xatosi, parol emas."""
-    real = net.__call__
-
-    def broken(request, timeout=None):
-        if request.full_url == f"{HRM}/api/authenticate":
-            raise _http_error(request.full_url, 500, {"title": "Internal Server Error",
-                                                      "detail": "NullPointerException"})
-        return real(request, timeout)
-
-    monkeypatch.setattr(urllib.request, "urlopen", broken)
-    with pytest.raises(ConnectorError) as exc:
-        hub.connect("1", "hrm", "y.m", PASSWORD)
-    assert exc.value.status == 502
 
 
 def test_qayta_ishga_tushganda_saqlangan_qoladi(tmp_path, net):
     path = tmp_path / "tokens.json"
     first = ConnectorHub(ConnectorStore(path), HrmAuth(HRM), CrmUserAuth(IDP, "c", "s", CRM))
-    first.connect("1", "hrm", "y.m", PASSWORD)
+    legacy_hrm(first)
     second = ConnectorHub(ConnectorStore(path), HrmAuth(HRM), CrmUserAuth(IDP, "c", "s", CRM))
     assert "hrm" in second.tokens("1")
     assert second.status("1")[0]["login"] == "y.m"
 
 
-def test_jwt_exp():
-    assert jwt_exp(make_jwt(1_800_000_000)) == 1_800_000_000.0
-    assert jwt_exp("bu-jwt-emas") is None
-    assert jwt_exp("a.b.c") is None
-
-
 # --- CRM: parol bilan ulanish yo'q, eski yozuvlar ishlaydi ---------------------
-
-
-def test_crm_ga_parol_bilan_ulanib_bolmaydi(hub, net):
-    """CRM odam boshqaradigan platforma emas: `connect` uni notanish nom kabi rad
-    etadi va hech qayerga (Keycloak, CRM) so'rov yubormaydi."""
-    with pytest.raises(ConnectorError) as exc:
-        hub.connect("1", "crm", "y.m", PASSWORD)
-    assert exc.value.status == 404
-    assert net.calls == []
-    assert hub.store.get("1") == {}
 
 
 def test_eski_crm_yozuvi_token_beradi(hub, net):
@@ -436,9 +276,9 @@ def _switch_off(hub: ConnectorHub, uid: str, platform: str) -> None:
 def test_ochirilgan_hrm_baribir_token_beradi(hub, net):
     """Kalit yo'q: yozuvda eski `enabled: false` qolgan bo'lsa ham ulangan, yaroqli
     HRM tokeni ishlatiladi - aks holda kalitsiz ilovada uni qayta yoqib bo'lmasdi."""
-    hub.connect("1", "hrm", "y.m", PASSWORD)
+    token = legacy_hrm(hub)
     _switch_off(hub, "1", "hrm")
-    assert jwt_exp(hub.tokens("1")["hrm"]) == pytest.approx(net.hrm_exp, abs=1)
+    assert hub.tokens("1")["hrm"] == token
     status = hub.status("1")[0]
     assert status["state"] == "connected" and status["enabled"] is True
 
@@ -488,13 +328,10 @@ def test_holat_odamga_faqat_hrm_adminga_ikkalasi(hub, net):
 def test_sozlanmagan_platforma(tmp_path):
     empty = ConnectorHub(ConnectorStore(tmp_path / "t.json"), HrmAuth(""), CrmUserAuth("", "", "", ""))
     assert [s["configured"] for s in empty.status("1")] == [False, False]
-    with pytest.raises(ConnectorError) as exc:
-        empty.connect("1", "hrm", "y.m", PASSWORD)
-    assert exc.value.status == 503
 
 
 def test_foydalanuvchilar_aralashmaydi(hub, net):
-    hub.connect("1", "hrm", "y.m", PASSWORD)
+    legacy_hrm(hub)
     assert hub.tokens("2") == {}
     assert hub.status("2")[0]["state"] == "disconnected"
 
@@ -543,11 +380,11 @@ def test_api_crm_ulash_kalit_uzish_404(client, auth, hub, net):
     assert hub.tokens("1") == {"crm": "access-0"}, "CRM ishlab turibdi"
 
 
-def test_api_ulanish_kalit_uzish(client, auth, hub, net):
-    response = client.post("/api/v1/connectors/hrm/connect", headers=auth,
-                           json={"username": "y.m", "password": PASSWORD})
+def test_api_holat_kalit_uzish(client, auth, hub, net):
+    legacy_hrm(hub)                                   # "1" - `auth` dagi admin
+    response = client.get("/api/v1/connectors", headers=auth)
     assert response.status_code == 200, response.text
-    assert response.json()["state"] == "connected"
+    assert response.json()["connectors"][0]["state"] == "connected"
     assert "eyJ" not in response.text, "TOKEN BRAUZERGA KETDI"
 
     # Eski klientlar kalitni hali yuboradi: so'rov qabul qilinadi, lekin hech narsani
@@ -571,17 +408,15 @@ def test_api_kalit_tanasi_hali_tekshiriladi(client, auth, hub, net):
                         json={"enabled": True}).status_code == 409
 
 
-def test_api_notogri_parol_400(client, auth, hub, net):
-    response = client.post("/api/v1/connectors/hrm/connect", headers=auth,
-                           json={"username": "y.m", "password": "xato"})
-    assert response.status_code == 400
-    assert response.json()["message"]
-
-
-def test_api_bosh_maydon_422(client, auth, hub):
-    response = client.post("/api/v1/connectors/hrm/connect", headers=auth,
-                           json={"username": "", "password": ""})
-    assert response.status_code == 422
+def test_api_qolda_ulash_410(client, auth, hub, net):
+    """Eski klient (keshdagi veb, eski Mini App) parol yuborsa ham: 410, nima qilish
+    kerakligi aytiladi, HRM ga ham, omborga ham hech narsa ketmaydi."""
+    for body in ({"username": "y.m", "password": PASSWORD}, None):
+        response = client.post("/api/v1/connectors/hrm/connect", headers=auth, json=body)
+        assert response.status_code == 410, response.text
+        assert "BRB-Tech ID" in response.json()["message"]
+        assert PASSWORD not in response.text
+    assert net.calls == [] and hub.store.get("1") == {}
 
 
 def test_api_notogri_platforma_404(client, auth, hub):
@@ -600,8 +435,7 @@ def test_chat_odamning_tokeni_umumiydan_ustun(client, auth, hub, net, monkeypatc
     me = AuthUser(actorId=1, email="admin@venera.uz", fullName="Admin")
     other = AuthUser(actorId=2, email="demo@venera.uz", fullName="Demo")
     assert chat_api._live_tokens(me) == {"hrm": "umumiy"}
-    client.post("/api/v1/connectors/hrm/connect", headers=auth,
-                json={"username": "y.m", "password": PASSWORD})
+    legacy_hrm(hub)
     assert chat_api._live_tokens(me)["hrm"].startswith("eyJ")
     assert chat_api._live_tokens(other) == {"hrm": "umumiy"}
 
@@ -614,18 +448,3 @@ def test_health_ulanishlar_holati(client, auth, hub):
     assert body["connectors"] == {"hrm": True, "hrmSso": False, "crm": False, "users": 0}
     note = next(w for w in body["warnings"] if "CRM ulanishi" in w)
     assert "SSO_CRM_CONNECT" in note and "CRM_BASE_URL" in note
-
-
-def test_hrm_login_tanasi_ikki_maydon(net):
-    """HRM login so'rovida FAQAT login va parol bo'ladi.
-
-    2026-09-29 da jonli HRM'da "meni eslab qol" maydoni uchala
-    yozilishida sinaldi (`rememberMe`, `remember-me`, `remember_me`):
-    HRM ularni qabul qildi, lekin tokenni baribir 10.0 soatlik qilib
-    berdi. Ya'ni ortiqcha maydon FOYDA BERMAYDI - bu test uni
-    qaytadan qo'shib qo'yishdan saqlaydi.
-    """
-    from app.services.integrations.connectors import HrmAuth
-
-    HrmAuth(HRM).login("y.m", PASSWORD)
-    assert net.calls[-1][1] == {"username": "y.m", "password": PASSWORD}

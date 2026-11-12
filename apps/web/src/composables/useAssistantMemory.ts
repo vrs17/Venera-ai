@@ -1,7 +1,7 @@
 // Barno XOTIRASI ekrani holati - web oynasi (MemoryDialog) va Mini App oynasi (MemorySheet)
 // uchun bitta mantiq. Faqat HTTP va holat; ko'rinish komponentlarda.
 //
-// NEGA MODUL DARAJASIDA EMAS (useConnectors'dan farqli). Xotira faqat oyna ochilganda
+// NEGA MODUL DARAJASIDA EMAS. Xotira faqat oyna ochilganda
 // kerak va har ochilishda serverdan yangidan olinadi (odam chatda "eslab qol" deb
 // yangisini qo'shgan bo'lishi mumkin). Har oyna o'z nusxasini yaratadi - chiqib boshqa
 // hisob bilan kirilganda oldingi odamning xotirasi xotirada qolib ketmaydi.

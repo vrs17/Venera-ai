@@ -603,11 +603,11 @@ def test_ollama_tasnifi_hisoblanadi(monkeypatch, db):
 
 
 def test_crm_hrm_kirishlari_hisoblanadi(monkeypatch, db):
-    from app.services.integrations import connectors as conn
     from app.services.integrations.crm_auth import CrmAuthError, post_json
+    from app.services.integrations.crm_sso import HrmSso
 
     jwt = "eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE5OTk5OTk5OTl9.c2ln"
-    hrm_logins = iter(("ok", "rad"))
+    hrm_checks = iter(("ok", "rad"))
 
     def fake(request, timeout=None):
         url = request.full_url
@@ -615,13 +615,16 @@ def test_crm_hrm_kirishlari_hisoblanadi(monkeypatch, db):
             return _Http(json.dumps({"data": {"access_token": jwt, "expires_in": 300}}).encode())
         if url.endswith("/api/auth/logout"):
             raise _http_error(url, 400, b'{"error":{"code":"AUTH_FAILED","message":"bekor"}}')
-        if url.endswith("/api/authenticate"):
-            if next(hrm_logins) == "ok":
-                return _Http(json.dumps({"id_token": jwt}).encode())
-            # Ba'zi xizmatlar so'rovni xato matnida qaytaradi - parol hisobga
-            # tushmasligi kerak.
-            raise _http_error(url, 401, b'{"title":"Unauthorized","detail":'
-                                        b'"Invalid user credentials password=Parol-123"}')
+        if url.endswith("/api/account"):
+            # HRM ga kirishdagi tekshiruv (SSO tokeni bilan, `crm_sso.HrmSso`) - qo'lda
+            # login (`/api/authenticate`) 2026-11-12 da olib tashlandi.
+            if next(hrm_checks) == "ok":
+                return _Http(b'{"login":"ali"}')
+            # Ba'zi xizmatlar tokenni xato matnida qaytaradi - u hisobga tushmasligi kerak.
+            error = _http_error(url, 401, b'{"title":"Unauthorized"}')
+            error.headers = {"WWW-Authenticate": f'Bearer error="invalid_token", '
+                                                 f'error_description="Invalid audience in {jwt}"'}
+            raise error
         raise AssertionError(url)
 
     monkeypatch.setattr(urllib.request, "urlopen", fake)
@@ -629,18 +632,17 @@ def test_crm_hrm_kirishlari_hisoblanadi(monkeypatch, db):
         post_json("https://crm.test/api/auth/refresh", {"refresh_token": "r-token"}, 5)
         with pytest.raises(CrmAuthError):
             post_json("https://crm.test/api/auth/logout", {"refresh_token": "r-token"}, 5)
-        conn.HrmAuth("https://hrm.test").login("ali", "Parol-123")
-        with pytest.raises(conn.ConnectorError):
-            conn.HrmAuth("https://hrm.test").login("ali", "Parol-123")
+        assert HrmSso(lambda: "https://hrm.test").check(jwt)[0] is True
+        assert HrmSso(lambda: "https://hrm.test").check(jwt)[0] is False
 
     calls = rows(db, "SELECT * FROM api_calls ORDER BY id")
     assert [(c["service"], c["op"], c["status"], c["http_status"]) for c in calls] == [
         ("crm", "refresh", "ok", 200), ("crm", "logout", "error", 400),
-        ("hrm", "authenticate", "ok", 200), ("hrm", "authenticate", "error", 401)]
+        ("hrm", "account", "ok", 200), ("hrm", "account", "error", 401)]
     assert all((c["actor_id"], c["channel"]) == (3, "web") for c in calls)
-    assert "AUTH_FAILED" in calls[1]["error"] and "Unauthorized" in calls[3]["error"]
+    assert "AUTH_FAILED" in calls[1]["error"] and "Invalid audience" in calls[3]["error"]
     text = all_text(db)
-    for secret in ("Parol-123", "r-token", jwt):
+    for secret in ("r-token", jwt):
         assert secret not in text, secret
 
 

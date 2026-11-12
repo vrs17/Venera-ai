@@ -79,7 +79,6 @@ class FakeHub:
 
     def __init__(self) -> None:
         self.disconnected: list[tuple[str, str]] = []
-        self.forgot: list[str] = []
         self.rows = {
             "hrm": {"id": "hrm", "label": "HRM", "configured": True, "state": "connected",
                     "login": "demo", "enabled": True, "expiresAt": "2026-09-30T00:00:00+00:00"},
@@ -98,9 +97,6 @@ class FakeHub:
                                "state": "disconnected", "login": None, "enabled": False,
                                "expiresAt": None}
         return dict(self.rows[platform])
-
-    def forget_password(self, user_id):
-        self.forgot.append(user_id)
 
 
 @pytest.fixture
@@ -283,11 +279,6 @@ def test_audit_yozuvlari_va_takroriy_patch_audit_yozmaydi(client, auth):
     assert roles["targetType"] == "user" and roles["targetId"] == "2"
     assert entries[2]["detail"] == {"tokenVersion": 1}
     assert entries[0]["detail"] == {"chars": 2, "preview": "ok"}
-
-
-def test_bloklash_hrm_parolini_xotiradan_ochiradi(client, auth, fake_hub):
-    client.patch("/api/v1/admin/users/2", headers=auth, json={"disabled": True})
-    assert fake_hub.forgot == ["2"]
 
 
 def test_patch_tanasi_tekshiriladi(client, auth):

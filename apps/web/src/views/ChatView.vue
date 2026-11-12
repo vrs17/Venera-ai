@@ -465,14 +465,18 @@ function streamedResponse(answer: string): PipelineResponse {
 // The service's text is documented as user-safe and written in the
 // language of the QUESTION. Our own string stays as the fallback for when
 // no text arrives at all.
-// Xizmatning O'Z matni yutadi - BITTA istisno: CRM tokeni yo'qligi. Xizmat u yerda
-// "«+» menyusidan ulang" deydi, lekin CRM odam tomonidan ulanmaydi: u BRB-Tech ID bilan
-// kirilganda o'zi ulanadi («+» -> Ulanishlar da faqat HRM bor). Qaysi tizim - xizmat
-// matnidan: faqat CRM tilga olingan bo'lsa CRM (Mini App'dagi qoida, `tg/chat/useTgChat.ts`).
+// Xizmatning O'Z matni yutadi - BITTA istisno: HRM yoki CRM tokeni yo'qligi. Xizmat u yerda
+// "«+» menyusidan ulang" deydi, lekin 2026-11-12 dan ikkalasi ham odam tomonidan ulanmaydi:
+// BRB-Tech ID bilan kirilganda o'zi ulanadi («+» da «Ulanishlar» yo'q). Qaysi tizim - xizmat
+// matnidan (Mini App'dagi qoida, `tg/chat/useTgChat.ts`).
 function errorText(frame: ChatFrame): string {
   const own = frame.text?.trim()
   const auth = frame.code === 'auth_missing' || frame.code === 'auth_expired'
-  if (auth && own && /CRM/i.test(own) && !/HRM/i.test(own)) return t('chatCrmNotConnected')
+  if (auth && own && /CRM|HRM/i.test(own)) {
+    const crm = /CRM/i.test(own)
+    const hrm = /HRM/i.test(own)
+    return t('chatSsoNotConnected', { system: crm && hrm ? 'HRM / CRM' : crm ? 'CRM' : 'HRM' })
+  }
   if (own) return own
   return auth ? t('chatNotConnected') : t('chatFailed')
 }

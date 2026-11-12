@@ -91,8 +91,10 @@ export function useTgChat() {
     const own = frame.text?.trim() ?? ''
     if (isAuthCode(frame.code)) {
       // So'z chegarasisiz: o'zbekcha qo'shimcha bilan ham topilsin ("CRMga", "CRMni").
-      const crmOnly = /CRM/i.test(own) && !/HRM/i.test(own)
-      return crmOnly ? t('tg.chat.crmNotConnected') : t('tg.chat.notConnected', { system: 'HRM' })
+      // 2026-11-12 dan HRM ham CRM kabi: BRB-Tech ID bilan kirilganda o'zi ulanadi.
+      const crm = /CRM/i.test(own)
+      const hrm = /HRM/i.test(own)
+      return t('tg.chat.notConnected', { system: crm && hrm ? 'HRM / CRM' : crm ? 'CRM' : 'HRM' })
     }
     return own || t('chatFailed')
   }

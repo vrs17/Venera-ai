@@ -503,10 +503,8 @@ def _diagnostics() -> dict:
     if crm_note:
         warnings.append(crm_note)
 
-    # Foydalanuvchilarning o'z ulanishlari. HRM ni odam "+" menyusida ulaydi:
-    # sozlanmagan bo'lsa tugma "serverda sozlanmagan" deydi - sababi shu yerda.
-    # CRM odamga ko'rinmaydi - u SSO kirishida o'zi ulanadi (`_connect_sso`); HRM
-    # ham, agar HRM sessiya tokenini qabul qilsa.
+    # Foydalanuvchilarning o'z ulanishlari: HRM va CRM SSO kirishida o'zi ulanadi
+    # (`_connect_sso`) - sozlanmagan bo'lsa sababi shu yerda.
     hub = connector_hub()
     crm_ready = _crm_connect_ready(hub)
     # Kirish yo'li: SSO (Keycloak, brauzer orqali - `SSO_ISSUER`/`SSO_CLIENT_SECRET`,

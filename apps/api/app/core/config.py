@@ -423,12 +423,11 @@ class Settings(BaseSettings):
     # --- Ulanishlar: foydalanuvchining O'Z HRM / CRM hisobi ---
     #: Yuqoridagi agent sessiyasidan FARQI: u yerda bitta umumiy hisob, bu
     #: yerda har bir odamning O'Z ulanishi va chatga uning O'Z tokeni
-    #: beriladi: HRM ga odam "+" menyusidan o'z logini va paroli bilan
-    #: kiradi, CRM esa SSO kirishida o'zi ulanadi (`sso_crm_connect`).
-    #: Mantiq: `services/integrations/connectors.py`.
+    #: beriladi: HRM va CRM SSO kirishida o'zi ulanadi (`sso_hrm_connect`,
+    #: `sso_crm_connect`). Mantiq: `services/integrations/connectors.py`.
     #:
-    #: HRM API manzili (`POST /api/authenticate`). BO'SH bo'lsa HRM ulanishi
-    #: o'chiq - menyuda "serverda sozlanmagan" ko'rinadi.
+    #: HRM API manzili (kirishda `GET /api/account` tekshiruvi). BO'SH bo'lsa
+    #: HRM ulanishi o'chiq.
     hrm_base_url: str = ""
     hrm_timeout: float = 10.0
     #: HRM tokeni 10 SOAT yashaydi va refresh'i YO'Q.

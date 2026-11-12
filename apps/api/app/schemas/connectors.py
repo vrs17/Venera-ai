@@ -1,13 +1,13 @@
-"""Ulanishlar sxemalari - `apps/web/src/types.ts` dagi `ConnectorStatus` va
-`ConnectRequest` ning aynan nusxasi. `tests/test_connectors.py` mosligini
-tekshiradi.
+"""Ulanishlar sxemalari - `apps/web/src/types.ts` dagi `ConnectorStatus` ning
+aynan nusxasi. `tests/test_connectors.py` mosligini tekshiradi. Login + parol
+bilan ulash (`ConnectRequest`) 2026-11-12 da olib tashlandi.
 
 TOKEN BU YERDA YO'Q va bo'lmaydi: klient faqat holatni ko'radi.
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ConnectorStatus(BaseModel):
@@ -37,13 +37,6 @@ class ConnectorsResponse(BaseModel):
     """types.ts: ConnectorsResponse"""
 
     connectors: list[ConnectorStatus]
-
-
-class ConnectRequest(BaseModel):
-    """types.ts: ConnectRequest - platformaning O'Z logini va paroli."""
-
-    username: str = Field(min_length=1, max_length=200)
-    password: str = Field(min_length=1, max_length=500)
 
 
 class ConnectorUpdate(BaseModel):

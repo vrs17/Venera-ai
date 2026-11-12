@@ -1,32 +1,24 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Paperclip, Plug, Plus } from 'lucide-vue-next'
-import { useConnectors } from '../composables/useConnectors'
+import { Paperclip, Plus } from 'lucide-vue-next'
 import VIconButton from '../ui/VIconButton.vue'
 import VMenu from '../ui/VMenu.vue'
 import VMenuItem from '../ui/VMenuItem.vue'
-import ConnectorDialog from './ConnectorDialog.vue'
 
 /**
- * Yozish maydonidagi "+" va uning menyusi: ulanishlar, fayl biriktirish (hali yo'q).
+ * Yozish maydonidagi "+" va uning menyusi: fayl biriktirish (hali yo'q).
+ *
+ * «Ulanishlar» bandi 2026-11-12 da olib tashlandi (ega so'rovi): HRM va CRM BRB-Tech ID
+ * bilan kirganda o'zi ulanadi - odam hech narsani qo'lda ulamaydi.
  *
  * VMenu (qatlam steki) hamma nozik joyni o'zi hal qiladi: "+" ni bosish menyuni yopib
  * qayta ochmaydi (trigger qatlamning bir qismi), Esc faqat eng ustidagi qatlamni yopadi
  * va `preventDefault` qiladi (ChatView yon panelni yig'ib yubormaydi), fokus menyuga
  * kiradi va "+" ga qaytadi. Menyu <body> ga teleport - hech qanday `overflow` uni kesmaydi.
- *
- * Ulanishlar oynasi menyudan TASHQARIDA yashaydi: menyu band tanlanganda yopiladi,
- * oyna esa ochiq qoladi; yopilganda fokus yana "+" ga qaytadi.
  */
 const { t } = useI18n({ useScope: 'global' })
 const menuOpen = ref(false)
-const connectorsOpen = ref(false)
-
-// Har ochilishda holat serverdan yangilanadi: HRM sessiyasi 10 soatda tugaydi -
-// oynadagi qator buni ko'rsatishi kerak.
-const { load } = useConnectors()
-watch(menuOpen, (open) => open && void load())
 </script>
 
 <template>
@@ -42,11 +34,9 @@ watch(menuOpen, (open) => open && void load())
         :tooltip="!menuOpen"
       />
     </template>
-    <VMenuItem :icon="Plug" @select="connectorsOpen = true">{{ t('connectors') }}</VMenuItem>
     <!-- Yuklash hali yo'q: band ko'rinadi (kelishini bilishsin), lekin bosilmaydi. -->
     <VMenuItem :icon="Paperclip" :hint="t('composer.soon')" disabled>{{ t('composer.attach') }}</VMenuItem>
   </VMenu>
-  <ConnectorDialog v-model:open="connectorsOpen" />
 </template>
 
 <style scoped>
