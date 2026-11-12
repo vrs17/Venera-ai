@@ -65,12 +65,15 @@ class FakeSlack:
         return {"ok": True}
 
     def say(self, channel: str = "D1", text: str = "", *, user: str = "U1", files: list[dict] | None = None,
-            thread: str | None = None, ago: float = 0.0) -> dict:
+            thread: str | None = None, ago: float = 0.0, team: str | None = None) -> dict:
         """Odam chatga yozdi: thread'dan tashqarida bo'lsa - chat tarixiga. `ts` - Slack'dagidek epoch soniya
-        (`ago` soniya oldin; `meeting.AUDIO_PENDING_SEC`). Qaytaradi: Bolt `message` hodisasi."""
+        (`ago` soniya oldin; `meeting.AUDIO_PENDING_SEC`). `team` - ish maydoni (prod'da dispetcher Bolt
+        kontekstidan yozadi, `__init__._stamp_team`). Qaytaradi: Bolt `message` hodisasi."""
         self.said += 1
         event = {"type": "message", "channel_type": "im", "channel": channel, "user": user, "text": text,
                  "ts": f"{int(time.time() - ago)}.{self.said:06d}"}
+        if team:
+            event["team"] = team
         if files:
             event["files"] = list(files)
         if thread:
@@ -141,25 +144,26 @@ def question_of(client: "FakeSlack", file_id: str) -> dict[str, Any]:
     return next(m for m in reversed(client.posted) if render.lang_marked(m) == file_id)
 
 
-def choose_language(client: "FakeSlack", question: dict[str, Any], lang: str, rt, *, user: str = "U1") -> None:
+def choose_language(client: "FakeSlack", question: dict[str, Any], lang: str, rt, *, user: str = "U1",
+                    team: str | None = None) -> None:
     """Odam til savolidagi tugmani bosdi (`meeting.on_action` -> `meeting.start`); navbat qo'lda (`drive`)."""
     from app.slack import meeting
 
     [button] = [e for e in elements(question) if e["action_id"] == f"barno_lang_{lang}"]
     message = {"ts": question["ts"], **({"thread_ts": question["thread_ts"]} if question.get("thread_ts") else {})}
     meeting.on_action(client, {"actions": [button], "channel": {"id": question["channel"]}, "user": {"id": user},
-                               "message": message}, sleep=drive(rt))
+                               "message": message, **({"team": {"id": team}} if team else {})}, sleep=drive(rt))
 
 
 def send_audio(client: "FakeSlack", event: dict[str, Any], rt, lang: str = "uz", *, user: str = "U1") -> None:
     """Odam audio yubordi (Bolt yo'li): til savoli (`meeting.acknowledge`), so'ng har fayl uchun tilni tanlaydi.
-    Fayl `files.info` uchun soxta klientga ham qo'shiladi."""
+    Fayl `files.info` uchun soxta klientga ham qo'shiladi. Ish maydoni hodisadan (`event["team"]`)."""
     from app.slack import meeting
 
     meeting.acknowledge(client, event)
     for file in transcribe.audio_files(event):
         client.files.setdefault(file["id"], file)
-        choose_language(client, question_of(client, file["id"]), lang, rt, user=user)
+        choose_language(client, question_of(client, file["id"]), lang, rt, user=user, team=event.get("team"))
 
 
 def drive(rt):

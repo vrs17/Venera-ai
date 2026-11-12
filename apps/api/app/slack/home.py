@@ -9,7 +9,10 @@ yo'l bilan qo'l ostida turadi:
     oxirgi yozuv bo'yicha savol, `meeting.on_text`);
   * `/plaud` buyrug'i (Bolt `command`, Socket Mode'da ishlaydi) - manifestda slash command
     bo'lsa; bo'lmasa shunchaki chaqirilmaydi.
-"Home" varag'ida faqat shior (`app_home_opened` -> `views.publish`, ruxsat kerak emas).
+"Home" varag'ida shior va - shaxsiy hisob majburiy bo'lsa (`link.py`) - hisob holati: ulangan bo'lsa
+ism va «Uzish», aks holda «Connect Barno AI account» (`app_home_opened` -> `views.publish`, ruxsat
+kerak emas). Ulanmagan odamga xush kelibsiz xabaridan keyin, `/plaud` va «🎙 Plaud» o'rniga ulash
+xabari chiqadi.
 Tugma bosilganda: chatda - faqat bosgan odamga ko'rinadigan (ephemeral) eslatma, Home'dan -
 odamning chatiga xabar (`chat.postMessage` ga foydalanuvchi id'si, `chat:write` bilan DM
 ochiladi).
@@ -28,7 +31,7 @@ import time
 
 from typing import Any
 
-from . import render
+from . import link, render
 
 log = logging.getLogger(__name__)
 
@@ -50,10 +53,19 @@ PROMPT = (
 )
 
 
-def view() -> dict[str, Any]:
-    """"Home" varag'i (Block Kit `home` view): faqat shior (ega so'rovi, 2026-11-12 - tugma va imkoniyatlar
-    ro'yxati olib tashlandi; yo'riqnoma chatdagi xabarda, `prompt_blocks`)."""
-    return {"type": "home", "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": TAGLINE}}]}
+def view(team: str | None = None, user: str | None = None) -> dict[str, Any]:
+    """"Home" varag'i (Block Kit `home` view): shior (ega so'rovi, 2026-11-12 - tugma va imkoniyatlar
+    ro'yxati olib tashlandi; yo'riqnoma chatdagi xabarda, `prompt_blocks`) va hisob holati
+    (`link.home_blocks` - shaxsiy hisob majburiy bo'lmasa bo'sh)."""
+    blocks: list[dict[str, Any]] = [{"type": "section", "text": {"type": "mrkdwn", "text": TAGLINE}}]
+    try:
+        account = link.home_blocks(team, user)
+    except Exception:  # noqa: BLE001 - katalog yoki fayl xatosi varaqni buzmasin
+        log.exception("Slack Home: hisob holati o'qilmadi")
+        account = []
+    if account:
+        blocks += [{"type": "divider"}, *account]
+    return {"type": "home", "blocks": blocks}
 
 
 def prompt_blocks() -> list[dict[str, Any]]:
@@ -82,13 +94,16 @@ def on_open(client: Any, event: dict[str, Any]) -> None:
     user, tab = event.get("user"), event.get("tab")
     if not user:
         return
+    team = link.team_of(event)
     try:
         if tab in (None, "home"):
-            client.views_publish(user_id=user, view=view())
+            client.views_publish(user_id=user, view=view(team, user))
         elif tab == "messages" and event.get("channel"):
             found = client.conversations_history(channel=event["channel"], limit=1)
             if not found.get("messages"):
                 client.chat_postMessage(channel=event["channel"], text=PROMPT, blocks=prompt_blocks())
+                # Birinchi ochilish: nima qila olishi (yuqorida) va - ulanmagan bo'lsa - ulash tugmasi.
+                link.gate(client, team, user, event["channel"])
     except Exception as exc:  # noqa: BLE001 - SlackApiError, tarmoq
         log.warning("Slack Home/xush kelibsiz yozilmadi: %s", exc)
 
@@ -118,6 +133,8 @@ def on_command(client: Any, body: dict[str, Any]) -> None:
     channel = body.get("channel_id") or body.get("user_id")
     if not channel:
         return
+    if not link.gate(client, body.get("team_id"), body.get("user_id"), body.get("channel_id"), force=True):
+        return
     try:
         client.chat_postMessage(channel=channel, text=PROMPT, blocks=prompt_blocks())
     except Exception as exc:  # noqa: BLE001
@@ -130,6 +147,8 @@ def on_plaud(client: Any, body: dict[str, Any]) -> None:
     user = (body.get("user") or {}).get("id")
     channel = (body.get("channel") or {}).get("id")
     if not user:
+        return
+    if not link.gate(client, link.team_of(body), user, channel, force=True):
         return
     try:
         if channel:

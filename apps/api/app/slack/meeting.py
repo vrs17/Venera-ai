@@ -34,15 +34,18 @@ savollari ishlaydi), boshqa yozuvlar aralashmaydi. Javob ostidagi «🔄 Yangi s
     (`home.on_text`), chat tarixini o'qib bo'lmasa - `render.CHAT_UNREAD`;
   * yozuv xabarining (karta, javob, odamning audio xabari) thread'ida - HAR QANDAY, eski yozuv bo'yicha ham
     (`question`).
-SUHBAT YOZUVNIKI VA ODAMNIKI (thread'niki emas): Slack'dagi hamma odam bitta hisobda (`transcribe.account`),
-shuning uchun xotira va «🔄 Yangi suhbat» so'rovchi bo'yicha (`asker`, `slack:<user id>`): bitta faylni ikki
-kishi o'z chatiga yuborsa (bitta yig'ilish) har biri o'z suhbatini ko'radi, hisob egasining ilovadagi suhbati
-ham alohida. Bir odamning shu yozuv haqidagi savollari (chatda ham, istalgan thread'da ham) - bitta suhbat.
+SUHBAT YOZUVNIKI VA ODAMNIKI (thread'niki emas). 2026-11-12 dan har kim O'Z hisobida (`transcribe.account`,
+«Connect Barno AI account» - `link.py`): yozuv uniki, Slack'dagi savollari ilovadagi suhbati bilan BITTA
+(`asker` yo'q - egasining suhbati). Ulanmagan odamga ish bajarilmaydi - ulash xabari (`_gate`). ESKI yozuvlar
+(ulashdan oldin kelgan) umumiy hisobda qolgan: ularda, avvalgidek, xotira va «🔄 Yangi suhbat» so'rovchi
+bo'yicha (`asker`, `slack:<user id>`) - bitta yozuvni ko'rgan har kim o'z suhbatini ko'radi (`who_asks`). Ulash
+o'chirilgan o'rnatmada hamma narsa eskicha umumiy hisobda. Bir odamning shu yozuv haqidagi savollari (chatda
+ham, istalgan thread'da ham) - bitta suhbat.
 
 NEGA AVTOMATIK XULOSA. Yig'ilish quvuri uni har yozuv uchun baribir yozadi (`summarizing`):
 ko'rsatish qo'shimcha LLM chaqiruvi emas.
 
-CHEGARALAR hisob bo'yicha, ya'ni hamma Slack xodimlariga UMUMIY: chat savoli soatiga
+CHEGARALAR hisob bo'yicha - shaxsiy hisobda har kimniki o'ziga (eski umumiy hisobda - hammaga umumiy): chat savoli soatiga
 `MEETINGS_ASK_PER_HOUR`, eksport (qisqa xulosa
 ham) `MEETINGS_EXPORT_PER_HOUR`, bayonnoma `MEETINGS_MINUTES_PER_HOUR` (har hujjat pullik
 Claude chaqiruvi). Oshsa xizmatning o'z xabari ko'rsatiladi.
@@ -64,7 +67,7 @@ from ..services.meetings import intake, minutes, service
 from ..services.meetings.errors import MeetingProblem
 from ..services.meetings.intake import (  # noqa: F401 - umumiy qadamlar (`intake.py`)
     SUMMARY_WAIT_SEC, Sleep, filename, summary_error, wait_summary, wait_summary_card)
-from . import home, render, transcribe
+from . import home, link, render, transcribe
 
 log = logging.getLogger(__name__)
 #: Chat xabari chegarasi (`ChatRequest.message`, `prompts.CHAT_QUESTION_CHARS`).
@@ -112,10 +115,29 @@ def acknowledge(client: Any, event: dict[str, Any]) -> None:
     """Audio kelishi bilan har fayl uchun "qabul qilindi" va til savoli - DARHOL, Bolt ipida (navbatdan oldin): navbat
     band bo'lsa ham odam audiosi qabul qilinganini ko'radi. Ish til tanlangach boshlanadi (`start`); bir xabardagi
     har faylning o'z savoli."""
-    for file in transcribe.audio_files(event):
+    files = transcribe.audio_files(event)
+    if files and not _gate(client, link.team_of(event), event.get("user"), event["channel"], event.get("thread_ts")):
+        return
+    for file in files:
         head = received(file)
         post(client, event["channel"], event.get("thread_ts"), f"{head}\n{render.LANG_QUESTION}",
              render.lang_question(head, file["id"]))
+
+
+def _gate(client: Any, team: str | None, slack_user: str | None, channel: str,
+          thread: str | None = None) -> bool:
+    """Shaxsiy hisob majburiy bo'lsa (`link.required()`): ulanmagan odamga faqat ulash xabari («Connect Barno
+    AI account») va `False` - ish bajarilmaydi; bloklangan hisobga - sababi. Aks holda `True`."""
+    return link.gate(client, team, slack_user, channel, thread=thread)
+
+
+def who_asks(holder: AuthUser, user: AuthUser, slack_user: Any) -> str | None:
+    """Yozuv chatidagi so'rovchi (`service.chat_send` / `chat_reset` ning `asker` i). Odamning O'Z yozuvi
+    (shaxsiy hisob) - `None`: Slack'dagi savollar uning ilovadagi suhbati bilan bitta. Umumiy hisobdagi
+    yozuv (eski yozuvlar yoki ulash o'chirilgan o'rnatma) - `slack:<user id>`: har kim o'z suhbatida."""
+    if link.required() and holder.actorId == user.actorId:
+        return None
+    return asker(slack_user)
 
 
 def received(file: dict[str, Any]) -> str:
@@ -159,7 +181,7 @@ def is_question(event: dict[str, Any]) -> bool:
 
 def handle(client: Any, channel: str, thread: str | None, files: list[dict[str, Any]], *,
            sleep: Sleep = time.sleep, shown: dict[str, intake.Progress] | None = None,
-           language: str = intake.LANGUAGE) -> None:
+           language: str = intake.LANGUAGE, team: str | None = None, slack_user: str | None = None) -> None:
     """Navbatdagi vazifa: har audio (`language` tilida) uchun jarayon xabari (til savolining o'rnida yoki yangisi),
     transkript va xulosa, xato bo'lsa sabab (va foyda beradigan bo'lsa "Qayta urinish" - o'sha til bilan)."""
     for file in files:
@@ -167,7 +189,7 @@ def handle(client: Any, channel: str, thread: str | None, files: list[dict[str, 
         progress.show(intake.UPLOAD)
         retry = f"f:{file['id']}:{language}"
         try:
-            user = transcribe.account()
+            user = transcribe.account(team, slack_user)
             meeting_id = transcribe.ingest(client, user, file, language=language)
             text = transcribe.wait_transcript(user, meeting_id, sleep=sleep, progress=progress.view)
         except transcribe.Problem as exc:
@@ -253,9 +275,9 @@ def fail(client: Any, channel: str, thread: str | None, reason: str, retry: str 
 
 
 def asker(slack_user: Any) -> str:
-    """Yozuv chatidagi so'rovchi (`service.chat_send` / `chat_reset` ning `asker` i): Slack'dagi hamma odam BITTA
-    hisobda, shuning uchun suhbat xotirasi va «🔄 Yangi suhbat» har odamga alohida - `slack:<user id>`. Kalit hech
-    qachon bo'sh emas: bo'sh (`None`) - hisob egasining ilovadagi suhbati bo'lardi."""
+    """Umumiy hisobdagi yozuv chatining so'rovchisi: u yerda hamma odam BITTA hisobda, shuning uchun suhbat
+    xotirasi va «🔄 Yangi suhbat» har odamga alohida - `slack:<user id>`. Kalit hech qachon bo'sh emas: bo'sh
+    (`None`) - hisob egasining ilovadagi suhbati bo'lardi. Qaysi biri kerakligini `who_asks` hal qiladi."""
     return f"slack:{slack_user or ''}"
 
 
@@ -263,15 +285,24 @@ def question(client: Any, event: dict[str, Any], *, bot_user: str | None = None)
     """Thread'dagi savol -> o'sha thread boshidagi xabarning yozuvi (`meeting_of_thread`) bo'yicha chat (`chat`):
     eski yozuv haqida ham shunday so'raladi. Yozuvga bog'liq bo'lmagan thread - jim."""
     channel, thread = event["channel"], event["thread_ts"]
+    team, person = link.team_of(event), event.get("user")
     try:
-        user = transcribe.account()
+        user = transcribe.account(team, person)
+    except link.NotLinked as exc:
+        link.offer(client, team, person, channel, thread=thread, state=exc.state)
+        return
     except transcribe.Problem as exc:
         post(client, channel, thread, render.escape(f"Javob berib bo'lmadi: {exc}"))
         return
     meeting_id = meeting_of_thread(client, channel, thread, user, bot_user=bot_user)
     if meeting_id is None:
         return
-    chat(client, channel, thread, user, meeting_id, _text(event), who=asker(event.get("user")))
+    try:
+        holder = transcribe.owner(user, meeting_id)
+    except MeetingProblem as exc:
+        post(client, channel, thread, render.escape(f"Javob berib bo'lmadi: {exc.detail}"))
+        return
+    chat(client, channel, thread, holder, meeting_id, _text(event), who=who_asks(holder, user, person))
 
 
 def on_text(client: Any, event: dict[str, Any], *, bot_user: str | None = None) -> None:
@@ -283,8 +314,15 @@ def on_text(client: Any, event: dict[str, Any], *, bot_user: str | None = None) 
     channel = event.get("channel")
     if not channel:
         return
+    team = link.team_of(event)
+    # Avval hisob: ulanmagan odamga yo'riqnoma ham, javob ham emas - ulash xabari.
+    if not _gate(client, team, event.get("user"), channel):
+        return
     try:
-        found = latest(client, channel, event.get("user"), bot_user=bot_user)
+        found = latest(client, channel, event.get("user"), bot_user=bot_user, team=team)
+    except link.NotLinked as exc:
+        link.offer(client, team, event.get("user"), channel, state=exc.state)
+        return
     except transcribe.Problem as exc:
         post(client, channel, None, render.escape(f"Javob berib bo'lmadi: {exc}"))
         return
@@ -304,20 +342,23 @@ def on_text(client: Any, event: dict[str, Any], *, bot_user: str | None = None) 
     elif found == CHOOSE:
         post(client, channel, None, render.CHAT_CHOOSE_LANG)
     else:
-        chat(client, channel, None, found.user, found.meeting_id, _text(event), who=asker(event.get("user")),
+        chat(client, channel, None, found.user, found.meeting_id, _text(event),
+             who=None if found.own and link.required() else asker(event.get("user")),
              view=found.view, titled=True)
 
 
 class Recording(NamedTuple):
-    """`latest` topgan yozuv (matni tayyor): Slack hisobi, yig'ilish va uning ko'rinishi (`service.detail`)."""
+    """`latest` topgan yozuv (matni tayyor): yozuv EGASI (`user` - odamning o'zi yoki, eski yozuvda, umumiy
+    hisob), yig'ilish va uning ko'rinishi (`service.detail`). `own` - yozuv so'ragan odamning o'ziniki."""
 
     user: AuthUser
     meeting_id: str
     view: dict[str, Any]
+    own: bool = True
 
 
 def latest(client: Any, channel: str, person: str | None, *,
-           bot_user: str | None = None) -> Recording | str | None:
+           bot_user: str | None = None, team: str | None = None) -> Recording | str | None:
     """Chatdagi OXIRGI yozuv. Chat tarixining `HISTORY` ta eng yangi xabari yangisidan boshlab ko'riladi, nomzodlar:
       * Barno'ning xulosa kartasi yoki chat javobi (`render.LATEST_TAGS`; belgiga faqat O'ZIMIZ yozganida ishonamiz,
         `meeting_of_thread` dagidek). Bayonnoma menyusi kabi tugma natijasi nomzod emas - eski kartada bosilgan
@@ -334,7 +375,7 @@ def latest(client: Any, channel: str, person: str | None, *,
     messages = _history(client, channel)
     if messages is None:
         return UNREAD
-    now, failed, asking, lookup = time.time(), set(), set(), _Lookup()
+    now, failed, asking, lookup = time.time(), set(), set(), _Lookup(team, person)
     for message in messages:
         if message.get("bot_id"):
             if bot_user and message.get("user") != bot_user:
@@ -355,7 +396,7 @@ def latest(client: Any, channel: str, person: str | None, *,
             fresh = now - _sent_at(message) < AUDIO_PENDING_SEC
             for file in reversed([f for f in message.get("files") or [] if transcribe.is_audio(f) and f.get("id")]):
                 file_id = str(file["id"])
-                meeting_id = transcribe.meeting_of_file(lookup.user, file_id)
+                meeting_id = lookup.meeting_of_file(file_id)
                 view = lookup.view(meeting_id)
                 if view is None or view["status"] == "uploading":
                     # Yig'ilish hali yo'q (Slack'dan yuklanmoqda) yoki yuklash yarim qolgan. Yo'ldami yoki o'girib
@@ -395,28 +436,61 @@ def _sent_at(message: dict[str, Any]) -> float:
 
 
 class _Lookup:
-    """`latest` nomzodlarining yig'ilishi. Slack hisobi birinchi kerak bo'lganda olinadi: chatda yozuv bo'lmasa
-    hisob ham kerak emas (yo'riqnoma hisobsiz chiqadi)."""
+    """`latest` nomzodlarining yig'ilishi. Hisob birinchi kerak bo'lganda olinadi: chatda yozuv bo'lmasa
+    hisob ham kerak emas (yo'riqnoma hisobsiz chiqadi). Yozuv avval odamning O'Z hisobidan qidiriladi, topilmasa
+    - umumiy hisobdan (ulashdan oldin kelgan ESKI yozuvlar; `transcribe.legacy_account`)."""
 
-    def __init__(self) -> None:
+    def __init__(self, team: str | None = None, person: str | None = None) -> None:
+        self._team, self._person = team, person
         self._user: AuthUser | None = None
+        self._legacy: AuthUser | None = None
+        self._legacy_seen = False
+        #: yig'ilish -> uni topgan hisob (egasi).
+        self._holders: dict[str, AuthUser] = {}
 
     @property
     def user(self) -> AuthUser:
         if self._user is None:
-            self._user = transcribe.account()
+            self._user = transcribe.account(self._team, self._person)
         return self._user
+
+    @property
+    def legacy(self) -> AuthUser | None:
+        """Umumiy hisob - faqat shaxsiy hisob majburiy bo'lganda va u odamning o'zi bo'lmasa."""
+        if not self._legacy_seen:
+            self._legacy_seen = True
+            if link.required():
+                shared = transcribe.legacy_account()
+                self._legacy = shared if shared is not None and shared.actorId != self.user.actorId else None
+        return self._legacy
+
+    def _holders_in_order(self) -> list[AuthUser]:
+        return [self.user] + ([self.legacy] if self.legacy is not None else [])
+
+    def meeting_of_file(self, file_id: str) -> str | None:
+        """Odamning audio xabari -> yig'ilish (fayl kaliti hisob bo'yicha): o'ziniki, bo'lmasa eski umumiy."""
+        for holder in self._holders_in_order():
+            meeting_id = transcribe.meeting_of_file(holder, file_id)
+            if meeting_id:
+                self._holders[meeting_id] = holder
+                return meeting_id
+        return None
 
     def view(self, meeting_id: str | None) -> dict[str, Any] | None:
         """Yig'ilish ko'rinishi; yo'q yoki o'chirilgan (404) - `None`."""
         if not meeting_id:
             return None
-        try:
-            return service.detail(self.user, meeting_id)
-        except MeetingProblem as exc:
-            if exc.status_code == 404:
-                return None
-            raise
+        known = self._holders.get(meeting_id)
+        for holder in ([known] if known is not None else self._holders_in_order()):
+            try:
+                found = service.detail(holder, meeting_id)
+            except MeetingProblem as exc:
+                if exc.status_code == 404:
+                    continue
+                raise
+            self._holders[meeting_id] = holder
+            return found
+        return None
 
     def verdict(self, meeting_id: str, view: dict[str, Any] | None) -> Recording | str | None:
         """Matni tayyor - `Recording`; hali o'girilmoqda - `PENDING`; o'girib bo'lmagan yoki o'chirilgan - `None`
@@ -424,12 +498,13 @@ class _Lookup:
         if view is None or view["status"] == "failed":
             return None
         if view["transcript"]["available"]:
-            return Recording(self.user, meeting_id, view)
+            holder = self._holders.get(meeting_id, self.user)
+            return Recording(holder, meeting_id, view, own=holder.actorId == self.user.actorId)
         return PENDING
 
 
 def chat(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str, text: str, *,
-         who: str, view: dict[str, Any] | None = None, titled: bool = False) -> None:
+         who: str | None, view: dict[str, Any] | None = None, titled: bool = False) -> None:
     """Yozuv chatiga savol (`service.chat_send`, kanal `slack`, so'rovchi `who` - `asker`): "⏳" xabari, so'ng uning
     o'rnida javob (manbalar bilan; `titled` - birinchi qatorda qaysi yozuv) va «🔄 Yangi suhbat»
     (`render.chat_actions`). Xatoda (chegara, model, yozuv topilmadi) - faqat sabab, tugmasiz."""
@@ -471,11 +546,14 @@ def meeting_of_thread(client: Any, channel: str, thread: str, user: AuthUser, *,
     if parent.get("bot_id"):
         # Belgiga faqat O'ZIMIZ yozgan xabarda ishonamiz.
         return render.marked(parent) if not bot_user or parent.get("user") == bot_user else None
+    legacy = transcribe.legacy_account() if link.required() else None
+    holders = [user] + ([legacy] if legacy is not None and legacy.actorId != user.actorId else [])
     for file in parent.get("files") or []:
         if transcribe.is_audio(file):
-            meeting_id = transcribe.meeting_of_file(user, file["id"])
-            if meeting_id:
-                return meeting_id
+            for holder in holders:
+                meeting_id = transcribe.meeting_of_file(holder, file["id"])
+                if meeting_id:
+                    return meeting_id
     return None
 
 
@@ -493,21 +571,24 @@ def on_action(client: Any, body: dict[str, Any], *, sleep: Sleep = time.sleep) -
     thread = message.get("thread_ts")
     if not channel:
         return
+    clicker, team = (body.get("user") or {}).get("id"), link.team_of(body)
     try:
-        user = transcribe.account()
+        person = transcribe.account(team, clicker)
         if kind == "barno_retry":
-            retry(client, channel, thread, user, value, sleep=sleep)
+            retry(client, channel, thread, person, value, sleep=sleep, team=team, slack_user=clicker)
             return
         if kind.startswith("barno_lang_"):
-            start(client, channel, thread, value, kind[len("barno_lang_"):], ref=message.get("ts"), sleep=sleep)
+            start(client, channel, thread, value, kind[len("barno_lang_"):], ref=message.get("ts"), sleep=sleep,
+                  team=team, slack_user=clicker)
             return
         meeting_id, _, arg = value.partition("|")
         if not _ID.fullmatch(meeting_id):
             return
+        # Yozuv egasi: odamning o'zi yoki - eski kartada - umumiy hisob (`transcribe.owner`).
+        user = transcribe.owner(person, meeting_id)
         if kind == "barno_transcript" or (arg == "transcript_txt" and kind in ("barno_download", "barno_export")):
             # «📥 Yuklab olish -> Transkript (TXT)»; eski kartalardagi tugma va "Eksport -> Transkript (TXT)" ham.
-            transcript_file(client, channel, thread, user, meeting_id, card=message.get("ts"),
-                            clicker=(body.get("user") or {}).get("id"))
+            transcript_file(client, channel, thread, user, meeting_id, card=message.get("ts"), clicker=clicker)
         elif kind == "barno_tasks":
             tasks(client, channel, thread, user, meeting_id)
         elif kind == "barno_minutes":
@@ -522,7 +603,9 @@ def on_action(client: Any, body: dict[str, Any], *, sleep: Sleep = time.sleep) -
         elif kind.startswith("barno_relang"):
             relang(client, channel, thread, user, meeting_id, arg, sleep=sleep)
         elif kind == "barno_chat_reset":
-            chat_reset(client, channel, thread, user, meeting_id, who=asker((body.get("user") or {}).get("id")))
+            chat_reset(client, channel, thread, user, meeting_id, who=who_asks(user, person, clicker))
+    except link.NotLinked as exc:
+        link.offer(client, team, clicker, channel, thread=thread, state=exc.state)
     except transcribe.Problem as exc:
         post(client, channel, thread, render.escape(str(exc)))
     except MeetingProblem as exc:
@@ -533,7 +616,7 @@ def on_action(client: Any, body: dict[str, Any], *, sleep: Sleep = time.sleep) -
 
 
 def start(client: Any, channel: str, thread: str | None, file_id: str, lang: str, *, ref: str | None,
-          sleep: Sleep = time.sleep) -> None:
+          sleep: Sleep = time.sleep, team: str | None = None, slack_user: str | None = None) -> None:
     """Til tanlandi (`render.lang_question` tugmasi): til savoli xabari (`ref`) joyida jarayon xabariga aylanadi va
     audio o'sha tilda o'giriladi (`handle`). Fayl Slack'dan qayta so'raladi (`files.info`) - server restartidan keyin
     bosilgan tugma ham ishlaydi. Tugma ikki marta (yoki ikkinchi til) bosilsa - ish bitta (`_started`)."""
@@ -546,14 +629,15 @@ def start(client: Any, channel: str, thread: str | None, file_id: str, lang: str
     try:
         file = client.files_info(file=file_id)["file"]
         progress = status(client, channel, thread, file, language=lang, ref=ref)
-        handle(client, channel, thread, [file], sleep=sleep, shown={file_id: progress}, language=lang)
+        handle(client, channel, thread, [file], sleep=sleep, shown={file_id: progress}, language=lang,
+               team=team, slack_user=slack_user)
     finally:
         with _started_lock:
             _started.discard(file_id)
 
 
 def chat_reset(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str, *,
-               who: str) -> None:
+               who: str | None) -> None:
     """«🔄 Yangi suhbat»: shu yozuv bo'yicha BOSGAN odamning (`who` - `asker`) faol savol-javoblari arxivga
     (`service.chat_reset`) - keyingi savoli modelga xotirasiz boradi, boshqalarning suhbatiga tegilmaydi. Tasdiq
     xabari - tugma turgan joyga (bosilgan xabarning `thread_ts` i; chatning o'zidagi javobda - chatga)."""
@@ -702,15 +786,16 @@ def relang(client: Any, channel: str, thread: str | None, user: AuthUser, meetin
 
 
 def retry(client: Any, channel: str, thread: str | None, user: AuthUser, value: str, *,
-          sleep: Sleep = time.sleep) -> None:
+          sleep: Sleep = time.sleep, team: str | None = None, slack_user: str | None = None) -> None:
     """"Qayta urinish": `f:<fayl>:<til>` - audio butun yo'ldan, o'sha tilda (yig'ilish kaliti fayldan, ya'ni
     tayyor qismi takrorlanmaydi; tilsiz eski tugma - o'zbek), `m:<yig'ilish>` - xulosa."""
     kind, _, ident = value.partition(":")
     if kind == "f" and ident:
         file_id, _, lang = ident.partition(":")
         handle(client, channel, thread, [client.files_info(file=file_id)["file"]], sleep=sleep,
-               language=lang if lang in render.LANG_NAMES else intake.LANGUAGE)
+               language=lang if lang in render.LANG_NAMES else intake.LANGUAGE, team=team, slack_user=slack_user)
     elif kind == "m" and _ID.fullmatch(ident):
+        user = transcribe.owner(user, ident)
         service.retry(user, ident)
         post(client, channel, thread, "Qisqa xulosa", summary_card(user, ident, wait_summary(user, ident, sleep=sleep)))
 

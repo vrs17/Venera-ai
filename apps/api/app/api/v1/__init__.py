@@ -15,6 +15,7 @@ from . import admin_users, reports
 from . import admin, admin_engines, admin_osmap, admin_playground, admin_probe
 from . import devices, meetings
 from . import assistant_extras
+from . import slack
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(auth.router)
@@ -46,5 +47,8 @@ router.include_router(assistant_extras.router)
 # `.env` dan jonli o'qiladi, ya'ni yoqish uchun restart kerak emas.
 router.include_router(meetings.router)
 router.include_router(devices.router)
+# Slack hisobini Barno hisobiga ulash - tasdiq sahifasining yo'llari (`slack.py`; Slack ilovasining
+# o'zi HTTP emas, Socket Mode - `app/slack/`).
+router.include_router(slack.router)
 
 __all__ = ["router"]

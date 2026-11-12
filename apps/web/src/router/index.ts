@@ -10,6 +10,8 @@ declare module 'vue-router' {
     requiresAuth?: boolean
     guestOnly?: boolean
     allowPasswordChangeRequired?: boolean
+    /** Kirmagan odam xush kelibsiz sahifasiga emas, TO'G'RI kirish sahifasiga yuboriladi. */
+    loginDirect?: boolean
     /** Shu rol bo'lmasa `/` ga qaytariladi. Ota marshrutda berilsa bolalarga ham tegadi. */
     requiresRole?: string
   }
@@ -89,6 +91,14 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../views/ChangePasswordView.vue'),
     meta: { requiresAuth: true, allowPasswordChangeRequired: true },
   },
+  {
+    // Slack'dagi «Connect Barno AI account» tugmasi shu yerni ochadi (`?t=<chipta>`): kirmagan odam
+    // avval kirish sahifasiga (BRB-Tech ID yoki login + parol), keyin shu tasdiq sahifasiga qaytadi.
+    path: '/link/slack',
+    name: 'slack-link',
+    component: () => import('../views/SlackLinkView.vue'),
+    meta: { requiresAuth: true, loginDirect: true },
+  },
   adminRoutes,
   ...devRoutes,
   { path: '/:pathMatch(.*)*', redirect: '/' },
@@ -119,13 +129,17 @@ router.beforeEach(async (to) => {
   // Unauthenticated: protected pages send you to the splash/landing first. Chuqur
   // havola (masalan /admin/turns/42) yo'qolmasin - kirishdan keyin shu yerga qaytiladi.
   if (to.meta.requiresAuth && !isAuthenticated.value) {
+    if (to.meta.loginDirect) return { name: 'login', query: { redirect: to.fullPath } }
     return to.fullPath === '/' ? { name: 'welcome' } : { name: 'welcome', query: { redirect: to.fullPath } }
   }
 
   // Forced password change: an authenticated user who must change their password
   // can only reach /change-password (and logout). Everything else bounces there.
   if (isAuthenticated.value && passwordChangeRequired.value && !to.meta.allowPasswordChangeRequired) {
-    return { name: 'change-password' }
+    // Slack ulash havolasi yo'qolmasin: parol almashtirilgach shu sahifaga qaytiladi.
+    return to.meta.loginDirect
+      ? { name: 'change-password', query: { redirect: to.fullPath } }
+      : { name: 'change-password' }
   }
 
   // Settled users shouldn't sit on guest pages or the (now-irrelevant) change page.

@@ -4,9 +4,11 @@ Qadamlar (yaratish -> yuklash -> yakunlash -> kutish -> txt eksport) Telegram bi
 umumiy - `services/meetings/intake.py`; bu yerda faqat Slack'ka xos qismi: fayl Slack'dan
 qanday olinadi va kimning nomidan. Slack'ka nima yozilishi - `meeting.py`.
 
-KIMNING NOMIDAN. Hozircha Slack odami Venera hisobiga bog'lanmaydi: hamma audio
-`SLACK_ACTOR_ID` hisobining yig'ilishi bo'lib saqlanadi (o'sha hisobning ro'yxatida
-ko'rinadi, kunlik limit va soatlik chegaralar ham umumiy).
+KIMNING NOMIDAN (`account`). 2026-11-12 dan har kim O'Z Barno hisobini ulaydi («Connect Barno AI
+account», `link.py`): audio va savollar o'sha odamning yig'ilishi bo'ladi, limitlar ham shaxsiy.
+Ulashdan OLDIN kelgan yozuvlar umumiy `SLACK_ACTOR_ID` hisobida qoladi - ularning kartalari va
+thread'lari ishlayveradi (`owner`). Ulash o'chirilgan o'rnatmada (`link.required()` yolg'on) hammasi
+eskicha, umumiy hisobda.
 
 BITTA FAYL - BITTA YIG'ILISH (`intake.client_id`): fayl qayta kelsa (Slack hodisani qayta
 yubordi, "Qayta urinish" tugmasi, fayl yana ulashildi) - o'sha yig'ilish davom ettiriladi
@@ -66,7 +68,50 @@ def meeting_of_file(user: AuthUser, file_id: str) -> str | None:
     return intake.meeting_of(user, client_id(file_id))
 
 
-def account() -> AuthUser:
+def account(team: str | None = None, slack_user: str | None = None) -> AuthUser:
+    """Shu so'rov KIMNING nomidan - HAR so'rovda qayta tekshiriladi (bot kabi).
+
+    Shaxsiy hisob majburiy bo'lsa (`link.required()`): Slack odamining O'Z hisobi; ulanmagan -
+    `link.NotLinked` (chaqiruvchi ulash xabarini yuboradi), bloklangan - `Problem`. Ulangan har bir
+    xodimga ochiq (ega qarori 2026-11-12) - `MEETINGS_LOGINS` tekshirilmaydi. Aks holda - umumiy
+    `SLACK_ACTOR_ID` hisobi (`shared_account`)."""
+    from . import link
+
+    if not _config.meetings_enabled_now():
+        raise Problem("Yig'ilishlar bo'limi o'chiq.")
+    if link.required():
+        return link.person(team, slack_user)
+    return shared_account()
+
+
+def owner(user: AuthUser, meeting_id: str) -> AuthUser:
+    """Yig'ilish KIMNIKI: odamning o'ziniki bo'lsa - o'zi; ulashdan OLDINGI yozuv bo'lsa - umumiy
+    hisob (eski kartalar va thread'lar ishlayversin). Hech kimniki emas - xizmatning 404 i."""
+    from . import link
+
+    try:
+        service.detail(user, meeting_id)
+        return user
+    except service.MeetingProblem as exc:
+        if exc.status_code != 404 or not link.required():
+            raise
+        shared = legacy_account()
+        if shared is None or shared.actorId == user.actorId:
+            raise
+    service.detail(shared, meeting_id)
+    return shared
+
+
+def legacy_account() -> AuthUser | None:
+    """Umumiy hisob - faqat ESKI yozuvlarni topish uchun; sozlanmagan yoki yaroqsiz bo'lsa `None`
+    (shaxsiy hisobli o'rnatmada u bo'lmasligi ham mumkin)."""
+    try:
+        return shared_account()
+    except Problem:
+        return None
+
+
+def shared_account() -> AuthUser:
     """`SLACK_ACTOR_ID` hisobi - HAR so'rovda qayta tekshiriladi (bot kabi): hisob
     o'chirilsa, bloklansa yoki bo'limga ruxsati olinsa, darhol to'xtaydi."""
     from ..api.deps import get_directory

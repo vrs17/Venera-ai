@@ -120,11 +120,13 @@ def signout(
     identities: IdentityStore = Depends(get_identity_store),
     users: UserStore = Depends(get_user_store),
 ) -> SignoutResult:
-    """Hamma sessiyalar tugaydi: veb/mini app tokenlari 401, Telegram bot
-    ulanishlari uziladi. Odam qaytadan kira oladi (bloklash emas)."""
+    """Hamma sessiyalar tugaydi: veb/mini app tokenlari 401, Telegram bot va
+    Slack ulanishlari uziladi. Odam qaytadan kira oladi (bloklash emas)."""
+    from ...slack import link as slack_link
+
     try:
         version = _admin.signout(admin, actor_id, identities, users, links=bot.links,
-                                 hub=_connectors.hub)
+                                 hub=_connectors.hub, slack=slack_link.store())
     except _admin.AdminError as exc:
         raise _fail(exc) from exc
     return SignoutResult(tokenVersion=version)

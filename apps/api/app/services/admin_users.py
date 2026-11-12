@@ -882,12 +882,14 @@ def update_user(admin: AuthUser, actor_id: int, identities: Any, users: Any, *,
 
 
 def signout(admin: AuthUser, actor_id: int, identities: Any, users: Any, *, links: Any = None,
-            hub: Any = None, db: Database | None = None, now: float | None = None) -> int:
+            hub: Any = None, db: Database | None = None, now: float | None = None,
+            slack: Any = None) -> int:
     """`POST /admin/users/{actorId}/signout` - hamma sessiyalar tugaydi.
 
     Versiya oshadi (veb va mini app tokenlari 401 oladi), Telegram bot
-    ulanishlari uziladi (bot sessiyasi JWT emas - u faqat ulanish bilan
-    yashaydi) va xotiradagi HRM paroli o'chiriladi. HRM/CRM ulanishlari
+    va Slack (`slack` - `slack_links.LinkStore`) ulanishlari uziladi (u
+    yerdagi sessiya JWT emas - u faqat ulanish bilan yashaydi) va
+    xotiradagi HRM paroli o'chiriladi. HRM/CRM ulanishlari
     QOLADI: ular sessiya emas, odamning saqlangan ulanishi (`/auth/logout`
     izohi); ularni uzish - alohida tugma.
     """
@@ -895,6 +897,7 @@ def signout(admin: AuthUser, actor_id: int, identities: Any, users: Any, *, link
     now = time.time() if now is None else now
     actor_id = int(actor_id)
     telegram = len(links.by_actor(actor_id)) if links is not None else 0
+    slack_links = len(slack.by_actor(actor_id)) if slack is not None else 0
     try:
         with db.transaction() as conn:
             _person_or_404(actor_id, identities, users, db)
@@ -902,14 +905,21 @@ def signout(admin: AuthUser, actor_id: int, identities: Any, users: Any, *, link
             new = AdminState(actor_id=actor_id, roles=old.roles, disabled=old.disabled,
                              token_version=old.token_version + 1, note=old.note)
             _upsert_state(conn, new, by=_by(admin), now=now)
-            write_audit(conn, admin, "user.signout", "user", actor_id,
-                        {"tokenVersion": new.token_version, "telegramLinks": telegram}, ts=now)
+            detail = {"tokenVersion": new.token_version, "telegramLinks": telegram}
+            if slack_links:
+                detail["slackLinks"] = slack_links
+            write_audit(conn, admin, "user.signout", "user", actor_id, detail, ts=now)
     except AdminError:
         raise
     except (sqlite3.Error, OSError) as exc:
         raise _write_failed(exc) from exc
     if links is not None:
         links.unlink_actor(actor_id)
+    if slack is not None:
+        try:
+            slack.unlink_actor(actor_id)
+        except OSError:
+            log_limited("admin_users.slack", "Slack ulanishi uzilmadi", exc_info=True)
     if hub is not None:
         try:
             hub.forget_password(str(actor_id))

@@ -57,6 +57,8 @@ SSO_CLIENT_SECRET=<Clients -> barno-ai -> Credentials>
 SSO_APP_URL=https://llm.brb-tech.uz                 # prod'da ANIQ; dev'da bo'sh qolsa so'rovdan olinadi
 # SSO_MOBILE_REDIRECT=barnoai://sso                 # mobil ilova tayyor bo'lganda
 # SSO_CRM_CONNECT=true                              # default: CRM ulanishi SSO sessiyasidan (pastda)
+# SLACK_LINK_REQUIRED=true                          # default: Slack'da har kim o'z hisobini ulaydi (pastda)
+# SLACK_LINK_DAYS=30                                # Slack ulanishi oxirgi faollikdan shuncha kun yashaydi
 LOCAL_LOGIN_ENABLED=true                            # users.yaml bilan zahira kirish; prod'da false qilish mumkin
 ```
 
@@ -138,8 +140,8 @@ qarang).
   granti, `services/sso.py`) OLIB TASHLANDI. U parolni ko'rar va o'sha
   parol bilan HRM ga ham kirar edi - SSO ning ma'nosiga zid.
 - Natija: HRM ulanishi kirishda o'zi ochilmaydi - "+" menyusida (Ulanishlar)
-  qo'lda ulanadi. HRM Keycloak tokenini QABUL QILMAYDI (o'z JWT'si, 2026-09-29
-  da tekshirilgan) - HRM jamoasi buni qo'shguncha shunday qoladi. HRM tokeni
+  qo'lda ulanadi (SSO sessiyasidan ulash hali qurilmagan - "Keyingi bosqichlar",
+  3-band: HRM Keycloak tokenini tekshiradi, eski "o'z JWT'si" yozuvi noto'g'ri edi). HRM tokeni
   10 soatlik; parol faqat xotirada turadi, API qayta ishga tushsa odam HRM ni
   qayta ulaydi.
 - CRM ulanishi SSO sessiyasidan O'ZI ochiladi (2026-11-12, pastdagi bo'lim) va
@@ -156,7 +158,12 @@ qarang).
    -> `barnoai://sso?sso=<kod>` -> `exchange` (`SSO_MOBILE_REDIRECT`).
 2. Telegram Mini App: kirish ekraniga SSO tugmasi (hozir u yerda faqat parol
    shakli - pastdagi "Ma'lum cheklovlar").
-3. HRM - HRM jamoasi Keycloak tokenini qabul qilganda (unga qadar qo'lda).
+3. HRM - SSO sessiyasidan o'zi ulanishi (CRM kabi). HRM jamoasi kod bo'yicha ko'rsatdi
+   (2026-11-12): HRM Keycloak `brb-realm` tokenini Bearer sifatida tekshiradi (`iss`, `aud` =
+   `account`, imzo), `/api/authenticate` ham Keycloak tokenini (`smart-office-client`) qaytaradi.
+   Ya'ni "HRM o'z JWT'sini beradi" degan eski yozuv (2026-09-29) noto'g'ri. Barno'ning `barno-ai`
+   tokeni bilan jonli sinov (`GET /api/account` -> 200) hali qilinmagan; o'tsa - HRM ham kirishda
+   o'zi ulanadi va «Ulanishlar» dagi login + parol olib tashlanadi.
 4. Jonli sayt uchun prod Keycloak'da `barno-ai` client'i, `SSO_*` prod `.env` da,
    `pip install -e .` (`cryptography`), `venera-api` ni qayta ishga tushirish.
 
@@ -284,6 +291,41 @@ Eski klientlar buzilmaydi, lekin farqni ko'rsatadi: yangilanmagan klient
 u "ulanmagan" ko'rinadi, ulash yoki kalit urinishi 404 oladi; CRM esa
 ishlayveradi. Namoyish manbalari kaliti ham 404 oladi - eski ilova kalitni
 joyiga qaytaradi.
+
+## Slack: «Connect Barno AI account» (2026-11-12, ega qarori)
+
+Avval Slack'dagi hamma odam bitta umumiy hisobda edi (`SLACK_ACTOR_ID`). Endi har kim o'z hisobini
+BIR MARTA ulaydi (Slack'dagi Claude agentidagi kabi):
+
+1. Ulanmagan odam Barno AI ga yozadi (matn, audio, thread'dagi savol, `/plaud`, tugma) - Barno ishni
+   BAJARMAYDI, faqat o'ziga ko'rinadigan xabar: "Barno AI hisobingizni ulang" va «Connect Barno AI
+   account» tugmasi. Chat birinchi ochilganda - yo'riqnoma va shu tugma; "Home" varag'ida ham bor.
+2. Tugma - havola `<SSO_APP_URL>/link/slack?t=<chipta>`. Chipta tasodifiy, bir martalik, 30 daqiqa,
+   faqat API jarayoni xotirasida; Slack id'lari havolada YO'Q - chiptaning serverdagi yozuvida (ular
+   faqat Slack yetkazgan hodisadan olinadi).
+3. Brauzerda Barno: kirmagan bo'lsa TO'G'RI kirish sahifasi (BRB-Tech ID yoki login + parol), kirgach
+   tasdiq sahifasi: "Slack hisobi - <ism>, Barno hisobi - <siz>" va ogohlantirish. Ulanish FAQAT
+   «Ulash» bosilganda (`POST /api/v1/slack/link`): havolani boshqaga yuborib, uning hisobiga o'z
+   Slack'ini bog'lab olish (havola-hujum) shu bilan yopiladi. Slack'ka "ulandi" xabari keladi.
+4. Shundan keyin audio va savollar odamning O'Z hisobida: yozuv uniki, Slack'dagi savollari
+   ilovadagi suhbati bilan bitta (so'rovchi yo'q), chegaralar shaxsiy. Plaud ulangan har bir
+   xodimga ochiq (ega qarori) - `MEETINGS_LOGINS` Slack'da tekshirilmaydi.
+
+ESKI yozuvlar (ulashdan oldin kelganlari) umumiy hisobda qoladi: kartalari, thread savollari va
+chatdagi savol ishlayveradi (avval odamning o'z hisobidan, topilmasa umumiy hisobdan qidiriladi;
+u yerda suhbat avvalgidek `slack:<user id>` bo'yicha). Shuning uchun `SLACK_ACTOR_ID` ni o'chirmang.
+
+Ulanish `data/slack/links.json` da (`<team>:<user>` -> actor_id va vaqtlar; ism, token YO'Q; 600),
+oxirgi faollikdan `SLACK_LINK_DAYS` yashaydi. Uzish: Slack "Home" varag'idagi «Uzish», veb'da
+`POST /api/v1/slack/unlink`, admin panelidagi "hamma joydan chiqarish" (audit'da `slackLinks`).
+Hisob o'chirilsa - keyingi xabarda ulanish ham o'chadi; bloklansa - Slack'da sababi aytiladi.
+
+Majburiylik: `SLACK_LINK_REQUIRED=true` (default) VA `SSO_APP_URL` to'ldirilgan bo'lsa. Aks holda
+Slack eskicha umumiy hisobda ishlaydi (dev'da `SSO_APP_URL` http bo'lsa ham ishlaydi, lekin dev'da
+Slack o'chiq - sinov faqat jonli serverda).
+
+MA'LUM: ilovadagi (veb, mobil) Plaud bo'limi hali faqat ADMIN va `MEETINGS_LOGINS` ga ochiq.
+Ro'yxatda yo'q odam Slack'dagi yozuvlarini faqat Slack'da ko'radi (ilovada 403).
 
 ## CRM ulanishi SSO sessiyasidan (2026-11-12)
 

@@ -584,7 +584,23 @@ class Settings(BaseSettings):
     #: butun `Settings` ni yiqitardi va API restartda umuman ko'tarilmasdi (jonli
     #: `.env` da aynan shunday bo'ldi). Matn ishlatilgan joyda tekshiriladi
     #: (`slack/transcribe.py: account`) - xatoni odam Slack'da ko'radi.
+    #:
+    #: 2026-11-12 dan (ega qarori) har kim O'Z hisobini ulaydi (`slack_link_required`);
+    #: bu hisob endi faqat ESKI yozuvlar uchun (ulashdan oldin kelgan audiolar va
+    #: ularning kartalari shu hisobniki bo'lib qoladi) va ulash o'chirilgan o'rnatma uchun.
     slack_actor_id: str = ""
+    #: Slack'da shaxsiy hisob MAJBURIY: ulanmagan odamga Barno AI ishni bajarmaydi,
+    #: «Connect Barno AI account» tugmasini yuboradi (`app/slack/link.py`) - tugma Barno
+    #: kirish sahifasini ochadi (BRB-Tech ID yoki login + parol), kirgach odam ulanishni
+    #: tasdiqlaydi. Havola uchun `SSO_APP_URL` kerak: u bo'sh bo'lsa bu sozlamaning ta'siri
+    #: yo'q va Slack eskicha umumiy hisobda (`slack_actor_id`) ishlaydi. Ulangan har bir
+    #: xodimga Plaud ochiq (ega qarori) - `MEETINGS_LOGINS` ro'yxati Slack'ga qo'llanmaydi.
+    slack_link_required: bool = True
+    #: Slack ulanishi OXIRGI FAOLLIKDAN shuncha kun yashaydi (Telegram ulanishidagi kabi).
+    slack_link_days: int = 30
+    #: Slack hisobi -> Barno hisobi (`services/slack_links.py`). Faqat id'lar va vaqtlar;
+    #: `data/` gitignore'da, fayl 600.
+    slack_links_file: Path = BASE_DIR / "data" / "slack" / "links.json"
 
     # --- Xodimlar ma'lumotnomasi (kontaktlar) ---
     #: F.I.SH, Telegram, telefon, email - `services/contacts.py`. SHAXSIY

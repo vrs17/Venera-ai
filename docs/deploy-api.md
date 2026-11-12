@@ -1443,9 +1443,11 @@ MEETINGS_ASK_PER_HOUR=60              # bitta hisobning soatlik chegarasi - chat
 
 - **"Yangi suhbat"** yumshoq: navbatlar `archived_at` bilan arxivga, bazada qoladi. Qayta o'girish ham faol
   navbatlarni arxivga o'tkazadi.
-- **Slack:** hamma odam bitta hisobdan (`SLACK_ACTOR_ID`), lekin suhbat har odamniki (`questions.asker` =
-  `slack:<user id>`): xotira va "Yangi suhbat" alohida, ilovada (hisob egasida) ko'rinmaydi. Soatlik chegara
-  esa hisobga - Slack'dagi hamma odamga bitta.
+- **Slack:** 2026-11-12 dan har kim O'Z hisobini ulaydi («Connect Barno AI account», `docs/auth-sso.md`):
+  yozuv va suhbat odamniki, ilovadagi suhbati bilan bitta, chegara shaxsiy. ESKI yozuvlar umumiy hisobda
+  (`SLACK_ACTOR_ID`) qoladi: u yerda suhbat har odamniki (`questions.asker` = `slack:<user id>`), xotira va
+  "Yangi suhbat" alohida, ilovada (hisob egasida) ko'rinmaydi, soatlik chegara hammaga bitta. Ulash
+  o'chiq (`SLACK_LINK_REQUIRED=false` yoki `SSO_APP_URL` bo'sh) bo'lsa - hammasi eskicha umumiy hisobda.
 - **Idempotentlik:** `POST /chat` dagi `clientId` (ilova «Qayta yuborish»da o'sha kalitni yuboradi) - 504 yoki
   uzilgan ulanishdan keyingi qayta urinish ikkinchi navbat yozmaydi va modelga qayta bormaydi; hali javob
   kutayotgan o'sha kalitni so'rov `MEETINGS_ASK_DEADLINE` + 15 s gacha kutadi (jarayon ichida - bugun bitta worker).

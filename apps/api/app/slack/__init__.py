@@ -135,6 +135,7 @@ def _on_message(event: dict[str, Any], client: Any, context: Any) -> None:
     pool = _pool
     if pool is None:
         return
+    _stamp_team(event, context)
     if keep.wants(event):
         pool.submit(keep.record, event)
     bot_user = context.get("bot_user_id")
@@ -157,24 +158,37 @@ def _on_command(ack: Any, body: dict[str, Any], client: Any) -> None:
         pool.submit(home.on_command, client, body)
 
 
-def _on_home(event: dict[str, Any], client: Any) -> None:
+def _on_home(event: dict[str, Any], client: Any, context: Any) -> None:
     """Barno AI ochildi - "Home" varag'i (`home.py`)."""
     from . import home
 
     pool = _pool
     if pool is not None:
+        _stamp_team(event, context)
         pool.submit(home.on_open, client, event)
+
+
+def _stamp_team(event: dict[str, Any], context: Any) -> None:
+    """Hodisaga ish maydoni id'sini yozadi - Slack hisobi kaliti `<team>:<user>` (`link.py`). Manba -
+    Bolt konteksti (Slack konverti), tugmalardagi `team.id` bilan bir xil; hodisaning o'z `team` maydoni
+    har doim ham bo'lmaydi (`file_share`, `app_home_opened`)."""
+    team = context.get("team_id")
+    if team:
+        event["team"] = team
 
 
 def _on_action(ack: Any, body: dict[str, Any], client: Any) -> None:
     """Tugma va ro'yxat. Slack javobni 3 s ichida kutadi - `ack` darhol, ish navbatda."""
-    from . import home, meeting
+    from . import home, link, meeting
 
     ack()
     pool = _pool
     if pool is None:
         return
-    if home.is_plaud(body):
+    if link.handles(body):
+        # «Connect Barno AI account» (havola - faqat `ack`), "Home" dagi ulash va «Uzish».
+        pool.submit(link.on_action, client, body)
+    elif home.is_plaud(body):
         pool.submit(home.on_plaud, client, body)
     else:
         pool.submit(meeting.on_action, client, body, sleep=_sleep)
