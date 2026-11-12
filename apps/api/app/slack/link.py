@@ -29,7 +29,6 @@ manzil kerak; Slack kodida uni olish uchun HTTP so'rov yo'q). Aks holda Slack es
 from __future__ import annotations
 
 import logging
-import secrets
 import threading
 import time
 
@@ -41,6 +40,7 @@ from ..core.config import settings
 from ..schemas.auth import AuthUser
 from ..services import admin_users
 from ..services.meetings.intake import Problem
+from ..services.link_tickets import TicketStore
 from ..services.slack_links import LinkStore
 from . import render
 
@@ -48,8 +48,6 @@ log = logging.getLogger(__name__)
 
 #: Chipta muddati: kirish sahifasi, parol, ikki bosqichli tasdiq - yarim soat yetarli.
 TICKET_TTL = 1800.0
-#: Xotira chegarasi (`oidc._MAX_ENTRIES` kabi).
-_MAX_TICKETS = 5000
 #: Tugmalar. Hammasi `barno_` bilan boshlanadi - Bolt faqat shu naqshni tinglaydi (`__init__.py`).
 LINK_ACTION = "barno_link"          # havola-tugma (brauzerni Slack o'zi ochadi; bizga faqat `ack` kerak)
 CONNECT_ACTION = "barno_connect"    # "Home" varag'idagi tugma -> chatga ulash xabari
@@ -85,48 +83,7 @@ class Ticket:
     created: float
 
 
-class _Tickets:
-    """`{chipta: Ticket}` - TTL bilan. `peek` yoqmaydi (tasdiq sahifasi ma'lumoti), `pop` yoqadi (ulash)."""
-
-    def __init__(self, ttl: float) -> None:
-        self.ttl = ttl
-        self._lock = threading.Lock()
-        self._items: dict[str, Ticket] = {}
-
-    def put(self, value: str, ticket: Ticket) -> None:
-        with self._lock:
-            self._prune()
-            self._items[value] = ticket
-
-    def peek(self, value: str) -> Ticket | None:
-        with self._lock:
-            self._prune()
-            return self._items.get(value)
-
-    def pop(self, value: str) -> Ticket | None:
-        with self._lock:
-            self._prune()
-            return self._items.pop(value, None)
-
-    def clear(self) -> None:
-        with self._lock:
-            self._items.clear()
-
-    def __len__(self) -> int:
-        with self._lock:
-            self._prune()
-            return len(self._items)
-
-    def _prune(self) -> None:
-        now = time.time()
-        for value in [v for v, t in self._items.items() if now - t.created > self.ttl]:
-            self._items.pop(value, None)
-        if len(self._items) > _MAX_TICKETS:
-            for value, _ in sorted(self._items.items(), key=lambda kv: kv[1].created)[: len(self._items) // 2]:
-                self._items.pop(value, None)
-
-
-TICKETS = _Tickets(TICKET_TTL)
+TICKETS: TicketStore[Ticket] = TicketStore(TICKET_TTL)
 _offered: dict[str, float] = {}
 _offered_lock = threading.Lock()
 _store: LinkStore | None = None
@@ -201,10 +158,8 @@ def linked_name(team_id: str | None, user_id: str | None) -> str | None:
 
 
 def new_ticket(team_id: str | None, user_id: str, channel: str | None, *, name: str = "") -> str:
-    value = secrets.token_urlsafe(32)
-    TICKETS.put(value, Ticket(team_id=(team_id or "").strip(), user_id=user_id, channel=channel or "",
+    return TICKETS.new(Ticket(team_id=(team_id or "").strip(), user_id=user_id, channel=channel or "",
                               name=name.strip()[:120], created=time.time()))
-    return value
 
 
 def link_url(ticket: str) -> str:

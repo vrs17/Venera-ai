@@ -5,6 +5,12 @@
     POST /telegram/session  ulangan Telegram hisobi -> yangi Venera sessiyasi
     POST /telegram/webhook  Telegram'ning o'zi xabar yuboradi (webhook rejimi)
 
+    BRB-Tech ID orqali birinchi kirish (2026-11-12) - brauzerda tasdiq, pastdagi bo'lim:
+    POST /telegram/link-ticket          Mini App: imzo -> chipta va brauzer havolasi
+    GET  /telegram/link-ticket/{t}      tasdiq sahifasi: kim kimga ulanyapti (sessiya bilan)
+    POST /telegram/link-ticket/confirm  tasdiq sahifasi: "Ulash" (sessiya bilan)
+    POST /telegram/link-ticket/claim    Mini App: chipta + imzo -> `pending` yoki sessiya
+
 ISBOT IKKITA, va ikkalasi ham kerak:
 
   * `Authorization` sessiyasi - "bu kim" (Venera hisobi);
@@ -28,8 +34,11 @@ from __future__ import annotations
 
 import hmac
 import logging
+import time
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from dataclasses import dataclass, replace
+
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 
 from ... import bot
 from ...core.channels import CLIENT_CHANNELS, channel_of
@@ -41,11 +50,17 @@ from ...schemas.telegram import (
     TelegramLinkRequest,
     TelegramLinkResult,
     TelegramSessionRequest,
+    TelegramTicket,
+    TelegramTicketClaim,
+    TelegramTicketClaimResult,
+    TelegramTicketConfirm,
+    TelegramTicketInfo,
     TelegramUnlinkResult,
 )
 from ...services.analytics import record_auth_event
 from ...services.identities import Directory, Identity, IdentityStore
 from ...services.integrations.telegram import InitDataError, verify_init_data
+from ...services.link_tickets import TicketStore
 from ...services.reports import RateLimiter
 from ...services.users import UserStore
 from ..deps import current_user, get_identity_store, get_user_store
@@ -120,7 +135,7 @@ _session_limiter = RateLimiter(limit=6, window=60)
 #: faqat jurnalda va `auth_events` da. Mini App baribir hammasida kirish
 #: ekraniga o'tadi, tashqariga esa "bu Telegram hisobi ulangan" degan ma'lumot
 #: chiqmaydi.
-_MSG_NO_SESSION = "Telegram orqali kirib bo'lmadi - login va parol bilan kiring"
+_MSG_NO_SESSION = "Telegram orqali kirib bo'lmadi - BRB-Tech ID bilan kiring"
 
 
 def _session_channel(request: Request) -> str:
@@ -153,8 +168,8 @@ def session(
     """Ulangan Telegram hisobi -> yangi Venera sessiyasi (parolsiz).
 
     ISBOT: Telegram imzosi (faqat Telegram yasaydi) + MAVJUD ulanish. Ulanishni
-    faqat parol bilan kirgan sessiya va o'sha imzo birga yaratadi (`/link`),
-    ya'ni bu yo'l parol bilan bir marta kirilgan joyni qayta ochadi, xolos.
+    kirgan sessiya va o'sha imzo birga yaratadi (`/link`, yoki brauzerdagi tasdiq -
+    `/link-ticket/confirm`), ya'ni bu yo'l bir marta kirilgan joyni qayta ochadi, xolos.
     Chiqishda Mini App avval `/unlink` ni chaqiradi - shundan keyin bu yerda 401.
 
     Kirish qoidalari `/auth/login` niki: admin bloki (403), sessiya versiyasi
@@ -183,7 +198,12 @@ def session(
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                             detail="Juda ko'p urinish - birozdan keyin qayta oching",
                             headers={"Retry-After": str(wait)})
+    return _open_session(tg_id, store, identities, channel)
 
+
+def _open_session(tg_id: int, store: UserStore, identities: IdentityStore, channel: str) -> LoginResponse:
+    """Ulanish -> Venera sessiyasi, `/auth/login` qoidalari bilan. Imzo va chegaralar
+    chaqiruvchida (`/session` - 600 s va daqiqasiga 6; `/link-ticket/claim` - chipta)."""
     # `tg:<id>` - login o'rnida: kim urinayotgani admin jurnalida ko'rinsin
     # (Telegram `id` ulanishlar faylida ham turadi - yangi shaxsiy ma'lumot emas).
     tg_login = f"tg:{tg_id}"
@@ -229,6 +249,153 @@ def session(
         passwordChangeRequired=False,
         user=verdict.user,
     )
+
+
+# --- BRB-Tech ID orqali ulash: brauzerda tasdiq (2026-11-12, ega so'rovi) -------------------
+#
+# Mini App ICHIDA Keycloak sahifasini ochib bo'lmaydi: Telegram Web va Desktop Mini App'ni
+# iframe'da ochadi (Keycloak ramkaga ruxsat bermaydi, kirishni brauzerga bog'laydigan SameSite
+# cookie iframe'da yo'qoladi), Android esa boshqa manzilni tashqi brauzerga chiqarib yuborishi
+# mumkin. Shuning uchun - Slack'dagi kabi (`app/slack/link.py`):
+#
+#   1. Mini App chipta oladi (`/link-ticket`): KIM ekanini Telegram IMZOSI aytadi.
+#   2. Havolani BRAUZERDA ochadi (`Telegram.WebApp.openLink`): `<SSO_APP_URL>/link/telegram?t=`.
+#      Odam Barno'ga kiradi (BRB-Tech ID yoki login + parol) va tasdiq sahifasida "Ulash" ni
+#      bosadi (`/link-ticket/confirm`) - ulanish SHU YERDA yoziladi, bot "ulandi" deydi.
+#   3. Mini App chiptani so'rab turadi (`/link-ticket/claim`, O'Z imzosi bilan): tasdiqlangach
+#      sessiya oladi - odam Telegram'ga qaytganda Barno ochiq turadi.
+#
+# NEGA TASDIQ: havolani boshqa odamga yuborib bo'ladi. Hamkasb uni ochib tasdiqsiz ulansa,
+# YUBORUVCHINING Telegram'i HAMKASBNING hisobiga ulanardi va uning HR javoblari begona botga
+# ketardi. Sahifa Telegram ismi va @username'ni ko'rsatadi va ogohlantiradi; kirishning o'zi
+# hech narsani ulamaydi.
+
+#: Chipta muddati: brauzer, BRB-Tech ID, ikki bosqichli tasdiq - yarim soat yetarli.
+LINK_TICKET_TTL = 1800.0
+#: Bitta Telegram hisobidan 10 daqiqada shuncha chipta (tugmani qayta-qayta bosish).
+_ticket_limiter = RateLimiter(limit=10, window=600)
+#: Mini App natijani har ~2.5 s da so'raydi; chegara faqat buzilgan klientga yetadi.
+_claim_limiter = RateLimiter(limit=60, window=60)
+#: Bitta umumiy xabar: chipta yo'q, eskirgan, ishlatilgan yoki boshqa Telegram hisobiniki.
+_MSG_TICKET = "Ulash havolasi eskirgan yoki ishlatilgan - Telegram'da Barno'ni qayta oching"
+_TICKET = Path(min_length=20, max_length=200, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+@dataclass(frozen=True)
+class TgTicket:
+    tg_id: int
+    #: Telegram'dagi ism va @username - tasdiq sahifasida "kim ulanyapti" uchun (imzodan).
+    name: str
+    username: str
+    created: float
+    #: Tasdiqlagan Barno hisobi; `None` - hali tasdiqlanmagan.
+    actor_id: int | None = None
+
+
+TICKETS: TicketStore[TgTicket] = TicketStore(LINK_TICKET_TTL)
+
+
+def _app_url() -> str:
+    return (settings.sso_app_url or "").strip().rstrip("/")
+
+
+def _signed_user(init_data: str) -> dict:
+    """Imzo -> Telegram `user`. Yosh - ulashdagidek (`telegram_init_max_age`): Mini App
+    ochilganiga ancha bo'lgan bo'lishi mumkin, chipta esa o'zi qisqa yashaydi."""
+    try:
+        return verify_init_data(init_data, settings.telegram_bot_token,
+                                max_age=settings.telegram_init_max_age)
+    except InitDataError as exc:
+        log.info("Telegram ulash chiptasi: imzo rad etildi: %s", exc)
+        if exc.stale:
+            raise bad_request("Telegram ma'lumoti eskirgan - ilovani yopib qayta oching") from exc
+        raise bad_request("Telegram ma'lumoti tasdiqlanmadi") from exc
+
+
+def _too_many(wait: int) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                         detail="Juda ko'p urinish - birozdan keyin qayta urinib ko'ring",
+                         headers={"Retry-After": str(wait)})
+
+
+@router.post("/link-ticket", response_model=TelegramTicket)
+def link_ticket(body: TelegramLinkRequest) -> TelegramTicket:
+    """Mini App: "BRB-Tech ID bilan kirish". Imzo -> bir martalik chipta va brauzer havolasi."""
+    if not settings.telegram_bot_token:
+        raise error_status(status.HTTP_501_NOT_IMPLEMENTED, "Telegram bot sozlanmagan")
+    app = _app_url()
+    if not app:
+        raise error_status(status.HTTP_501_NOT_IMPLEMENTED, "Barno manzili sozlanmagan (SSO_APP_URL)")
+    tg_user = _signed_user(body.initData)
+    tg_id = int(tg_user["id"])
+    wait = _ticket_limiter.take(tg_id)
+    if wait is not None:
+        raise _too_many(wait)
+    name = " ".join(str(tg_user.get(k) or "").strip() for k in ("first_name", "last_name")).strip()
+    value = TICKETS.new(TgTicket(tg_id=tg_id, name=name[:120],
+                                 username=str(tg_user.get("username") or "").strip()[:64],
+                                 created=time.time()))
+    log.info("Telegram ulash chiptasi yaratildi (tg %s)", tg_id)
+    return TelegramTicket(ticket=value, url=f"{app}/link/telegram?t={value}", expiresIn=int(LINK_TICKET_TTL))
+
+
+def _open_ticket(value: str) -> TgTicket:
+    found = TICKETS.peek(value)
+    if found is None or found.actor_id is not None:
+        raise error_status(status.HTTP_404_NOT_FOUND, _MSG_TICKET)
+    return found
+
+
+@router.get("/link-ticket/{ticket}", response_model=TelegramTicketInfo)
+def link_ticket_info(ticket: str = _TICKET, user: AuthUser = Depends(current_user)) -> TelegramTicketInfo:
+    """Tasdiq sahifasi: kim kimga ulanyapti. Chiptani YOQMAYDI - sahifa qayta yuklansa ham ishlaydi."""
+    found = _open_ticket(ticket)
+    left = max(0, int(LINK_TICKET_TTL - (time.time() - found.created)))
+    return TelegramTicketInfo(telegramName=found.name or None, telegramUsername=found.username or None,
+                              accountName=user.fullName, accountLogin=user.email, expiresIn=left)
+
+
+@router.post("/link-ticket/confirm", response_model=TelegramLinkResult)
+def link_ticket_confirm(body: TelegramTicketConfirm, request: Request,
+                        user: AuthUser = Depends(current_user)) -> TelegramLinkResult:
+    """"Ulash": Telegram hisobi (chiptadagi, imzodan) shu sessiya egasiga ulanadi. Chipta
+    "tasdiqlangan" bo'lib qoladi - uni endi faqat O'SHA Telegram hisobi yig'ib oladi (`claim`)."""
+    found = _open_ticket(body.ticket)
+    if not TICKETS.swap(body.ticket, found, replace(found, actor_id=user.actorId)):
+        raise error_status(status.HTTP_404_NOT_FOUND, _MSG_TICKET)
+    result = bot.links.link(found.tg_id, user.actorId)
+    log.info("Telegram hisobi brauzerda ulandi (%s, tg %s): %s", user.actorId, found.tg_id, result)
+    if result != "refreshed":
+        bot.welcome(found.tg_id, user)
+    record_auth_event(user.email, True, method="tg_link", channel=channel_of(request), actor_id=user.actorId)
+    return TelegramLinkResult(status=result, bot=bot.username() or None, days=settings.telegram_link_days)
+
+
+@router.post("/link-ticket/claim", response_model=TelegramTicketClaimResult)
+def link_ticket_claim(
+    body: TelegramTicketClaim,
+    request: Request,
+    store: UserStore = Depends(get_user_store),
+    identities: IdentityStore = Depends(get_identity_store),
+) -> TelegramTicketClaimResult:
+    """Mini App: tasdiqlandimi. Chipta va imzo BITTA Telegram hisobiniki bo'lishi shart (boshqa
+    odamning chiptasi - eskirgan bilan bir xil 404). Tasdiqlangach chipta yonadi va sessiya
+    beriladi - qoidalar `/session` niki (blok, sessiya versiyasi, `auth_events`)."""
+    channel = _session_channel(request)
+    if not settings.telegram_bot_token:
+        raise error_status(status.HTTP_501_NOT_IMPLEMENTED, "Telegram bot sozlanmagan")
+    tg_id = int(_signed_user(body.initData)["id"])
+    wait = _claim_limiter.take(tg_id)
+    if wait is not None:
+        raise _too_many(wait)
+    found = TICKETS.peek(body.ticket)
+    if found is None or found.tg_id != tg_id:
+        raise error_status(status.HTTP_404_NOT_FOUND, _MSG_TICKET)
+    if found.actor_id is None:
+        return TelegramTicketClaimResult(status="pending")
+    if TICKETS.pop(body.ticket) != found:
+        raise error_status(status.HTTP_404_NOT_FOUND, _MSG_TICKET)
+    return TelegramTicketClaimResult(status="ready", session=_open_session(tg_id, store, identities, channel))
 
 
 #: Telegram yangilanishi odatda bir necha KB. Undan kattasi - xato yoki suiiste'mol.

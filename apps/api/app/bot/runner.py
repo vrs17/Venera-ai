@@ -171,7 +171,7 @@ COMMANDS = [
 
 _INTRO = (
     "Salom! Men <b>Barno</b> - HRM va CRM bo'yicha yordamchiman.\n\n"
-    "Boshlash uchun pastdagi tugma bilan Barnoni oching va ish loginingiz "
+    "Boshlash uchun pastdagi tugma bilan Barnoni oching va <b>BRB-Tech ID</b> "
     "bilan <b>bir marta</b> kiring. Shundan keyin savollarni shu chatda "
     "yozaverasiz - qayta kirish so'ralmaydi."
 )

@@ -30,8 +30,9 @@ tekshiruvi), `apps/api/app/api/v1/auth.py` (endpointlar),
 `apps/web/src/views/LoginView.vue` + `composables/useAuth.ts` (tugma, qaytish).
 
 Nega server orqali (brauzerdagi kutubxona emas): client siri va PKCE
-verifier brauzerga chiqmaydi, token tekshiruvi bir joyda, mobil ilova va
-Telegram Mini App ham xuddi shu endpointlarni ishlatadi (keyingi bosqich).
+verifier brauzerga chiqmaydi, token tekshiruvi bir joyda. Telegram Mini App
+SSO ni brauzerda o'tkazadi ("Telegram: BRB-Tech ID bilan kirish" bo'limi), mobil
+ilova ham shu endpointlarni ishlatadi (keyingi bosqich).
 
 ## Rollar
 
@@ -148,13 +149,18 @@ qarang).
 - `POST /auth/login` faqat zahira (`users.yaml`); `LOCAL_LOGIN_ENABLED=false`
   bo'lsa 403.
 - Chiqish Keycloak sessiyasini ham yopadi (`LogoutResponse.ssoLogoutUrl`).
+  `id_token_hint` uchun oxirgi ID token `data/sso/id_tokens.json` da (600) - API qayta
+  ishga tushganda yo'qolmaydi. 2026-11-12 gacha u faqat xotirada edi va restartdan keyin
+  chiqish Keycloak'ning "We are sorry... Missing parameters: id_token_hint" sahifasiga
+  olib borardi: `brb-realm` Keycloak'i `post_logout_redirect_uri` ni hint'siz rad etadi
+  (`client_id` yetmaydi). Hint bo'lmasa endi qaytish manzilisiz manzil beriladi - Keycloak
+  "chiqasizmi?" deb so'raydi, xato yo'q.
 
 ## Keyingi bosqichlar
 
 1. Mobil ilova: tizim brauzeri -> `start?return=barnoai://sso&channel=mobile`
    -> `barnoai://sso?sso=<kod>` -> `exchange` (`SSO_MOBILE_REDIRECT`).
-2. Telegram Mini App: kirish ekraniga SSO tugmasi (hozir u yerda faqat parol
-   shakli - pastdagi "Ma'lum cheklovlar").
+2. Telegram Mini App: QURILDI (2026-11-12) - "Telegram: BRB-Tech ID bilan kirish" bo'limi.
 3. HRM - SSO sessiyasidan o'zi ulanadi va jonli tekshirildi (2026-11-12); qo'lda ulash olib
    tashlandi.
 4. Jonli sayt uchun prod Keycloak'da `barno-ai` client'i, `SSO_*` prod `.env` da,
@@ -201,13 +207,11 @@ Testlar: `tests/test_sso_hardening.py`.
 
 ## Ma'lum cheklovlar (jonli chiqishda bilish kerak)
 
-- **Mobil ilova va Telegram Mini App**: ularning kirish ekrani hali login +
-  parolni `POST /auth/login` ga yuboradi, u esa endi faqat `users.yaml` ni
-  taniydi - Keycloak hisobi bilan u yerda KIRIB BO'LMAYDI. Ishlayveradi: zahira
-  (`users.yaml`) hisoblar, qurilma tokeni bor telefonlar (`/auth/devices/session`)
-  va Telegram'ga allaqachon ulangan hisoblar (`/telegram/session`, bot). Yangi
-  Telegram foydalanuvchisi yoki "Chiqish" bosgan odam Mini App'ga qayta kira
-  olmaydi (veb'dagi SSO sessiyasi Telegram WebView'ga o'tmaydi).
+- **Mobil ilova**: kirish ekrani hali login + parolni `POST /auth/login` ga
+  yuboradi, u esa endi faqat `users.yaml` ni taniydi - Keycloak hisobi bilan u
+  yerda KIRIB BO'LMAYDI. Ishlayveradi: zahira (`users.yaml`) hisoblar va qurilma
+  tokeni bor telefonlar (`/auth/devices/session`). Telegram Mini App'da bu
+  cheklov 2026-11-12 da yopildi (pastdagi bo'lim).
 - **HRM va CRM faqat VEB'dagi SSO kirishida ulanadi** - boshqa yo'l yo'q (qo'lda
   ulash olib tashlangan). Ulanish o'sha odamning hamma kanaliga (veb, Mini App,
   bot, Slack) xizmat qiladi. Vebga BRB-Tech ID bilan hech kirmagan odamning (faqat
@@ -323,6 +327,38 @@ Slack o'chiq - sinov faqat jonli serverda).
 
 MA'LUM: ilovadagi (veb, mobil) Plaud bo'limi hali faqat ADMIN va `MEETINGS_LOGINS` ga ochiq.
 Ro'yxatda yo'q odam Slack'dagi yozuvlarini faqat Slack'da ko'radi (ilovada 403).
+
+## Telegram: BRB-Tech ID bilan kirish (2026-11-12, ega so'rovi)
+
+Mini App ICHIDA Keycloak sahifasini ochib bo'lmaydi: Telegram Web va Desktop Mini App'ni
+iframe'da ochadi (Keycloak ramkaga ruxsat bermaydi, kirishni brauzerga bog'laydigan
+SameSite cookie iframe'da yo'qoladi), Android esa boshqa manzilni tashqi brauzerga
+chiqarib yuborishi mumkin. Shuning uchun - Slack'dagi kabi - kirish BRAUZERDA va tasdiq bilan:
+
+1. Mini App kirish ekranida asosiy tugma «BRB-Tech ID bilan kirish» (server SSO sozlangan
+   bo'lsa; login + parol - pastda, faqat `LOCAL_LOGIN_ENABLED=true` bo'lsa).
+2. `POST /api/v1/telegram/link-ticket {initData}` - Telegram imzosi bilan bir martalik
+   chipta (30 daqiqa, xotirada) va havola `<SSO_APP_URL>/link/telegram?t=<chipta>`; Mini App
+   uni `Telegram.WebApp.openLink` bilan tashqi brauzerda ochadi va "Brauzerda davom eting"
+   holatiga o'tadi. Telegram `id` havolada YO'Q - chiptaning serverdagi yozuvida.
+3. Brauzerda Barno: kirmagan bo'lsa kirish sahifasi (BRB-Tech ID yoki login + parol),
+   keyin tasdiq sahifasi (`LinkAccountView`, Slack bilan umumiy): "Telegram hisobi - <ism,
+   @username>, Barno hisobi - <siz>" va ogohlantirish. «Ulash» bosilganda
+   (`POST /telegram/link-ticket/confirm`) Telegram ulanishi YOZILADI va bot "ulandi" deydi.
+4. Mini App har ~2.5 s da (ekran ko'rinib turganda va Telegram'ga qaytilgan zahoti)
+   `POST /telegram/link-ticket/claim {ticket, initData}` so'raydi: `pending` yoki sessiya
+   (qoidalar `/telegram/session` niki - blok 403, sessiya versiyasi, `auth_events`). Chipta
+   faqat UNI YARATGAN Telegram hisobi tomonidan yig'iladi va bir martalik.
+
+Nega tasdiq: havolani boshqaga yuborib, uning hisobiga o'z Telegram'ini bog'lab olish
+(keyin bot orqali uning HR/CRM javoblarini o'qish) - kirishning o'zi hech narsani
+ulamaydi, sahifa kim ulanayotganini aytadi. Chegaralar: chipta - Telegram hisobiga 10
+daqiqada 10 ta, `claim` - daqiqasiga 60. Bot chatida o'zgarish yo'q: ulanmagan odamga
+"Barnoni ochish" tugmasi Mini App'ni ochadi, u yerda shu tugma. Mini App sessiyasi SSO
+belgisiz (Keycloak sessiyasi brauzerda qoladi), "Chiqish" Telegram ulanishini uzadi.
+Kod: `api/v1/telegram.py`, `services/link_tickets.py` (Slack bilan umumiy chipta ombori),
+`apps/web/src/tg/useTgSession.ts`, `tg/screens/LoginScreen.vue`. Testlar:
+`tests/test_telegram_link_ticket.py`.
 
 ## CRM ulanishi SSO sessiyasidan (2026-11-12)
 

@@ -3,13 +3,21 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { CircleAlert, Eye, EyeOff, ExternalLink } from 'lucide-vue-next'
 import { authErrorKind, localizeAuthError } from '../../api/errors'
+import { ApiError } from '../../api/http'
 import BrandSpark from '../../components/BrandSpark.vue'
-import { haptic, mainButton, openLink } from '../telegram'
-import { useTgSession } from '../useTgSession'
+import { useAuth } from '../../composables/useAuth'
+import { haptic, initData, mainButton, openLink } from '../telegram'
+import { useTgSession, type PendingTicket } from '../useTgSession'
 
 /**
- * Birinchi ochilish: HRM / CRM (Keycloak) login va paroli - BIR MARTA. Kirgach
- * Telegram hisobi shu hisobga ulanadi va keyingi ochilishlar avtomatik (useTgSession).
+ * Birinchi ochilish - BIR MARTA kirish. Kirgach Telegram hisobi shu hisobga ulanadi va keyingi
+ * ochilishlar avtomatik (useTgSession).
+ *
+ * ASOSIY YO'L (server SSO sozlangan bo'lsa) - «BRB-Tech ID bilan kirish»: havola BRAUZERDA
+ * ochiladi, odam u yerda kiradi va ulanishni tasdiqlaydi, ekran esa "Brauzerda davom eting"
+ * holatida natijani so'rab turadi (har 2.5 s, ekran ko'rinib turganda, va Telegram'ga
+ * qaytilgan zahoti). Tasdiqlangach chat o'zi ochiladi. Login + parol - zahira (`users.yaml`),
+ * faqat server ruxsat bersa (`localLoginEnabled`) va pastda.
  *
  * "Kirish" - Telegram'ning O'Z pastki tugmasi (MainButton): u klaviatura ustida
  * turadi va Telegram foydalanuvchisiga tanish. Telegram'dan tashqarida (stub) -
@@ -27,7 +35,89 @@ import { useTgSession } from '../useTgSession'
  */
 const props = withDefaults(defineProps<{ fromBrand?: boolean }>(), { fromBrand: false })
 const { t } = useI18n({ useScope: 'global' })
-const { login, lastLogin, notice } = useTgSession()
+const { login, lastLogin, notice, startBrowserSignIn, claimBrowserSignIn, cancelBrowserSignIn, pendingTicket } =
+  useTgSession()
+
+// --- BRB-Tech ID (brauzerda) -------------------------------------------------------
+// SSO tugmasi Telegram imzosi (`initData`) bo'lgandagina: chipta shu imzo bilan olinadi.
+const ssoEnabled = ref(false)
+const localEnabled = ref(true)
+const ssoBusy = ref(false)
+const ssoError = ref('')
+const waiting = ref<PendingTicket | null>(pendingTicket())
+let pollTimer: number | undefined
+let polling = false
+
+function stopTimer() {
+  if (pollTimer !== undefined) window.clearInterval(pollTimer)
+  pollTimer = undefined
+}
+
+function stopWaiting(forget = true) {
+  stopTimer()
+  if (forget) cancelBrowserSignIn()
+  waiting.value = null
+}
+
+async function poll() {
+  const pending = waiting.value
+  if (!pending || polling) return
+  if (Date.now() > pending.until) {
+    stopWaiting()
+    ssoError.value = t('tg.login.gone')
+    return
+  }
+  if (document.visibilityState === 'hidden') return
+  polling = true
+  try {
+    const result = await claimBrowserSignIn(pending.ticket)
+    if (result === 'ready') {
+      haptic.notify('success')
+      stopWaiting(false)
+    } else if (result === 'gone') {
+      stopWaiting()
+      ssoError.value = notice.value === 'blocked' ? t('shell.auth.blocked') : t('tg.login.gone')
+      haptic.notify('error')
+    }
+  } catch {
+    /* tarmoq - keyingi urinishda */
+  } finally {
+    polling = false
+  }
+}
+
+function startPolling() {
+  stopTimer()
+  pollTimer = window.setInterval(() => void poll(), 2500)
+  void poll()
+}
+
+function onVisible() {
+  if (document.visibilityState === 'visible') void poll()
+}
+
+async function signInWithSso() {
+  if (ssoBusy.value || waiting.value) return
+  ssoBusy.value = true
+  ssoError.value = ''
+  try {
+    waiting.value = await startBrowserSignIn()
+    startPolling()
+  } catch (err) {
+    ssoError.value = err instanceof ApiError && err.status === 429 ? err.message : t('tg.login.ssoFailed')
+    haptic.notify('error')
+  } finally {
+    ssoBusy.value = false
+  }
+}
+
+function reopen() {
+  if (waiting.value) openLink(waiting.value.url)
+}
+
+function cancelWait() {
+  stopWaiting()
+}
 
 // "Qayta ulash" dan kelgan bo'lsa - login tayyor, faqat parol.
 const username = ref(lastLogin.value)
@@ -91,18 +181,41 @@ function onUserEnter() {
 }
 
 // --- Telegram MainButton ------------------------------------------------------
+// SSO bor - pastki tugma «BRB-Tech ID bilan kirish» (parol shakli o'z tugmasi bilan); kutish
+// paytida yashirin (sahifada "qayta ochish" va "bekor qilish"); SSO yo'q - avvalgidek "Kirish".
 let offMain: (() => void) | null = null
-watch(
-  [busy, () => t('tg.login.submit')],
-  () => mainButton.set({ text: busy.value ? t('tg.login.busy') : t('tg.login.submit'), progress: busy.value }),
-)
-onMounted(() => {
-  if (lastLogin.value) passEl.value?.focus({ preventScroll: true })
+function syncMainButton() {
   if (!mainButton.native) return
-  offMain = mainButton.onClick(() => void submit())
-  mainButton.set({ text: t('tg.login.submit'), visible: true, active: true, progress: false })
+  if (waiting.value) {
+    mainButton.set({ visible: false, progress: false })
+  } else if (ssoEnabled.value) {
+    mainButton.set({ text: ssoBusy.value ? t('tg.login.ssoBusy') : t('tg.login.sso'), visible: true, active: true,
+                     progress: ssoBusy.value })
+  } else {
+    mainButton.set({ text: busy.value ? t('tg.login.busy') : t('tg.login.submit'), visible: true, active: true,
+                     progress: busy.value })
+  }
+}
+watch([busy, ssoBusy, waiting, ssoEnabled, () => t('tg.login.submit')], syncMainButton)
+onMounted(async () => {
+  if (lastLogin.value) passEl.value?.focus({ preventScroll: true })
+  document.addEventListener('visibilitychange', onVisible)
+  if (mainButton.native) {
+    offMain = mainButton.onClick(() => void (ssoEnabled.value ? signInWithSso() : submit()))
+    syncMainButton()
+  }
+  if (waiting.value) startPolling()
+  try {
+    const cfg = await useAuth().loadSsoConfig()
+    ssoEnabled.value = Boolean(cfg.enabled) && !!initData
+    localEnabled.value = cfg.localLoginEnabled !== false
+  } catch {
+    /* konfiguratsiya yo'q - avvalgidek faqat parol */
+  }
 })
 onBeforeUnmount(() => {
+  stopTimer()
+  document.removeEventListener('visibilitychange', onVisible)
   offMain?.()
   mainButton.set({ visible: false, progress: false })
 })
@@ -114,10 +227,42 @@ onBeforeUnmount(() => {
       <div class="login__brand">
         <span class="login__spark"><BrandSpark :size="36" /></span>
         <h1 class="login__title">Barno</h1>
-        <p class="login__lead">{{ t('tg.login.lead') }}</p>
+        <p class="login__lead">{{ ssoEnabled ? t('tg.login.ssoLead') : t('tg.login.lead') }}</p>
       </div>
 
-      <div class="login__fields">
+      <!-- Brauzerda kirish kutilmoqda: tasdiqlangach chat o'zi ochiladi. -->
+      <section v-if="waiting" class="login__wait" role="status" aria-live="polite">
+        <span class="login__spinner login__spinner--wait" aria-hidden="true" />
+        <h2 class="login__wait-title">{{ t('tg.login.waitTitle') }}</h2>
+        <p class="login__wait-text">{{ t('tg.login.waitText') }}</p>
+        <button type="button" class="login__submit" @click="reopen">
+          {{ t('tg.login.reopen') }}
+          <ExternalLink :size="16" :stroke-width="2" aria-hidden="true" />
+        </button>
+        <button type="button" class="login__link login__cancel" @click="cancelWait">{{ t('tg.login.cancel') }}</button>
+      </section>
+
+      <div v-if="!waiting && ssoEnabled" class="login__sso">
+        <button
+          v-if="!mainButton.native"
+          type="button"
+          class="login__submit"
+          :aria-busy="ssoBusy ? 'true' : undefined"
+          @click="signInWithSso"
+        >
+          <span v-if="ssoBusy" class="login__spinner" aria-hidden="true" />
+          {{ ssoBusy ? t('tg.login.ssoBusy') : t('tg.login.sso') }}
+        </button>
+        <p v-if="ssoError" class="login__error login__error--shown" role="alert">
+          <CircleAlert class="login__error-icon" :size="18" :stroke-width="2" aria-hidden="true" />
+          <span>{{ ssoError }}</span>
+        </p>
+        <div v-if="localEnabled" class="login__divider" role="separator">
+          <span>{{ t('tg.login.or') }}</span>
+        </div>
+      </div>
+
+      <div v-if="!waiting && (!ssoEnabled || localEnabled)" class="login__fields">
         <label class="field">
           <span class="field__label">{{ t('tg.login.username') }}</span>
           <input
@@ -185,8 +330,14 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <!-- Telegram'dan tashqarida: MainButton yo'q - ayni o'sha joy va ko'rinishda. -->
-        <button v-if="!mainButton.native" type="submit" class="login__submit" :aria-busy="busy ? 'true' : undefined">
+        <!-- Telegram'dan tashqarida yoki pastki tugma SSO'niki bo'lsa - sahifadagi tugma. -->
+        <button
+          v-if="!mainButton.native || ssoEnabled"
+          type="submit"
+          class="login__submit"
+          :class="{ 'login__submit--secondary': ssoEnabled }"
+          :aria-busy="busy ? 'true' : undefined"
+        >
           <span v-if="busy" class="login__spinner" aria-hidden="true" />
           {{ busy ? t('tg.login.busy') : t('tg.login.submit') }}
         </button>
@@ -437,6 +588,69 @@ onBeforeUnmount(() => {
   to {
     transform: rotate(360deg);
   }
+}
+
+.login__sso,
+.login__wait {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.login__wait {
+  align-items: center;
+  text-align: center;
+  padding: var(--s-4) 0;
+}
+.login__wait .login__submit {
+  align-self: stretch;
+}
+.login__spinner--wait {
+  width: 28px;
+  height: 28px;
+  border-width: 3px;
+  border-color: color-mix(in srgb, var(--text) 18%, transparent);
+  border-top-color: var(--text);
+}
+.login__wait-title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-body-lg);
+  font-weight: 600;
+}
+.login__wait-text {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+.login__cancel {
+  margin: 0;
+  justify-content: center;
+  text-decoration: none;
+  color: var(--text-2);
+}
+.login__error--shown {
+  margin-top: 0;
+  opacity: 1;
+}
+.login__divider {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-2);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+}
+.login__divider::before,
+.login__divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--line);
+}
+.login__submit--secondary {
+  background: var(--fill);
+  color: var(--text);
 }
 
 .login__foot {

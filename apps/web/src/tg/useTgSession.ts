@@ -16,8 +16,13 @@
 //             parolni terib, shundan keyingina sababini bilardi
 //        429  daqiqasiga 6 urinishdan oshdi; 501 - bot sozlanmagan (dev) - kirish ekrani
 //      404/405 - eski backend (endpoint yo'q) - ham jim kirish ekrani.
-//   3. Kirish ekrani (HRM/CRM login + parol, Keycloak). Kirgach Telegram ulanadi -
-//      keyingi ochilishlar 1- yoki 2-yo'ldan o'tadi.
+//   3. Kirish ekrani. Asosiy yo'l - «BRB-Tech ID bilan kirish» (2026-11-12): Mini App chipta
+//      oladi (POST /telegram/link-ticket, imzo bilan), havolani BRAUZERDA ochadi, odam u yerda
+//      kiradi va ulanishni tasdiqlaydi; Mini App natijani so'rab turadi (POST
+//      /telegram/link-ticket/claim) va tasdiqlangach sessiya oladi. Keycloak sahifasi Mini App
+//      ICHIDA ochilmaydi: Telegram Web/Desktop uni iframe'da ochadi (ramka va cookie ishlamaydi),
+//      Android esa boshqa manzilni tashqariga chiqarib yuborishi mumkin. Zahira - login + parol
+//      (`users.yaml`, `LOCAL_LOGIN_ENABLED`). Keyingi ochilishlar 1- yoki 2-yo'ldan o'tadi.
 //
 // TARMOQ YO'Q (token bor, lekin server javob bermadi): token O'CHIRILMAYDI va kirish
 // ekrani ko'rsatilmaydi - "ulanib bo'lmadi, qayta urinish" ekrani. Aks holda metroda
@@ -126,6 +131,97 @@ async function boot(): Promise<void> {
   phase.value = 'login'
 }
 
+// --- BRB-Tech ID: brauzerda kirish va tasdiq ------------------------------------------
+
+/** Kutilayotgan chipta - WebView qayta yuklansa ham (iOS) kutish davom etsin. */
+const TICKET_KEY = 'barno_tg_link_ticket'
+
+export interface PendingTicket {
+  ticket: string
+  /** Brauzer havolasi - «Havolani qayta ochish» uchun. */
+  url: string
+  /** Epoch ms - shundan keyin chipta serverda yo'q. */
+  until: number
+}
+
+interface TicketResponse {
+  ticket: string
+  url: string
+  expiresIn: number
+}
+
+interface ClaimResponse {
+  status: 'pending' | 'ready'
+  session?: LoginResponse | null
+}
+
+function saveTicket(value: PendingTicket | null): void {
+  try {
+    if (value) sessionStorage.setItem(TICKET_KEY, JSON.stringify(value))
+    else sessionStorage.removeItem(TICKET_KEY)
+  } catch {
+    /* xotira yopiq - kutish shu sahifa ichida baribir ishlaydi */
+  }
+}
+
+/** Kutilayotgan, muddati o'tmagan chipta (bo'lmasa `null`). */
+function pendingTicket(): PendingTicket | null {
+  try {
+    const raw = sessionStorage.getItem(TICKET_KEY)
+    const found = raw ? (JSON.parse(raw) as PendingTicket) : null
+    if (found && typeof found.ticket === 'string' && typeof found.url === 'string' && found.until > Date.now()) return found
+  } catch {
+    /* buzilgan yozuv */
+  }
+  saveTicket(null)
+  return null
+}
+
+/** «BRB-Tech ID bilan kirish»: chipta oladi va havolani brauzerda ochadi. Xato `ApiError`. */
+async function startBrowserSignIn(): Promise<PendingTicket> {
+  if (!initData) throw new Error('Telegram maʼlumoti yoʻq')
+  const res = await apiFetch<TicketResponse>('/api/v1/telegram/link-ticket', {
+    method: 'POST',
+    body: JSON.stringify({ initData }),
+  })
+  const pending = { ticket: res.ticket, url: res.url, until: Date.now() + res.expiresIn * 1000 }
+  saveTicket(pending)
+  openLink(res.url)
+  return pending
+}
+
+/** Brauzerda tasdiqlandimi. `ready` - sessiya o'rnatildi va ekran chatga o'tdi; `gone` -
+ *  chipta yo'q/eskirgan yoki hisob bloklangan (`notice`); `pending` - hali kutamiz. Tarmoq
+ *  xatosi - tashlanadi (chaqiruvchi keyinroq qayta so'raydi). */
+async function claimBrowserSignIn(ticket: string): Promise<'pending' | 'ready' | 'gone'> {
+  try {
+    const res = await apiFetch<ClaimResponse>('/api/v1/telegram/link-ticket/claim', {
+      method: 'POST',
+      body: JSON.stringify({ ticket, initData }),
+    })
+    if (res.status !== 'ready' || !res.session?.token || !res.session.user) return 'pending'
+    setToken(res.session.token)
+    const auth = useAuth()
+    auth.user.value = res.session.user
+    auth.initialized.value = true
+    saveTicket(null)
+    notice.value = null
+    phase.value = 'ready'
+    return 'ready'
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 404 || err.status === 400 || err.status === 401 || err.status === 403)) {
+      if (err.status === 403) notice.value = 'blocked'
+      saveTicket(null)
+      return 'gone'
+    }
+    throw err
+  }
+}
+
+function cancelBrowserSignIn(): void {
+  saveTicket(null)
+}
+
 /** Kirish ekranidan. Xato `ApiError` sifatida qaytadi - ekran o'zi ko'rsatadi. */
 async function login(username: string, password: string): Promise<LoginResponse> {
   const auth = useAuth()
@@ -203,6 +299,10 @@ export function useTgSession() {
     notice: readonly(notice),
     boot,
     login,
+    startBrowserSignIn,
+    claimBrowserSignIn,
+    cancelBrowserSignIn,
+    pendingTicket,
     logout,
     reconnect,
     expire,

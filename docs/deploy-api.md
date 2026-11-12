@@ -1282,7 +1282,9 @@ tuzatilsa - bitta qator bilan yoqiladi. Polling'ga qaytishda webhook qo'lda
 o'chiriladi (`deleteWebhook`), aks holda `getUpdates` 409 oladi.
 
 **Hisobni ulash - faqat mini app orqali.** Odam botdagi "Barnoni ochish" tugmasi bilan
-mini app'ni ochib kiradi; ilova `POST /api/v1/telegram/link` ga Telegram
+mini app'ni ochib kiradi - «BRB-Tech ID bilan kirish» kirishni brauzerda o'tkazadi va
+ulanishni tasdiq sahifasida yozadi (`docs/auth-sso.md`, "Telegram: BRB-Tech ID bilan
+kirish"); keyingi ochilishlarda ilova `POST /api/v1/telegram/link` ga Telegram
 imzolagan `initData` ni yuboradi. Isbot ikkita: sessiya (kim kirgan) va
 imzo (kim ochgan) - `user.id` klientdan olinmaydi. Botda parol so'ralmaydi.
 Ulanish oxirgi faollikdan 30 kun yashaydi: mini app ochilishi ham, botdagi

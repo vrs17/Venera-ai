@@ -33,7 +33,7 @@ from tests.test_telegram_bot import BOT_TOKEN, TG_ID, sign_init
 SESSION = "/api/v1/telegram/session"
 MINIAPP = {"X-Venera-Client": "miniapp"}
 LOGIN_FIELDS = {"token", "tokenType", "expiresAt", "passwordChangeRequired", "user"}
-GENERIC = "Telegram orqali kirib bo'lmadi - login va parol bilan kiring"
+GENERIC = "Telegram orqali kirib bo'lmadi - BRB-Tech ID bilan kiring"
 
 
 @pytest.fixture

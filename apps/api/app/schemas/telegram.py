@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from .auth import LoginResponse
+
 
 class TelegramLinkRequest(BaseModel):
     """`Telegram.WebApp.initData` - Telegram imzolagan satr, o'zgartirilmasdan.
@@ -36,3 +38,46 @@ class TelegramLinkResult(BaseModel):
 
 class TelegramUnlinkResult(BaseModel):
     unlinked: bool
+
+
+# --- BRB-Tech ID orqali ulash: brauzerda tasdiq (`api/v1/telegram.py`) ----------------------
+
+_TICKET = {"min_length": 20, "max_length": 200, "pattern": r"^[A-Za-z0-9_-]+$"}
+
+
+class TelegramTicket(BaseModel):
+    """`POST /telegram/link-ticket` javobi: Mini App `url` ni brauzerda ochadi va `ticket` bilan
+    natijani so'raydi (`claim`)."""
+
+    ticket: str
+    url: str
+    expiresIn: int
+
+
+class TelegramTicketInfo(BaseModel):
+    """Tasdiq sahifasi uchun: QAYSI Telegram hisobi QAYSI Barno hisobiga ulanyapti."""
+
+    telegramName: str | None = None
+    telegramUsername: str | None = None
+    accountName: str
+    accountLogin: str
+    expiresIn: int
+
+
+class TelegramTicketConfirm(BaseModel):
+    """Tasdiq: Barno hisobi `Authorization` sessiyasidan, Telegram hisobi chiptaning serverdagi
+    yozuvidan (Mini App yuborgan imzodan) olinadi. Klient Telegram `id` yubormaydi."""
+
+    ticket: str = Field(**_TICKET)
+
+
+class TelegramTicketClaim(TelegramTicketConfirm):
+    """Mini App natijani so'raydi: chipta + O'Z imzosi (chipta shu Telegram hisobiniki bo'lishi shart)."""
+
+    initData: str = Field(min_length=1, max_length=8192)
+
+
+class TelegramTicketClaimResult(BaseModel):
+    #: `pending` - odam hali brauzerda tasdiqlamadi; `ready` - tasdiqlandi, `session` bor.
+    status: str
+    session: LoginResponse | None = None

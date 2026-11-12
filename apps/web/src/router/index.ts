@@ -96,7 +96,16 @@ const routes: RouteRecordRaw[] = [
     // avval kirish sahifasiga (BRB-Tech ID yoki login + parol), keyin shu tasdiq sahifasiga qaytadi.
     path: '/link/slack',
     name: 'slack-link',
-    component: () => import('../views/SlackLinkView.vue'),
+    component: () => import('../views/LinkAccountView.vue'),
+    props: { kind: 'slack' },
+    meta: { requiresAuth: true, loginDirect: true },
+  },
+  {
+    // Telegram Mini App'dagi «BRB-Tech ID bilan kirish» shu yerni brauzerda ochadi (`?t=<chipta>`).
+    path: '/link/telegram',
+    name: 'telegram-link',
+    component: () => import('../views/LinkAccountView.vue'),
+    props: { kind: 'telegram' },
     meta: { requiresAuth: true, loginDirect: true },
   },
   adminRoutes,
