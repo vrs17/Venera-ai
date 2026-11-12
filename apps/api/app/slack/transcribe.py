@@ -89,9 +89,9 @@ def account() -> AuthUser:
     return verdict.user
 
 
-def ingest(client: Any, user: AuthUser, file: dict[str, Any]) -> str:
-    """Fayl -> yig'ilish id. Yangi bo'lsa yaratib yuklaydi; oldin kelgan bo'lsa davom
-    ettiradi: yarim yuklangani - qolgan joyidan, xato bergani - `service.retry` bilan."""
+def ingest(client: Any, user: AuthUser, file: dict[str, Any], *, language: str = intake.LANGUAGE) -> str:
+    """Fayl -> yig'ilish id. Yangi bo'lsa yaratib yuklaydi (`language` - odam tanlagan audio tili); oldin kelgan
+    bo'lsa davom ettiradi: yarim yuklangani - qolgan joyidan, xato bergani - `service.retry` bilan."""
     if file.get("file_access") == "check_file_info":
         # Hodisada faylning to'liq obyekti yo'q (masalan Slack Connect) - so'rab olinadi.
         file = client.files_info(file=file["id"])["file"]
@@ -105,7 +105,7 @@ def ingest(client: Any, user: AuthUser, file: dict[str, Any]) -> str:
         # Kanal `api`: `core/channels.py` ro'yxatida Slack yo'q - Plaud filtri uchun manba alohida (`origin`).
         return intake.upload(user, client_id(file["id"]), path, size, sha, kind, title=f"Slack: {name}",
                              recorded_at=float(file.get("created") or time.time()), channel="api",
-                             origin="slack")
+                             origin="slack", language=language)
 
 
 def fetch(file: dict[str, Any], folder: Path) -> tuple[Path, int, str, str]:

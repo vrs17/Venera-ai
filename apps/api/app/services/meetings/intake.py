@@ -87,12 +87,14 @@ def resume(user: AuthUser, meeting_id: str) -> bool:
 
 
 def upload(user: AuthUser, client: str, path: Path, size: int, sha: str, kind: str, *, title: str,
-           recorded_at: float, channel: str = "api", source: str = "share", origin: str | None = None) -> str:
+           recorded_at: float, channel: str = "api", source: str = "share", origin: str | None = None,
+           language: str = LANGUAGE) -> str:
     """Yig'ilish yaratadi (yoki oldingisini oladi), audioni bo'laklab beradi va yakunlaydi.
-    `origin` - Plaud filtri uchun manba (`slack`, `telegram`): `channel` uni har doim aytmaydi."""
+    `origin` - Plaud filtri uchun manba (`slack`, `telegram`): `channel` uni har doim aytmaydi.
+    `language` - audio tili (Slack'da odam tanlaydi; bot - default o'zbek)."""
     body = schemas.CreateMeetingRequest(
         clientId=client, title=title[:120], recordedAt=iso(recorded_at),
-        language=LANGUAGE, contentType=kind, source=source)
+        language=language, contentType=kind, source=source)
     view = service.create(user, body, channel, origin=origin)[0]
     meeting_id = view["id"]
     # Oldingi urinish yarim qolgan bo'lsa - qolgan joyidan (`append_chunk` faqat shuni qabul qiladi).

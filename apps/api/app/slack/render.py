@@ -27,15 +27,20 @@ LATEST_TAGS = ("", "chat")
 #: Audio xatosi belgisi (`block_id`, `fail_mark`): "Matnga o'girib bo'lmadi" xabari qaysi fayl haqida - chatdagi savol
 #: (`meeting.latest`) o'sha audioni "tayyorlanmoqda" deb kutmaydi. `MARK` bilan boshlanmaydi - `marked` uni olmaydi.
 FAIL_MARK = "barno-fail:"
-#: Qayta o'girish tillari (`schemas.meetings.Lang`).
+#: Audio tillari (`schemas.meetings.Lang`): yuklanganda so'raladi (`lang_question`), eski kartalarda - qayta o'girish.
 LANG_NAMES = {"uz": "o'zbek", "ru": "rus", "en": "ingliz"}
-#: Eksport menyusi: qiymat -> nom. Transkript TXT - alohida tugmada (`TRANSCRIPT_BUTTON`, 2026-11-11); eski
-#: kartalardagi `transcript_txt` tanlovi ham o'sha yo'ldan (`meeting.transcript_file`).
-EXPORTS = (("transcript_srt", "Transkript (SRT)"), ("summary_md", "Xulosa (MD)"),
-           ("report_docx", "Hisobot (Word)"), ("report_pdf", "Hisobot (PDF)"))
-#: Transkript chatga YOZILMAYDI (ega talabi 2026-11-11: uzun matn chatni tushunarsiz qiladi) - kartadagi
-#: tugma uni .txt fayl qilib kartaning thread'iga yuboradi, Slack'da shu yerdan yuklab olinadi.
-TRANSCRIPT_BUTTON = "📥 Transkriptni yuklab olish"
+LANG_FLAGS = {"uz": "🇺🇿", "ru": "🇷🇺", "en": "🇬🇧"}
+#: Til savoli belgisi (`block_id`, `lang_mark`): audio tili hali tanlanmagan - chatdagi savol (`meeting.latest`) "avval
+#: tilni tanlang" deydi. `MARK` bilan boshlanmaydi - `marked` uni olmaydi.
+LANG_MARK = "barno-lang:"
+#: Audio kelganda (ega talabi 2026-11-12): Barno ishni boshlashdan oldin tilni so'raydi - kartada qayta o'girish
+#: tugmalari yo'q, til noto'g'ri aniqlanishi ham yo'q.
+LANG_QUESTION = "🌐 Audio qaysi tilda? Tanlang - shundan keyin matnga o'giraman."
+#: «📥 Yuklab olish» menyusi - transkript fayllari (TXT - kartaning thread'iga, `meeting.transcript_file`).
+DOWNLOADS = (("transcript_txt", "Transkript (TXT)"), ("transcript_srt", "Transkript (SRT)"))
+#: «Eksport» menyusi - xulosa va hisobot fayllari. Eski kartalardagi `transcript_srt` / `transcript_txt` tanlovlari
+#: ham ishlaydi (`meeting.on_action`).
+EXPORTS = (("summary_md", "Xulosa (MD)"), ("report_docx", "Hisobot (Word)"), ("report_pdf", "Hisobot (PDF)"))
 #: Tugmani bosgan odamga (faqat unga ko'rinadi): fayl qayerda.
 TRANSCRIPT_SENT = "📥 Transkript fayli shu xulosa ostidagi thread'ga yuklandi - thread'ni ochib, faylni yuklab oling."
 #: Xulosa kartasi ostidagi eslatma: chatga (thread'dan tashqarida) yozilgan savol - OXIRGI yozuv chati
@@ -49,10 +54,14 @@ CHAT_RESET_DONE = "🔄 Yangi suhbat boshlandi - keyingi savollar oldingi savol-
 #: Thread'dan tashqaridagi savol, chatdagi oxirgi audio esa hali matnga o'girilmoqda (`meeting.on_text`). O'girib
 #: bo'lmagan yoki o'chirilgan audio "tayyorlanmoqda" emas - savol oldingi yozuvga (`meeting.latest`).
 CHAT_PENDING = "⏳ Oxirgi audio hali tayyorlanmoqda - matn va xulosa chiqqach savol bering."
+#: ... chatdagi oxirgi audioning tili hali tanlanmagan (`lang_question` tugmalari bosilmagan).
+CHAT_CHOOSE_LANG = "🌐 Avval oxirgi audio tilini tanlang (yuqoridagi tugmalar) - matn va xulosa chiqqach savol bering."
 #: ... chat tarixini o'qib bo'lmadi (Slack xatosi): yozuv bormi-yo'qmi noma'lum - «🎙 Plaud» yo'riqnomasi emas va
 #: cheklovsiz (har savolga), aks holda ikkinchi savol javobsiz qolardi.
 CHAT_UNREAD = ("Chat tarixini o'qib bo'lmadi - birozdan keyin qayta yozing yoki savolni yozuv xabarining "
                "thread'ida bering.")
+#: Eski kartadagi «Boshqa shablon bilan xulosa» menyusi bosilsa (funksiya o'chirilgan, ega qarori 2026-11-12).
+TEMPLATE_OFF = "«Boshqa shablon bilan xulosa» hozircha o'chirilgan - xulosa avtomatik shablon bilan yoziladi."
 
 _ID = re.compile(r"[0-9a-f]{32}")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
@@ -153,6 +162,30 @@ def fail_marked(message: dict[str, Any] | None) -> str | None:
     return None
 
 
+def lang_mark(file_id: str) -> str:
+    """Til savoli xabarining belgisi (`LANG_MARK`) - Slack fayli id'si bilan."""
+    return f"{LANG_MARK}{file_id}"
+
+
+def lang_marked(message: dict[str, Any] | None) -> str | None:
+    """Xabar bloklaridagi til savoli belgisi (`lang_mark`) - fayl id'si yoki `None`."""
+    for block in (message or {}).get("blocks") or []:
+        block_id = str(block.get("block_id") or "")
+        if block_id.startswith(LANG_MARK) and len(block_id) > len(LANG_MARK):
+            return block_id[len(LANG_MARK):]
+    return None
+
+
+def lang_question(head: str, file_id: str) -> list[dict[str, Any]]:
+    """Audio qabul qilindi -> til savoli: sarlavha va savol (`block_id` - `lang_mark`) hamda til tugmalari. Har
+    tugmaning O'Z `action_id` si (`barno_lang_<til>`; Slack bitta blokda takror id ni rad etadi), qiymati - fayl id."""
+    buttons = [button(f"{LANG_FLAGS[lang]} {name.capitalize()}", f"barno_lang_{lang}", file_id)
+               for lang, name in LANG_NAMES.items()]
+    return [{"type": "section", "block_id": lang_mark(file_id),
+             "text": {"type": "mrkdwn", "text": f"{head}\n{LANG_QUESTION}"}},
+            {"type": "actions", "block_id": f"barno-langs:{file_id}", "elements": buttons}]
+
+
 def option(text: str, value: str) -> dict[str, Any]:
     return {"text": {"type": "plain_text", "text": text[:75]}, "value": value}
 
@@ -165,35 +198,28 @@ def button(text: str, action_id: str, value: str, *, confirm: dict[str, Any] | N
     return element
 
 
-def controls(meeting_id: str, language: str, templates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Xulosa ostidagi tugmalar va chat haqida eslatma (`CHAT_HINT`). Qiymatlarda yig'ilish id'si bor."""
+def controls(meeting_id: str) -> list[dict[str, Any]]:
+    """Xulosa ostidagi tugmalar (ega tartibi 2026-11-12): «📥 Yuklab olish» (transkript), «✅ Vazifalar»,
+    «📄 Bayonnoma», «Eksport» (xulosa, hisobot) va chat haqida eslatma (`CHAT_HINT`).
+    Qayta o'girish tugmalari yo'q - til audio yuklanganda so'raladi (`lang_question`). «Boshqa shablon bilan
+    xulosa» ham yo'q (ega qarori 2026-11-12: hozirgi bosqichda kerak emas - xulosa avtomatik shablon bilan).
+    Qiymatlarda yig'ilish id'si."""
     elements = [
-        # Birinchi: transkript endi chatda yo'q - uni olishning yagona yo'li shu tugma.
-        button(TRANSCRIPT_BUTTON, "barno_transcript", meeting_id),
-        button("Vazifalar", "barno_tasks", meeting_id),
+        # Transkript chatga yozilmaydi - uni olish yo'li shu menyu (TXT kartaning thread'iga).
+        select("📥 Yuklab olish", "barno_download", [(title, f"{meeting_id}|{kind}") for kind, title in DOWNLOADS]),
+        button("✅ Vazifalar", "barno_tasks", meeting_id),
         # Rasmiy hujjat: til menyusi alohida xabarda (`minutes_menu`) - tugma faqat uni chaqiradi.
         button("📄 Bayonnoma", "barno_minutes", meeting_id),
-        {"type": "static_select", "action_id": "barno_template",
-         "placeholder": {"type": "plain_text", "text": "Boshqa shablon bilan xulosa"},
-         "options": [option(t["title"], f"{meeting_id}|{t['id']}") for t in templates if t["id"] != "auto"]},
-        {"type": "static_select", "action_id": "barno_export",
-         "placeholder": {"type": "plain_text", "text": "Eksport"},
-         "options": [option(title, f"{meeting_id}|{kind}") for kind, title in EXPORTS]},
+        select("Eksport", "barno_export", [(title, f"{meeting_id}|{kind}") for kind, title in EXPORTS]),
     ]
-    for lang, name in LANG_NAMES.items():
-        if lang == language:
-            continue
-        # Tasdiq oynasi: qayta o'girish GAPI daqiqalarini yana sarflaydi va eski
-        # transkript hamda xulosani almashtiradi (`service.retranscribe`).
-        elements.append(button(f"{name.capitalize()} tilida qayta o'girish", f"barno_relang_{lang}",
-                               f"{meeting_id}|{lang}", confirm={
-                                   "title": {"type": "plain_text", "text": "Qayta o'girish"},
-                                   "text": {"type": "mrkdwn", "text": (
-                                       f"Audio {name} tilida qaytadan o'giriladi: GAPI daqiqalari yana "
-                                       "sarflanadi, eski transkript va xulosa almashtiriladi.")},
-                                   "confirm": {"type": "plain_text", "text": "O'girish"},
-                                   "deny": {"type": "plain_text", "text": "Bekor qilish"}}))
     return [{"type": "actions", "block_id": mark(meeting_id), "elements": elements}, context(CHAT_HINT)]
+
+
+def select(placeholder: str, action_id: str, options: list[tuple[str, str]]) -> dict[str, Any]:
+    """Ochiladigan ro'yxat (`static_select`): (nom, qiymat) juftlari."""
+    return {"type": "static_select", "action_id": action_id,
+            "placeholder": {"type": "plain_text", "text": placeholder[:150]},
+            "options": [option(text, value) for text, value in options]}
 
 
 def chat_actions(meeting_id: str) -> dict[str, Any]:

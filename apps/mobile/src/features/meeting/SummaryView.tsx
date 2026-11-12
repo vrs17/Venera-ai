@@ -9,7 +9,9 @@
  *
  * NEGA: 8,5 daqiqalik yig'ilish 16 ekran edi - bitta fakt 7 joyda (karta, keyin har bo'lim yana).
  * Server birlashtirgan fakt (`alsoIn`) bandida chip bo'lib qoladi - ma'no yo'qolmaydi.
- * Shablon almashtirgich (+ Yangi xulosa), Markdown ulashish, matn nusxalash, xato bo'lsa qayta urinish.
+ * Markdown ulashish, matn nusxalash, xato bo'lsa qayta urinish. "+ Yangi xulosa" (boshqa shablon bilan xulosa)
+ * olib tashlangan (ega qarori 2026-11-12: hozirgi bosqichda kerak emas - xulosa avtomatik shablon bilan); eski
+ * yig'ilishda bir nechta xulosa bo'lsa, ular orasida tanlash chiplari qoladi.
  *
  * Ko'rsatish mantig'i `summaryModel.ts` va `brief.ts` da - bu fayl faqat chizadi.
  */
@@ -25,7 +27,6 @@ import { useT } from '@/features/settings/settingsStore';
 import { useServices } from '@/services';
 import { Banner, Body, Button, Chip, EvidenceChip, Loading, Muted, styles as ui } from '@/ui/components';
 import { errorText, shareableText, showToast } from '@/ui/errors';
-import { PickerModal, type PickerOption } from '@/ui/modals';
 import { useTheme } from '@/ui/theme';
 import { radius, type as typeScale } from '@/ui/tokens';
 
@@ -44,21 +45,6 @@ import {
 } from './summaryModel';
 
 const NO_GROUPS: DetailPlan = { shown: [], more: [] };
-
-export const TEMPLATE_IDS: TemplateId[] = [
-  'auto',
-  'general',
-  'minutes',
-  'standup',
-  'one_on_one',
-  'project_review',
-  'brainstorm',
-  'sales_call',
-  'interview',
-  'lecture',
-  'short_call',
-  'follow_up',
-];
 
 export function useTemplateTitle(): (id: TemplateId) => string {
   const t = useT();
@@ -91,7 +77,6 @@ export function SummaryView({ meeting, speakers, onSeek, onAcceptName, selectedI
     setOwn(id);
     onSelect?.(id);
   };
-  const [picker, setPicker] = useState(false);
   const muts = useMeetingMutations(meeting.id);
 
   const activeId = selected && items.some((s) => s.id === selected) ? selected : (meeting.primarySummaryId ?? items[0]?.id ?? null);
@@ -102,26 +87,22 @@ export function SummaryView({ meeting, speakers, onSeek, onAcceptName, selectedI
     return <Banner tone="info" text={t('detail.processing')} />;
   }
 
-  const templateOptions: PickerOption<TemplateId>[] = TEMPLATE_IDS.filter((id) => id !== 'auto').map((id) => ({
-    value: id,
-    label: templateTitle(id),
-  }));
-
   return (
     <View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.tabs}>
-        {items.map((card) => (
-          <Chip
-            key={card.id}
-            testID={`summary-tab-${card.id}`}
-            label={`${templateTitle(card.template)}${card.primary ? ' ★' : ''}`}
-            tone={card.id === activeId ? 'accent' : 'neutral'}
-            selected={card.id === activeId}
-            onPress={() => setSelected(card.id)}
-          />
-        ))}
-        <Chip testID="summary-new" label={t('detail.newSummary')} tone="info" onPress={() => setPicker(true)} />
-      </ScrollView>
+      {items.length > 1 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.tabs}>
+          {items.map((card) => (
+            <Chip
+              key={card.id}
+              testID={`summary-tab-${card.id}`}
+              label={`${templateTitle(card.template)}${card.primary ? ' ★' : ''}`}
+              tone={card.id === activeId ? 'accent' : 'neutral'}
+              selected={card.id === activeId}
+              onPress={() => setSelected(card.id)}
+            />
+          ))}
+        </ScrollView>
+      ) : null}
 
       {meeting.summaryStatus === 'skipped' && !active ? <Banner tone="neutral" text={t('detail.summarySkipped')} /> : null}
       {!active && summaries.isLoading ? <Loading /> : null}
@@ -140,17 +121,6 @@ export function SummaryView({ meeting, speakers, onSeek, onAcceptName, selectedI
           regenerating={muts.createSummary.isPending}
         />
       ) : null}
-
-      <PickerModal
-        visible={picker}
-        title={t('detail.chooseTemplate')}
-        options={templateOptions}
-        onCancel={() => setPicker(false)}
-        onPick={(template) => {
-          setPicker(false);
-          muts.createSummary.mutate({ template, makePrimary: template !== 'follow_up' });
-        }}
-      />
     </View>
   );
 }

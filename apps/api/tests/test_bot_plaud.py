@@ -136,7 +136,8 @@ def test_ovozli_xabar_transkript_va_qisqa_xulosa(world):
     assert summary["text"].endswith(plaud_mod._HINT)
     rows = summary["reply_markup"]["inline_keyboard"]
     mid = meeting_of(tg)
-    assert [b["callback_data"] for row in rows for b in row] == [f"p:q:{mid}", f"p:t:{mid}", f"p:s:{mid}", f"p:e:{mid}",
+    # «🗂 Boshqa shablon» yo'q (ega qarori 2026-11-12).
+    assert [b["callback_data"] for row in rows for b in row] == [f"p:q:{mid}", f"p:t:{mid}", f"p:e:{mid}",
                                                                f"p:l:{mid}", f"p:d:{mid}"]
     # Yozuv ODAMNING hisobida (actor 1), kanal `bot`, OGG sifatida.
     row = rt.store.meeting_any(mid)
@@ -235,21 +236,24 @@ def test_savol_xulosa_xabariga_javob_bilan(world):
     assert bot.backend.questions[-1][0] == "salom"
 
 
-def test_vazifalar_shablon_eksport(world):
+def test_vazifalar_eksport_va_eski_shablon_tugmasi(world):
     bot, tg, rt, plaud = world
     bot.handle_update(text_update(BTN_PLAUD))
     bot.handle_update(voice())
     mid, summary_id = meeting_of(tg), card(tg)["message_id"]
     bot.handle_update(callback(f"p:t:{mid}", message_id=summary_id))
     assert tg.texts()[-1].startswith("✅ <b>Vazifalar</b>\n\n•")
-    # Shablon menyusi - tugmalar almashadi; tanlov - yangi xulosa.
-    bot.handle_update(callback(f"p:s:{mid}", message_id=summary_id))
-    menu = [kw for n, kw in tg.calls if n == "edit_reply_markup"][-1]["reply_markup"]["inline_keyboard"]
-    assert f"p:s:{mid}:minutes" in [b["callback_data"] for row in menu for b in row]
-    assert f"p:s:{mid}:auto" not in [b["callback_data"] for row in menu for b in row]
-    bot.handle_update(callback(f"p:s:{mid}:minutes", message_id=summary_id))
-    edited = [kw for n, kw in tg.calls if n == "edit_message_text"][-1]
-    assert edited["text"].startswith("🗂 <b>Xulosa: Protokol</b>")
+    # Eski xabardagi «🗂 Boshqa shablon» (va uning menyusidagi tanlov) - o'chirilgan (ega qarori 2026-11-12):
+    # izoh (alert), tugmalar yangi ko'rinishga almashadi, YANGI XULOSA YOZILMAYDI.
+    summaries = len(rt.store.summaries(mid))
+    for data in (f"p:s:{mid}", f"p:s:{mid}:minutes"):
+        before = len(tg.calls)
+        bot.handle_update(callback(data, message_id=summary_id))
+        calls = tg.calls[before:]
+        assert [n for n, _ in calls] == ["answer_callback", "edit_reply_markup"]
+        assert calls[0][1]["text"] == plaud_mod.TEMPLATE_OFF and calls[0][1]["alert"]
+        assert calls[1][1]["reply_markup"] == plaud_mod.controls(mid, "uz")
+    assert len(rt.store.summaries(mid)) == summaries
     # Eksport - fayl.
     bot.handle_update(callback(f"p:e:{mid}:txt", message_id=summary_id))
     bot.handle_update(callback(f"p:e:{mid}:docx", message_id=summary_id))

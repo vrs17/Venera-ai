@@ -100,7 +100,6 @@ export const uz = {
 
   'record.title': 'Yozish',
   'record.language': 'Gapirilayotgan til',
-  'record.template': 'Xulosa shabloni',
   'record.speakers': 'Ishtirokchilar soni',
   'record.speakersAuto': 'Avto',
   'record.start': 'Yozishni boshlash',
@@ -156,8 +155,6 @@ export const uz = {
   'detail.summarySkipped': "Yozuv juda qisqa - xulosa yozilmadi",
   'detail.summaryFailed': 'Xulosa yozilmadi: {message}',
   'detail.summaryNone': "Xulosa hali yo'q",
-  'detail.newSummary': '+ Yangi xulosa',
-  'detail.chooseTemplate': 'Shablonni tanlang',
   'detail.shareMd': "To'liq xulosani ulashish",
   'detail.copyText': "To'liq xulosani nusxalash",
   'detail.audioExpired': "Audio saqlash muddati tugagan - faqat matn qoldi",

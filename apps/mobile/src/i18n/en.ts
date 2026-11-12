@@ -93,7 +93,6 @@ export const en: Record<TKey, string> = {
 
   'record.title': 'Record',
   'record.language': 'Spoken language',
-  'record.template': 'Summary template',
   'record.speakers': 'Number of participants',
   'record.speakersAuto': 'Auto',
   'record.start': 'Start recording',
@@ -148,8 +147,6 @@ export const en: Record<TKey, string> = {
   'detail.summarySkipped': 'The recording is too short - no summary',
   'detail.summaryFailed': 'The summary failed: {message}',
   'detail.summaryNone': 'No summary yet',
-  'detail.newSummary': '+ New summary',
-  'detail.chooseTemplate': 'Choose a template',
   'detail.shareMd': 'Share full summary',
   'detail.copyText': 'Copy full summary',
   'detail.audioExpired': 'Audio retention expired - only the text remains',

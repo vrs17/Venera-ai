@@ -43,7 +43,8 @@ PROMPT = (
     "🎙 *Plaud* — audio yuboring, matnga o'girib, qisqa xulosa beraman.\n"
     "• mikrofon tugmasi bilan ovozli xabar yozing, yoki\n"
     "• audio fayl yuklang: mp3, m4a, aac, wav, ogg — 3 soat yoki 150 MB gacha.\n"
-    "Xulosa ostida: vazifalar, boshqa shablon, eksport, boshqa til va 📄 Bayonnoma (rasmiy hujjat, Word/PDF). "
+    "Audio kelgach Barno uning tilini so'raydi (o'zbek, rus, ingliz) - tanlang. Xulosa ostida: yuklab olish, "
+    "vazifalar, 📄 Bayonnoma (rasmiy hujjat, Word/PDF) va eksport. "
     "Savol bo'lsa — shu chatga yozing: Barno oxirgi yuborilgan yozuv bo'yicha javob beradi va suhbatni eslab "
     "qoladi. Oldingi yozuv haqida — o'sha yozuv xabarining thread'ida so'rang."
 )

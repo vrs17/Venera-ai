@@ -45,7 +45,7 @@ async function renderRecord(params: Record<string, string>, actions = fakeAction
 
 beforeEach(() => {
   setMachine({});
-  useSettings.setState({ uiLang: 'uz', consentSeen: true, batteryHintSeen: true, lastLanguage: 'uz', lastTemplate: 'auto', lastSpeakers: null });
+  useSettings.setState({ uiLang: 'uz', consentSeen: true, batteryHintSeen: true, lastLanguage: 'uz', lastSpeakers: null });
 });
 
 describe('Record screen', () => {
@@ -55,17 +55,18 @@ describe('Record screen', () => {
     expect(actions.start).toHaveBeenCalledWith({ language: 'uz', template: 'auto', expectedSpeakers: null, source: 'launcher' });
   });
 
-  it('a foreign link only opens the ready state; the big button starts with the chosen options', async () => {
+  it('a foreign link only opens the ready state; the big button starts with the chosen options (template always auto)', async () => {
     const { actions } = await renderRecord({ src: 'tile', k: 'cd'.repeat(32) });
     await act(async () => {});
     expect(actions.start).not.toHaveBeenCalled();
     expect(screen.getByText('Ishtirokchilarni yozib olinayotgani haqida ogohlantiring')).toBeTruthy();
     await fireEvent.press(screen.getByTestId('lang-ru'));
-    await fireEvent.press(screen.getByTestId('tpl-sales_call'));
+    // Shablon tanlovi yo'q (ega qarori 2026-11-12) - xulosa turini Barno o'zi aniqlaydi.
+    expect(screen.queryByTestId('tpl-sales_call')).toBeNull();
+    expect(screen.queryByText('Xulosa shabloni')).toBeNull();
     await fireEvent.press(screen.getByTestId('spk-3'));
     await fireEvent.press(screen.getByTestId('record-start'));
-    expect(actions.start).toHaveBeenCalledWith({ language: 'ru', template: 'sales_call', expectedSpeakers: 3, source: 'app' });
-    expect(useSettings.getState().lastTemplate).toBe('sales_call');
+    expect(actions.start).toHaveBeenCalledWith({ language: 'ru', template: 'auto', expectedSpeakers: 3, source: 'app' });
   });
 
   it('shows timer, level bars and controls while recording; Muhim adds a mark with an optional note', async () => {

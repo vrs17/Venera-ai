@@ -1,6 +1,6 @@
 """Slack ilovasi (`app/slack/meeting.py`): transkriptdan keyingi imkoniyatlar - yozuv chati (chatning
 o'zidagi savol - oxirgi yozuv bo'yicha, thread'dagisi - o'sha yozuv bo'yicha; suhbat xotirasi, har Slack
-odamining suhbati alohida, «🔄 Yangi suhbat»), vazifalar, boshqa shablon bilan xulosa, eksport, boshqa
+odamining suhbati alohida, «🔄 Yangi suhbat»), vazifalar, eksport, boshqa
 tilda qayta o'girish.
 
 Hammasi soxta (`slack_fakes.py`, `meetings_fakes.py`): tarmoq ham, pul ham yo'q.
@@ -14,9 +14,10 @@ import pytest
 
 from app.core.config import settings
 from app.schemas import meetings as schemas
-from app.services.meetings import llm, prompts, service, templates
+from app.services.meetings import llm, prompts, service
 from app.slack import home, meeting, render, transcribe
-from slack_fakes import AUDIO, BOT_USER, FakeSlack, as_parent, card, drive, elements, setup, shown
+from slack_fakes import (AUDIO, BOT_USER, FakeSlack, as_parent, card, choose_language, drive, elements, question_of,
+                         send_audio, setup, shown)
 from meetings_fakes import FakeAnthropic, gapi_segments, run_all
 
 
@@ -95,7 +96,24 @@ def test_juda_qisqa_yozuv_matni_kartaning_ozida(users_file, monkeypatch, _isolat
     text = shown(summary)
     assert "Xulosa yozilmadi: Yozuv juda qisqa - xulosa yozilmadi." in text
     assert "*Matn:* Ertaga soat o'nda uchrashamiz." in text
-    assert elements(summary)[0]["action_id"] == "barno_transcript"
+    assert elements(summary)[0]["action_id"] == "barno_download"
+
+
+def test_yuklab_olish_menyusi_transkript_fayllari(delivered, _isolated_meetings):
+    """«📥 Yuklab olish» (ega tartibi 2026-11-12): Transkript (TXT) - kartaning thread'iga (asosiy chat toza), bosgan
+    odamga izoh; Transkript (SRT) - fayl (eksport yo'li)."""
+    client, mid, summary = delivered
+    posted = len(client.posted)
+    _press(client, _isolated_meetings, {"action_id": "barno_download",
+                                        "selected_option": {"value": f"{mid}|transcript_txt"}}, {"ts": summary["ts"]})
+    [sent] = client.uploaded
+    assert (sent["thread_ts"], sent["filename"][-4:]) == (summary["ts"], ".txt") and len(client.posted) == posted
+    assert client.ephemeral == [{"channel": "D1", "user": "U1", "text": render.TRANSCRIPT_SENT}]
+
+    _press(client, _isolated_meetings, {"action_id": "barno_download",
+                                        "selected_option": {"value": f"{mid}|transcript_srt"}}, {"ts": summary["ts"]})
+    srt = client.uploaded[-1]
+    assert srt["filename"].endswith(".srt") and b"-->" in srt["file"]
 
 
 def test_xulosa_xabari_ostidagi_savolga_javob(delivered):
@@ -258,7 +276,7 @@ def _send(client, rt, file=AUDIO, *, channel="D1", user="U1"):
     `on_message`), navbat qo'lda. Qaytaradi: yig'ilish id ("Qisqa xulosa" kartasi o'sha chatda)."""
     event = client.say(channel, files=[file], user=user)
     assert meeting.wants(event)
-    meeting.on_message(client, event, sleep=drive(rt), bot_user=BOT_USER)
+    send_audio(client, event, rt, user=user)
     summary = card(client)
     assert summary["channel"] == channel and "thread_ts" not in summary
     client.parents[summary["ts"]] = as_parent(summary)
@@ -505,7 +523,7 @@ def test_oxirgi_audio_otmasa_savol_oldingi_yozuvga(users_file, monkeypatch, _iso
     _top(client, "Hisobotni kim yuboradi?")
 
     breaks(monkeypatch)
-    meeting.on_message(client, client.say("D1", files=[AUDIO2]), sleep=drive(rt), bot_user=BOT_USER)
+    send_audio(client, client.say("D1", files=[AUDIO2]), rt)
     failure = client.visible()[-1]
     assert failure["text"].startswith("Matnga o'girib bo'lmadi: ") and reason in failure["text"]
     assert render.fail_marked(failure) == "F2" and render.marked(failure) is None
@@ -520,7 +538,7 @@ def test_oxirgi_audio_otmasa_savol_oldingi_yozuvga(users_file, monkeypatch, _iso
     assert [m["role"] for m in claude.chats()[-1]["messages"]] == ["user", "assistant"] * 2 + ["user"]
 
     # Boshqa odamning chatida bu birinchi audio edi - oldingi yozuv yo'q: yo'riqnoma (chatga `TEXT_EVERY` da bir marta).
-    meeting.on_message(client, client.say("D2", files=[AUDIO3], user="U2"), sleep=drive(rt), bot_user=BOT_USER)
+    send_audio(client, client.say("D2", files=[AUDIO3], user="U2"), rt, user="U2")
     assert render.fail_marked(client.visible()[-1]) == "F3"
     posted = len(client.posted)
     _top(client, "Qarorlar?", channel="D2", user="U2")
@@ -556,6 +574,28 @@ def test_eski_audio_yigilishsiz_otkaziladi(users_file, monkeypatch, _isolated_me
     assert len(claude.chats()) == 2
 
 
+def test_tili_tanlanmagan_audio_chatdagi_savolga_avval_tilni_tanlang(users_file, monkeypatch, _isolated_meetings,
+                                                                    claude):
+    """Yangi audioning tili hali tanlanmagan (til savoli javobsiz): chatdagi savolga «avval tilni tanlang» (thread'siz),
+    model chaqirilmaydi va eski yozuvga ham javob berilmaydi. Til tanlangach - savollar yangi yozuvga."""
+    setup(monkeypatch, users_file)
+    rt = _isolated_meetings
+    client = FakeSlack(files={"F1": AUDIO, "F2": AUDIO2})
+    first = _send(client, rt)
+    meeting.acknowledge(client, client.say("D1", files=[AUDIO2]))
+    _top(client)
+    asked = client.posted[-1]
+    assert asked["text"] == render.CHAT_CHOOSE_LANG and "thread_ts" not in asked
+    assert claude.chats() == [] and rt.store.chat_turns(first, asker="slack:U1") == []
+
+    choose_language(client, question_of(client, "F2"), "uz", rt)
+    second = render.marked(card(client))
+    assert second != first
+    _top(client, "Muddat qachon?")
+    answer = client.updated[-1]
+    assert answer["text"].startswith("📼 «Slack: ikkinchi.m4a» bo'yicha:\n") and render.marked(answer) == second
+
+
 def test_ochirilgan_yozuv_otkaziladi(users_file, monkeypatch, _isolated_meetings, claude):
     """Oxirgi yozuv o'chirilgan (hisob egasi ilovada o'chirdi): uning kartasi va chat javobi belgisi yo'q yig'ilishni
     ko'rsatadi - xato emas, o'tkaziladi (eski audiosi ham), savol oldingi yozuv bo'yicha."""
@@ -564,7 +604,7 @@ def test_ochirilgan_yozuv_otkaziladi(users_file, monkeypatch, _isolated_meetings
     client = FakeSlack(files={"F1": AUDIO, "F2": AUDIO2})
     first = _send(client, rt)
     event = client.say("D1", files=[AUDIO2], ago=meeting.AUDIO_PENDING_SEC + 60)
-    meeting.on_message(client, event, sleep=drive(rt), bot_user=BOT_USER)
+    send_audio(client, event, rt)
     second = render.marked(card(client))
     _top(client, "Hisobotni kim yuboradi?")
     assert render.marked(client.updated[-1]) == second != first
@@ -701,16 +741,17 @@ def test_vazifalar_tugmasi(delivered, _isolated_meetings):
     assert client.posted[-1]["text"].startswith("*Vazifalar*\n")
 
 
-def test_boshqa_shablon_bilan_xulosa(delivered, _isolated_meetings):
+def test_shablon_menyusi_yoq_eski_kartadagisi_ochirilgan(delivered, _isolated_meetings):
+    """Ega qarori (2026-11-12): «Boshqa shablon bilan xulosa» hozirgi bosqichda kerak emas - yangi kartada menyu
+    yo'q, eski kartadagi menyu bosilsa izoh chiqadi va YANGI XULOSA YOZILMAYDI (model chaqirilmaydi)."""
     client, mid, summary = delivered
-    title = {t["id"]: t["title"] for t in templates.catalog("uz")}["minutes"]
-    options = [e for e in elements(summary) if e["action_id"] == "barno_template"][0]["options"]
-    assert f"{mid}|minutes" in [o["value"] for o in options]
-    assert f"{mid}|auto" not in [o["value"] for o in options]
+    assert "barno_template" not in [e["action_id"] for e in elements(summary)]
+    before = len(_isolated_meetings.store.summaries(mid))
     _click(client, "barno_template", f"{mid}|minutes", _isolated_meetings, selected=True)
 
-    assert client.posted[-1]["text"].startswith("⏳")
-    assert client.updated[-1]["text"].startswith(f"*Xulosa: {title}*")
+    assert client.posted[-1]["text"] == render.TEMPLATE_OFF
+    assert not client.updated
+    assert len(_isolated_meetings.store.summaries(mid)) == before
 
 
 def test_eksport_transkript_va_hisobot(delivered, _isolated_meetings):
@@ -734,7 +775,9 @@ def test_eksport_ruxsat_yoq(delivered, _isolated_meetings):
     assert "files:write" in client.posted[-1]["text"]
 
 
-def test_boshqa_tilda_qayta_ogirish(delivered, _isolated_meetings):
+def test_eski_kartadagi_boshqa_tilda_qayta_ogirish(delivered, _isolated_meetings):
+    """2026-11-12 dan til audio yuklanganda so'raladi - yangi kartada qayta o'girish tugmasi yo'q, lekin ESKI
+    kartalardagi tugma ishlayveradi."""
     client, mid, _ = delivered
     before = len(client.posted)
     _click(client, "barno_relang_ru", f"{mid}|ru", _isolated_meetings)
@@ -745,7 +788,7 @@ def test_boshqa_tilda_qayta_ogirish(delivered, _isolated_meetings):
     assert [c["language"] for c in _isolated_meetings.router.calls] == ["ru"]
     assert "Добрый день" in shown(client.posted[before + 1])
     ids = [e["action_id"] for e in elements(card(client))]
-    assert ids[-2:] == ["barno_relang_uz", "barno_relang_en"]
+    assert not any(i.startswith("barno_relang") for i in ids)
 
 
 # --- 📄 Bayonnoma --------------------------------------------------------------------------------
@@ -780,7 +823,7 @@ from app.services.meetings import minutes  # noqa: E402 - bayonnoma testlari uch
 def test_bayonnoma_tugmasi_kartada(delivered):
     _, mid, summary = delivered
     ids = [e["action_id"] for e in elements(summary)]
-    assert ids[:3] == ["barno_transcript", "barno_tasks", "barno_minutes"]
+    assert ids[:3] == ["barno_download", "barno_tasks", "barno_minutes"]
     assert [e for e in elements(summary) if e["action_id"] == "barno_minutes"][0]["value"] == mid
 
 

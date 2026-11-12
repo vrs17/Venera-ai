@@ -93,7 +93,6 @@ export const ru: Record<TKey, string> = {
 
   'record.title': 'Запись',
   'record.language': 'Язык разговора',
-  'record.template': 'Шаблон итога',
   'record.speakers': 'Число участников',
   'record.speakersAuto': 'Авто',
   'record.start': 'Начать запись',
@@ -148,8 +147,6 @@ export const ru: Record<TKey, string> = {
   'detail.summarySkipped': 'Запись слишком короткая - итог не создан',
   'detail.summaryFailed': 'Итог не создан: {message}',
   'detail.summaryNone': 'Итога пока нет',
-  'detail.newSummary': '+ Новый итог',
-  'detail.chooseTemplate': 'Выберите шаблон',
   'detail.shareMd': 'Поделиться полным итогом',
   'detail.copyText': 'Скопировать полный итог',
   'detail.audioExpired': 'Срок хранения аудио истёк - остался только текст',

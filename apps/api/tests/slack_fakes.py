@@ -136,6 +136,32 @@ def setup(monkeypatch, users_file, *, seconds: float = 64.0) -> list[str]:
     return calls
 
 
+def question_of(client: "FakeSlack", file_id: str) -> dict[str, Any]:
+    """Shu audioga Barno'ning til savoli («Audio qaysi tilda?», `render.lang_question`)."""
+    return next(m for m in reversed(client.posted) if render.lang_marked(m) == file_id)
+
+
+def choose_language(client: "FakeSlack", question: dict[str, Any], lang: str, rt, *, user: str = "U1") -> None:
+    """Odam til savolidagi tugmani bosdi (`meeting.on_action` -> `meeting.start`); navbat qo'lda (`drive`)."""
+    from app.slack import meeting
+
+    [button] = [e for e in elements(question) if e["action_id"] == f"barno_lang_{lang}"]
+    message = {"ts": question["ts"], **({"thread_ts": question["thread_ts"]} if question.get("thread_ts") else {})}
+    meeting.on_action(client, {"actions": [button], "channel": {"id": question["channel"]}, "user": {"id": user},
+                               "message": message}, sleep=drive(rt))
+
+
+def send_audio(client: "FakeSlack", event: dict[str, Any], rt, lang: str = "uz", *, user: str = "U1") -> None:
+    """Odam audio yubordi (Bolt yo'li): til savoli (`meeting.acknowledge`), so'ng har fayl uchun tilni tanlaydi.
+    Fayl `files.info` uchun soxta klientga ham qo'shiladi."""
+    from app.slack import meeting
+
+    meeting.acknowledge(client, event)
+    for file in transcribe.audio_files(event):
+        client.files.setdefault(file["id"], file)
+        choose_language(client, question_of(client, file["id"]), lang, rt, user=user)
+
+
 def drive(rt):
     """`sleep` o'rniga: yig'ilish navbatini oxirigacha yuritadi (fon ishchisi yo'q)."""
     return lambda _sec: run_all(rt)

@@ -9,7 +9,7 @@
 import { useMemo } from 'react';
 import { create } from 'zustand';
 
-import type { Lang, TemplateId } from '@/api/types';
+import type { Lang } from '@/api/types';
 import { isUiLang, makeT, type TFn, type UiLang } from '@/i18n';
 
 export type ThemePref = 'system' | 'light' | 'dark';
@@ -26,7 +26,6 @@ export interface Settings {
   consentSeen: boolean;
   batteryHintSeen: boolean;
   lastLanguage: Lang;
-  lastTemplate: TemplateId;
   lastSpeakers: number | null;
 }
 
@@ -39,7 +38,6 @@ export const DEFAULT_SETTINGS: Settings = {
   consentSeen: false,
   batteryHintSeen: false,
   lastLanguage: 'uz',
-  lastTemplate: 'auto',
   lastSpeakers: null,
 };
 

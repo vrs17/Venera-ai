@@ -15,7 +15,7 @@ import pytest
 
 from app.core.config import settings
 from app.slack import meeting, render, transcribe
-from slack_fakes import AUDIO, FakeSlack, card, drive, elements, setup, shown
+from slack_fakes import AUDIO, FakeSlack, card, choose_language, drive, elements, question_of, setup, shown
 
 
 @pytest.fixture
@@ -54,15 +54,18 @@ def test_audio_chatda_faqat_qisqa_xulosa_transkript_tugmada(slack, _isolated_mee
     assert summary is card(client) and render.marked(summary) == mid
     assert not any("Assalomu alaykum" in shown(m) or "Assalomu alaykum" in m["text"] for m in client.posted)
     assert shown(summary).startswith("Qisqa xulosa\n*")
+    # Ega tartibi (2026-11-12): «📥 Yuklab olish» (transkript), «✅ Vazifalar», «📄 Bayonnoma», «Eksport» (xulosa,
+    # hisobot). Qayta o'girish tugmalari yo'q - til audio yuklanganda so'raladi; «Boshqa shablon bilan xulosa» ham
+    # yo'q (ega qarori 2026-11-12).
     ids = [e["action_id"] for e in elements(summary)]
-    assert ids == ["barno_transcript", "barno_tasks", "barno_minutes", "barno_template", "barno_export",
-                   "barno_relang_ru", "barno_relang_en"]
-    button = elements(summary)[0]
-    assert (button["text"]["text"], button["value"]) == ("📥 Transkriptni yuklab olish", mid)
-    export = next(e for e in elements(summary) if e["action_id"] == "barno_export")
-    assert [o["value"].split("|")[1] for o in export["options"]] == ["transcript_srt", "summary_md", "report_docx",
-                                                                     "report_pdf"]
-    assert all("confirm" in e for e in elements(summary) if e["action_id"].startswith("barno_relang"))
+    assert ids == ["barno_download", "barno_tasks", "barno_minutes", "barno_export"]
+    labels = [(e.get("placeholder") or e["text"])["text"] for e in elements(summary)]
+    assert labels == ["📥 Yuklab olish", "✅ Vazifalar", "📄 Bayonnoma", "Eksport"]
+    download, export = elements(summary)[0], elements(summary)[-1]
+    assert [(o["text"]["text"], o["value"]) for o in download["options"]] == [
+        ("Transkript (TXT)", f"{mid}|transcript_txt"), ("Transkript (SRT)", f"{mid}|transcript_srt")]
+    assert [o["value"].split("|")[1] for o in export["options"]] == ["summary_md", "report_docx", "report_pdf"]
+    assert elements(summary)[2]["value"] == mid
 
 
 def test_jarayon_xabari_bosqichma_bosqich(slack, _isolated_meetings):
@@ -73,21 +76,22 @@ def test_jarayon_xabari_bosqichma_bosqich(slack, _isolated_meetings):
     meeting.handle(client, "D1", None, [AUDIO], sleep=drive(_isolated_meetings))
 
     status, summary = client.posted
-    assert status["text"] == ("📎 «ovoz.aac» qabul qilindi.\n\n⏳ Audio yuklanmoqda…\n◻️ Matnga o'girish\n"
+    assert status["text"] == ("📎 «ovoz.aac» qabul qilindi. Til: o'zbek.\n\n⏳ Audio yuklanmoqda…\n◻️ Matnga o'girish\n"
                               "◻️ Qisqa xulosa\n\nNatija shu yerga keladi - odatda 1-3 daqiqada.")
     transcribing, waiting = client.updated
     assert transcribing["ts"] == waiting["ts"] == status["ts"]
     assert "\n\n✅ Audio yuklandi (1 daq 4 s)\n⏳ Matnga o'girilmoqda…\n◻️ Qisqa xulosa\n\n" in transcribing["text"]
-    assert waiting["text"] == ("📎 «ovoz.aac» qabul qilindi.\n\n✅ Audio yuklandi (1 daq 4 s)\n"
+    assert waiting["text"] == ("📎 «ovoz.aac» qabul qilindi. Til: o'zbek.\n\n✅ Audio yuklandi (1 daq 4 s)\n"
                                "✅ Matnga o'girildi\n⏳ Qisqa xulosa yozilmoqda…\n\n"
                                "Xulosa tayyor bo'lishi bilan shu yerga keladi.")
     assert summary is card(client)
     assert [d["ts"] for d in client.deleted] == [status["ts"]]
 
 
-def test_dispetcher_qabul_qilindi_ni_darhol_chiqaradi(slack, _isolated_meetings, monkeypatch):
-    """Jarayon xabari Bolt ipida, navbatdan OLDIN: ishchilar band bo'lsa ham odam audiosi qabul
-    qilinganini ko'radi. Bir xabardagi ikkinchi fayl - "navbatda", o'z navbati kelganda boshlanadi."""
+def test_dispetcher_avval_tilni_soraydi(slack, _isolated_meetings, monkeypatch):
+    """Ega talabi (2026-11-12): audio kelishi bilan - DARHOL, Bolt ipida - "qabul qilindi" va «Audio qaysi tilda?»
+    (har faylga o'z savoli). Til tanlanmaguncha hech narsa yuklanmaydi va navbatga ish qo'yilmaydi; tanlangach savol
+    xabari joyida jarayon xabariga aylanadi, natija chiqqach o'chadi."""
     from types import SimpleNamespace
 
     from app import slack as slack_app
@@ -95,23 +99,52 @@ def test_dispetcher_qabul_qilindi_ni_darhol_chiqaradi(slack, _isolated_meetings,
     jobs = []
     monkeypatch.setattr(slack_app, "_pool", SimpleNamespace(submit=lambda fn, *a, **k: jobs.append((fn, a, k))))
     second = {**AUDIO, "id": "F2", "name": "ikkinchi.m4a"}
-    client = FakeSlack()
+    client = FakeSlack(files={"F1": AUDIO, "F2": second})
     event = {"channel_type": "im", "subtype": "file_share", "channel": "D1", "user": "U1", "ts": "5.1",
              "files": [AUDIO, second]}
     slack_app._on_message(event, client, {"bot_user_id": "UBOT"})
 
-    first_status, second_status = client.posted                    # navbatdagi ish hali boshlanmagan
-    assert "\n\n⏳ Audio yuklanmoqda…\n" in first_status["text"]
-    assert second_status["text"] == ("📎 «ikkinchi.m4a» qabul qilindi.\n\n⏳ Navbatda - oldingi audio tugagach "
-                                     "boshlanadi\n◻️ Matnga o'girish\n◻️ Qisqa xulosa\n\nNatija shu yerga keladi.")
-    [(job, args, kwargs)] = [j for j in jobs if j[0] is meeting.on_message]
-    job(*args, **{**kwargs, "sleep": drive(_isolated_meetings)})
+    first_q, second_q = client.posted
+    assert first_q["text"] == "📎 «ovoz.aac» qabul qilindi.\n🌐 Audio qaysi tilda? Tanlang - shundan keyin matnga o'giraman."
+    assert render.lang_marked(first_q) == "F1" and render.lang_marked(second_q) == "F2"
+    assert [(e["action_id"], e["text"]["text"], e["value"]) for e in elements(first_q)] == [
+        ("barno_lang_uz", "🇺🇿 O'zbek", "F1"), ("barno_lang_ru", "🇷🇺 Rus", "F1"), ("barno_lang_en", "🇬🇧 Ingliz", "F1")]
+    assert not [j for j in jobs if j[0] is meeting.on_message] and slack == [] and _meetings(_isolated_meetings)[1] == 0
 
-    assert any(u["ts"] == second_status["ts"] and "⏳ Audio yuklanmoqda…" in u["text"] for u in client.updated)
-    assert {first_status["ts"], second_status["ts"]} <= {d["ts"] for d in client.deleted}
-    left = client.visible()
-    assert [m["text"] for m in left] == ["Qisqa xulosa", "Qisqa xulosa"]
-    assert not any("Assalomu alaykum" in shown(m) for m in left)
+    choose_language(client, first_q, "ru", _isolated_meetings)
+    choose_language(client, second_q, "uz", _isolated_meetings)
+    assert any(u["ts"] == first_q["ts"] and u["text"].startswith("📎 «ovoz.aac» qabul qilindi. Til: rus.\n\n")
+               for u in client.updated)
+    assert {first_q["ts"], second_q["ts"]} <= {d["ts"] for d in client.deleted}
+    assert [m["text"] for m in client.visible()] == ["Qisqa xulosa", "Qisqa xulosa"]
+
+
+def test_tanlangan_tilda_ogiriladi(slack, _isolated_meetings):
+    """Tanlangan til yig'ilishga yoziladi va o'girish o'sha tilda (rus - Router orqali, quvurning o'z qoidasi)."""
+    client = FakeSlack(files={"F1": AUDIO})
+    meeting.acknowledge(client, client.say("D1", files=[AUDIO]))
+    choose_language(client, question_of(client, "F1"), "ru", _isolated_meetings)
+
+    [row] = _meetings(_isolated_meetings)[0]
+    assert row["language"] == "ru"
+    assert [c["language"] for c in _isolated_meetings.router.calls] == ["ru"]
+    assert render.marked(card(client)) == row["id"] and client.visible() == [card(client)]
+
+
+def test_til_tugmasi_takror_va_yaroqsiz_qiymat(slack, _isolated_meetings):
+    """Tugma ikki marta (yoki ikkinchi til) bosilsa - audio hali ishlanayotgan bo'lsa ikkinchisi e'tiborsiz; noma'lum
+    til yoki fayl id'si - jim."""
+    client = FakeSlack(files={"F1": AUDIO})
+    meeting.acknowledge(client, client.say("D1", files=[AUDIO]))
+    question = question_of(client, "F1")
+    meeting._started.add("F1")                                  # birinchi bosish hali ishlanyapti
+    try:
+        choose_language(client, question, "en", _isolated_meetings)
+    finally:
+        meeting._started.discard("F1")
+    meeting.start(client, "D1", None, "F1", "de", ref=question["ts"])
+    meeting.start(client, "D1", None, "../x", "uz", ref=question["ts"])
+    assert slack == [] and client.updated == [] and _meetings(_isolated_meetings)[1] == 0
 
 
 def test_thread_ichidagi_audio_javobi_osha_threadda(slack, _isolated_meetings):
@@ -140,7 +173,7 @@ def test_slack_ovozli_xabari_aac_nusxasidan_olinadi(slack, _isolated_meetings):
     meeting.handle(client, "D1", None, [clip], sleep=drive(_isolated_meetings))
 
     assert slack == [clip["aac"]]
-    assert client.posted[0]["text"].startswith("🎙 Ovozli xabaringiz qabul qilindi.\n\n⏳ Audio yuklanmoqda…")
+    assert client.posted[0]["text"].startswith("🎙 Ovozli xabaringiz qabul qilindi. Til: o'zbek.\n\n⏳ Audio yuklanmoqda…")
     assert client.visible() == [card(client)]
 
 
@@ -182,16 +215,24 @@ def test_yuklab_bolmasa_qayta_urinish_tugmasi(slack, monkeypatch, _isolated_meet
 
     monkeypatch.setattr(transcribe, "download", broken)
     client = FakeSlack(files={"F1": AUDIO})
-    meeting.handle(client, "D1", None, [AUDIO])
-    [retry] = elements(client.visible()[0])
-    assert (retry["action_id"], retry["value"]) == ("barno_retry", "f:F1")
-    assert render.fail_marked(client.visible()[0]) == "F1"
+    meeting.acknowledge(client, client.say("D1", files=[AUDIO]))
+    choose_language(client, question_of(client, "F1"), "en", _isolated_meetings)
+    [failed] = client.visible()
+    [retry] = elements(failed)
+    # "Qayta urinish" tanlangan tilni eslab qoladi.
+    assert (retry["action_id"], retry["value"]) == ("barno_retry", "f:F1:en")
+    assert render.fail_marked(failed) == "F1"
 
     monkeypatch.setattr(transcribe, "download", real)
     meeting.on_action(client, {"actions": [retry], "channel": {"id": "D1"}, "message": {}},
                       sleep=drive(_isolated_meetings))
     assert client.visible()[1] is card(client)
-    assert render.marked(card(client)) == _meetings(_isolated_meetings)[0][0]["id"]
+    [row] = _meetings(_isolated_meetings)[0]
+    assert render.marked(card(client)) == row["id"] and row["language"] == "en"
+
+    # Tilsiz eski tugma (2026-11-12 gacha) - o'zbek.
+    meeting.retry(client, "D1", None, transcribe.account(), "f:F1", sleep=drive(_isolated_meetings))
+    assert client.posted[-1] is card(client)
 
 
 def test_kunlik_limit_tugasa_yozuv_ochiriladi(slack, monkeypatch, _isolated_meetings):

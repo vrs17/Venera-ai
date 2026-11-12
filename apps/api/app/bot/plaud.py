@@ -14,8 +14,9 @@ Slack'dagi Barno AI (`app/slack/meeting.py`) bilan AYNI imkoniyatlar, Telegram k
     yuklash, matnga o'girish (foizi bilan), qisqa xulosa. Joyida yangilanadi, transkript chiqqach
     uning ostiga ko'chadi, xulosa (yoki xato) chiqqach o'chiriladi;
   * transkript (xabarlar 4000 belgidan), keyin "📋 Qisqa xulosa" - mobil kartadagi bilan
-    AYNI matn (`intake.brief_markdown`) va tugmalar: vazifalar, boshqa shablon, eksport
-    (fayl), boshqa tilda qayta o'girish (tasdiq bilan - GAPI qayta sarflanadi);
+    AYNI matn (`intake.brief_markdown`) va tugmalar: vazifalar, eksport (fayl), boshqa tilda
+    qayta o'girish (tasdiq bilan - GAPI qayta sarflanadi). «🗂 Boshqa shablon» olib tashlangan (ega
+    qarori 2026-11-12: hozirgi bosqichda kerak emas - xulosa avtomatik shablon bilan);
   * "📄 Bayonnoma" (ega qarori, 2026-11-04) - rasmiy hujjat loyihasi: til menyusi (lotin /
     kirill / rus / ingliz, tavsiya - yig'ilish tilidan), tanlovdan keyin Word (asosiy) va PDF
     (nusxa) fayl shu chatga (`services.meetings.minutes`); «________» joylari qo'lda to'ldiriladi;
@@ -50,7 +51,7 @@ TUGMALAR (`callback_data`, 64 baytgacha; yig'ilish id'si 32 belgi):
     p:q:<id>            savol berish: ForceReply so'rovi (yig'ilish chati)
     p:n:<id>            yangi suhbat: chat navbatlari arxivga (`service.chat_reset`)
     p:t:<id>            vazifalar
-    p:s:<id>[:<shablon>] boshqa shablon: menyu / tanlangan shablon bilan xulosa
+    p:s:<id>[:<shablon>] (o'chirilgan) eski xabardagi «🗂 Boshqa shablon»: izoh va asosiy tugmalar
     p:e:<id>[:<tur>]    eksport: menyu / fayl (txt, srt, md, docx, pdf)
     p:l:<id>[:<til>[:y]] boshqa til: menyu / tasdiq / qayta o'girish
     p:d:<id>[:<til>]    bayonnoma: hujjat tili menyusi / tanlangan tilda Word + PDF (`minutes.LANGS`)
@@ -86,7 +87,7 @@ from ..schemas.auth import AuthUser
 from ..services import archive
 from ..services.analytics import bind
 from ..services.integrations.telegram import TelegramApi, TelegramError
-from ..services.meetings import audio, export, intake, minutes, service, templates
+from ..services.meetings import audio, export, intake, minutes, service
 from ..services.meetings.errors import MeetingProblem
 from . import render
 from .mobile_app import BTN_APP
@@ -126,7 +127,7 @@ PROMPT = (
     "3 soatgacha.\n\n"
     "Keyingi 15 daqiqada kelgan ovozli xabar Plaud'ga ketadi; audio fayllar - har doim. "
     "Xulosa ostida: 💬 <b>Savol berish</b> (shu yozuv bo'yicha chat - Barno suhbatni eslab qoladi), "
-    "vazifalar, boshqa shablon, eksport, boshqa til va 📄 <b>Bayonnoma</b> - rasmiy hujjat (Word/PDF) "
+    "vazifalar, eksport, boshqa til va 📄 <b>Bayonnoma</b> - rasmiy hujjat (Word/PDF) "
     "tanlangan tilda."
 )
 BTN_ASK = "💬 Savol berish"
@@ -138,6 +139,8 @@ ASK_REPLY = {"force_reply": True, "input_field_placeholder": "Savolingiz…"}
 _PROMPT_MARK = "savolingizni yozing"
 STALE_PROMPT = "Bu so'rov eskirgan - yozuv ostidagi «💬 Savol berish» tugmasini qayta bosing."
 CHAT_RESET = "🔄 Yangi suhbat boshlandi - oldingi savol-javoblar endi hisobga olinmaydi."
+#: Eski xabardagi «🗂 Boshqa shablon» bosilsa (ega qarori 2026-11-12: funksiya o'chirilgan).
+TEMPLATE_OFF = "«Boshqa shablon» hozircha o'chirilgan - xulosa avtomatik shablon bilan yoziladi."
 
 
 class Plaud:
@@ -266,13 +269,11 @@ class Plaud:
             elif op == "t":
                 self._answer(cq_id)
                 self._submit(user, lambda: self._tasks(chat_id, user, meeting_id))
-            elif op == "s" and not arg:
-                self._answer(cq_id)
-                self._menu(chat_id, message_id, template_menu(meeting_id))
             elif op == "s":
-                self._answer(cq_id, "Xulosa yozilmoqda…")
+                # Eski xabardagi «🗂 Boshqa shablon» (yoki uning menyusi): funksiya o'chirilgan - xulosa
+                # yozilmaydi, tugmalar yangi ko'rinishga almashadi.
+                self._answer(cq_id, TEMPLATE_OFF, alert=True)
                 self._menu(chat_id, message_id, controls(meeting_id, language))
-                self._submit(user, lambda: self._template(chat_id, user, meeting_id, arg))
             elif op == "e" and not arg:
                 self._answer(cq_id)
                 self._menu(chat_id, message_id, export_menu(meeting_id))
@@ -393,7 +394,7 @@ class Plaud:
             body = esc("Xulosa yozilmadi" + (f": {reason}" if reason else "."))
             retry = f"p:r:m:{meeting_id}" if status == "failed" else None
         else:
-            body = "Xulosa hali tayyor emas - birozdan keyin «🗂 Boshqa shablon» dan oling."
+            body = "Xulosa hali tayyor emas - birozdan keyin «📎 Eksport -> 📋 Xulosa (MD)» dan oling."
         pages = render.pack(["📋 <b>Qisqa xulosa</b>\n\n" + body, _HINT])
         markup = controls(meeting_id, view["language"], retry=retry)
         for n, page in enumerate(pages, 1):
@@ -521,29 +522,6 @@ class Plaud:
             body = esc(f"Bajarib bo'lmadi: {exc.detail}")
         for page in render.pack(["✅ <b>Vazifalar</b>\n\n" + (body or "Bu yozuvda vazifalar topilmadi.")]):
             self._remember(chat_id, self._send(chat_id, page), meeting_id)
-
-    def _template(self, chat_id: int, user: AuthUser, meeting_id: str, template_id: str) -> None:
-        """Tanlangan shablon bilan xulosa: yozilishini kutadi, so'ng "Qisqa xulosa" va shablon
-        bo'limlari. Xuddi shu shablon qayta tanlansa - tayyori (`create_summary` takrorlamaydi)."""
-        title = template_titles().get(template_id)
-        if title is None:
-            return
-        holder = self._send(chat_id, esc(f"⏳ «{title}» shabloni bilan xulosa yozilmoqda…"))
-        try:
-            card, _ = service.create_summary(user, meeting_id, schemas.SummaryRequest(template=template_id))
-            card = intake.wait_summary_card(user, meeting_id, card["id"], sleep=self._sleep)
-            if card["status"] == "ready":
-                text = f"🗂 <b>Xulosa: {esc(title)}</b>\n\n" + html_of(
-                    intake.brief_markdown(user, meeting_id, summary_id=card["id"], parts="brief,summary"))
-            elif card["status"] in ("queued", "running"):
-                text = "Xulosa hali yozilmoqda - birozdan keyin shu shablonni qayta tanlang."
-            else:
-                reason = (card.get("error") or {}).get("message")
-                text = esc("Xulosa yozilmadi" + (f": {reason}" if reason else "."))
-        except (MeetingProblem, intake.Problem) as exc:
-            text = esc(f"Xulosa yozilmadi: {getattr(exc, 'detail', exc)}")
-        for message_id in self._replace(chat_id, holder, text):
-            self._remember(chat_id, message_id, meeting_id)
 
     def _export(self, chat_id: int, user: AuthUser, meeting_id: str, kind: str) -> None:
         """Fayl (`EXPORTS`) shu chatga - `sendDocument`."""
@@ -745,8 +723,8 @@ def _btn(text: str, data: str) -> dict[str, str]:
 
 def controls(meeting_id: str, language: str, *, retry: str | None = None) -> dict[str, Any]:
     rows = [[_btn(BTN_ASK, f"p:q:{meeting_id}")],
-            [_btn("✅ Vazifalar", f"p:t:{meeting_id}"), _btn("🗂 Boshqa shablon", f"p:s:{meeting_id}")],
-            [_btn("📎 Eksport", f"p:e:{meeting_id}"), _btn("🌐 Boshqa til", f"p:l:{meeting_id}")],
+            [_btn("✅ Vazifalar", f"p:t:{meeting_id}"), _btn("📎 Eksport", f"p:e:{meeting_id}")],
+            [_btn("🌐 Boshqa til", f"p:l:{meeting_id}")],
             [_btn("📄 Bayonnoma", f"p:d:{meeting_id}")]]
     if retry:
         rows.append([_btn("🔁 Xulosani qayta urinish", retry)])
@@ -764,16 +742,6 @@ def ask_menu(meeting_id: str) -> dict[str, Any]:
     javobining oxirgisidan boshqa bo'laklarida, xato xabarida va ovozli savolning "🎙 matn"ida - yig'ilish
     belgisi ham (`_MARK`)."""
     return {"inline_keyboard": [[_btn(BTN_ASK, f"p:q:{meeting_id}")]]}
-
-
-def template_titles() -> dict[str, str]:
-    return {t["id"]: t["title"] for t in templates.catalog("uz") if t["id"] != "auto"}
-
-
-def template_menu(meeting_id: str) -> dict[str, Any]:
-    items = [_btn(title, f"p:s:{meeting_id}:{tid}") for tid, title in template_titles().items()]
-    rows = [items[i:i + 2] for i in range(0, len(items), 2)]
-    return {"inline_keyboard": rows + [[_btn("⬅ Orqaga", f"p:b:{meeting_id}")]]}
 
 
 def export_menu(meeting_id: str) -> dict[str, Any]:

@@ -15,11 +15,10 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import type { Lang, TemplateId } from '@/api/types';
+import type { Lang } from '@/api/types';
 import { useAuth } from '@/features/auth/authStore';
 import { decideEntry, entrySignature, parseEntryParams, type EntryParams } from '@/features/entry/deepLink';
 import { formatClock } from '@/features/meeting/formatDate';
-import { TEMPLATE_IDS, useTemplateTitle } from '@/features/meeting/SummaryView';
 import { openBatterySettings } from '@/features/recorder/battery';
 import { useRecorder, useRecorderStore } from '@/features/recorder/RecorderProvider';
 import { elapsedMs, limitState } from '@/features/recorder/recorderMachine';
@@ -73,9 +72,7 @@ export function RecordScreen({
   const lastSaved = useRecorderStore((s) => s.lastSavedClientId);
   const settings = useSettings();
   const config = useAuth((s) => s.config);
-  const templateTitle = useTemplateTitle();
   const [language, setLanguage] = useState<Lang>(settings.lastLanguage);
-  const [template, setTemplate] = useState<TemplateId>(settings.lastTemplate);
   const [speakers, setSpeakers] = useState<number | null>(settings.lastSpeakers);
   const [now, setNow] = useState(() => Date.now());
   const [note, setNote] = useState('');
@@ -85,8 +82,9 @@ export function RecordScreen({
   const [mountedAt] = useState(() => Date.now());
 
   const startWith = (source: EntryParams['src']) => {
-    useSettings.getState().set({ lastLanguage: language, lastTemplate: template, lastSpeakers: speakers });
-    void actions.start({ language, template, expectedSpeakers: speakers, source });
+    useSettings.getState().set({ lastLanguage: language, lastSpeakers: speakers });
+    // Shablon tanlovi yo'q (ega qarori 2026-11-12): xulosa turini Barno o'zi aniqlaydi.
+    void actions.start({ language, template: 'auto', expectedSpeakers: speakers, source });
   };
 
   // Deep link / yorliq / plitka qarori - har bir intent bir marta.
@@ -134,7 +132,6 @@ export function RecordScreen({
   const elapsed = elapsedMs(m, m.status === 'recording' ? now : (m.endedAt ?? now));
   const limit = m.status === 'recording' ? limitState(m, now) : 'ok';
   const minutesLeft = Math.max(1, Math.ceil((m.maxSec - elapsed / 1000) / 60));
-  const templates = TEMPLATE_IDS.filter((id) => id !== 'follow_up');
   const languages = (config?.languages?.length ? config.languages : (['uz', 'ru', 'en'] as Lang[])).map((l) => ({
     value: l,
     label: t(`lang.${l}`),
@@ -179,13 +176,6 @@ export function RecordScreen({
 
           <Text style={[s.label, { color: th.textMuted }]}>{t('record.language')}</Text>
           <Segmented testIDPrefix="lang" options={languages} value={language} onChange={setLanguage} />
-
-          <Text style={[s.label, { color: th.textMuted }]}>{t('record.template')}</Text>
-          <View style={ui.wrap}>
-            {templates.map((id) => (
-              <Chip key={id} testID={`tpl-${id}`} label={templateTitle(id)} tone={id === template ? 'accent' : 'neutral'} selected={id === template} onPress={() => setTemplate(id)} />
-            ))}
-          </View>
 
           <Text style={[s.label, { color: th.textMuted }]}>
             {t('record.speakers')} ({t('common.optional')})

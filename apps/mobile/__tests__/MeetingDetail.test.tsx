@@ -16,7 +16,7 @@ import * as PathsMod from '@/lib/paths';
 import { useSettings } from '@/features/settings/settingsStore';
 
 import { fakeMeetingsApi, fakeServices, Providers } from './fixtures/fakeServices';
-import { meeting, summary, transcript } from './fixtures/server';
+import { meeting, summary, summaryCard, transcript } from './fixtures/server';
 
 const ID = 'a'.repeat(32);
 
@@ -120,12 +120,20 @@ describe('Meeting detail', () => {
     expect(screen.getByTestId('summary-meta')).toHaveTextContent(/^Kayfiyat: ijobiy/);
   });
 
-  it('creates a new summary tab from another template', async () => {
+  it('has no "another template" picker; a single summary shows no tab row (owner, 2026-11-12)', async () => {
     const { api } = await open();
-    await waitFor(() => expect(screen.getByTestId('summary-new')).toBeTruthy());
-    await fireEvent.press(screen.getByTestId('summary-new'));
-    await fireEvent.press(screen.getByText('Protokol'));
-    await waitFor(() => expect(api.createSummary).toHaveBeenCalledWith(ID, { template: 'minutes', makePrimary: true }));
+    await waitFor(() => expect(screen.getByTestId('summary-body')).toBeTruthy());
+    expect(screen.queryByTestId('summary-new')).toBeNull();
+    expect(screen.queryByTestId(`summary-tab-${'b'.repeat(32)}`)).toBeNull();
+    expect(api.createSummary).not.toHaveBeenCalled();
+  });
+
+  it('an old meeting with several summaries still switches between them', async () => {
+    const other = { ...summaryCard, id: 'c'.repeat(32), template: 'minutes' as const, primary: false };
+    await open(fakeMeetingsApi({ summaries: jest.fn(async () => ({ items: [summaryCard, other] })) }));
+    await waitFor(() => expect(screen.getByTestId(`summary-tab-${'c'.repeat(32)}`)).toBeTruthy());
+    expect(screen.getByTestId(`summary-tab-${'b'.repeat(32)}`)).toBeTruthy();
+    expect(screen.queryByTestId('summary-new')).toBeNull();
   });
 
   it('transcript tab is a chat-like dialog grouped by speaker; rename works', async () => {
