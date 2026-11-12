@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     #: SSO bilan kirganlar: Keycloak `sub` -> `actor_id`
     #: (`services/identities.py`). Sir yo'q, lekin `data/` da, 600.
     identities_file: Path = BASE_DIR / "data" / "identities.json"
+    #: Chiqish uchun oxirgi ID token (`id_token_hint`) har odamga - API qayta ishga
+    #: tushganda yo'qolmasin (`services/oidc.IdTokens`). 600, atomik.
+    sso_id_tokens_file: Path = BASE_DIR / "data" / "sso" / "id_tokens.json"
 
     #: Demo foydalanuvchilar fayli. Keyinchalik bu joyni DB egallaydi -
     #: `services/users.py` interfeysi o'zgarmaydi.

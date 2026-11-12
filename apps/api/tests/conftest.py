@@ -130,6 +130,8 @@ def _isolated_identities(tmp_path, monkeypatch):
     from app.api.deps import get_identity_store
 
     monkeypatch.setattr(settings, "identities_file", tmp_path / "identities.json", raising=False)
+    # Chiqish uchun ID tokenlar ham (`oidc.IdTokens`) - jonli `data/sso/` ga yozilmasin.
+    monkeypatch.setattr(settings, "sso_id_tokens_file", tmp_path / "sso" / "id_tokens.json", raising=False)
     get_identity_store.cache_clear()
     yield
     get_identity_store.cache_clear()

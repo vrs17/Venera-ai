@@ -38,7 +38,10 @@ import hashlib
 import http.client
 import json
 import logging
+import os
 import secrets
+import stat
+import tempfile
 import threading
 import time
 import urllib.error
@@ -46,7 +49,8 @@ import urllib.parse
 import urllib.request
 
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
 import jwt
 
@@ -164,9 +168,88 @@ PENDING = _Expiring(PENDING_TTL)
 #: Callback'dan frontend'ga bir martalik kod: kod -> tayyor `LoginResponse` (dict).
 #: Token URL'da YURMAYDI (jurnal, tarix, Referer) - faqat shu kod yuradi.
 HANDOFF = _Expiring(HANDOFF_TTL)
-#: Chiqish uchun oxirgi ID token (`id_token_hint`): actor_id -> token. Yo'q
-#: bo'lsa Keycloak "chiqasizmi?" deb bir marta so'raydi, xolos.
-ID_TOKENS: dict[int, str] = {}
+class IdTokens:
+    """Chiqish uchun oxirgi ID token (`id_token_hint`): actor_id -> token - DISKDA.
+
+    2026-11-12 gacha faqat xotirada edi va API har qayta ishga tushganda yo'qolardi:
+    shundan keyin chiqishda Keycloak (`brb-realm`, `post_logout_redirect_uri` bilan
+    `id_token_hint` siz) "We are sorry... Missing parameters: id_token_hint" sahifasini
+    ko'rsatardi (jonli sayt, ega xabari). Endi `data/sso/id_tokens.json` da (600, atomik).
+    ID token API'ga kirish kaliti EMAS - Keycloak uni faqat "kim chiqyapti" belgisi
+    sifatida o'qiydi (imzosi tekshiriladi, muddati emas). `TTL` dan eskisi tashlanadi.
+    """
+
+    TTL = 30 * 86400.0
+
+    def __init__(self, path: Callable[[], Path]) -> None:
+        self._path = path
+        self._lock = threading.Lock()
+
+    def __setitem__(self, actor_id: int, token: str) -> None:
+        with self._lock:
+            data = self._read()
+            data[str(int(actor_id))] = {"token": token, "at": time.time()}
+            self._write(data)
+
+    def get(self, actor_id: int, default: str | None = None) -> str | None:
+        with self._lock:
+            entry = self._read().get(str(int(actor_id)))
+        return entry["token"] if entry else default
+
+    def pop(self, actor_id: int, default: str | None = None) -> str | None:
+        with self._lock:
+            data = self._read()
+            entry = data.pop(str(int(actor_id)), None)
+            if entry is not None:
+                self._write(data)
+        return entry["token"] if entry else default
+
+    def clear(self) -> None:
+        with self._lock:
+            self._write({})
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._read())
+
+    def _read(self) -> dict[str, dict[str, Any]]:
+        try:
+            raw = json.loads(Path(self._path()).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        now = time.time()
+        return {k: v for k, v in (raw.items() if isinstance(raw, dict) else [])
+                if isinstance(v, dict) and isinstance(v.get("token"), str)
+                and now - float(v.get("at") or 0) <= self.TTL}
+
+    def _write(self, data: dict[str, dict[str, Any]]) -> None:
+        path = Path(self._path())
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent,
+                                                 prefix=".id-tokens.", suffix=".tmp", delete=False)
+            try:
+                with handle:
+                    json.dump(data, handle)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.chmod(handle.name, stat.S_IRUSR | stat.S_IWUSR)
+                os.replace(handle.name, path)
+            except BaseException:
+                Path(handle.name).unlink(missing_ok=True)
+                raise
+        except OSError as exc:
+            # Chiqish manzili baribir quriladi (hint'siz - `logout_url`), kirish to'xtamaydi.
+            log.warning("ID tokenlar fayli yozilmadi (%s): %s", path, exc)
+
+
+def _id_tokens_path() -> Path:
+    from ..core.config import settings
+
+    return Path(settings.sso_id_tokens_file)
+
+
+ID_TOKENS = IdTokens(_id_tokens_path)
 
 
 def pkce_pair() -> tuple[str, str]:
@@ -537,9 +620,15 @@ class KeycloakOidc:
     # --- 4. chiqish ---------------------------------------------------------
 
     def logout_url(self, post_logout_redirect_uri: str, *, id_token_hint: str | None = None) -> str:
-        params = {"client_id": self.client_id, "post_logout_redirect_uri": post_logout_redirect_uri}
-        if id_token_hint:
-            params["id_token_hint"] = id_token_hint
+        """Keycloak chiqish manzili. `id_token_hint` bo'lsa - chiqqach Barno'ga qaytadi.
+        Bo'lmasa - QAYTISH MANZILISIZ: `brb-realm` Keycloak'i `post_logout_redirect_uri`
+        ni `id_token_hint` siz rad etadi ("Missing parameters: id_token_hint", `client_id`
+        yetmaydi - 2026-11-12, jonli). Unda Keycloak "chiqasizmi?" deb so'raydi va o'z
+        "chiqdingiz" sahifasini ko'rsatadi - xato sahifasi emas, sessiya baribir yopiladi."""
+        if not id_token_hint:
+            return self.end_session_endpoint
+        params = {"client_id": self.client_id, "post_logout_redirect_uri": post_logout_redirect_uri,
+                  "id_token_hint": id_token_hint}
         return f"{self.end_session_endpoint}?{urllib.parse.urlencode(params)}"
 
 

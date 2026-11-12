@@ -376,9 +376,28 @@ def test_sso_chiqishda_keycloak_manzili(client, net):
     assert query["client_id"] == CLIENT_ID
     assert query["post_logout_redirect_uri"] == f"{APP_URL}/welcome"
     assert query["id_token_hint"].count(".") == 2
-    # Ikkinchi chiqish (token hali yaroqli) - ID token qolmagan, hint'siz.
+    # Ikkinchi chiqish (token hali yaroqli) - ID token qolmagan: QAYTISH MANZILISIZ
+    # (`brb-realm` `post_logout_redirect_uri` ni hint'siz "Missing parameters" bilan rad etadi).
     again = client.post("/api/v1/auth/logout", headers=_bearer(body)).json()["ssoLogoutUrl"]
-    assert "id_token_hint" not in again
+    assert again == LOGOUT_URL
+
+
+def test_chiqish_tokeni_api_qayta_ishga_tushganda_yoqolmaydi(client, net, tmp_path):
+    """Jonli xato (2026-11-12): ID token faqat xotirada edi - restartdan keyin chiqish Keycloak'ning
+    "Missing parameters: id_token_hint" sahifasiga olib borardi. Endi diskda (600)."""
+    import stat
+
+    from app.core.config import settings
+    from app.services import oidc as oidc_module
+
+    body = sso_login(client, net)
+    path = settings.sso_id_tokens_file
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    restarted = oidc_module.IdTokens(lambda: path)          # yangi jarayon - xotira bo'sh
+    assert restarted.get(body["user"]["actorId"]).count(".") == 2
+    url = client.post("/api/v1/auth/logout", headers=_bearer(body)).json()["ssoLogoutUrl"]
+    assert "id_token_hint=" in url and "post_logout_redirect_uri=" in url
+    assert restarted.get(body["user"]["actorId"]) is None, "chiqishda o'chiriladi"
 
 
 def test_zahira_hisob_chiqishida_sso_manzili_yoq(client, net):
