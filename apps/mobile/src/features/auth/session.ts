@@ -54,6 +54,8 @@ export interface SessionDeps {
 export interface Session extends TokenProvider {
   /** Login + qurilmani ro'yxatdan o'tkazish. 403/404 -> FeatureDisabledError, tokenlar o'chadi. */
   login(username: string, password: string, device: RegisterDeviceRequest): Promise<LoginResponse>;
+  /** Tayyor kirish javobi (BRB-Tech ID: `POST /auth/sso/exchange`) -> sessiya va qurilma, `login` dagi kabi. */
+  loginWith(res: LoginResponse, device: RegisterDeviceRequest): Promise<LoginResponse>;
   /** Server tomonda revoke + logout (best effort), keyin `wipe` (navbat, fayllar), keyin tokenlar. */
   logout(wipe?: () => Promise<void>): Promise<void>;
   /** Kirgan holatmi: device token bor YOKI yaroqli (Mini App bergan) token bor. Tarmoqqa chiqmaydi. */
@@ -172,7 +174,7 @@ export function createSession(deps: SessionDeps): Session {
 
   const getToken = () => tokenValidFor(REFRESH_WINDOW_MS);
 
-  return {
+  const api: Session = {
     getToken,
     refreshToken,
 
@@ -185,6 +187,10 @@ export function createSession(deps: SessionDeps): Session {
 
     async login(username, password, device) {
       const res = await deps.authApi.login({ username: username.trim(), password });
+      return api.loginWith(res, device);
+    },
+
+    async loginWith(res, device) {
       await store.setToken(res.token, res.expiresAt);
       try {
         const reg = await deps.authApi.registerDevice(device, res.token);
@@ -296,4 +302,5 @@ export function createSession(deps: SessionDeps): Session {
       }
     },
   };
+  return api;
 }

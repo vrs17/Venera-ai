@@ -99,6 +99,7 @@ export function fakeServices(over: { meetings?: MeetingsApi; actions?: ActionsAp
     getToken: jest.fn(async () => 'jwt'),
     refreshToken: jest.fn(async () => 'jwt2'),
     login: jest.fn(),
+    loginWith: jest.fn(),
     logout: jest.fn(async () => {}),
     hasSession: jest.fn(async () => true),
     subscribe: jest.fn(() => () => {}),

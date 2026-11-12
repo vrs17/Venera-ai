@@ -133,9 +133,23 @@ export function sanitizeIncomingPath(path: string): string {
   const query = qIdx >= 0 ? rest.slice(qIdx + 1) : '';
   if (pathname === '/record') return buildRecordPath(parseEntryParams(parseQuery(query)));
   if (pathname === '/import') return buildImportPath(parseImportParams(parseQuery(query)));
+  if (pathname === '/sso') return buildSsoPath(parseQuery(query));
   if (['/', '/meetings', '/settings', '/action-items', '/login'].includes(pathname)) return pathname;
   if (/^\/meeting\/[A-Za-z0-9_-]{1,64}$/.test(pathname)) return pathname;
   return '/';
+}
+
+/**
+ * BRB-Tech ID dan qaytish (`venera-rec://sso?sso=<kod>` yoki `?sso_error=<sabab>`): faqat shu
+ * ikki parametr, qat'iy shaklda. Kodning o'zi hech narsa bermaydi - uni faqat kirishni boshlagan
+ * ilova o'z PKCE verifier'i bilan almashtiradi (`features/auth/sso.ts`). Boshqa narsa - kirish.
+ */
+export function buildSsoPath(q: RawParams): string {
+  const code = q.sso;
+  if (typeof code === 'string' && /^[A-Za-z0-9_-]{20,200}$/.test(code)) return `/sso?sso=${code}`;
+  const err = q.sso_error;
+  if (typeof err === 'string' && /^[a-z_:]{1,40}$/.test(err)) return `/sso?sso_error=${encodeURIComponent(err)}`;
+  return '/login';
 }
 
 /** Taymingga chidamli taqqoslash (kalit uzunligi qat'iy). */

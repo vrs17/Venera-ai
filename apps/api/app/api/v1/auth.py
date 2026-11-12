@@ -33,7 +33,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import logging
+import re
 import secrets
 import urllib.parse
 
@@ -41,7 +43,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ...core.channels import channel_of
 from ...core.config import settings
@@ -58,7 +60,7 @@ from ...schemas.auth import (
 from ...services import admin_users
 from ...services.analytics import record_auth_event
 from ...services.identities import IdentityStore
-from ...services.oidc import HANDOFF, HANDOFF_TTL, ID_TOKENS, PENDING_TTL, KeycloakOidc, OidcError, Tokens
+from ...services.oidc import HANDOFF, HANDOFF_TTL, ID_TOKENS, PENDING_TTL, KeycloakOidc, OidcError, Tokens, s256
 from ...services.oidc import from_settings as oidc_from_settings
 from ...services.users import UserStore
 from . import connectors as _connectors
@@ -75,6 +77,8 @@ _MSG_BAD_LOGIN = "Login yoki parol noto'g'ri"
 _MSG_BLOCKED = "Hisob bloklangan. Administratorga murojaat qiling."
 _MSG_LOCAL_OFF = "Parol bilan kirish o'chirilgan - SSO orqali kiring"
 _MSG_HANDOFF = "Kirish kodi eskirgan yoki ishlatilgan - qaytadan kiring"
+#: Mobil ilovaning PKCE challenge'i (S256): base64url, 43 belgi.
+_APP_CHALLENGE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
 START_PATH = "/api/v1/auth/sso/start"
 CALLBACK_PATH = "/api/v1/auth/sso/callback"
@@ -272,6 +276,34 @@ def _fail_url(app: str, return_to: str, reason: str) -> str:
     return _with_query(target, {"sso_error": code})
 
 
+def _finish(return_to: str, url: str) -> Response:
+    """Callback natijasi: veb - 303 yo'naltirish; MOBIL ilova - kichik sahifa.
+
+    Android Chrome ilovani (`venera-rec://`) foydalanuvchi bosmagan avtomatik yo'naltirishdan
+    ochishni rad etishi mumkin - masalan Keycloak sessiyasi tirik va kirish birorta bosishsiz
+    o'tganda: odam bo'sh sahifada qolardi. Sahifa ilovani darhol ochishga urinadi va
+    «Barno AI ilovasini ochish» tugmasini qoldiradi (bosish - foydalanuvchi harakati).
+    Koddan qo'rqish shart emas: u bir martalik va faqat PKCE verifier bilan almashadi."""
+    if not _is_mobile(return_to):
+        return RedirectResponse(url, status_code=status.HTTP_303_SEE_OTHER)
+    nonce = secrets.token_urlsafe(16)
+    href = html.escape(url, quote=True)
+    page = f"""<!doctype html><html lang="uz"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Barno AI</title></head>
+<body style="margin:0;font-family:system-ui,sans-serif;background:#fff;color:#1d1d1f">
+<main style="max-width:420px;margin:0 auto;padding:48px 24px;text-align:center">
+<p style="font-size:17px;line-height:1.5;margin:0 0 24px">Barno AI ilovasiga qayting.<br>
+<span style="color:#6e6e73;font-size:14px">Return to the Barno AI app.</span></p>
+<a id="go" href="{href}" style="display:inline-block;padding:14px 24px;border-radius:14px;background:#EE5A24;color:#fff;text-decoration:none;font-weight:600;font-size:16px">Barno AI ilovasini ochish</a>
+</main><script nonce="{nonce}">location.replace(document.getElementById("go").href);</script>
+</body></html>"""
+    return HTMLResponse(page, headers={
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
+        "Content-Security-Policy": f"default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{nonce}'",
+    })
+
+
 def _admit(user: AuthUser, login: str | None, *, attempt: str, method: str,
            channel: str) -> admin_users.Access:
     """Shaxs TASDIQLANGANDAN keyin: admin bloklaganmi? -> `Access` yoki 403.
@@ -307,12 +339,18 @@ def sso_start(
     request: Request,
     return_to: str | None = Query(default=None, alias="return"),
     channel: str | None = None,
+    app_challenge: str | None = Query(default=None, max_length=64),
 ) -> RedirectResponse:
     """Brauzerni Keycloak kirish sahifasiga yuboradi.
 
     `return` - kirishdan keyin qaytiladigan ilova yo'li (`/admin/users`),
     `channel` - web/miniapp/desktop/mobile (hisob uchun). Ikkalasi
     `state` ostida serverda turadi, Keycloak'ga ketmaydi.
+
+    Mobil ilova (`return` = `SSO_MOBILE_REDIRECT`) `app_challenge` ni ham beradi -
+    O'Z PKCE challenge'i (S256). Kod ilovaga `venera-rec://` orqali qaytadi; shu sxemani
+    boshqa ilova ham ro'yxatdan o'tkazishi mumkin, shuning uchun kodni faqat verifier'ni
+    bilgan ilova almashtiradi (RFC 8252). Usiz mobil kirish boshlanmaydi (400).
     """
     oidc = _oidc()
     if not oidc.configured:
@@ -327,9 +365,15 @@ def sso_start(
             and _other_host(request, app):
         query = urllib.parse.urlencode([*request.query_params.multi_items(), (_CANONICAL_MARK, "1")])
         return RedirectResponse(f"{app}{START_PATH}?{query}", status_code=status.HTTP_302_FOUND)
+    return_path = _safe_return(return_to)
+    challenge = ""
+    if _is_mobile(return_path):
+        challenge = (app_challenge or "").strip()
+        if not _APP_CHALLENGE.fullmatch(challenge):
+            raise error_status(status.HTTP_400_BAD_REQUEST, "Ilova kirishi uchun app_challenge (PKCE S256) kerak")
     secret = secrets.token_urlsafe(32)
-    url = oidc.begin(f"{app}{CALLBACK_PATH}", return_to=_safe_return(return_to),
-                     channel=_channel(request, channel), binding=_binding(secret))
+    url = oidc.begin(f"{app}{CALLBACK_PATH}", return_to=return_path,
+                     channel=_channel(request, channel), binding=_binding(secret), app_challenge=challenge)
     response = RedirectResponse(url, status_code=status.HTTP_302_FOUND)
     name, path, secure = _bind_cookie(app)
     response.set_cookie(name, secret, max_age=_BIND_MAX_AGE, path=path,
@@ -337,7 +381,8 @@ def sso_start(
     return response
 
 
-@router.get("/sso/callback", response_class=RedirectResponse, status_code=status.HTTP_303_SEE_OTHER)
+@router.get("/sso/callback", response_class=RedirectResponse, status_code=status.HTTP_303_SEE_OTHER,
+            response_model=None)
 def sso_callback(
     request: Request,
     code: str = "",
@@ -346,7 +391,7 @@ def sso_callback(
     error_description: str = "",
     store: UserStore = Depends(get_user_store),
     identities: IdentityStore = Depends(get_identity_store),
-) -> RedirectResponse:
+) -> Response:
     """Keycloak'dan qaytish. Har qanday natija - frontend'ga yo'naltirish:
     muvaffaqiyat `?sso=<bir martalik kod>`, xato `?sso_error=<sabab>`.
     JSON emas: bu manzilni brauzerning o'zi ochadi, JS yo'q.
@@ -373,7 +418,7 @@ def sso_callback(
     except OidcError as exc:
         log.warning("SSO kirish bajarilmadi (%s): %s", exc.code, exc)
         record_auth_event("sso", False, method="sso", channel=channel, reason=f"sso:{exc.code}")
-        return RedirectResponse(_fail_url(app, return_to, exc.code), status_code=status.HTTP_303_SEE_OTHER)
+        return _finish(return_to, _fail_url(app, return_to, exc.code))
 
     login = profile.username
     try:
@@ -390,7 +435,7 @@ def sso_callback(
     except HTTPException as exc:
         if exc.status_code != status.HTTP_403_FORBIDDEN:
             raise
-        return RedirectResponse(_fail_url(app, return_to, "blocked"), status_code=status.HTTP_303_SEE_OTHER)
+        return _finish(return_to, _fail_url(app, return_to, "blocked"))
 
     token, expires = create_token(identity.subject, version=verdict.token_version, sso=True)
     if tokens.id_token:
@@ -412,8 +457,9 @@ def sso_callback(
     # qaytish bilan olgan kodini `/login?sso=` havolasida birovga berardi.
     mobile = _is_mobile(return_to)
     HANDOFF.put(handoff, {"binding": "" if mobile else pending.binding, "mobile": mobile,
+                          "app_challenge": pending.app_challenge if mobile else "",
                           "response": response.model_dump()})
-    return RedirectResponse(_done_url(app, return_to, handoff), status_code=status.HTTP_303_SEE_OTHER)
+    return _finish(return_to, _done_url(app, return_to, handoff))
 
 
 @router.post("/sso/exchange", response_model=LoginResponse)
@@ -430,6 +476,13 @@ def sso_exchange(body: SsoExchangeRequest, request: Request, response: Response)
     # olmaydi); ilovaning HTTP klienti ularni yubormaydi.
     if payload.get("mobile") and (request.headers.get("sec-fetch-site") or request.headers.get("origin")):
         raise error_status(status.HTTP_400_BAD_REQUEST, _MSG_HANDOFF)
+    # Mobil kod - faqat kirishni BOSHLAGAN ilova uchun: o'sha `app_challenge` ning verifier'i
+    # bilan. `venera-rec://` ni ushlab olgan boshqa ilovada verifier yo'q - kod esa yuqorida
+    # allaqachon yondi.
+    if payload.get("mobile"):
+        challenge = str(payload.get("app_challenge") or "")
+        if not challenge or not body.verifier or not hmac.compare_digest(s256(body.verifier), challenge):
+            raise error_status(status.HTTP_400_BAD_REQUEST, _MSG_HANDOFF)
     name, path, secure = _bind_cookie(_app_url(request))
     response.delete_cookie(name, path=path, secure=secure, httponly=True, samesite="lax")
     return LoginResponse(**payload["response"])

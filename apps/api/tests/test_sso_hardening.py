@@ -45,6 +45,7 @@ from tests.sso_fake import (  # noqa: F401 - fiksturalar
     net,
     sso_login,
     start,
+    mobile_callback,
 )
 from tests.test_connectors import CRM, HRM, IDP
 
@@ -214,20 +215,52 @@ def test_mobil_kodni_brauzer_almashtira_olmaydi(client, net, monkeypatch):
     """Mobil qaytish kodi cookie bilan bog'lanmagan (uni ilova almashtiradi). Hujumchi
     uni `/login?sso=` havolasida birovga bersa - brauzer so'rovi rad etiladi."""
     monkeypatch.setattr(settings, "sso_mobile_redirect", "venera-rec://sso")
+    from app.services.oidc import pkce_pair
+
+    verifier, challenge = pkce_pair()
 
     def mobile_code() -> str:
-        code, state = start(client, net, **{"return": "venera-rec://sso", "channel": "mobile"})
-        location, query = callback(client, code, state)
+        code, state = start(client, net, **{"return": "venera-rec://sso", "channel": "mobile",
+                                             "app_challenge": challenge})
+        location, query = mobile_callback(client, code, state)
         assert location.startswith("venera-rec://sso?sso=")
         return query["sso"]
 
     victim = _other_browser()
-    refused = victim.post("/api/v1/auth/sso/exchange", json={"code": mobile_code()},
+    refused = victim.post("/api/v1/auth/sso/exchange", json={"code": mobile_code(), "verifier": verifier},
                           headers={"Sec-Fetch-Site": "same-origin", "Origin": "http://testserver"})
     assert refused.status_code == 400
-    # Ilovaning o'zi (brauzer sarlavhalarisiz, cookie'siz) - ishlaydi.
+    # Ilovaning o'zi (brauzer sarlavhalarisiz, cookie'siz, O'Z verifier'i bilan) - ishlaydi.
     app_client = _other_browser()
-    assert app_client.post("/api/v1/auth/sso/exchange", json={"code": mobile_code()}).status_code == 200
+    assert app_client.post("/api/v1/auth/sso/exchange",
+                           json={"code": mobile_code(), "verifier": verifier}).status_code == 200
+
+
+def test_mobil_kodni_boshqa_ilova_verifiersiz_almashtira_olmaydi(client, net, monkeypatch):
+    """`venera-rec://` sxemasini boshqa ilova ham ro'yxatdan o'tkazishi mumkin (RFC 8252):
+    u kodni ushlab olsa ham verifier'siz yoki boshqa verifier bilan almashtira olmaydi,
+    urinish esa kodni yoqadi. Challenge'siz mobil kirish umuman boshlanmaydi."""
+    from app.services.oidc import pkce_pair
+
+    monkeypatch.setattr(settings, "sso_mobile_redirect", "venera-rec://sso")
+    verifier, challenge = pkce_pair()
+    other_verifier, _ = pkce_pair()
+
+    def mobile_code() -> str:
+        code, state = start(client, net, **{"return": "venera-rec://sso", "channel": "mobile",
+                                             "app_challenge": challenge})
+        return mobile_callback(client, code, state)[1]["sso"]
+
+    thief = _other_browser()
+    stolen = mobile_code()
+    assert thief.post("/api/v1/auth/sso/exchange", json={"code": stolen}).status_code == 400
+    assert thief.post("/api/v1/auth/sso/exchange",
+                      json={"code": stolen, "verifier": verifier}).status_code == 400, "kod yondi"
+    assert thief.post("/api/v1/auth/sso/exchange",
+                      json={"code": mobile_code(), "verifier": other_verifier}).status_code == 400
+    refused = client.get("/api/v1/auth/sso/start", params={"return": "venera-rec://sso", "channel": "mobile"},
+                         follow_redirects=False)
+    assert refused.status_code == 400
 
 
 # --- chiqish: Mini App va mobil ilova Keycloak'ga yuborilmaydi ------------------------
@@ -446,3 +479,25 @@ def test_yangilash_faqat_osha_sessiyaga_yoziladi(client, hub, net):
     assert hub.store.replace_if("yoq-odam", "sso", before, expired=True) is False
     assert hub.store.replace_if(uid, "sso", "boshqa-token", expired=True) is False
     assert hub.store.get(uid)["sso"]["expired"] is False
+
+
+def test_mobil_qaytish_sahifasi_ilovani_ochadi_va_xatoni_ham_aytadi(client, net, monkeypatch):
+    """Mobil qaytish 303 emas, kichik sahifa: Android Chrome ilovani bosishsiz yo'naltirishdan
+    ochmasligi mumkin. Sahifa ilovani darhol ochishga urinadi va tugma qoldiradi; keshlanmaydi,
+    Referer yubormaydi. Odam Keycloak'da "bekor" desa ham sahifa ilovaga sababni olib boradi."""
+    import urllib.parse
+
+    from app.services.oidc import pkce_pair
+
+    monkeypatch.setattr(settings, "sso_mobile_redirect", "venera-rec://sso")
+    _, challenge = pkce_pair()
+    response = client.get("/api/v1/auth/sso/start", params={"return": "venera-rec://sso", "channel": "mobile",
+                                                            "app_challenge": challenge}, follow_redirects=False)
+    state = urllib.parse.parse_qs(urllib.parse.urlparse(response.headers["location"]).query)["state"][0]
+    page = client.get("/api/v1/auth/sso/callback", params={"state": state, "error": "access_denied"},
+                      follow_redirects=False)
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+    assert page.headers["referrer-policy"] == "no-referrer"
+    assert "script-src 'nonce-" in page.headers["content-security-policy"]
+    assert 'href="venera-rec://sso?sso_error=denied"' in page.text
+    assert "Barno AI ilovasini ochish" in page.text

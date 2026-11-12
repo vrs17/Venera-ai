@@ -38,6 +38,7 @@ from tests.sso_fake import (  # noqa: F401 - fiksturalar
     net,
     sso_login,
     start,
+    mobile_callback,
 )
 
 
@@ -183,11 +184,15 @@ def test_return_ochiq_yonaltirish_rad_etiladi(client, net, bad):
 
 
 def test_mobil_qaytish_manzili_faqat_sozlangani(client, net, monkeypatch):
+    from app.services.oidc import pkce_pair
+
     monkeypatch.setattr(settings, "sso_mobile_redirect", "barnoai://sso")
-    code, state = start(client, net, **{"return": "barnoai://sso", "channel": "mobile"})
-    location, query = callback(client, code, state)
+    verifier, challenge = pkce_pair()
+    code, state = start(client, net, **{"return": "barnoai://sso", "channel": "mobile", "app_challenge": challenge})
+    location, query = mobile_callback(client, code, state)
     assert location.startswith("barnoai://sso?sso=")
-    assert client.post("/api/v1/auth/sso/exchange", json={"code": query["sso"]}).status_code == 200
+    assert client.post("/api/v1/auth/sso/exchange",
+                       json={"code": query["sso"], "verifier": verifier}).status_code == 200
     # Boshqa sxema - rad (ilova ichiga qaytadi).
     code, state = start(client, net, **{"return": "evil://sso"})
     location, _ = callback(client, code, state)

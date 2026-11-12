@@ -43,9 +43,14 @@ class SsoConfig(BaseModel):
 
 
 class SsoExchangeRequest(BaseModel):
-    """types.ts: SsoExchangeRequest - callback bergan bir martalik kod."""
+    """types.ts: SsoExchangeRequest - callback bergan bir martalik kod.
+
+    `verifier` - faqat MOBIL ilova: kirishni boshlaganda yuborgan `app_challenge` ning
+    PKCE verifier'i (RFC 7636, 43-128 belgi). Veb va Mini App yubormaydi."""
 
     code: str
+    verifier: str | None = Field(default=None, min_length=43, max_length=128,
+                                 pattern=r"^[A-Za-z0-9._~-]+$")
 
 
 class LoginRequest(BaseModel):

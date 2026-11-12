@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     #: Mobil ilova uchun ruxsat etilgan qaytish manzili (masalan
     #: `barnoai://sso`). Bo'sh - mobil SSO o'chiq. Boshqa har qanday tashqi
     #: manzil rad etiladi (ochiq yo'naltirish bo'lardi).
-    sso_mobile_redirect: str = ""
+    sso_mobile_redirect: str = "venera-rec://sso"
     sso_timeout: float = 10.0
     #: CRM ulanishini SSO sessiyasidan ochish (2026-11-12, ega so'rovi;
     #: `services/integrations/crm_sso.py`). Yoqilgan bo'lsa: (1) kirishda

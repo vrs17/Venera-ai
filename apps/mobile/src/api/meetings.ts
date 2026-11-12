@@ -55,6 +55,8 @@ import type {
   RegisterDeviceResponse,
   RetranscribeRequest,
   SpeakersResponse,
+  SsoConfig,
+  SsoExchangeRequest,
   StatusOk,
   Summary,
   SummaryCard,
@@ -258,6 +260,10 @@ export function createAuthApi(client: ApiClient) {
   return {
     login: (body: LoginRequest) =>
       client.request<LoginResponse>(`${API_PREFIX}/auth/login`, { method: 'POST', body, auth: false }),
+    // BRB-Tech ID: kirish ekrani qaysi tugmalarni ko'rsatadi va brauzer qaytargan kodni almashtirish.
+    ssoConfig: () => client.request<SsoConfig>(`${API_PREFIX}/auth/sso/config`, { auth: false }),
+    ssoExchange: (body: SsoExchangeRequest) =>
+      client.request<LoginResponse>(`${API_PREFIX}/auth/sso/exchange`, { method: 'POST', body, auth: false }),
     logout: () => client.request<StatusOk>(`${API_PREFIX}/auth/logout`, { method: 'POST' }),
     // Mavjud endpoint: sozlamalarda ism ko'rsatish uchun (avtomatik kirishdan keyin).
     me: () => client.request<AuthUser>(`${API_PREFIX}/auth/me`),

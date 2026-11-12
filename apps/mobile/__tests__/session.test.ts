@@ -31,6 +31,16 @@ function setup(initial: Record<string, string> = {}) {
 }
 
 describe('session', () => {
+  it('loginWith (BRB-Tech ID) stores the ready JWT and registers the device like password login', async () => {
+    const s = setup();
+    await s.session.loginWith(loginResponse, { deviceName: 'SM-S921B', platform: 'android', appVersion: '1.0.0' });
+    expect(s.api.login).not.toHaveBeenCalled();
+    expect(s.api.registerDevice).toHaveBeenCalledWith({ deviceName: 'SM-S921B', platform: 'android', appVersion: '1.0.0' }, loginResponse.token);
+    expect(s.kv.data.get(KEYS.token)).toBe(loginResponse.token);
+    expect(s.kv.data.get(KEYS.deviceToken)).toBe(deviceResponse.deviceToken);
+    expect(s.events).toEqual(['signedIn']);
+  });
+
   it('login stores the JWT and the device token, registering with the fresh JWT', async () => {
     const s = setup();
     await s.session.login(' aziz ', 'pw', { deviceName: 'SM-S921B', platform: 'android', appVersion: '1.0.0' });

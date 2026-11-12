@@ -900,6 +900,19 @@ export interface LoginRequest {
   password: string;
 }
 
+/** `GET /auth/sso/config` - kirish ekrani qaysi yo'llarni ko'rsatadi. */
+export interface SsoConfig {
+  enabled: boolean;
+  localLoginEnabled: boolean;
+  startPath: string;
+}
+
+/** `POST /auth/sso/exchange` - bir martalik kod va ilovaning PKCE verifier'i. */
+export interface SsoExchangeRequest {
+  code: string;
+  verifier: string;
+}
+
 export interface LoginResponse {
   token: string;
   tokenType: string;

@@ -158,8 +158,8 @@ qarang).
 
 ## Keyingi bosqichlar
 
-1. Mobil ilova: tizim brauzeri -> `start?return=barnoai://sso&channel=mobile`
-   -> `barnoai://sso?sso=<kod>` -> `exchange` (`SSO_MOBILE_REDIRECT`).
+1. Mobil ilova: QURILDI (2026-11-12, ilova 1.3.12) - "Mobil ilova: BRB-Tech ID bilan kirish"
+   bo'limi. Yangi APK yig'ilib tarqatilishi kerak.
 2. Telegram Mini App: QURILDI (2026-11-12) - "Telegram: BRB-Tech ID bilan kirish" bo'limi.
 3. HRM - SSO sessiyasidan o'zi ulanadi va jonli tekshirildi (2026-11-12); qo'lda ulash olib
    tashlandi.
@@ -207,11 +207,11 @@ Testlar: `tests/test_sso_hardening.py`.
 
 ## Ma'lum cheklovlar (jonli chiqishda bilish kerak)
 
-- **Mobil ilova**: kirish ekrani hali login + parolni `POST /auth/login` ga
-  yuboradi, u esa endi faqat `users.yaml` ni taniydi - Keycloak hisobi bilan u
-  yerda KIRIB BO'LMAYDI. Ishlayveradi: zahira (`users.yaml`) hisoblar va qurilma
-  tokeni bor telefonlar (`/auth/devices/session`). Telegram Mini App'da bu
-  cheklov 2026-11-12 da yopildi (pastdagi bo'lim).
+- **Mobil ilova 1.3.11 va eskisi**: kirish ekrani faqat login + parolni `POST /auth/login`
+  ga yuboradi, u esa faqat `users.yaml` ni taniydi - Keycloak hisobi bilan u yerda KIRIB
+  BO'LMAYDI (zahira hisoblar va qurilma tokeni bor telefonlar ishlayveradi). 1.3.12 da
+  «BRB-Tech ID bilan kirish» bor (pastdagi bo'lim). Telegram Mini App'da bu cheklov
+  2026-11-12 da yopildi.
 - **HRM va CRM faqat VEB'dagi SSO kirishida ulanadi** - boshqa yo'l yo'q (qo'lda
   ulash olib tashlangan). Ulanish o'sha odamning hamma kanaliga (veb, Mini App,
   bot, Slack) xizmat qiladi. Vebga BRB-Tech ID bilan hech kirmagan odamning (faqat
@@ -327,6 +327,33 @@ Slack o'chiq - sinov faqat jonli serverda).
 
 MA'LUM: ilovadagi (veb, mobil) Plaud bo'limi hali faqat ADMIN va `MEETINGS_LOGINS` ga ochiq.
 Ro'yxatda yo'q odam Slack'dagi yozuvlarini faqat Slack'da ko'radi (ilovada 403).
+
+## Mobil ilova: BRB-Tech ID bilan kirish (2026-11-12, ilova 1.3.12)
+
+Tizim brauzerida, RFC 8252 bo'yicha:
+
+1. Kirish ekranida «BRB-Tech ID bilan kirish» (`GET /auth/sso/config` yoqiq bo'lsa; login +
+   parol - zahira, pastda). Ilova PKCE verifier (48 tasodifiy bayt) va S256 challenge
+   yasaydi, verifier'ni SecureStore'ga yozadi (10 daqiqa, bir martalik,
+   `features/auth/sso.ts`) va brauzerda ochadi:
+   `/api/v1/auth/sso/start?channel=mobile&return=venera-rec://sso&app_challenge=<S256>`.
+2. Server challenge'ni kirish holatida saqlaydi (usiz mobil kirish 400). Keycloak'dan
+   qaytgach u 303 EMAS, kichik sahifa beradi: ilovani darhol ochishga urinadi va «Barno AI
+   ilovasini ochish» tugmasini qoldiradi - Android Chrome ilovani bosishsiz yo'naltirishdan
+   ochmasligi mumkin (Keycloak sessiyasi tirik va kirish bosishsiz o'tganda). Sahifa
+   keshlanmaydi, Referer yubormaydi, skript nonce bilan.
+3. Ilova `venera-rec://sso?sso=<kod>` ni oladi (havola tozalovchisi faqat qat'iy shakldagi
+   `sso`/`sso_error` ni o'tkazadi), `POST /auth/sso/exchange {code, verifier}` - server
+   `S256(verifier)` ni challenge bilan solishtiradi. `venera-rec://` ni boshqa ilova ham
+   ro'yxatdan o'tkazishi mumkin: kodni ushlab olsa ham verifier'siz almashtira olmaydi,
+   urinish esa kodni yoqadi. Keyin sessiya va qurilma - parol bilan kirishdagi kabi
+   (`session.loginWith`).
+
+`SSO_MOBILE_REDIRECT` ning default'i endi `venera-rec://sso` (ilova sxemasi) - `.env` da
+yozish shart emas. Keycloak sozlamasi o'zgarmaydi: Keycloak serverga qaytaradi, ilovaga
+server yo'naltiradi. Kod: `api/v1/auth.py` (`sso_start`, `_finish`, `sso_exchange`),
+`apps/mobile/src/features/auth/sso.ts`, `src/app/login.tsx`, `src/app/sso.tsx`. Testlar:
+`tests/test_sso_hardening.py`, `apps/mobile/__tests__/sso.test.ts`.
 
 ## Telegram: BRB-Tech ID bilan kirish (2026-11-12, ega so'rovi)
 

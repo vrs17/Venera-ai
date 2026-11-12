@@ -123,6 +123,10 @@ class Pending:
     #: Kirishni BOSHLAGAN brauzerga bog'lash: `start` qo'ygan cookie'ning
     #: SHA-256 i (`api/v1/auth.py`). Bo'sh - bog'lanmagan (testlar, eski yo'l).
     binding: str = ""
+    #: Mobil ilovaning O'Z PKCE challenge'i (S256, RFC 8252/7636): kod `venera-rec://`
+    #: orqali ilovaga qaytadi va shu sxemani boshqa ilova ham ro'yxatdan o'tkazishi
+    #: mumkin - kodni faqat verifier'ni bilgan ilova almashtira oladi (`sso_exchange`).
+    app_challenge: str = ""
 
 
 class _Expiring:
@@ -255,8 +259,13 @@ ID_TOKENS = IdTokens(_id_tokens_path)
 def pkce_pair() -> tuple[str, str]:
     """(code_verifier, code_challenge S256). RFC 7636: verifier 43-128 belgi."""
     verifier = secrets.token_urlsafe(64)
+    return verifier, s256(verifier)
+
+
+def s256(verifier: str) -> str:
+    """PKCE S256: base64url(SHA-256(verifier)), `=` siz."""
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
-    return verifier, base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
 # --- tarmoq -----------------------------------------------------------------
@@ -425,7 +434,8 @@ class KeycloakOidc:
 
     # --- 1. boshlash --------------------------------------------------------
 
-    def begin(self, redirect_uri: str, *, return_to: str, channel: str, binding: str = "") -> str:
+    def begin(self, redirect_uri: str, *, return_to: str, channel: str, binding: str = "",
+              app_challenge: str = "") -> str:
         """Kirishni boshlaydi: `Pending` ni saqlaydi, Keycloak manzilini qaytaradi."""
         verifier, challenge = pkce_pair()
         pending = Pending(
@@ -435,6 +445,7 @@ class KeycloakOidc:
             return_to=return_to,
             channel=channel,
             binding=binding,
+            app_challenge=app_challenge,
         )
         PENDING.put(pending.state, pending)
         query = urllib.parse.urlencode({

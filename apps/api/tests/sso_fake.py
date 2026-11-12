@@ -301,6 +301,21 @@ def start(client, fake: FakeKeycloak, **params) -> tuple[str, str]:
     return fake.authorize(response.headers["location"])
 
 
+def mobile_callback(client, code: str, state: str) -> tuple[str, dict[str, str]]:
+    """Mobil qaytish: `GET /auth/sso/callback` -> sahifa (200), undagi ilova havolasi va query'si."""
+    import html as _html
+    import re as _re
+
+    response = client.get("/api/v1/auth/sso/callback", params={"code": code, "state": state}, follow_redirects=False)
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+    found = _re.search(r'id="go" href="([^"]+)"', response.text)
+    assert found, response.text
+    location = _html.unescape(found.group(1))
+    query = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlparse(location).query).items()}
+    return location, query
+
+
 def callback(client, code: str, state: str, **extra) -> tuple[str, dict[str, str]]:
     """`GET /auth/sso/callback` -> (yo'naltirilgan manzil, uning query'si)."""
     response = client.get("/api/v1/auth/sso/callback",
