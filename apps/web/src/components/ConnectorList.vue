@@ -25,7 +25,11 @@ const HINTS: Record<ConnectorId, string> = { hrm: 'connectorHrmHint' }
 
 function statusText(c: ConnectorStatus): string {
   if (!c.configured) return t('connectorUnavailable')
-  if (c.state === 'connected') return c.login || t('connected')
+  if (c.state === 'connected') {
+    // BRB-Tech ID kirishidan ulangan: odam uni qo'lda yangilamaydi - qayerdan kelganini aytamiz.
+    if (c.via === 'sso' && c.login) return t('connectorViaSso', { login: c.login })
+    return c.login || t('connected')
+  }
   if (c.state === 'expired') return t('connectorExpired')
   // Ulanmagan: holat emas, tizim nima berishini aytamiz - "nega ulanay?" savoliga javob.
   return t(HINTS[c.id])

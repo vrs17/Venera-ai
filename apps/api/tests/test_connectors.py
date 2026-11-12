@@ -47,7 +47,7 @@ CRM = "https://crm.test"
 PASSWORD = "to'g'ri-parol"
 
 # types.ts: ConnectorStatus
-STATUS_FIELDS = {"id", "label", "configured", "state", "login", "enabled", "expiresAt"}
+STATUS_FIELDS = {"id", "label", "configured", "state", "login", "enabled", "expiresAt", "via"}
 
 
 def make_jwt(exp: float) -> str:
@@ -611,7 +611,7 @@ def test_health_ulanishlar_holati(client, auth, hub):
     yo'q (eski `crm-client` sozlamalari to'liq bo'lsa ham) - demak yo'q, va sababi
     ogohlantirishda aytiladi. SSO bilan holat - `test_sso_crm.py`."""
     body = client.get("/api/health/detail", headers=auth).json()
-    assert body["connectors"] == {"hrm": True, "crm": False, "users": 0}
+    assert body["connectors"] == {"hrm": True, "hrmSso": False, "crm": False, "users": 0}
     note = next(w for w in body["warnings"] if "CRM ulanishi" in w)
     assert "SSO_CRM_CONNECT" in note and "CRM_BASE_URL" in note
 

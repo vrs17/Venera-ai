@@ -25,8 +25,12 @@ class ConnectorStatus(BaseModel):
     #: Kalit yo'q: yozuv bor bo'lsa har doim `true` (ulangan = ishlatiladi).
     #: Maydon eski klientlar (mobil ilova) uchun qoldi.
     enabled: bool = False
-    #: HRM tokenining muddati (ISO-8601 UTC). CRM da yo'q - u o'zi yangilanadi.
+    #: HRM tokenining muddati (ISO-8601 UTC). CRM da va SSO ulanishida yo'q -
+    #: token o'zi yangilanadi.
     expiresAt: str | None = None
+    #: `sso` - ulanish BRB-Tech ID kirishidan (odam uni qo'lda yangilamaydi;
+    #: qayta kirish uni yangilaydi), `null` - login + parol bilan qo'lda ulangan.
+    via: str | None = None
 
 
 class ConnectorsResponse(BaseModel):

@@ -57,6 +57,7 @@ SSO_CLIENT_SECRET=<Clients -> barno-ai -> Credentials>
 SSO_APP_URL=https://llm.brb-tech.uz                 # prod'da ANIQ; dev'da bo'sh qolsa so'rovdan olinadi
 # SSO_MOBILE_REDIRECT=barnoai://sso                 # mobil ilova tayyor bo'lganda
 # SSO_CRM_CONNECT=true                              # default: CRM ulanishi SSO sessiyasidan (pastda)
+# SSO_HRM_CONNECT=true                              # default: HRM ham, agar HRM tokenni qabul qilsa (pastda)
 # SLACK_LINK_REQUIRED=true                          # default: Slack'da har kim o'z hisobini ulaydi (pastda)
 # SLACK_LINK_DAYS=30                                # Slack ulanishi oxirgi faollikdan shuncha kun yashaydi
 LOCAL_LOGIN_ENABLED=true                            # users.yaml bilan zahira kirish; prod'da false qilish mumkin
@@ -158,12 +159,9 @@ qarang).
    -> `barnoai://sso?sso=<kod>` -> `exchange` (`SSO_MOBILE_REDIRECT`).
 2. Telegram Mini App: kirish ekraniga SSO tugmasi (hozir u yerda faqat parol
    shakli - pastdagi "Ma'lum cheklovlar").
-3. HRM - SSO sessiyasidan o'zi ulanishi (CRM kabi). HRM jamoasi kod bo'yicha ko'rsatdi
-   (2026-11-12): HRM Keycloak `brb-realm` tokenini Bearer sifatida tekshiradi (`iss`, `aud` =
-   `account`, imzo), `/api/authenticate` ham Keycloak tokenini (`smart-office-client`) qaytaradi.
-   Ya'ni "HRM o'z JWT'sini beradi" degan eski yozuv (2026-09-29) noto'g'ri. Barno'ning `barno-ai`
-   tokeni bilan jonli sinov (`GET /api/account` -> 200) hali qilinmagan; o'tsa - HRM ham kirishda
-   o'zi ulanadi va «Ulanishlar» dagi login + parol olib tashlanadi.
+3. HRM - SSO sessiyasidan o'zi ulanishi QURILDI ("HRM ham SSO sessiyasidan" bo'limi). Jonli
+   sinov (`barno-ai` tokeni bilan `GET /api/account` -> 200) o'tgach «Ulanishlar» dagi login +
+   parol olib tashlanadi.
 4. Jonli sayt uchun prod Keycloak'da `barno-ai` client'i, `SSO_*` prod `.env` da,
    `pip install -e .` (`cryptography`), `venera-api` ni qayta ishga tushirish.
 
@@ -251,8 +249,10 @@ Testlar: `tests/test_sso_hardening.py`.
 
 ## Ulanishlar: odam faqat HRM ni boshqaradi (2026-11-12, ega qarori)
 
-- **HRM** - «Ulanishlar» dagi yagona qator: ulash (login + parol), holat,
-  muddati tugasa qayta ulash, uzish. HRM hali SSO sessiyasini qabul qilmaydi.
+- **HRM** - «Ulanishlar» dagi yagona qator: holat, uzish. SSO kirishida o'zi
+  ulanadi (agar HRM tokenni qabul qilsa - "HRM ham SSO sessiyasidan" bo'limi;
+  qatorda "<login> · BRB-Tech ID orqali"); aks holda - vaqtinchalik zahira:
+  ulash (login + parol), muddati tugasa qayta ulash.
 - **CRM odamga ko'rinmaydi va uni odam boshqarmaydi.** U SSO kirishida o'zi
   ulanadi (pastdagi bo'lim) va HAR DOIM ishlatiladi: chat, Telegram bot,
   guruhdagi CRM, "yig'ilishdan CRM ga".
@@ -330,7 +330,7 @@ Ro'yxatda yo'q odam Slack'dagi yozuvlarini faqat Slack'da ko'radi (ilovada 403).
 ## CRM ulanishi SSO sessiyasidan (2026-11-12)
 
 Kod: `services/integrations/crm_sso.py`, `ConnectorHub` (`via: "sso"`),
-`api/v1/auth.py` (`_connect_crm`), testlar `tests/test_sso_crm.py`.
+`api/v1/auth.py` (`_connect_sso`), testlar `tests/test_sso_crm.py`.
 
 Kirishda (`SSO_CRM_CONNECT=true`, default):
 1. Keycloak'dan `offline_access` ham so'raladi - usiz sessiya 30 daqiqa
@@ -369,3 +369,39 @@ prod CRM bilan uch marta kirildi, har safar CRM sessiyani QABUL QILDI va
 ulandi (`Ulanish: <actor> -> crm (sso)`); Audience mapper kerak bo'lmadi.
 HALI SINALMAGAN: access token muddati tugagach Keycloak orqali yangilash va
 chat orqali haqiqiy CRM javobi - dev stack'da chat o'chiq.
+
+## HRM ham SSO sessiyasidan (2026-11-12, ega so'rovi)
+
+HRM jamoasi kod bo'yicha ko'rsatdi: HRM (Spring Boot) Keycloak `brb-realm` tokenini
+Bearer sifatida tekshiradi - `iss`, `aud` (`account` yoki `api://default`), imzo;
+shaxs - `preferred_username` (HRM `employee` jadvalidagi login); rollar faqat
+`roles`/`groups` claim'idan, `ROLE_` bilan (faqat `/api/admin/**` uchun kerak).
+`/api/authenticate` ham Keycloak tokenini qaytaradi (`smart-office-client`, parol
+granti). "HRM o'z JWT'sini beradi" degan eski yozuv (2026-09-29) noto'g'ri edi.
+
+Kirishda (`SSO_HRM_CONNECT=true`, default; `HRM_BASE_URL` bo'lishi kerak) CRM
+tekshiruvi bilan PARALLEL: `GET <HRM_BASE_URL>/api/account` odamning access
+tokeni bilan.
+- 200 - HRM ulanadi (`via: "sso"`, qatorda "BRB-Tech ID orqali"); qo'lda ulangan
+  HRM almashtiriladi va xotiradagi paroli o'chadi.
+- 401/403 yoki boshqa javob - ulanish ochilmaydi, qo'lda ulangan HRM joyida,
+  kirish ishlaydi. Jurnalda sabab:
+  `SSO: HRM sessiyani RAD ETDI (...) [HTTP 401: <HRM'ning error_description i>] ... aud=[...]`.
+  "Invalid audience" bo'lsa - Keycloak'da `barno-ai` client'iga `account`
+  auditoriyasi kerak (Audience mapper, Included Client Audience `account`) yoki
+  HRM ruxsat etilgan `aud` ro'yxatiga qo'shadi. 500 - ko'pincha login HRM
+  xodimlari jadvalida yo'q.
+
+BITTA SESSIYA. CRM va HRM ikkalasi SSO dan ulanganda ularning yozuvida token yo'q:
+Keycloak sessiyasi ombordagi alohida `sso` yozuvida, ikkala tizim BIR XIL access
+tokenni oladi va u har savol oldidan BITTA joyda yangilanadi (muddati
+`CRM_TOKEN_MARGIN` dan kam qolsa). Ikki nusxa refresh tokenni alohida aylantirsa,
+Keycloak'ning "Revoke Refresh Token" sozlamasida biri ikkinchisini o'ldirardi.
+Sessiya o'lsa ikkala holat "expired" - odam qayta kiradi. Bitta tizim uzilsa
+(admin panelda CRM, «Ulanishlar» da HRM) sessiya qoladi; oxirgisi uzilganda
+Keycloak'da bekor qilinadi. Avvalgi fayl (sessiya CRM yozuvining ichida) o'qilganda
+o'zi yangi shaklga o'tadi. `/api/health/detail`: `connectors.hrmSso`.
+
+Kod: `crm_sso.py` (`SsoSession`, `HrmSso`), `ConnectorHub.adopt_sso`, `auth._connect_sso`.
+Testlar: `tests/test_sso_hrm.py`. HALI SINALMAGAN: jonli HRM `barno-ai` tokenini
+qabul qilishi (dev'da `barno-ai-dev` bilan sinab ko'rish mumkin).

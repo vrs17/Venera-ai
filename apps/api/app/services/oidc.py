@@ -551,7 +551,8 @@ def from_settings() -> KeycloakOidc:
     from ..core.config import settings
 
     return KeycloakOidc(settings.sso_issuer, settings.sso_client_id, settings.sso_client_secret,
-                        timeout=settings.sso_timeout, offline=settings.sso_crm_connect)
+                        timeout=settings.sso_timeout,
+                        offline=bool(settings.sso_crm_connect or settings.sso_hrm_connect))
 
 
 def _full_name(claims: dict[str, Any]) -> str:

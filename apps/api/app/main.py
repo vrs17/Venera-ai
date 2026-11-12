@@ -400,9 +400,17 @@ def _sso_configured() -> bool:
 
 def _crm_connect_ready(hub) -> bool:
     """Odamning CRM ulanishi ochila oladimi: u faqat SSO kirishida ochiladi
-    (`api/v1/auth._connect_crm`) - kalit (`sso_crm_connect`) yoqiq va SSO
+    (`api/v1/auth._connect_sso`) - kalit (`sso_crm_connect`) yoqiq va SSO
     manbasi (Keycloak + `CRM_BASE_URL`) sozlangan bo'lishi kerak."""
     return bool(settings.sso_crm_connect) and hub.configured("crm")
+
+
+def _hrm_sso_ready(hub) -> bool:
+    """HRM ulanishi SSO kirishida o'zi ochila oladimi (`sso_hrm_connect`, Keycloak
+    va `HRM_BASE_URL`). Yo'q bo'lsa HRM faqat qo'lda ulanadi."""
+    check, session = hub.hrm_check, hub.session
+    return (bool(settings.sso_hrm_connect) and check is not None and bool(check.configured)
+            and session is not None and bool(session.configured))
 
 
 def _diagnostics() -> dict:
@@ -497,7 +505,8 @@ def _diagnostics() -> dict:
 
     # Foydalanuvchilarning o'z ulanishlari. HRM ni odam "+" menyusida ulaydi:
     # sozlanmagan bo'lsa tugma "serverda sozlanmagan" deydi - sababi shu yerda.
-    # CRM odamga ko'rinmaydi - u SSO kirishida o'zi ulanadi (`_connect_crm`).
+    # CRM odamga ko'rinmaydi - u SSO kirishida o'zi ulanadi (`_connect_sso`); HRM
+    # ham, agar HRM sessiya tokenini qabul qilsa.
     hub = connector_hub()
     crm_ready = _crm_connect_ready(hub)
     # Kirish yo'li: SSO (Keycloak, brauzer orqali - `SSO_ISSUER`/`SSO_CLIENT_SECRET`,
@@ -623,6 +632,7 @@ def _diagnostics() -> dict:
         # `crm` - SSO kirishida CRM ulanishi ochila oladimi. TOKEN YO'Q.
         "connectors": {
             "hrm": hub.hrm.configured,
+            "hrmSso": _hrm_sso_ready(hub),
             "crm": crm_ready,
             "users": hub.store.user_count(),
         },

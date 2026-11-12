@@ -21,11 +21,9 @@ KIRISH IKKI YO'L BILAN:
 
 OLDINGI YO'L - login+parolni Keycloak'ga ilovaning o'zi yuborishi (parol
 granti) va o'sha parol bilan HRM ga kirish - OLIB TASHLANDI (2026-11): SSO
-ning ma'nosi ilova parolni ko'rmasligi. HRM ulanishi endi kirishda o'zi
-ochilmaydi - odam uni "+" menyusida qo'lda ulaydi (`api/v1/connectors.py`);
-HRM Keycloak tokenini qabul qilgan kuni u ham SSO sessiyasidan ochiladi. CRM
-ulanishi esa SSO sessiyasining o'zidan ochiladi (`_connect_crm`) - odam uni
-ko'rmaydi va boshqarmaydi.
+ning ma'nosi ilova parolni ko'rmasligi. CRM va HRM ulanishi SSO sessiyasining
+o'zidan ochiladi (`_connect_sso`) - har tizim tokenni qabul qilsagina. HRM rad
+etsa odam uni "+" menyusida qo'lda ulaydi (`api/v1/connectors.py`, zahira).
 
 Frontend (`apps/web/src/api/auth.api.ts`). `signup` va `change-password`
 ATAYLAB 501: hisob va parol Keycloak'da.
@@ -38,6 +36,9 @@ import hmac
 import logging
 import secrets
 import urllib.parse
+
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
@@ -162,48 +163,56 @@ def _oidc() -> KeycloakOidc:
     return oidc_from_settings()
 
 
-def _connect_crm(oidc: KeycloakOidc, actor_id: int, username: str, tokens: Tokens) -> None:
-    """Kirgan odamning SSO sessiyasini uning CRM ulanishiga aylantiradi
-    (`sso_crm_connect`, `services/integrations/crm_sso.py`).
+def _connect_sso(oidc: KeycloakOidc, actor_id: int, username: str, tokens: Tokens) -> None:
+    """Kirgan odamning SSO sessiyasini uning CRM va HRM ulanishiga aylantiradi
+    (`sso_crm_connect`, `sso_hrm_connect`, `services/integrations/crm_sso.py`).
 
     HECH QACHON kirishni to'xtatmaydi: har qanday xato jurnalga yoziladi,
     odam baribir kiradi.
 
-    Qoida: sessiya faqat CRM uni QABUL QILGANDA ulanishga aylanadi (eski
-    ulanish almashtiriladi). CRM rad etsa yoki javob bermasa odamning
-    mavjud ulanishiga TEGILMAYDI - ishlab turgan (masalan eski, qo'lda
-    ulangan) CRM ni tekshirilmagan sessiya bilan almashtirmaymiz. Keyingi
-    kirishda yana sinaladi.
+    Qoida: sessiya faqat tizim uni QABUL QILGANDA o'sha tizimning ulanishiga
+    aylanadi (eski ulanish almashtiriladi). Tizim rad etsa yoki javob bermasa
+    odamning mavjud ulanishiga TEGILMAYDI - ishlab turgan (masalan qo'lda
+    ulangan HRM) ulanishni tekshirilmagan sessiya bilan almashtirmaymiz.
+    Keyingi kirishda yana sinaladi. Ikkala tekshiruv PARALLEL: har biri 5 s
+    gacha kutadi, kirish 10 s kutib qolmasin.
 
     CRM HAR DOIM YOQIQ (2026-11-12, ega qarori): kalit yo'q, odam CRM ni
-    ko'rmaydi ham. Yangi yozuv `enabled: true` bilan saqlanadi - bir paytlar
-    o'chirib qo'yilgan CRM qayta kirishdan keyin o'chiq qolmaydi.
+    ko'rmaydi ham. Yangi yozuv `enabled: true` bilan saqlanadi.
     """
-    if not settings.sso_crm_connect:
+    hub = _connectors.hub
+    checks: dict[str, Any] = {}
+    if settings.sso_crm_connect and hub.sso is not None and hub.sso.configured:
+        checks["crm"] = lambda: (hub.sso.accepts(tokens.access_token), "")
+    hrm = hub.hrm_check
+    if settings.sso_hrm_connect and hrm is not None and hrm.configured:
+        checks["hrm"] = lambda: hrm.check(tokens.access_token)
+    if not checks:
         return
     try:
-        hub = _connectors.hub
-        sso = hub.sso
-        if sso is None or not sso.configured:
-            return
         if not tokens.refresh_token:
-            log.info("SSO: Keycloak refresh_token bermadi - CRM ulanishi ochilmadi (%s)", username)
+            log.info("SSO: Keycloak refresh_token bermadi - CRM/HRM ulanishi ochilmadi (%s)", username)
             return
-        verdict = sso.accepts(tokens.access_token)
-        if verdict is not True:
-            # Sabab odatda tokenning KIMGA berilganida: `azp` bizning client,
-            # CRM esa `aud`/`azp` da o'zini kutadi. Nomlar sir emas.
+        with ThreadPoolExecutor(max_workers=len(checks), thread_name_prefix="sso-check") as pool:
+            futures = {name: pool.submit(run) for name, run in checks.items()}
+            results = {name: future.result() for name, future in futures.items()}
+        accepted = tuple(name for name in ("crm", "hrm") if results.get(name, (None, ""))[0] is True)
+        for name, (verdict, reason) in results.items():
+            if verdict is True:
+                continue
+            # Sabab odatda tokenning KIMGA berilganida (`aud`, `azp`). Nomlar sir emas.
             seen = oidc.describe(tokens.access_token)
             log.warning(
-                "SSO: CRM sessiyani %s (%s) - CRM ulanishi ochilmadi. Token: azp=%s aud=%s clientlar=%s",
-                "RAD ETDI" if verdict is False else "tekshira olmadi", username,
+                "SSO: %s sessiyani %s (%s)%s - %s ulanishi ochilmadi. Token: azp=%s aud=%s clientlar=%s",
+                name.upper(), "RAD ETDI" if verdict is False else "tekshira olmadi", username,
+                f" [{reason}]" if reason else "", name.upper(),
                 seen.get("azp") or "?", seen.get("aud") or [], seen.get("clients") or [],
             )
-            return
-        hub.adopt_crm(str(actor_id), username, tokens.access_token, tokens.refresh_token,
-                      tokens.expires_in, revoke_old=True, via="sso")
-    except Exception:  # noqa: BLE001 - CRM kirishga to'siq bo'lmasin
-        log.exception("SSO: CRM ulanishini ochishda xato (%s) - kirish davom etadi", username)
+        if accepted:
+            hub.adopt_sso(str(actor_id), username, tokens.access_token, tokens.refresh_token,
+                          tokens.expires_in, accepted, revoke_old=True)
+    except Exception:  # noqa: BLE001 - CRM/HRM kirishga to'siq bo'lmasin
+        log.exception("SSO: CRM/HRM ulanishini ochishda xato (%s) - kirish davom etadi", username)
 
 
 def _app_url(request: Request) -> str:
@@ -388,7 +397,7 @@ def sso_callback(
         ID_TOKENS[identity.actor_id] = tokens.id_token
     record_auth_event(login, True, method="sso", channel=channel, actor_id=identity.actor_id)
     log.info("Kirish (SSO): %s (actor_id %s, %s)", identity.username, identity.actor_id, channel)
-    _connect_crm(oidc, identity.actor_id, identity.username, tokens)
+    _connect_sso(oidc, identity.actor_id, identity.username, tokens)
     response = LoginResponse(
         token=token,
         tokenType="Bearer",

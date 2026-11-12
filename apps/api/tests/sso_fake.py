@@ -115,6 +115,11 @@ class FakeKeycloak(FakeNet):
         self.crm_accepts: bool | None = True
         #: `me` ga kelgan `Authorization` sarlavhalari.
         self.me_calls: list[str] = []
+        #: HRM `GET /api/account` (SSO sessiyasidan HRM ulanishi, `crm_sso.HrmSso`):
+        #: True - 200, False - 401 (`WWW-Authenticate` da sabab), None - 500.
+        self.hrm_accepts: bool | None = True
+        self.hrm_reason = "Invalid audience"
+        self.account_calls: list[str] = []
         #: Keycloak `/revoke` da bekor qilingan refresh tokenlar.
         self.revoked: list[str] = []
         #: `refresh_token` granti shu xato bilan yiqiladi (masalan sessiya o'lgan).
@@ -160,6 +165,17 @@ class FakeKeycloak(FakeNet):
             if not self.crm_accepts:
                 raise _http_error(url, 401, {"error": "unauthorized"})
             return _Response(json.dumps({"data": {"username": self.username}}).encode())
+        if url == f"{HRM}/api/account":
+            self.calls.append((url, {}))
+            self.account_calls.append(request.get_header("Authorization") or "")
+            if self.hrm_accepts is None:
+                raise _http_error(url, 500, {"title": "Internal Server Error"})
+            if not self.hrm_accepts:
+                error = _http_error(url, 401, {})
+                error.headers = {"WWW-Authenticate": f'Bearer error="invalid_token", '
+                                                     f'error_description="{self.hrm_reason}"'}
+                raise error
+            return _Response(json.dumps({"login": self.username}).encode())
         if url == REVOKE_URL:
             # RFC 7009: faqat shu client'ning ruxsati bekor bo'ladi. `/logout` ga
             # (butun sessiyani yopadi) so'rov kelsa - pastdagi AssertionError.

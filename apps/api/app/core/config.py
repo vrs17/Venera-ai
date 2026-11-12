@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     #: hisobiga tushadi, guruh va yig'ilish CRM i ishlamaydi). `CRM_BASE_URL`
     #: bo'sh bo'lsa bu sozlamaning ta'siri yo'q (scope'dan tashqari).
     sso_crm_connect: bool = True
+    #: HRM ulanishini ham SSO sessiyasidan ochish (2026-11-12, ega so'rovi): kirishda
+    #: sessiya tokeni HRM da tekshiriladi (`GET /api/account`) va qabul qilinsa HRM
+    #: ulanishi bo'ladi - CRM bilan BITTA sessiya, bitta token. Rad etilsa odam HRM ni
+    #: avvalgidek qo'lda ulaydi. `HRM_BASE_URL` bo'sh bo'lsa ta'siri yo'q.
+    sso_hrm_connect: bool = True
     #: SSO bilan kirganlar: Keycloak `sub` -> `actor_id`
     #: (`services/identities.py`). Sir yo'q, lekin `data/` da, 600.
     identities_file: Path = BASE_DIR / "data" / "identities.json"

@@ -381,27 +381,27 @@ def _during_refresh(hub: ConnectorHub, monkeypatch, action) -> None:
 
 def test_yangilash_paytida_uzilgan_ulanish_tirilmaydi(client, hub, net, monkeypatch):
     uid = str(sso_login(client, net)["user"]["actorId"])
-    hub._crm_cache.pop(uid)
+    hub._sso_cache.pop(uid)
     _during_refresh(hub, monkeypatch, lambda: hub.disconnect(uid, "crm"))
 
     assert hub.tokens(uid) == {}
-    assert "crm" not in hub.store.get(uid)
+    assert "crm" not in hub.store.get(uid) and "sso" not in hub.store.get(uid)
     assert next(s for s in hub.status(uid) if s["id"] == "crm")["state"] == "disconnected"
 
 
 def test_yangilash_paytidagi_qayta_kirish_ustun(client, hub, net, monkeypatch):
     uid = str(sso_login(client, net)["user"]["actorId"])
-    hub._crm_cache.pop(uid)
+    hub._sso_cache.pop(uid)
     _during_refresh(hub, monkeypatch, lambda: hub.adopt_crm(
         uid, USERNAME, "yangi-access", "yangi-refresh", 300.0, via="sso"))
 
     assert hub.tokens(uid) == {"crm": "yangi-access"}
-    assert hub.store.get(uid)["crm"]["refresh_token"] == "yangi-refresh"
+    assert hub.store.get(uid)["sso"]["refresh_token"] == "yangi-refresh"
 
 
 def test_olgan_sessiya_xabari_yangi_ulanishni_buzmaydi(client, hub, net, monkeypatch):
     uid = str(sso_login(client, net)["user"]["actorId"])
-    hub._crm_cache.pop(uid)
+    hub._sso_cache.pop(uid)
     real = hub.sso.refresh
 
     def dead_but_replaced(refresh_token: str):
@@ -411,7 +411,7 @@ def test_olgan_sessiya_xabari_yangi_ulanishni_buzmaydi(client, hub, net, monkeyp
 
     monkeypatch.setattr(hub.sso, "refresh", dead_but_replaced)
     hub.tokens(uid)
-    entry = hub.store.get(uid)["crm"]
+    entry = hub.store.get(uid)["sso"]
     assert entry["refresh_token"] == "yangi-refresh" and entry["expired"] is False
 
 
@@ -437,11 +437,12 @@ def test_yangilash_faqat_osha_sessiyaga_yoziladi(client, hub, net):
     """Rotatsiya yozuvning boshqa maydonlariga tegmaydi, `replace_if` esa boshqa sessiya
     (boshqa refresh token) yoki yo'q yozuv ustiga hech narsa yozmaydi."""
     uid = str(sso_login(client, net)["user"]["actorId"])
-    before = hub.store.get(uid)["crm"]["refresh_token"]
-    hub._crm_cache.pop(uid)
+    before = hub.store.get(uid)["sso"]["refresh_token"]
+    hub._sso_cache.pop(uid)
     hub.tokens(uid)
-    after = hub.store.get(uid)["crm"]
-    assert after["refresh_token"] != before and after["enabled"] is True and after["via"] == "sso"
-    assert hub.store.replace_if("yoq-odam", "crm", before, expired=True) is False
-    assert hub.store.replace_if(uid, "crm", "boshqa-token", expired=True) is False
-    assert hub.store.get(uid)["crm"]["expired"] is False
+    after = hub.store.get(uid)["sso"]
+    crm = hub.store.get(uid)["crm"]
+    assert after["refresh_token"] != before and crm["enabled"] is True and crm["via"] == "sso"
+    assert hub.store.replace_if("yoq-odam", "sso", before, expired=True) is False
+    assert hub.store.replace_if(uid, "sso", "boshqa-token", expired=True) is False
+    assert hub.store.get(uid)["sso"]["expired"] is False

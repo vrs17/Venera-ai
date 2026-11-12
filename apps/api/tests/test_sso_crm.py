@@ -106,9 +106,10 @@ def test_kirishda_crm_ulanadi(client, hub, net):
     # Chat shu tokenni oladi - kesh, Keycloak'ka qayta borilmaydi.
     assert hub.tokens(uid) == {"crm": token}
     assert _refresh_calls(net) == []
-    # Saqlangan yozuv SSO sessiyasi deb belgilangan.
+    # Saqlangan yozuv SSO sessiyasi deb belgilangan; sessiyaning o'zi umumiy `sso` yozuvida.
     entry = hub.store.get(uid)["crm"]
-    assert entry["via"] == "sso" and entry["refresh_token"].startswith("refresh-")
+    assert entry["via"] == "sso" and "refresh_token" not in entry
+    assert hub.store.get(uid)["sso"]["refresh_token"].startswith("refresh-")
 
 
 def test_offline_access_soraladi(client, hub, net):
@@ -118,6 +119,7 @@ def test_offline_access_soraladi(client, hub, net):
 
 def test_ochirilgan_bolsa_crm_ga_borilmaydi(client, hub, net, monkeypatch):
     monkeypatch.setattr(settings, "sso_crm_connect", False)
+    monkeypatch.setattr(settings, "sso_hrm_connect", False)        # ikkalasi o'chiq - offline ham kerak emas
     body = sso_login(client, net)
     assert net.last_authorize["scope"] == "openid profile email"
     assert net.me_calls == []
@@ -207,7 +209,7 @@ def test_ulanishdagi_kutilmagan_xato_kirishni_toxtatmaydi(client, hub, net, monk
     def boom(*args, **kwargs):
         raise RuntimeError("disk to'la")
 
-    monkeypatch.setattr(hub, "adopt_crm", boom)
+    monkeypatch.setattr(hub, "adopt_sso", boom)
     body = sso_login(client, net)
     assert body["token"] and body["user"]["actorId"]
 
@@ -219,9 +221,9 @@ def test_access_token_keycloakda_yangilanadi(client, hub, net):
     body = sso_login(client, net)
     uid = _uid(body)
     first = hub.tokens(uid)["crm"]
-    stored = hub.store.get(uid)["crm"]["refresh_token"]
+    stored = hub.store.get(uid)["sso"]["refresh_token"]
 
-    hub._crm_cache.pop(uid)                # kesh eskirdi deb faraz qilamiz
+    hub._sso_cache.pop(uid)                # kesh eskirdi deb faraz qilamiz
     second = hub.tokens(uid)["crm"]
 
     calls = _refresh_calls(net)
@@ -231,26 +233,27 @@ def test_access_token_keycloakda_yangilanadi(client, hub, net):
     assert CRM_REFRESH_URL not in net.urls()
     assert second.startswith("ey") and second != first
     # Rotatsiya: Keycloak yangi refresh_token berdi - o'sha saqlandi, belgi joyida.
-    entry = hub.store.get(uid)["crm"]
-    assert entry["refresh_token"] != stored and entry["via"] == "sso" and entry["expired"] is False
+    session = hub.store.get(uid)["sso"]
+    assert session["refresh_token"] != stored and session["expired"] is False
+    assert hub.store.get(uid)["crm"]["via"] == "sso"
 
 
 def test_sessiya_olgan_bolsa_holat_expired(client, hub, net):
     body = sso_login(client, net)
     uid = _uid(body)
-    hub._crm_cache.pop(uid)
+    hub._sso_cache.pop(uid)
     net.refresh_error = (400, {"error": "invalid_grant", "error_description": "Session not active"})
 
     assert hub.tokens(uid) == {}
     status = _crm(hub, uid)
     assert status["state"] == "expired" and status["login"] == USERNAME
-    assert hub.store.get(uid)["crm"]["refresh_token"] == ""
+    assert hub.store.get(uid)["sso"]["refresh_token"] == ""
 
 
 def test_keycloak_vaqtincha_yiqilsa_ulanish_qoladi(client, hub, net):
     body = sso_login(client, net)
     uid = _uid(body)
-    hub._crm_cache.pop(uid)
+    hub._sso_cache.pop(uid)
     net.refresh_error = (503, {"error": "temporarily_unavailable"})
 
     assert hub.tokens(uid) == {}             # bu savol CRM siz ketadi
@@ -266,7 +269,7 @@ def test_uzish_sessiyani_keycloakda_bekor_qiladi(client, hub, net):
     """Uzish faqat admin panelda (`DELETE /admin/users/{id}/connectors/crm`)."""
     body = sso_login(client, net, roles=["admin"])
     uid = _uid(body)
-    stored = hub.store.get(uid)["crm"]["refresh_token"]
+    stored = hub.store.get(uid)["sso"]["refresh_token"]
 
     response = client.delete(f"/api/v1/admin/users/{uid}/connectors/crm", headers=_auth(body))
     assert response.status_code == 200, response.text
@@ -278,15 +281,16 @@ def test_uzish_sessiyani_keycloakda_bekor_qiladi(client, hub, net):
     assert LOGOUT_URL not in net.urls()
     assert CRM_LOGOUT_URL not in net.urls()
     assert hub.tokens(uid) == {}
+    assert "sso" not in hub.store.get(uid)             # oxirgi SSO ulanishi edi - sessiya ham ketdi
 
 
 def test_qayta_kirish_eski_sso_sessiyasini_bekor_qilmaydi(client, hub, net):
     body = sso_login(client, net)
     uid = _uid(body)
-    old = hub.store.get(uid)["crm"]["refresh_token"]
+    old = hub.store.get(uid)["sso"]["refresh_token"]
 
     sso_login(client, net)
-    new = hub.store.get(uid)["crm"]["refresh_token"]
+    new = hub.store.get(uid)["sso"]["refresh_token"]
     assert new != old
     # Ikkalasi bitta offline sessiyani bo'lishishi mumkin - eskisini bekor qilish
     # yangisini ham o'ldirardi.
@@ -302,7 +306,7 @@ def test_sso_sessiyasi_eski_qolda_ulangan_crm_ni_almashtiradi(client, hub, net):
 
     sso_login(client, net)                               # CRM qabul qiladi -> SSO sessiyasi
     entry = hub.store.get(uid)["crm"]
-    assert entry["via"] == "sso" and entry["refresh_token"] != manual_refresh
+    assert entry["via"] == "sso" and hub.store.get(uid)["sso"]["refresh_token"] != manual_refresh
     assert entry["enabled"] is True, "eski kalit yangi ulanishga o'tmaydi"
     # Eski qo'lda ulangan kredensial CRM da bekor qilindi (to'planib qolmasin).
     assert (CRM_LOGOUT_URL, {"refresh_token": manual_refresh}) in net.calls
@@ -349,7 +353,7 @@ def test_api_royxatida_crm_yoq_va_token_yoq(client, hub, net):
     assert set(items[0]) == STATUS_FIELDS
     raw = response.text
     assert "crm" not in raw.lower() and USERNAME not in raw
-    assert hub.store.get(_uid(body))["crm"]["refresh_token"] not in raw
+    assert hub.store.get(_uid(body))["sso"]["refresh_token"] not in raw
     assert net.me_calls[0].removeprefix("Bearer ") not in raw
 
 

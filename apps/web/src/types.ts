@@ -457,8 +457,11 @@ export interface ConnectorStatus {
   /** Eski kalit maydoni: server yuboradi, lekin endi hech narsani hal qilmaydi -
    *  ulangan tizim doim ishlatiladi. */
   enabled: boolean
-  /** HRM tokenining muddati (ISO-8601). */
+  /** HRM tokenining muddati (ISO-8601). SSO ulanishida yo'q - token o'zi yangilanadi. */
   expiresAt: string | null
+  /** `sso` - ulanish BRB-Tech ID kirishidan (qayta kirish uni yangilaydi), `null` - qo'lda ulangan.
+   *  Eski server yubormaydi. */
+  via?: 'sso' | null
 }
 
 /** schemas/connectors.py: ConnectorsResponse */
