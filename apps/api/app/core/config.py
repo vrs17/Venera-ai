@@ -73,6 +73,17 @@ class Settings(BaseSettings):
     #: manzil rad etiladi (ochiq yo'naltirish bo'lardi).
     sso_mobile_redirect: str = ""
     sso_timeout: float = 10.0
+    #: CRM ulanishini SSO sessiyasidan ochish (2026-11-12, ega so'rovi;
+    #: `services/integrations/crm_sso.py`). Yoqilgan bo'lsa: (1) kirishda
+    #: `offline_access` ham so'raladi - Keycloak'da client'ning "Optional
+    #: client scopes" ro'yxatida `offline_access` bo'lishi kerak (yangi
+    #: client'da odatda bor); (2) kirgan odamning sessiyasi CRM da
+    #: tekshiriladi (`GET /api/auth/me`) va qabul qilinsa uning CRM ulanishi
+    #: bo'ladi - "+" menyusiga kirish shart emas. CRM rad etsa ulanish
+    #: ochilmaydi, kirish esa ishlayveradi. `false` - kirish faqat shaxsni
+    #: beradi, CRM "+" menyusida qo'lda ulanadi. `CRM_BASE_URL` bo'sh bo'lsa
+    #: bu sozlamaning ta'siri yo'q (scope'dan tashqari).
+    sso_crm_connect: bool = True
     #: SSO bilan kirganlar: Keycloak `sub` -> `actor_id`
     #: (`services/identities.py`). Sir yo'q, lekin `data/` da, 600.
     identities_file: Path = BASE_DIR / "data" / "identities.json"

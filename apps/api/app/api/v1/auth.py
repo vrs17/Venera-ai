@@ -53,7 +53,8 @@ from ...schemas.auth import (
 from ...services import admin_users
 from ...services.analytics import record_auth_event
 from ...services.identities import IdentityStore
-from ...services.oidc import HANDOFF, ID_TOKENS, KeycloakOidc, OidcError
+from ...services.oidc import HANDOFF, ID_TOKENS, KeycloakOidc, OidcError, Tokens
+from ...services.oidc import from_settings as oidc_from_settings
 from ...services.users import UserStore
 from . import connectors as _connectors
 from ..deps import current_user, get_identity_store, get_user_store
@@ -83,8 +84,47 @@ _REASON_MAP = {"invalid_grant": "expired", "invalid_client": "config", "unauthor
 
 def _oidc() -> KeycloakOidc:
     """Chaqiruv paytida sozlamadan: testlar `settings.sso_*` ni almashtiradi."""
-    return KeycloakOidc(settings.sso_issuer, settings.sso_client_id, settings.sso_client_secret,
-                        timeout=settings.sso_timeout)
+    return oidc_from_settings()
+
+
+def _connect_crm(oidc: KeycloakOidc, actor_id: int, username: str, tokens: Tokens) -> None:
+    """Kirgan odamning SSO sessiyasini uning CRM ulanishiga aylantiradi
+    (`sso_crm_connect`, `services/integrations/crm_sso.py`).
+
+    HECH QACHON kirishni to'xtatmaydi: har qanday xato jurnalga yoziladi,
+    odam baribir kiradi.
+
+    Qoida: sessiya faqat CRM uni QABUL QILGANDA ulanishga aylanadi (eski
+    ulanish almashtiriladi). CRM rad etsa yoki javob bermasa odamning
+    mavjud ulanishiga TEGILMAYDI - ishlab turgan (masalan qo'lda ulangan)
+    CRM ni tekshirilmagan sessiya bilan almashtirmaymiz va menyuda "ulangan"
+    deb yolg'on ko'rsatmaymiz. Keyingi kirishda yana sinaladi.
+    """
+    if not settings.sso_crm_connect:
+        return
+    try:
+        hub = _connectors.hub
+        sso = hub.sso
+        if sso is None or not sso.configured:
+            return
+        if not tokens.refresh_token:
+            log.info("SSO: Keycloak refresh_token bermadi - CRM ulanishi ochilmadi (%s)", username)
+            return
+        verdict = sso.accepts(tokens.access_token)
+        if verdict is not True:
+            # Sabab odatda tokenning KIMGA berilganida: `azp` bizning client,
+            # CRM esa `aud`/`azp` da o'zini kutadi. Nomlar sir emas.
+            seen = oidc.describe(tokens.access_token)
+            log.warning(
+                "SSO: CRM sessiyani %s (%s) - CRM ulanishi ochilmadi. Token: azp=%s aud=%s clientlar=%s",
+                "RAD ETDI" if verdict is False else "tekshira olmadi", username,
+                seen.get("azp") or "?", seen.get("aud") or [], seen.get("clients") or [],
+            )
+            return
+        hub.adopt_crm(str(actor_id), username, tokens.access_token, tokens.refresh_token,
+                      tokens.expires_in, keep_enabled=True, revoke_old=True, via="sso")
+    except Exception:  # noqa: BLE001 - CRM kirishga to'siq bo'lmasin
+        log.exception("SSO: CRM ulanishini ochishda xato (%s) - kirish davom etadi", username)
 
 
 def _app_url(request: Request) -> str:
@@ -251,6 +291,7 @@ def sso_callback(
         ID_TOKENS[identity.actor_id] = tokens.id_token
     record_auth_event(login, True, method="sso", channel=channel, actor_id=identity.actor_id)
     log.info("Kirish (SSO): %s (actor_id %s, %s)", identity.username, identity.actor_id, channel)
+    _connect_crm(oidc, identity.actor_id, identity.username, tokens)
     response = LoginResponse(
         token=token,
         tokenType="Bearer",

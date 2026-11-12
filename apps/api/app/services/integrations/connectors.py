@@ -25,6 +25,13 @@ IKKI PLATFORMA, IKKI XIL SHAKL:
         kelsa o'sha saqlanadi. Refresh 400/401 bersa token o'lgan - holat
         "expired", odam qayta kiradi.
 
+  CRM, SSO sessiyasidan (`via: "sso"`, 2026-11-12). Brauzer orqali SSO da
+        parol bizga kelmaydi - CRM ulanishi Keycloak SESSIYASINING o'zi
+        (`barno-ai` client'iga berilgan refresh_token, `offline_access`).
+        Farqi bitta: access_token ni CRM emas, KEYCLOAK yangilaydi va
+        bekor qilish ham o'sha yerda (`crm_sso.py`) - qolgan hamma narsa
+        (kesh, oyna, rotatsiya, "expired") yuqoridagi bilan bir xil.
+
 SAQLASH. `refresh_token` PAROLDAN FARQI YO'Q - uni qo'lga kiritgan odam o'sha
 foydalanuvchi nomidan cheksiz token yasay oladi. HRM tokeni ham 10 soatlik
 to'liq sessiya. Shuning uchun:
@@ -532,10 +539,15 @@ class ConnectorHub:
     """Holat, ulanish, uzish, kalit - va chat uchun yaroqli tokenlar."""
 
     def __init__(self, store: ConnectorStore, hrm: HrmAuth, crm: CrmUserAuth, *,
-                 hrm_margin: float = 300.0, crm_margin: float = 180.0) -> None:
+                 hrm_margin: float = 300.0, crm_margin: float = 180.0,
+                 sso: Any | None = None) -> None:
         self.store = store
         self.hrm = hrm
         self.crm = crm
+        #: SSO sessiyasidan ochilgan CRM ulanishlari uchun (`crm_sso.CrmSso`):
+        #: `configured`, `refresh`, `revoke`. Yo'q bo'lsa bunday ulanish
+        #: ochilmaydi, borlari esa token bermaydi.
+        self.sso = sso
         self.hrm_margin = hrm_margin
         self.crm_margin = crm_margin
         self._lock = threading.Lock()
@@ -608,27 +620,56 @@ class ConnectorHub:
         return self._entry_status("hrm", entry, user_id=user_id)
 
     def adopt_crm(self, user_id: str, username: str, access: str, refresh: str, ttl: float,
-                  *, keep_enabled: bool = False, revoke_old: bool = False) -> dict[str, Any]:
+                  *, keep_enabled: bool = False, revoke_old: bool = False,
+                  via: str = "") -> dict[str, Any]:
         """Tayyor Keycloak sessiyasini CRM ulanishi sifatida saqlaydi.
 
-        SSO kirishida (`services/sso.py`) Keycloak javobi ikki ish qiladi:
+        SSO kirishida (`api/v1/auth.py`) Keycloak javobi ikki ish qiladi:
         shaxsni beradi VA shu yerda CRM ulanishiga aylanadi - odam CRM ga
-        alohida kirmaydi. `revoke_old`: oldingi `refresh_token` CRM da
-        bekor qilinadi - har kirish yangi doimiy kredensial yasaydi,
-        eskilari to'planib qolmasin.
+        alohida kirmaydi. `revoke_old`: oldingi `refresh_token` bekor
+        qilinadi - har kirish yangi doimiy kredensial yasaydi, eskilari
+        to'planib qolmasin. `via="sso"`: sessiya BIZNING client'ga berilgan -
+        uni CRM emas, Keycloak yangilaydi va bekor qiladi (modul izohi).
         """
         old = self.store.get(user_id).get("crm")
         entry = {"login": username, "refresh_token": refresh, "expired": False,
                  "enabled": self._enabled_after(user_id, "crm", keep_enabled, old),
                  "connected_at": time.time()}
+        if via:
+            entry["via"] = via
         with self._lock:
             self._crm_cache[user_id] = (access, time.monotonic() + ttl)
         self.store.set(user_id, "crm", entry)
         stale = (old or {}).get("refresh_token")
-        if revoke_old and stale and stale != refresh and self.crm.configured:
-            self.crm.logout(stale)
-        log.info("Ulanish: %s -> crm", user_id)
+        # SSO sessiyasi SSO sessiyasini almashtirganda eskisi BEKOR QILINMAYDI:
+        # brauzerda Keycloak sessiyasi tirik bo'lsa qayta kirish O'SHA sessiyada
+        # bo'ladi va `offline_access` tokenlari uning ichida BITTA offline
+        # sessiyani bo'lishadi - eskisini bekor qilish hozirgina olingan yangi
+        # tokenni ham o'ldirardi. Ishlatilmagan offline sessiyani Keycloak o'zi
+        # tozalaydi (Offline Session Idle); "uzish" tugmasi esa bekor qiladi.
+        same_session_kind = via == "sso" and (old or {}).get("via") == "sso"
+        if revoke_old and stale and stale != refresh and not same_session_kind:
+            self._revoke_crm(old, stale)
+        log.info("Ulanish: %s -> crm%s", user_id, f" ({via})" if via else "")
         return self._entry_status("crm", entry, user_id=user_id)
+
+    def _crm_source(self, entry: dict[str, Any] | None) -> Any | None:
+        """Shu ulanishning tokenini KIM yangilaydi va bekor qiladi: SSO
+        sessiyasi - Keycloak (`self.sso`), qo'lda ulangani - CRM (`self.crm`).
+        Sozlanmagan bo'lsa `None`."""
+        source = self.sso if (entry or {}).get("via") == "sso" else self.crm
+        return source if source is not None and source.configured else None
+
+    def _revoke_crm(self, entry: dict[str, Any] | None, refresh_token: str) -> None:
+        """`refresh_token` ni egasida bekor qiladi. Eng yaxshi harakat - ikkala
+        manba ham xatoni o'zi jurnalga yozadi."""
+        source = self._crm_source(entry)
+        if source is None:
+            return
+        if source is self.crm:
+            self.crm.logout(refresh_token)
+        else:
+            source.revoke(refresh_token)
 
     def _enabled_after(self, user_id: str, platform: str, keep: bool,
                        old: dict[str, Any] | None = None) -> bool:
@@ -644,10 +685,11 @@ class ConnectorHub:
         if platform == "crm":
             with self._lock:
                 self._crm_cache.pop(user_id, None)
-            # Saqlangan refresh_token CRM da ham bekor qilinadi: o'g'irlangan
-            # deb gumon qilsa, uzish uni darhol yaroqsiz qilsin.
-            if entry and entry.get("refresh_token") and self.crm.configured:
-                self.crm.logout(entry["refresh_token"])
+            # Saqlangan refresh_token egasida ham bekor qilinadi (CRM yoki, SSO
+            # sessiyasi bo'lsa, Keycloak): o'g'irlangan deb gumon qilsa, uzish
+            # uni darhol yaroqsiz qilsin.
+            if entry and entry.get("refresh_token"):
+                self._revoke_crm(entry, entry["refresh_token"])
         if platform == "hrm":
             # Parol faqat HRM ni yangilash uchun turardi - endi keraksiz.
             self.forget_password(user_id)
@@ -795,10 +837,13 @@ class ConnectorHub:
             now = time.monotonic()
             if cached and now < cached[1] - self.crm_margin:
                 return cached[0]
-            if not self.crm.configured:
+            # Kim yangilaydi: qo'lda ulangan sessiyani CRM, SSO sessiyasini
+            # Keycloak (`_crm_source`). Ikkalasining `refresh` shakli bir xil.
+            source = self._crm_source(entry)
+            if source is None:
                 return cached[0] if cached and now < cached[1] else ""
             try:
-                access, refresh, ttl = self.crm.refresh(entry["refresh_token"])
+                access, refresh, ttl = source.refresh(entry["refresh_token"])
             except ConnectorError as exc:
                 if exc.status in (400, 401, 403):
                     # Token o'lgan: bekor qilingan yoki 30 kun ishlatilmagan.

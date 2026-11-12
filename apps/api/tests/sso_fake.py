@@ -109,6 +109,15 @@ class FakeKeycloak(FakeNet):
         self._codes: dict[str, dict[str, str]] = {}
         self.last_authorize: dict[str, str] = {}
         self.token_calls: list[dict[str, str]] = []
+        #: CRM `GET /api/auth/me` (SSO sessiyasidan CRM ulanishi, `crm_sso.py`):
+        #: True - 200, False - 401, None - 503 (aniqlab bo'lmaydi).
+        self.crm_accepts: bool | None = True
+        #: `me` ga kelgan `Authorization` sarlavhalari.
+        self.me_calls: list[str] = []
+        #: Keycloak logout endpoint'ida bekor qilingan refresh tokenlar.
+        self.revoked: list[str] = []
+        #: `refresh_token` granti shu xato bilan yiqiladi (masalan sessiya o'lgan).
+        self.refresh_error: tuple[int, dict] | None = None
 
     # --- "brauzer" Keycloak sahifasida -------------------------------------
 
@@ -142,6 +151,22 @@ class FakeKeycloak(FakeNet):
             if KID2 in self.published:
                 keys.append({**_JWK2, "kid": KID2, "use": "sig", "alg": "RS256"})
             return _Response(json.dumps({"keys": keys}).encode())
+        if url == f"{CRM}/api/auth/me":
+            self.calls.append((url, {}))
+            self.me_calls.append(request.get_header("Authorization") or "")
+            if self.crm_accepts is None:
+                raise _http_error(url, 503, {"error": "unavailable"})
+            if not self.crm_accepts:
+                raise _http_error(url, 401, {"error": "unauthorized"})
+            return _Response(json.dumps({"data": {"username": self.username}}).encode())
+        if url == LOGOUT_URL:
+            raw = (request.data or b"").decode()
+            body = {k: v[0] for k, v in urllib.parse.parse_qs(raw).items()}
+            self.calls.append((url, body))
+            if body.get("client_id") != CLIENT_ID or body.get("client_secret") != SECRET:
+                raise _http_error(url, 401, {"error": "invalid_client"})
+            self.revoked.append(body.get("refresh_token", ""))
+            return _Response(b"")
         if url == TOKEN_URL:
             raw = (request.data or b"").decode()
             body = {k: v[0] for k, v in urllib.parse.parse_qs(raw).items()}
@@ -159,6 +184,8 @@ class FakeKeycloak(FakeNet):
             raise _http_error(TOKEN_URL, 401, {"error": "invalid_client",
                                                "error_description": "Invalid client or Invalid client credentials"})
         if body["grant_type"] == "refresh_token":
+            if self.refresh_error:
+                raise _http_error(TOKEN_URL, *self.refresh_error)
             return _Response(json.dumps(self._tokens(nonce="")).encode())
         issued = self._codes.pop(body.get("code", ""), None)
         if issued is None:
@@ -172,7 +199,10 @@ class FakeKeycloak(FakeNet):
     def _tokens(self, *, nonce: str) -> dict:
         now = int(time.time())
         pem = _PEM2 if self.kid == KID2 else _PEM
+        # `jti` - haqiqiy Keycloak kabi har token noyob (bir sekund ichida ikki
+        # marta berilsa ham): "yangilandi" ni testlar token farqidan ko'radi.
         base = {"iss": self.iss, "sub": self.sub, "iat": now, "exp": now + self.exp_offset,
+                "jti": secrets.token_hex(8),
                 "preferred_username": self.username, "email": self.email, "name": self.name}
         if self.azp:
             base["azp"] = self.azp

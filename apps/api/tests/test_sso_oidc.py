@@ -91,7 +91,9 @@ def test_start_keycloak_manziliga_yuboradi(client, net):
     query = _query(location)
     assert query["client_id"] == CLIENT_ID
     assert query["redirect_uri"] == CALLBACK
-    assert query["scope"] == "openid profile email"
+    # `offline_access` - CRM ulanishi SSO sessiyasidan ochilgani uchun (default
+    # `sso_crm_connect=True`); o'chirilgan holati `test_sso_crm.py` da.
+    assert query["scope"] == "openid profile email offline_access"
     assert query["code_challenge_method"] == "S256"
     assert len(query["state"]) >= 32 and len(query["nonce"]) >= 24
     # Parol, login, sir - manzilda hech narsa yo'q.

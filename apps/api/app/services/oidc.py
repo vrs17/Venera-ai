@@ -64,6 +64,12 @@ _MAX_ENTRIES = 5000
 _LEEWAY = 30
 _ALGORITHMS = ["RS256", "RS384", "RS512", "PS256", "ES256", "ES384", "ES512"]
 _SCOPE = "openid profile email"
+#: CRM ulanishi SSO sessiyasidan ochilganda (`sso_crm_connect`) `offline_access`
+#: ham so'raladi: usiz `refresh_token` Keycloak'ning SSO sessiyasi bilan birga
+#: o'ladi (odatda 30 daqiqa harakatsizlik) va CRM ulanishi kuniga bir necha
+#: marta "muddati tugagan" bo'lib qolardi. Oldingi yo'l (`crm-client`, parol
+#: granti) ham aynan shu scope'ni so'rardi (`connectors._CRM_SCOPE`).
+_SCOPE_OFFLINE = f"{_SCOPE} offline_access"
 #: JWKS noma'lum `kid` uchun qayta so'raladi, lekin bundan tez-tez emas.
 _JWKS_MIN_REFRESH = 60.0
 
@@ -291,11 +297,13 @@ class KeycloakOidc:
     """Bitta realm + bizning client. Sozlama `core/config.py` (`sso_*`)."""
 
     def __init__(self, issuer: str, client_id: str, client_secret: str, *,
-                 timeout: float = 10.0) -> None:
+                 timeout: float = 10.0, offline: bool = False) -> None:
         self.issuer = (issuer or "").strip().rstrip("/")
         self.client_id = (client_id or "").strip()
         self._client_secret = client_secret or ""
         self.timeout = timeout
+        #: `offline_access` so'raladimi (`_SCOPE_OFFLINE` izohi).
+        self.scope = _SCOPE_OFFLINE if offline else _SCOPE
 
     @property
     def configured(self) -> bool:
@@ -335,7 +343,7 @@ class KeycloakOidc:
             "response_type": "code",
             "client_id": self.client_id,
             "redirect_uri": redirect_uri,
-            "scope": _SCOPE,
+            "scope": self.scope,
             "state": pending.state,
             "nonce": pending.nonce,
             "code_challenge": challenge,
@@ -366,7 +374,8 @@ class KeycloakOidc:
         return self._tokens(payload)
 
     def refresh(self, refresh_token: str) -> Tokens:
-        """Keycloak sessiyasini yangilash (keyinroq CRM ulanishi uchun)."""
+        """Keycloak sessiyasini yangilash - CRM ulanishi shu bilan yashaydi
+        (`services/integrations/crm_sso.py`)."""
         payload = _post_form(self.token_endpoint, {
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
@@ -374,6 +383,45 @@ class KeycloakOidc:
             "client_secret": self._client_secret,
         }, self.timeout, what="refresh")
         return self._tokens(payload)
+
+    def revoke(self, refresh_token: str) -> None:
+        """Saqlangan sessiyani Keycloak'da BEKOR qiladi (`refresh_token` bo'yicha;
+        `offline_access` sessiyasi ham shu yo'l bilan o'chadi). Eng yaxshi
+        harakat: xato jurnalga yoziladi, chaqiruvchi ishini davom ettiradi -
+        "uzish" tugmasi Keycloak javob bermagani uchun to'xtab qolmasin."""
+        if not refresh_token:
+            return
+        try:
+            _post_form(self.end_session_endpoint, {
+                "client_id": self.client_id,
+                "client_secret": self._client_secret,
+                "refresh_token": refresh_token,
+            }, self.timeout, what="logout")
+        except OidcError as exc:
+            log.warning("Keycloak sessiyasi bekor qilinmadi (%s): %s", exc.code, exc)
+
+    def describe(self, access_token: str) -> dict[str, Any]:
+        """Access token KIMGA mo'ljallangani - jurnal uchun, sirsiz: `azp`, `aud`
+        va `resource_access` dagi client NOMLARI (rollar emas). CRM tokenni rad
+        etsa sabab shu yerdan ko'rinadi (masalan `aud` da `crm-client` yo'q).
+        O'qib bo'lmasa bo'sh lug'at - bu faqat diagnostika."""
+        if not access_token or access_token.count(".") != 2:
+            return {}
+        try:
+            claims = self._decode(access_token, audience=None)
+        except OidcError:
+            return {}
+        aud = claims.get("aud")
+        if isinstance(aud, (list, tuple)):
+            audiences = [str(item) for item in aud]
+        else:
+            audiences = [str(aud)] if aud else []
+        clients = claims.get("resource_access")
+        return {
+            "azp": str(claims.get("azp") or ""),
+            "aud": audiences,
+            "clients": sorted(str(name) for name in clients) if isinstance(clients, dict) else [],
+        }
 
     @staticmethod
     def _tokens(payload: dict[str, Any]) -> Tokens:
@@ -471,6 +519,17 @@ class KeycloakOidc:
         if id_token_hint:
             params["id_token_hint"] = id_token_hint
         return f"{self.end_session_endpoint}?{urllib.parse.urlencode(params)}"
+
+
+def from_settings() -> KeycloakOidc:
+    """Bizning client - CHAQIRUV PAYTIDAGI sozlamadan (testlar `settings.sso_*`
+    ni almashtiradi). Kirish (`api/v1/auth.py`) va CRM ulanishi
+    (`integrations/crm_sso.py`) BITTA joydan yasaydi - scope ikkisida bir xil
+    bo'lsin."""
+    from ..core.config import settings
+
+    return KeycloakOidc(settings.sso_issuer, settings.sso_client_id, settings.sso_client_secret,
+                        timeout=settings.sso_timeout, offline=settings.sso_crm_connect)
 
 
 def _full_name(claims: dict[str, Any]) -> str:

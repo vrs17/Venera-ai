@@ -32,6 +32,8 @@ from ...services.integrations.connectors import (
     CrmUserAuth,
     HrmAuth,
 )
+from ...services.integrations.crm_sso import CrmSso
+from ...services.oidc import from_settings as oidc_from_settings
 from ..deps import current_user
 
 log = logging.getLogger(__name__)
@@ -52,6 +54,10 @@ hub = ConnectorHub(
     ),
     hrm_margin=settings.hrm_token_margin,
     crm_margin=settings.crm_token_margin,
+    # CRM ulanishi SSO sessiyasidan (`crm_sso.py`): sozlama chaqiruv paytida
+    # o'qiladi, shuning uchun funksiyalar beriladi.
+    sso=CrmSso(oidc_from_settings, lambda: settings.crm_base_url,
+               timeout=min(settings.crm_timeout, 5.0)),
 )
 
 _PLATFORM = Path(max_length=16, description="hrm | crm")
