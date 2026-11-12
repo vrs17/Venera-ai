@@ -33,6 +33,7 @@ from app.services.oidc import from_settings as oidc_from_settings
 from tests.sso_fake import (  # noqa: F401 - fiksturalar
     CLIENT_ID,
     LOGOUT_URL,
+    REVOKE_URL,
     TOKEN_URL,
     USERNAME,
     net,
@@ -258,8 +259,10 @@ def test_uzish_sessiyani_keycloakda_bekor_qiladi(client, hub, net):
     assert response.status_code == 200, response.text
     assert response.json()["state"] == "disconnected"
     assert net.revoked == [stored]
-    logout_body = next(b for url, b in net.calls if url == LOGOUT_URL)
-    assert logout_body["client_id"] == CLIENT_ID and logout_body["client_secret"]
+    revoke_body = next(b for url, b in net.calls if url == REVOKE_URL)
+    assert revoke_body["client_id"] == CLIENT_ID and revoke_body["client_secret"]
+    # Butun Keycloak sessiyasi YOPILMAGAN: odam shu brauzerdagi CRM dan chiqib ketmaydi.
+    assert LOGOUT_URL not in net.urls()
     assert CRM_LOGOUT_URL not in net.urls()
     assert hub.tokens(uid) == {}
 

@@ -53,8 +53,8 @@ const en = {
     copied: 'Answer copied',
     actions: 'Message actions',
     sourcesShort: '{n} sources',
-    notConnected: 'Your {system} account isn’t connected. Sign in again and it connects automatically.',
-    reconnect: 'Reconnect',
+    notConnected: 'Your {system} account isn’t connected. Connect it in the web app: “+” → Connections.',
+    reconnect: 'Open web app',
     selectText: 'Select text',
   },
   sources: {
@@ -144,8 +144,8 @@ const uz: Mirror<typeof en> = {
     copied: 'Javob nusxalandi',
     actions: 'Xabar amallari',
     sourcesShort: '{n} manba',
-    notConnected: '{system} hisobingiz ulanmagan. Qayta kirsangiz, avtomatik ulanadi.',
-    reconnect: 'Qayta ulash',
+    notConnected: '{system} hisobingiz ulanmagan. Uni veb ilovada ulang: «+» → Ulanishlar.',
+    reconnect: 'Veb ilovani ochish',
     selectText: 'Matnni belgilash',
   },
   sources: {
@@ -235,8 +235,8 @@ const uzCyrl: Mirror<typeof en> = {
     copied: 'Жавоб нусхаланди',
     actions: 'Хабар амаллари',
     sourcesShort: '{n} манба',
-    notConnected: '{system} ҳисобингиз уланмаган. Қайта кирсангиз, автоматик уланади.',
-    reconnect: 'Қайта улаш',
+    notConnected: '{system} ҳисобингиз уланмаган. Уни веб иловада уланг: «+» → Уланишлар.',
+    reconnect: 'Веб иловани очиш',
     selectText: 'Матнни белгилаш',
   },
   sources: {
@@ -326,8 +326,8 @@ const ru: Mirror<typeof en> = {
     copied: 'Ответ скопирован',
     actions: 'Действия с сообщением',
     sourcesShort: 'Источники: {n}',
-    notConnected: 'Аккаунт {system} не подключён. Войдите заново, и он подключится сам.',
-    reconnect: 'Переподключить',
+    notConnected: 'Аккаунт {system} не подключён. Подключите его в веб-приложении: «+» → Подключения.',
+    reconnect: 'Открыть веб-приложение',
     selectText: 'Выделить текст',
   },
   sources: {

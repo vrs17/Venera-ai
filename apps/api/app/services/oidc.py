@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import json
 import logging
 import secrets
@@ -115,6 +116,9 @@ class Pending:
     return_to: str
     channel: str
     created: float = field(default_factory=time.time)
+    #: Kirishni BOSHLAGAN brauzerga bog'lash: `start` qo'ygan cookie'ning
+    #: SHA-256 i (`api/v1/auth.py`). Bo'sh - bog'lanmagan (testlar, eski yo'l).
+    binding: str = ""
 
 
 class _Expiring:
@@ -193,7 +197,10 @@ def _request(request: urllib.request.Request, timeout: float, *, what: str) -> d
         desc = str(payload.get("error_description") or "") if isinstance(payload, dict) else ""
         log.warning("Keycloak %s: HTTP %s %s %s", what, exc.code, code, desc[:120])
         raise _http_failure(exc.code, code, desc) from None
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+    except (urllib.error.URLError, OSError, TimeoutError, http.client.HTTPException) as exc:
+        # `HTTPException` (buzilgan holat qatori, uzilgan javob) `OSError` emas va
+        # urllib uni o'ramaydi - ushlanmasa "eng yaxshi harakat" chaqiruvlaridan
+        # (masalan `revoke`) tashqariga chiqib, uzishni yarim yo'lda to'xtatardi.
         log.warning("Keycloak %s: aloqa yo'q: %s", what, exc)
         raise OidcError("SSO (Keycloak) bilan aloqa yo'q", status=502, code="network") from None
     try:
@@ -257,8 +264,11 @@ class Jwks:
             elif kid not in keys:
                 last_kid, last_at = self._unknown.get(url, ("", 0.0))
                 if kid != last_kid or time.time() - last_at > _JWKS_MIN_REFRESH:
-                    self._unknown[url] = (kid, time.time())
                     keys = self._fetch(url, timeout)
+                    # Cheklov faqat MUVAFFAQIYATLI so'rovdan keyin yoziladi: so'rov
+                    # yiqilsa (timeout, 5xx) keyingi kirish darhol qayta so'raydi -
+                    # aks holda kalit almashgandan keyin bir daqiqa hamma kira olmasdi.
+                    self._unknown[url] = (kid, time.time())
             found = keys.get(kid)
         if found is None:
             raise OidcError("Keycloak tokeni noma'lum kalit bilan imzolangan", status=502, code="unknown_kid")
@@ -326,9 +336,13 @@ class KeycloakOidc:
     def end_session_endpoint(self) -> str:
         return f"{self.issuer}/protocol/openid-connect/logout"
 
+    @property
+    def revocation_endpoint(self) -> str:
+        return f"{self.issuer}/protocol/openid-connect/revoke"
+
     # --- 1. boshlash --------------------------------------------------------
 
-    def begin(self, redirect_uri: str, *, return_to: str, channel: str) -> str:
+    def begin(self, redirect_uri: str, *, return_to: str, channel: str, binding: str = "") -> str:
         """Kirishni boshlaydi: `Pending` ni saqlaydi, Keycloak manzilini qaytaradi."""
         verifier, challenge = pkce_pair()
         pending = Pending(
@@ -337,6 +351,7 @@ class KeycloakOidc:
             nonce=secrets.token_urlsafe(24),
             return_to=return_to,
             channel=channel,
+            binding=binding,
         )
         PENDING.put(pending.state, pending)
         query = urllib.parse.urlencode({
@@ -385,20 +400,27 @@ class KeycloakOidc:
         return self._tokens(payload)
 
     def revoke(self, refresh_token: str) -> None:
-        """Saqlangan sessiyani Keycloak'da BEKOR qiladi (`refresh_token` bo'yicha;
-        `offline_access` sessiyasi ham shu yo'l bilan o'chadi). Eng yaxshi
-        harakat: xato jurnalga yoziladi, chaqiruvchi ishini davom ettiradi -
-        "uzish" tugmasi Keycloak javob bermagani uchun to'xtab qolmasin."""
+        """Saqlangan tokenni Keycloak'da BEKOR qiladi - FAQAT bizning client'ning
+        ruxsatini (RFC 7009, `/revoke`; `offline_access` tokeni ham shu yo'l bilan).
+
+        ATAYLAB `/logout` EMAS: u sessiyani yopadi - `refresh_token` bilan
+        chaqirilsa odamning BUTUN Keycloak sessiyasi tugaydi va u shu brauzerda
+        ochiq turgan CRM va boshqa SSO tizimlaridan ham chiqib ketadi. "CRM ni
+        uzish" tugmasi esa faqat Barno'ning saqlangan ruxsatini o'chirishi kerak.
+
+        Eng yaxshi harakat: xato jurnalga yoziladi, chaqiruvchi ishini davom
+        ettiradi - "uzish" Keycloak javob bermagani uchun to'xtab qolmasin."""
         if not refresh_token:
             return
         try:
-            _post_form(self.end_session_endpoint, {
+            _post_form(self.revocation_endpoint, {
                 "client_id": self.client_id,
                 "client_secret": self._client_secret,
-                "refresh_token": refresh_token,
-            }, self.timeout, what="logout")
+                "token": refresh_token,
+                "token_type_hint": "refresh_token",
+            }, self.timeout, what="revoke")
         except OidcError as exc:
-            log.warning("Keycloak sessiyasi bekor qilinmadi (%s): %s", exc.code, exc)
+            log.warning("Keycloak tokeni bekor qilinmadi (%s): %s", exc.code, exc)
 
     def describe(self, access_token: str) -> dict[str, Any]:
         """Access token KIMGA mo'ljallangani - jurnal uchun, sirsiz: `azp`, `aud`

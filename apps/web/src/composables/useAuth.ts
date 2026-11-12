@@ -83,10 +83,13 @@ export function useAuth() {
     if (sso.value) return sso.value
     try {
       sso.value = await authApi.ssoConfig()
+      return sso.value
     } catch {
-      sso.value = SSO_FALLBACK
+      // Zahira ESLAB QOLINMAYDI: bitta yiqilgan so'rov (API qayta ishga tushayotgan
+      // soniyalar, tarmoq uzilishi) SSO tugmasini sahifa qayta yuklanguncha yashirib
+      // qo'ymasin - kirish sahifasi keyingi ochilishda yana so'raydi.
+      return SSO_FALLBACK
     }
-    return sso.value
   }
 
   /** Brauzerni Keycloak kirish sahifasiga yuboradi. Sahifa shu yerda tugaydi:

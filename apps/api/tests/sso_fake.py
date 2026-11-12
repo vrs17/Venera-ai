@@ -52,6 +52,7 @@ TOKEN_URL = f"{ISSUER}/protocol/openid-connect/token"
 CERTS_URL = f"{ISSUER}/protocol/openid-connect/certs"
 AUTH_URL = f"{ISSUER}/protocol/openid-connect/auth"
 LOGOUT_URL = f"{ISSUER}/protocol/openid-connect/logout"
+REVOKE_URL = f"{ISSUER}/protocol/openid-connect/revoke"
 SUB = "6f1a2b3c-0000-4000-8000-000000000001"
 USERNAME = "y.mamajonov"
 #: Eski testlar `LOGIN["username"]` ni ishlatadi (`admin_logins` va h.k.).
@@ -114,7 +115,7 @@ class FakeKeycloak(FakeNet):
         self.crm_accepts: bool | None = True
         #: `me` ga kelgan `Authorization` sarlavhalari.
         self.me_calls: list[str] = []
-        #: Keycloak logout endpoint'ida bekor qilingan refresh tokenlar.
+        #: Keycloak `/revoke` da bekor qilingan refresh tokenlar.
         self.revoked: list[str] = []
         #: `refresh_token` granti shu xato bilan yiqiladi (masalan sessiya o'lgan).
         self.refresh_error: tuple[int, dict] | None = None
@@ -159,13 +160,16 @@ class FakeKeycloak(FakeNet):
             if not self.crm_accepts:
                 raise _http_error(url, 401, {"error": "unauthorized"})
             return _Response(json.dumps({"data": {"username": self.username}}).encode())
-        if url == LOGOUT_URL:
+        if url == REVOKE_URL:
+            # RFC 7009: faqat shu client'ning ruxsati bekor bo'ladi. `/logout` ga
+            # (butun sessiyani yopadi) so'rov kelsa - pastdagi AssertionError.
             raw = (request.data or b"").decode()
             body = {k: v[0] for k, v in urllib.parse.parse_qs(raw).items()}
             self.calls.append((url, body))
             if body.get("client_id") != CLIENT_ID or body.get("client_secret") != SECRET:
                 raise _http_error(url, 401, {"error": "invalid_client"})
-            self.revoked.append(body.get("refresh_token", ""))
+            assert body.get("token_type_hint") == "refresh_token", body
+            self.revoked.append(body.get("token", ""))
             return _Response(b"")
         if url == TOKEN_URL:
             raw = (request.data or b"").decode()

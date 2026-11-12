@@ -33,7 +33,7 @@ import { useChats } from '../composables/useChats'
 import { clearSources } from '../sourcesCache'
 import { toast } from '../ui/useToast'
 import type { LoginResponse } from '../types'
-import { initData } from './telegram'
+import { initData, openLink } from './telegram'
 
 export type SessionPhase = 'boot' | 'login' | 'ready' | 'offline'
 
@@ -169,17 +169,14 @@ async function logout(): Promise<void> {
   phase.value = 'login'
 }
 
-/** "Qayta ulash" (HRM/CRM tokeni yo'q yoki eskirgan - javob kartasidagi tugma).
- *  Keycloak tokenlari faqat parol bilan kirishda olinadi: sessiya yopiladi va kirish
- *  ekrani ochiladi, login oldindan to'ldirilgan. Telegram ulanishi UZILMAYDI - u shu
- *  hisobniki bo'lib qoladi, kirgach jim yangilanadi. */
+/** HRM/CRM ulanmagan (javob kartasidagi tugma). SSO dan beri kirish HRM/CRM ni
+ *  o'zi ulamaydi - parol Barno'ga kelmaydi; ular veb ilovaning "+" (Ulanishlar)
+ *  menyusida ulanadi va token shu odamning HAMMA kanaliga (Mini App, bot) xizmat
+ *  qiladi. Shuning uchun sessiya YOPILMAYDI (avval yopilardi va odam Keycloak
+ *  paroli endi ishlamaydigan kirish ekranida qolardi) - veb ilova tashqi
+ *  brauzerda ochiladi. */
 async function reconnect(): Promise<void> {
-  const auth = useAuth()
-  lastLogin.value = auth.user.value?.email ?? ''
-  await auth.logout()
-  forgetLocalState()
-  notice.value = null
-  phase.value = 'login'
+  openLink(`${window.location.origin}/`)
 }
 
 /** Ish paytida 401 keldi (sessiya serverda bekor qilingan yoki hisob bloklangan):

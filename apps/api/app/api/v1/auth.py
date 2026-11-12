@@ -31,17 +31,19 @@ ATAYLAB 501: hisob va parol Keycloak'da.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import secrets
 import urllib.parse
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 
 from ...core.channels import channel_of
 from ...core.config import settings
 from ...core.errors import error_status, unauthorized
-from ...core.security import create_token
+from ...core.security import create_token, verify_claims
 from ...schemas.auth import (
     AuthUser,
     LoginRequest,
@@ -53,7 +55,7 @@ from ...schemas.auth import (
 from ...services import admin_users
 from ...services.analytics import record_auth_event
 from ...services.identities import IdentityStore
-from ...services.oidc import HANDOFF, ID_TOKENS, KeycloakOidc, OidcError, Tokens
+from ...services.oidc import HANDOFF, HANDOFF_TTL, ID_TOKENS, PENDING_TTL, KeycloakOidc, OidcError, Tokens
 from ...services.oidc import from_settings as oidc_from_settings
 from ...services.users import UserStore
 from . import connectors as _connectors
@@ -79,7 +81,78 @@ _PUBLIC_REASONS = frozenset({"denied", "blocked", "expired", "network", "config"
 #: `OidcError.code` -> frontend sababi. Keycloak `invalid_grant` = kod eskirgan
 #: yoki ikki marta ishlatilgan (odam "orqaga" bosdi); `invalid_client` = bizning
 #: sir noto'g'ri - administrator tuzatadi.
-_REASON_MAP = {"invalid_grant": "expired", "invalid_client": "config", "unauthorized_client": "config"}
+_REASON_MAP = {
+    "invalid_grant": "expired", "invalid_client": "config", "unauthorized_client": "config",
+    # Kirish boshqa brauzerda boshlangan (`_BIND_COOKIE`) - odam qaytadan boshlaydi.
+    "binding": "expired",
+    # Keycloak `offline_access` ni bermadi: client'ning "Optional client scopes"
+    # ro'yxatida yo'q yoki odamda `offline_access` realm roli yo'q - bu SOZLAMA
+    # (`SSO_CRM_CONNECT`, docs/auth-sso.md), odam hech narsa qila olmaydi.
+    "invalid_scope": "config", "not_allowed": "config",
+}
+
+#: Kirishni BOSHLAGAN brauzerga bog'laydigan cookie. `state` va bir martalik
+#: kod faqat URL'da yuradi - ularni boshqa odamga yuborib bo'ladi: hujumchi o'z
+#: kirishini oxirgi qadamda to'xtatib, havolani hamkasbiga bersa, hamkasbi
+#: HUJUMCHINING hisobiga kirib qolardi (login CSRF) va o'z savollari, audio
+#: yozuvlari, "+" menyusida kiritgan HRM/CRM paroli o'sha hisobga tushardi.
+#: Cookie `start` da qo'yiladi, uning SHA-256 i `Pending` va `HANDOFF` da
+#: turadi; `callback` va `exchange` cookie mos kelmasa rad etadi. HttpOnly
+#: (JS o'qimaydi), SameSite=Lax (Keycloak'dan qaytishda - yuqori darajali GET -
+#: yuboriladi).
+#:
+#: HTTPS da nomi `__Host-` bilan: bunday cookie'ni brauzer faqat AYNAN shu
+#: host qo'ygan bo'lsa qabul qiladi (Secure, Path=/, Domain'siz) - qo'shni
+#: `*.brb-tech.uz` saytidan (yoki undagi XSS dan) hujumchi o'z qiymatini
+#: "tashlab" qo'ya olmaydi. `http` (dev) da prefiks ishlamaydi - oddiy nom va
+#: tor yo'l.
+_BIND_COOKIE = "barno_sso"
+_BIND_PATH = "/api/v1/auth/sso"
+_BIND_COOKIE_HOST = "__Host-barno_sso"
+#: Cookie `start` dan `exchange` gacha yashashi kerak: kutish (`PENDING_TTL`) va
+#: undan keyin bir martalik kod muddati (`HANDOFF_TTL`).
+_BIND_MAX_AGE = int(PENDING_TTL + HANDOFF_TTL)
+#: Boshqa hostda boshlangan kirishni asosiy manzilga bir marta ko'chirish belgisi.
+_CANONICAL_MARK = "_c"
+
+
+def _bind_cookie(app: str) -> tuple[str, str, bool]:
+    """(nom, yo'l, secure) - ilovaning TASHQI manzilidan: prod'da TLS chekkada
+    tugaydi, API o'zi `http` ni ko'radi."""
+    if app.startswith("https://"):
+        return _BIND_COOKIE_HOST, "/", True
+    return _BIND_COOKIE, _BIND_PATH, False
+
+
+def _sso_session(request: Request) -> bool:
+    """So'rov tokeni brauzer SSO kirishidan olinganmi. Tokenni `current_user`
+    allaqachon tekshirgan - bu yerda faqat belgisi o'qiladi."""
+    scheme, _, token = (request.headers.get("authorization") or "").partition(" ")
+    claims = verify_claims(token.strip()) if scheme.lower() == "bearer" else None
+    return bool(claims and claims.sso)
+
+
+def _binding(value: str | None) -> str:
+    return hashlib.sha256((value or "").encode("utf-8")).hexdigest() if value else ""
+
+
+def _bound(request: Request, expected: str) -> bool:
+    """So'rov kirishni boshlagan brauzerdanmi. `expected` bo'sh - bog'lanmagan
+    kirish (mobil qaytish, testlar) - tekshirilmaydi."""
+    if not expected:
+        return True
+    name = _bind_cookie(_app_url(request))[0]
+    return hmac.compare_digest(expected, _binding(request.cookies.get(name)))
+
+
+def _other_host(request: Request, app: str) -> bool:
+    """So'rov ilovaning asosiy manzilidan BOSHQA hostga kelganmi (masalan sayt
+    domen o'rniga server IP si bilan ochilgan). Faqat host nomi solishtiriladi:
+    API portni va sxemani ko'rmaydi (nginx `$host` ni portsiz uzatadi)."""
+    wanted = (urllib.parse.urlsplit(app).hostname or "").lower()
+    raw = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    got = (urllib.parse.urlsplit(f"//{raw.split(',')[0].strip()}").hostname or "").lower()
+    return bool(wanted and got and wanted != got)
 
 
 def _oidc() -> KeycloakOidc:
@@ -229,9 +302,24 @@ def sso_start(
     oidc = _oidc()
     if not oidc.configured:
         raise error_status(status.HTTP_501_NOT_IMPLEMENTED, "SSO sozlanmagan")
-    url = oidc.begin(f"{_app_url(request)}{CALLBACK_PATH}",
-                     return_to=_safe_return(return_to), channel=_channel(request, channel))
-    return RedirectResponse(url, status_code=status.HTTP_302_FOUND)
+    app = _app_url(request)
+    # Sayt asosiy manzildan boshqa host bilan ochilgan bo'lsa (IP, eski nom),
+    # Keycloak baribir ASOSIY manzilga qaytaradi - bu hostda qo'yilgan cookie u
+    # yerga yetmaydi va kirish "eskirgan" bo'lib tugardi. Shuning uchun kirish
+    # asosiy manzilda qaytadan boshlanadi. Belgi (`_c`) - proksi Host'ni
+    # o'zgartirib yuborsa cheksiz aylanmaslik uchun: ikkinchi marta ko'chirilmaydi.
+    if settings.sso_app_url and _CANONICAL_MARK not in request.query_params \
+            and _other_host(request, app):
+        query = urllib.parse.urlencode([*request.query_params.multi_items(), (_CANONICAL_MARK, "1")])
+        return RedirectResponse(f"{app}{START_PATH}?{query}", status_code=status.HTTP_302_FOUND)
+    secret = secrets.token_urlsafe(32)
+    url = oidc.begin(f"{app}{CALLBACK_PATH}", return_to=_safe_return(return_to),
+                     channel=_channel(request, channel), binding=_binding(secret))
+    response = RedirectResponse(url, status_code=status.HTTP_302_FOUND)
+    name, path, secure = _bind_cookie(app)
+    response.set_cookie(name, secret, max_age=_BIND_MAX_AGE, path=path,
+                        httponly=True, samesite="lax", secure=secure)
+    return response
 
 
 @router.get("/sso/callback", response_class=RedirectResponse, status_code=status.HTTP_303_SEE_OTHER)
@@ -256,6 +344,9 @@ def sso_callback(
     try:
         pending = oidc.take_pending(state)
         return_to, channel = pending.return_to, pending.channel
+        if not _bound(request, pending.binding):
+            raise OidcError("Kirish boshqa brauzerda boshlangan - qaytadan kiring",
+                            status=400, code="binding")
         if error:
             # Odam Keycloak sahifasida "bekor" dedi yoki Keycloak so'rovni rad etdi.
             raise OidcError(error_description or error, status=400,
@@ -286,7 +377,7 @@ def sso_callback(
             raise
         return RedirectResponse(_fail_url(app, return_to, "blocked"), status_code=status.HTTP_303_SEE_OTHER)
 
-    token, expires = create_token(identity.subject, version=verdict.token_version)
+    token, expires = create_token(identity.subject, version=verdict.token_version, sso=True)
     if tokens.id_token:
         ID_TOKENS[identity.actor_id] = tokens.id_token
     record_auth_event(login, True, method="sso", channel=channel, actor_id=identity.actor_id)
@@ -300,18 +391,33 @@ def sso_callback(
         user=verdict.user,
     )
     handoff = secrets.token_urlsafe(32)
-    HANDOFF.put(handoff, response.model_dump())
+    # Mobil qaytishda kodni ILOVA almashtiradi - unda brauzer cookie'si yo'q,
+    # shuning uchun u yerda cookie bilan bog'lanmaydi. Lekin bunday kodni BRAUZER
+    # almashtira olmasligi shart (`sso_exchange`) - aks holda hujumchi mobil
+    # qaytish bilan olgan kodini `/login?sso=` havolasida birovga berardi.
+    mobile = _is_mobile(return_to)
+    HANDOFF.put(handoff, {"binding": "" if mobile else pending.binding, "mobile": mobile,
+                          "response": response.model_dump()})
     return RedirectResponse(_done_url(app, return_to, handoff), status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/sso/exchange", response_model=LoginResponse)
-def sso_exchange(body: SsoExchangeRequest) -> LoginResponse:
-    """Bir martalik kod -> token. Ikkinchi marta 400: kod ishlatilgan."""
+def sso_exchange(body: SsoExchangeRequest, request: Request, response: Response) -> LoginResponse:
+    """Bir martalik kod -> token. Ikkinchi marta 400: kod ishlatilgan. Kod
+    kirishni boshlagan brauzerdagina ishlaydi (`_BIND_COOKIE`); boshqa brauzer
+    urinsa ham kod YONADI - o'g'irlangan havola ikkinchi marta sinalmasin."""
     code = (body.code or "").strip()
     payload = HANDOFF.pop(code) if code else None
-    if payload is None:
+    if payload is None or not _bound(request, payload["binding"]):
         raise error_status(status.HTTP_400_BAD_REQUEST, _MSG_HANDOFF)
-    return LoginResponse(**payload)
+    # Mobil qaytish kodi faqat ILOVA uchun. Brauzer so'rovini brauzerning o'zi
+    # belgilaydi (`Sec-Fetch-Site`, `Origin` - sahifa kodi ularni o'zgartira
+    # olmaydi); ilovaning HTTP klienti ularni yubormaydi.
+    if payload.get("mobile") and (request.headers.get("sec-fetch-site") or request.headers.get("origin")):
+        raise error_status(status.HTTP_400_BAD_REQUEST, _MSG_HANDOFF)
+    name, path, secure = _bind_cookie(_app_url(request))
+    response.delete_cookie(name, path=path, secure=secure, httponly=True, samesite="lax")
+    return LoginResponse(**payload["response"])
 
 
 # --- zahira (parol) -----------------------------------------------------------
@@ -391,7 +497,13 @@ def logout(
     _connectors.hub.forget_password(str(user.actorId))
     sso_url: str | None = None
     oidc = _oidc()
-    if oidc.configured and identities.by_actor_id(user.actorId) is not None:
+    # Keycloak manzili faqat BRAUZER SSO kirishidan ochilgan sessiyaga beriladi
+    # (tokendagi `sso` belgisi). Telegram (`/telegram/session`), qurilma va zahira
+    # sessiyalarida Keycloak brauzer sessiyasi yo'q: Mini App "Chiqish" bosilganda
+    # Telegram WebView Keycloak sahifasiga, keyin veb ilovaga ketib qolardi.
+    # Belgi klient sarlavhasidan EMAS, sessiyaning o'zidan - Mini App to'plami oddiy
+    # brauzerda ochilgan bo'lsa ham SSO sessiyasi to'g'ri yopiladi.
+    if _sso_session(request) and oidc.configured and identities.by_actor_id(user.actorId) is not None:
         hint = ID_TOKENS.pop(user.actorId, None)
         sso_url = oidc.logout_url(f"{_app_url(request)}/welcome", id_token_hint=hint)
     log.info("Chiqish: %s", user.email)

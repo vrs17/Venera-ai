@@ -38,6 +38,13 @@ from .users import StoredUser, UserStore
 log = logging.getLogger(__name__)
 
 
+#: Ishonchli rollar yoziladigan kalit: bizning Keycloak client'imizning rollari
+#: (`services/oidc.py`, `resource_access[<client>].roles`). Uni FAQAT yangi oqim
+#: yozadi; eski kirish (`roles` ga realm va `crm-client` rollarini yozgan) bu
+#: kalitni bilmaydi - orqaga qaytarilgan (rollback) eski kod ham uni buza olmaydi.
+CLIENT_ROLES = "client_roles"
+
+
 @dataclass
 class Identity:
     """Bitta odam. `subject` - Keycloak `sub`, o'zgarmas."""
@@ -138,7 +145,10 @@ class IdentityStore:
                 "username": profile.username,
                 "email": (profile.email or "").strip().lower(),
                 "full_name": profile.full_name or profile.username,
+                # `roles` - eski kod (rollback) o'qiydigan maydon; ishoniladigani -
+                # `client_roles` (`_identity` izohi).
                 "roles": list(profile.roles),
+                CLIENT_ROLES: list(profile.roles),
                 "last_login_at": now,
             })
             self._data[profile.subject] = raw
@@ -161,7 +171,14 @@ class IdentityStore:
         known = {f for f in Identity.__dataclass_fields__}
         clean = {k: v for k, v in raw.items() if k in known}
         clean["actor_id"] = int(clean.get("actor_id", 0))
-        clean["roles"] = [str(r) for r in (clean.get("roles") or [])]
+        # ESKI kirish (`services/sso.py`, o'chirilgan) bu yerga REALM rollarini va
+        # `crm-client` rollarini yozgan - ular Barno rollari emas, ularni boshqa
+        # tizimlar uchun kim ham bergan bo'lishi mumkin. Xavfsizlik o'qish paytidagi
+        # suzgichda edi (`SSO_TRUSTED_ROLES`), u olib tashlandi. Shuning uchun `roles`
+        # maydoniga ISHONILMAYDI - rollar faqat `client_roles` dan o'qiladi: odam
+        # veb'da SSO bilan bir marta kirguncha rollari bo'sh. Aks holda eski yozuvdagi
+        # `ADMIN` nomli realm/CRM roli deploy bilan birga Barno administratoriga aylanardi.
+        clean["roles"] = [str(r) for r in (raw.get(CLIENT_ROLES) or [])]
         return Identity(**clean)
 
     def _reload(self) -> None:

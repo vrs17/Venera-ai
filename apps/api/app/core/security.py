@@ -68,9 +68,11 @@ class TokenClaims:
 
     subject: str
     version: int = 0
+    #: Brauzer SSO kirishidan ochilgan sessiya (`create_token(sso=True)`).
+    sso: bool = False
 
 
-def create_token(subject: str, *, version: int = 0) -> tuple[str, datetime]:
+def create_token(subject: str, *, version: int = 0, sso: bool = False) -> tuple[str, datetime]:
     """(token, tugash vaqti). `subject` - SSO `sub` yoki zahira hisob emaili.
 
     `version` - `ver` claim'i. Eski tokenlarda u YO'Q va 0 deb o'qiladi:
@@ -83,6 +85,11 @@ def create_token(subject: str, *, version: int = 0) -> tuple[str, datetime]:
         "iat": datetime.now(timezone.utc),
         "ver": int(version),
     }
+    if sso:
+        # Sessiya BRAUZER SSO kirishidan ochilgan: chiqishda Keycloak sessiyasi ham
+        # yopiladi (`api/v1/auth.py` logout). Telegram, qurilma va zahira (parol)
+        # sessiyalarida bu belgi yo'q.
+        payload["sso"] = True
     token = jwt.encode(payload, settings.secret_key, algorithm=_ALGORITHM)
     return token, expires
 
@@ -106,7 +113,7 @@ def verify_claims(token: str) -> TokenClaims | None:
     version = payload.get("ver", 0)
     if isinstance(version, bool) or not isinstance(version, int):
         return None
-    return TokenClaims(subject=str(subject), version=version)
+    return TokenClaims(subject=str(subject), version=version, sso=payload.get("sso") is True)
 
 
 def verify_token(token: str) -> str | None:

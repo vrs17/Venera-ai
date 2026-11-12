@@ -8,7 +8,7 @@
 //   2. Zahira hisob (`users.yaml`): login + parol shakli, faqat `localLoginEnabled`.
 //
 // Parol SSO yo'lida bu sahifadan HECH QACHON o'tmaydi.
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
@@ -94,9 +94,22 @@ watch([username, password], () => {
   setupHelp.value = false
 })
 
+// Sozlama so'rovi yiqilgan bo'lsa (API qayta ishga tushayotgan soniyalar) sahifa ochiq
+// turganda ham qayta so'raladi - aks holda SSO tugmasi qayta yuklanguncha ko'rinmasdi.
+let ssoRetryTimer: number | undefined
+function retrySsoConfig(left: number): void {
+  if (sso.value || left <= 0) return
+  ssoRetryTimer = window.setTimeout(async () => {
+    await loadSsoConfig()
+    retrySsoConfig(left - 1)
+  }, 2000)
+}
+onBeforeUnmount(() => window.clearTimeout(ssoRetryTimer))
+
 onMounted(async () => {
   await loadSsoConfig()
   ssoReady.value = true
+  retrySsoConfig(5)
   const code = queryString('sso')
   if (code) {
     await finishSso(code)
@@ -141,6 +154,8 @@ async function submit() {
 <template>
   <AuthShell :title="t('signIn')" :caption="showSso ? t('shell.auth.sso.caption') : t('shell.auth.caption')">
     <div v-if="ssoReady" class="auth-form">
+      <!-- SSO tugmasi ko'rinmasa ham (sozlama o'qilmadi) kirish xatosi aytilsin. -->
+      <AuthError v-if="!showSso" :message="ssoError ? t(`shell.auth.sso.${ssoError}`) : ''" />
       <template v-if="showSso">
         <VButton
           type="button"

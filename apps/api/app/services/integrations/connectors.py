@@ -476,6 +476,35 @@ class ConnectorStore:
                 user[platform] = copy.deepcopy(entry)
             self._write()
 
+    def patch(self, user_id: str, platform: str, **fields: Any) -> dict[str, Any] | None:
+        """Mavjud yozuvning ayrim maydonlarini BITTA qulf ostida yangilaydi va yangi
+        nusxani qaytaradi; yozuv yo'q bo'lsa `None`. `get` + `set` emas: ular orasida
+        boshqa ip yozgan narsa (masalan yangilangan `refresh_token`) yo'qolardi."""
+        with self._lock:
+            self._reload()
+            entry = (self._data.get(user_id) or {}).get(platform)
+            if entry is None:
+                return None
+            entry.update(copy.deepcopy(fields))
+            self._write()
+            return copy.deepcopy(entry)
+
+    def replace_if(self, user_id: str, platform: str, expected: str, /, **fields: Any) -> bool:
+        """`patch`, lekin FAQAT yozuv hali o'sha sessiya bo'lsa (saqlangan
+        `refresh_token` == `expected`): tekshiruv va yozish bitta qulf ostida. Shu
+        orada odam uzgan yoki qayta kirgan bo'lsa hech narsa yozilmaydi va `False`
+        qaytadi. `expected` faqat pozitsion - `fields` ichida ham `refresh_token`
+        (yangi qiymat) kelishi mumkin."""
+        with self._lock:
+            self._reload()
+            entry = (self._data.get(user_id) or {}).get(platform)
+            if entry is None or entry.get("refresh_token") != expected:
+                return False
+            if any(entry.get(key) != value for key, value in fields.items()):
+                entry.update(copy.deepcopy(fields))
+                self._write()
+            return True
+
     def user_count(self) -> int:
         with self._lock:
             self._reload()
@@ -682,28 +711,32 @@ class ConnectorHub:
     def disconnect(self, user_id: str, platform: str) -> dict[str, Any]:
         self._check(platform, need_configured=False)
         entry = self.store.get(user_id).get(platform)
+        # AVVAL ombordan o'chiriladi: bundan keyin hech bir yangilash uni qayta
+        # yoza olmaydi (`replace_if`), va bekor qilish (tarmoq) yiqilsa ham uzish
+        # bajarilgan bo'ladi.
+        self.store.set(user_id, platform, None)
         if platform == "crm":
             with self._lock:
                 self._crm_cache.pop(user_id, None)
             # Saqlangan refresh_token egasida ham bekor qilinadi (CRM yoki, SSO
             # sessiyasi bo'lsa, Keycloak): o'g'irlangan deb gumon qilsa, uzish
-            # uni darhol yaroqsiz qilsin.
+            # uni darhol yaroqsiz qilsin. Eng yaxshi harakat.
             if entry and entry.get("refresh_token"):
-                self._revoke_crm(entry, entry["refresh_token"])
+                try:
+                    self._revoke_crm(entry, entry["refresh_token"])
+                except Exception:  # noqa: BLE001 - uzish baribir bajarildi
+                    log.exception("CRM tokeni bekor qilinmadi (%s) - ulanish uzilgan", user_id)
         if platform == "hrm":
             # Parol faqat HRM ni yangilash uchun turardi - endi keraksiz.
             self.forget_password(user_id)
-        self.store.set(user_id, platform, None)
         log.info("Uzish: %s -> %s", user_id, platform)
         return self._entry_status(platform, None, user_id=user_id)
 
     def set_enabled(self, user_id: str, platform: str, enabled: bool) -> dict[str, Any]:
         self._check(platform, need_configured=False)
-        entry = self.store.get(user_id).get(platform)
+        entry = self.store.patch(user_id, platform, enabled=bool(enabled))
         if not entry:
             raise ConnectorError(f"{LABELS[platform]} ulanmagan", status=409, code="NOT_CONNECTED")
-        entry["enabled"] = bool(enabled)
-        self.store.set(user_id, platform, entry)
         return self._entry_status(platform, entry, user_id=user_id)
 
     def tokens(self, user_id: str) -> dict[str, str]:
@@ -850,17 +883,29 @@ class ConnectorHub:
                     # Holat "expired" - odam qayta kiradi. Login SAQLANADI,
                     # oyna uni to'ldirib beradi.
                     log.info("CRM refresh rad etildi (%s): %s - qayta kirish kerak", user_id, exc)
-                    entry = {**entry, "refresh_token": "", "expired": True}
-                    self.store.set(user_id, "crm", entry)
-                    self._crm_cache.pop(user_id, None)
+                    # Faqat O'SHA sessiya "o'lgan" deb belgilanadi: shu orada odam
+                    # qayta kirgan bo'lsa yangi ulanishga tegilmaydi.
+                    if self.store.replace_if(user_id, "crm", entry["refresh_token"],
+                                             refresh_token="", expired=True):
+                        self._crm_cache.pop(user_id, None)
                     return ""
                 # Vaqtinchalik (tarmoq, 429, 5xx): eski token hali yaroqli
                 # bo'lsa - o'sha, bo'lmasa bu savol CRM siz ketadi.
                 log.warning("CRM refresh (%s): %s", user_id, exc)
                 return cached[0] if cached and now < cached[1] else ""
+            # Yangilash davomida (tarmoq - soniyalar) ulanish O'ZGARGAN bo'lishi
+            # mumkin: odam qayta kirdi, uzdi yoki kalitni o'chirdi - ular bu qulfni
+            # olmaydi. Natija ESKI nusxa ustiga yozilsa uzilgan ulanish tirilardi,
+            # yangi sessiya esa o'lgan tokenga almashardi. Shuning uchun natija
+            # faqat omborda hali O'SHA `refresh_token` turgan bo'lsa yoziladi -
+            # tekshiruv va yozish bitta qulf ostida (`replace_if`). ROTATSIYA: yangi
+            # refresh_token kelsa o'sha saqlanadi - eskisi egasida bekor bo'lgan
+            # bo'lishi mumkin; boshqa maydonlar (masalan `enabled`) tegilmaydi.
+            sent = entry["refresh_token"]
+            if not self.store.replace_if(user_id, "crm", sent,
+                                         refresh_token=refresh or sent, expired=False):
+                fresh = self._crm_cache.get(user_id)
+                still = self.store.get(user_id).get("crm")
+                return fresh[0] if still and fresh and time.monotonic() < fresh[1] else ""
             self._crm_cache[user_id] = (access, time.monotonic() + ttl)
-            # ROTATSIYA: yangi refresh_token kelsa o'sha saqlanadi - eskisi
-            # CRM tomonida bekor bo'lgan bo'lishi mumkin.
-            if refresh and refresh != entry.get("refresh_token"):
-                self.store.set(user_id, "crm", {**entry, "refresh_token": refresh, "expired": False})
             return access

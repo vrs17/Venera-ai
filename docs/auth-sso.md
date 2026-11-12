@@ -152,11 +152,73 @@ qarang).
 
 1. Mobil ilova: tizim brauzeri -> `start?return=barnoai://sso&channel=mobile`
    -> `barnoai://sso?sso=<kod>` -> `exchange` (`SSO_MOBILE_REDIRECT`).
-2. Telegram Mini App: Telegram ulanishi (`/telegram/session`) avvalgidek;
-   birinchi kirish web'da SSO bilan.
+2. Telegram Mini App: kirish ekraniga SSO tugmasi (hozir u yerda faqat parol
+   shakli - pastdagi "Ma'lum cheklovlar").
 3. HRM - HRM jamoasi Keycloak tokenini qabul qilganda (unga qadar qo'lda).
 4. Jonli sayt uchun prod Keycloak'da `barno-ai` client'i, `SSO_*` prod `.env` da,
    `pip install -e .` (`cryptography`), `venera-api` ni qayta ishga tushirish.
+
+## Himoya qo'shimchalari (2026-11-12, jonli chiqishdan oldingi ko'rib chiqish)
+
+- **Kirish uni boshlagan brauzerga bog'langan.** `start` HttpOnly, SameSite=Lax
+  cookie qo'yadi (HTTPS da `__Host-barno_sso`, Path=/ - qo'shni `*.brb-tech.uz`
+  sayti uni "tashlab" qo'ya olmaydi; `http` dev'da `barno_sso`, yo'li
+  `/api/v1/auth/sso`; muddati kutish + bir martalik kod = 690 s). Uning SHA-256 i
+  `state` va bir martalik kod bilan birga serverda turadi. `callback` va
+  `exchange` cookie mos kelmasa rad etadi - birovga yuborilgan havola uni
+  yuboruvchining hisobiga kiritib qo'ymaydi (login CSRF). Boshqa brauzerda
+  sinalgan bir martalik kod YONADI. Ikki varaqda boshlansa oxirgisi ishlaydi.
+- **Sayt boshqa host bilan ochilgan bo'lsa** (domen o'rniga server IP si) `start`
+  kirishni `SSO_APP_URL` da qaytadan boshlaydi (`?_c=1`, faqat bir marta) - aks
+  holda cookie Keycloak qaytaradigan manzilga yetmasdi.
+- **Mobil qaytish kodini brauzer almashtira olmaydi** (`Sec-Fetch-Site` /
+  `Origin` bor so'rov rad etiladi) - u cookie bilan bog'lanmagan, uni faqat ilova
+  ishlatadi. Mobil SSO yoqilganda ilova o'z PKCE juftini beradi.
+- **Eski kirish yozgan rollarga ishonilmaydi.** Rollar `identities.json` da
+  faqat `client_roles` kalitidan o'qiladi - uni faqat yangi oqim yozadi. Eski
+  `roles` maydoni (realm va `crm-client` rollari; rollback'da eski kod uni qayta
+  yozishi mumkin) o'qilmaydi - odam veb'da SSO bilan bir marta kirguncha rollari
+  bo'sh.
+- **"CRM ni uzish" faqat Barno ruxsatini bekor qiladi** (`/revoke`, RFC 7009).
+  `/logout` ishlatilmaydi: u odamni shu brauzerdagi CRM va boshqa SSO
+  tizimlaridan ham chiqarib yuborardi.
+- **Chiqishda Keycloak manzili faqat brauzer SSO sessiyasiga beriladi** (Barno
+  tokenidagi `sso` belgisi). Telegram, qurilma va zahira sessiyalari Keycloak'ga
+  yuborilmaydi - Telegram WebView Mini App'dan chiqib ketmasin.
+- **Mini App'da "ulanmagan" tugmasi** endi sessiyani yopmaydi: veb ilovani ochadi
+  (HRM u yerda "+" menyusidan ulanadi).
+- CRM tokenini yangilash shu orada o'zgargan ulanishni (uzish, kalit, qayta
+  kirish) buzmaydi - ombordagi yozuv bitta qulf ostida tekshirib yoziladi
+  (`ConnectorStore.replace_if` / `patch`); "uzish" avval ombordan o'chiradi,
+  keyin tokenni bekor qiladi. JWKS so'rovi yiqilsa keyingi kirish darhol qayta
+  so'raydi; `offline_access` berilmasa kirish sahifasi "sozlama" sababini
+  ko'rsatadi; kirish sahifasi sozlamani o'qiy olmasa o'zi qayta so'raydi.
+
+Testlar: `tests/test_sso_hardening.py`.
+
+## Ma'lum cheklovlar (jonli chiqishda bilish kerak)
+
+- **Mobil ilova va Telegram Mini App**: ularning kirish ekrani hali login +
+  parolni `POST /auth/login` ga yuboradi, u esa endi faqat `users.yaml` ni
+  taniydi - Keycloak hisobi bilan u yerda KIRIB BO'LMAYDI. Ishlayveradi: zahira
+  (`users.yaml`) hisoblar, qurilma tokeni bor telefonlar (`/auth/devices/session`)
+  va Telegram'ga allaqachon ulangan hisoblar (`/telegram/session`, bot). Yangi
+  Telegram foydalanuvchisi yoki "Chiqish" bosgan odam Mini App'ga qayta kira
+  olmaydi (veb'dagi SSO sessiyasi Telegram WebView'ga o'tmaydi).
+- **HRM** Mini App va botdan qayta ulanmaydi (u yerda "+" yo'q, "Qayta ulash"
+  qayta kirishga yuborardi): HRM veb'da "+" menyusidan ulanadi, token o'sha
+  odamning hamma kanaliga xizmat qiladi; API qayta ishga tushsa yana ulash kerak.
+- **Keycloak'dagi rol - kirish paytidagi nusxa.** Rol olib tashlansa yoki hisob
+  o'chirilsa, bu odamning keyingi VEB kirishigacha Barno'ga yetmaydi (Telegram
+  va qurilma sessiyalari saqlangan nusxadan yashaydi). Darhol to'xtatish:
+  admin panel -> bloklash yoki "hamma joydan chiqarish".
+- **"Hamma joydan chiqarish" Keycloak sessiyasini yopmaydi**: o'sha brauzerda
+  "BRB-Tech ID bilan kirish" parolsiz qayta kiritadi. Odamni to'xtatish uchun -
+  bloklash.
+- **Birinchi kirishda `users.yaml` hisobi bilan bog'lash** email bo'yicha,
+  bo'lmasa login == email'ning `@` gacha qismi bo'yicha (`_legacy_match`).
+  Keycloak'da shunday nomli yangi hisob o'sha zahira hisobning `actor_id` sini
+  oladi - `users.yaml` da keraksiz hisob qoldirilmasin.
 
 ## CRM ulanishi SSO sessiyasidan (2026-11-12)
 
