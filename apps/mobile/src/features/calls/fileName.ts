@@ -110,8 +110,8 @@ export function parseCallFileName(displayName: string | null | undefined): Parse
 export const MAX_TITLE = 120;
 
 /**
- * Navbat qatori / yig'ilish sarlavhasi: "Qo'ng'iroq: Alisher". Qo'ng'iroqqa o'xshamagan
- * ulashilgan fayl - o'z nomi ("Mijoz bilan uchrashuv"), nom yo'q bo'lsa vaqt bilan.
+ * Telefon qo'ng'irog'i yozuvining (avtomatik yuborish, `source: 'call'`) sarlavhasi: "Qo'ng'iroq: Alisher",
+ * suhbatdosh noma'lum bo'lsa vaqt bilan. Yuklangan / ulashilgan fayl bunga kirmaydi - `uploadTitle`.
  */
 export function importTitle(t: TFn, parsed: ParsedCallName, fallbackTime: string): string {
   let title: string;
@@ -121,6 +121,17 @@ export function importTitle(t: TFn, parsed: ParsedCallName, fallbackTime: string
     title = parsed.counterpart ?? t('calls.titleNoName', { time: fallbackTime });
   }
   return title.length > MAX_TITLE ? title.slice(0, MAX_TITLE).trimEnd() : title;
+}
+
+/**
+ * Yuklangan / ulashilgan fayl yig'ilishining sarlavhasi - fayl nomi O'ZGARISHSIZ (ega qarori 2026-11-12:
+ * "Qo'ng'iroq, 16:02" emas, "20261112_160200.m4a" qanday bo'lsa shunday). Faqat server chegarasi
+ * (`MAX_TITLE`) uchun qisqartiriladi; nom yo'q bo'lsa `null` - server AI sarlavhasini qo'yadi.
+ */
+export function uploadTitle(displayName: string | null | undefined): string | null {
+  const name = (displayName ?? '').trim();
+  if (!name) return null;
+  return name.length > MAX_TITLE ? name.slice(0, MAX_TITLE).trimEnd() : name;
 }
 
 /** Bir kunlik kelajak chegarasi: undan keyingi "sana" - noto'g'ri soat yoki noto'g'ri o'qilgan nom. */

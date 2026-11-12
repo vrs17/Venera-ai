@@ -7,7 +7,7 @@ import { translate } from '@/i18n';
 import type { CallRecording, ImportMeta } from '@/features/entry/nativeEntry';
 import { MAX_PER_RUN, pickAutoSend, QUIET_MS, runAutoSendOnce, type SizeMemory } from '@/features/calls/autoSend';
 import { __setCallsStorage, DEFAULT_CALLS, MAX_SENT, parseCallsPrefs, pruneSent, useCalls } from '@/features/calls/callsStore';
-import { formatSize, importTitle, parseCallFileName, recordedAtMs } from '@/features/calls/fileName';
+import { formatSize, importTitle, MAX_TITLE, parseCallFileName, recordedAtMs, uploadTitle } from '@/features/calls/fileName';
 import { limitMb, toastSendOutcome } from '@/features/calls/feedback';
 import { callsHubValue } from '@/features/calls/hub';
 import { callClientId, callKey, isStillWriting, sendCallRecording, sendImportedFile, type CallSendDeps, type ImportSendDeps, type SendOptions } from '@/features/calls/send';
@@ -231,7 +231,8 @@ describe('sending a shared file', () => {
       contentType: 'audio/aac',
       source: 'share',
       expectedSpeakers: 2,
-      title: "Qo'ng'iroq: +998901234567",
+      // Fayl nomi o'zgarishsiz (ega qarori 2026-11-12) - "Qo'ng'iroq: +998..." emas.
+      title: '+998901234567_241010_143012.aac',
       startedAt: new Date(local(2024, 10, 10, 14, 30, 12)).toISOString(),
       // 2024-yilgi fayl bugun yuklandi - Plaud'da bugungi kunga (`timeline.rowListedAt`).
       queuedAt: new Date(NOW).toISOString(),
@@ -239,15 +240,59 @@ describe('sending a shared file', () => {
     });
   });
 
-  it('a non-call file gets no title (the server names it) and unknown speakers; bad files are not moved', async () => {
+  it('a non-call file keeps its own name as the title, with unknown speakers; bad files are not moved', async () => {
     const { deps, queue } = importDeps();
     await sendImportedFile(deps, meta({ displayName: 'AUD-20241010-WA0003.m4a', contentType: 'audio/mp4', dateMs: NOW - 60_000 }), OPTS);
-    expect((await queue.list())[0]).toMatchObject({ title: null, expectedSpeakers: null, contentType: 'audio/mp4', startedAt: new Date(NOW - 120_000).toISOString() });
+    expect((await queue.list())[0]).toMatchObject({
+      title: 'AUD-20241010-WA0003.m4a',
+      expectedSpeakers: null,
+      contentType: 'audio/mp4',
+      startedAt: new Date(NOW - 120_000).toISOString(),
+    });
     (deps.moveIntoRecordings as jest.Mock).mockClear();
     expect(await sendImportedFile(deps, meta({ contentType: null }), OPTS)).toEqual({ kind: 'unsupported' });
     expect(await sendImportedFile(deps, meta({ sizeBytes: 0 }), OPTS)).toEqual({ kind: 'missing' });
     expect(await sendImportedFile(deps, meta({ sizeBytes: 999 * 1024 * 1024 }), OPTS)).toEqual({ kind: 'too_large', maxBytes: OPTS.maxBytes });
     expect(deps.moveIntoRecordings).not.toHaveBeenCalled();
+  });
+});
+
+describe('uploaded file title (owner, 2026-11-12: the file name stays as it is)', () => {
+  const base = {
+    fileName: 'share_1_0_x.m4a',
+    path: '/data/user/0/app/files/imports/share_1_0_x.m4a',
+    contentType: 'audio/mp4' as const,
+    sizeBytes: 900_000,
+    durationMs: 60_000,
+    dateMs: null,
+    source: 'share' as const,
+  };
+  async function titleOf(displayName: string) {
+    const queue = createMemoryQueueStore();
+    const deps: ImportSendDeps = {
+      queue,
+      moveIntoRecordings: jest.fn((_m: ImportMeta, id: string, ext: string) => `file:///doc/recordings/${id}${ext}`),
+      removeImport: jest.fn(() => true),
+      newClientId: () => '11111111-2222-4333-8444-555555555555',
+      now: () => NOW,
+    };
+    await sendImportedFile(deps, { ...base, displayName }, OPTS);
+    return (await queue.list())[0]?.title;
+  }
+
+  it('call-like names are not turned into "Qo\'ng\'iroq, 16:02"', async () => {
+    expect(await titleOf('20261112_160200.m4a')).toBe('20261112_160200.m4a');
+    expect(await titleOf('Call recording Alisher_241010_143012.m4a')).toBe('Call recording Alisher_241010_143012.m4a');
+    expect(await titleOf('Mijoz bilan uchrashuv.m4a')).toBe('Mijoz bilan uchrashuv.m4a');
+    expect(uploadTitle('  Yig\'ilish.mp3  ')).toBe("Yig'ilish.mp3");
+  });
+
+  it('only the server limit shortens a name; an unknown name (internal copy name) leaves the title to the server', async () => {
+    const long = `${'a'.repeat(130)}.m4a`;
+    expect(await titleOf(long)).toBe('a'.repeat(MAX_TITLE));
+    expect(await titleOf('share_1_0_x.m4a')).toBeNull();
+    expect(uploadTitle('')).toBeNull();
+    expect(uploadTitle(null)).toBeNull();
   });
 });
 

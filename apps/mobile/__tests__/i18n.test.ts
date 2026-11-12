@@ -86,8 +86,7 @@ describe('i18n', () => {
     expect(translate('uz', 'calls.queued')).toBe("Yuborilmoqda - holati Plaud'da");
     expect(translate('uz', 'calls.import.toRecordings')).toBe("Plaud'ga o'tish");
     expect(translate('ru', 'calls.import.toRecordings')).toBe('Открыть Plaud');
-    // Bo'lim ichidagi tab (yozuvlar ro'yxati | qo'ng'iroqlar) va yozuvlar NARSA sifatida - o'zgarmaydi.
-    expect(translate('uz', 'calls.tab.recordings')).toBe('Yozuvlar');
+    // Yozuvlar NARSA sifatida - o'zgarmaydi ("Yozuvlar | Qo'ng'iroqlar" tabi 2026-11-12 da olib tashlangan).
     expect(translate('uz', 'list.sessionExpired')).toMatch(/Yozuvlar telefonda saqlanib turibdi/);
     expect(translate('uz', 'recs.listFailed')).toBe("Yozuvlarni yuklab bo'lmadi");
     expect(translate('uz', 'recs.emptyTitle')).toBe("Hali yozuv yo'q");

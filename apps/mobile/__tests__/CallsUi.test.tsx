@@ -1,7 +1,7 @@
 /**
- * Qo'ng'iroq yozuvlari ekranlari: Yozuvlar ekranidagi "Qo'ng'iroqlar" bo'limi (faqat native
- * funksiyalar bor APK'da), rozilik eslatmasi + ruxsat, ro'yxat (suhbatdosh, davomiylik, hajm),
- * "Yuborish" -> navbat qatori, holat pill'lari, avtomatik yuborish kaliti; Sozlamalar ->
+ * Qo'ng'iroq yozuvlari ekranlari: "Qo'ng'iroqlar" bo'limi (`CallsPanel` - 2026-11-12 dan Plaud ekranida
+ * YO'Q, ega qarori; komponent o'zi sinaladi), rozilik eslatmasi + ruxsat, ro'yxat (suhbatdosh, davomiylik,
+ * hajm), "Yuborish" -> navbat qatori, holat pill'lari, avtomatik yuborish kaliti; Sozlamalar ->
  * Qo'ng'iroq yozuvlari sahifasi.
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
@@ -13,6 +13,7 @@ import MeetingsScreen from '@/app/meetings';
 import CallsSettingsScreen from '@/app/settings/calls';
 import { useAuth } from '@/features/auth/authStore';
 import { __resetCallAutoSend, kickCallAutoSend } from '@/features/calls/CallAutoSend';
+import { CallsPanel } from '@/features/calls/CallsPanel';
 import { __setCallsStorage, useCalls } from '@/features/calls/callsStore';
 import { callClientId, callKey } from '@/features/calls/send';
 import type { CallRecording } from '@/features/entry/nativeEntry';
@@ -82,9 +83,16 @@ async function renderMeetings() {
   return services;
 }
 
-async function openCallsTab() {
-  await waitFor(() => expect(screen.getByTestId('meetings-tab-calls')).toBeTruthy());
-  await fireEvent.press(screen.getByTestId('meetings-tab-calls'));
+/** "Qo'ng'iroqlar" bo'limi o'zi (Plaud ekranida endi yo'q); `onFind` - suhbatdosh bo'yicha qidirish so'rovi. */
+async function renderPanel() {
+  const services: Services = { ...fakeServices(), queue: createMemoryQueueStore() };
+  const onFind = jest.fn();
+  await render(
+    <Providers services={services}>
+      <CallsPanel onFind={onFind} />
+    </Providers>,
+  );
+  return { services, onFind };
 }
 
 beforeEach(() => {
@@ -101,21 +109,27 @@ beforeEach(() => {
   useAuth.setState({ status: 'signedIn', user: loginResponse.user, config, expired: false });
 });
 
-describe('Recordings screen: Calls section', () => {
-  it('old APK / no native functions: no Calls switcher, the screen stays as before', async () => {
-    mockNative.available = false;
-    await renderMeetings();
-    await waitFor(() => expect(screen.getByTestId('meetings-list')).toBeTruthy());
-    expect(screen.queryByTestId('meetings-tab-calls')).toBeNull();
+describe('Plaud screen', () => {
+  it('opens straight on the recordings: no "Yozuvlar | Qo\'ng\'iroqlar" switcher even on a native APK (owner, 2026-11-12)', async () => {
+    for (const available of [true, false]) {
+      mockNative.available = available;
+      await renderMeetings();
+      await waitFor(() => expect(screen.getByTestId('meetings-list')).toBeTruthy());
+      expect(screen.queryByTestId('meetings-tab-calls')).toBeNull();
+      expect(screen.queryByTestId('meetings-tab-recordings')).toBeNull();
+      expect(screen.queryByTestId('calls-intro')).toBeNull();
+      expect(screen.queryByTestId('calls-settings')).toBeNull();
+      await screen.unmount();
+    }
   });
+});
 
-  it('intro -> consent once -> permission -> the list of calls; the FAB is hidden on this tab', async () => {
+describe('Calls section (CallsPanel)', () => {
+  it('intro -> consent once -> permission -> the list of calls', async () => {
     mockNative.recs = [call(), call({ uri: 'content://m/2', displayName: '+998901234567_241010_101010.m4a', sizeBytes: 300_000, durationMs: 0 })];
-    await renderMeetings();
-    await openCallsTab();
+    await renderPanel();
     expect(screen.getByTestId('calls-intro')).toBeTruthy();
     expect(screen.getByText("Qo'ng'iroqlarni Barno'ga yuboring")).toBeTruthy();
-    expect(screen.queryByTestId('record-fab')).toBeNull();
 
     answerAlert('Tushundim');
     requestSpy.mockImplementationOnce(async () => {
@@ -144,8 +158,7 @@ describe('Recordings screen: Calls section', () => {
     useCalls.getState().set({ enabled: true, consentAt: 1, owner: '7' });
     mockNative.permitted = true;
     mockNative.recs = [call()];
-    const services = await renderMeetings();
-    await openCallsTab();
+    const { services } = await renderPanel();
     const sendBtn = await waitFor(() => screen.getByTestId('call-send-Call recording Alisher_241010_143012.m4a'));
     await fireEvent.press(sendBtn);
 
@@ -176,8 +189,7 @@ describe('Recordings screen: Calls section', () => {
       call({ uri: 'content://m/a', displayName: 'Amr_241010_090000.amr', contentType: null }),
       call({ uri: 'content://m/b', displayName: 'Big_241010_090000.m4a', sizeBytes: config.maxUploadBytes + 1 }),
     ];
-    await renderMeetings();
-    await openCallsTab();
+    await renderPanel();
     await waitFor(() => expect(screen.getByTestId('call-status-Sent_241010_090000.m4a')).toHaveTextContent('Yuborildi'));
     expect(screen.getByTestId('call-status-Amr_241010_090000.amr')).toHaveTextContent('Format mos emas');
     // Chegara aytiladi - foydalanuvchi nima mumkinligini bilsin.
@@ -189,8 +201,7 @@ describe('Recordings screen: Calls section', () => {
     useCalls.getState().set({ enabled: true, consentAt: 1, owner: '7' });
     mockNative.permitted = true;
     mockNative.recs = [call()];
-    await renderMeetings();
-    await openCallsTab();
+    await renderPanel();
     await waitFor(() => expect(screen.getByTestId('calls-auto')).toBeTruthy());
 
     // Ogohlantirish bekor qilinsa - o'chiq qoladi.
@@ -216,9 +227,6 @@ describe('Recordings screen: Calls section', () => {
     expect(native.copyToAppStorage).not.toHaveBeenCalled();
     await fireEvent.press(screen.getByTestId('calls-auto'));
     expect(useCalls.getState().autoSend).toBe(false);
-    // Sozlama - sarlavha o'ngida (ro'yxat tepasida ikkinchi qator yo'q).
-    await fireEvent.press(screen.getByTestId('calls-settings'));
-    expect(push).toHaveBeenLastCalledWith('/settings/calls');
   });
 
   it('a call still being written cannot be sent yet; calls are grouped by day with only the time on the card', async () => {
@@ -226,8 +234,7 @@ describe('Recordings screen: Calls section', () => {
     mockNative.permitted = true;
     const fresh = call({ uri: 'content://m/fresh', displayName: 'Yangi.m4a', durationMs: 0, dateMs: Date.now() - 10_000 });
     mockNative.recs = [fresh];
-    await renderMeetings();
-    await openCallsTab();
+    await renderPanel();
     await waitFor(() => expect(screen.getByTestId('call-status-Yangi.m4a')).toHaveTextContent('Yozilmoqda'));
     expect(screen.queryByTestId('call-send-Yangi.m4a')).toBeNull();
     expect(screen.getByText('Bugun')).toBeTruthy();
@@ -235,7 +242,7 @@ describe('Recordings screen: Calls section', () => {
     expect(within(screen.getByTestId('call-Yangi.m4a')).getByText(/^\d{2}:\d{2} · 2,3 MB$/)).toBeTruthy();
   });
 
-  it('a sent call opens its summary when the server id is known, otherwise searches Recordings for the counterpart', async () => {
+  it('a sent call opens its summary when the server id is known, otherwise asks to search by the counterpart', async () => {
     const known = call({ uri: 'content://m/k', displayName: 'Known_241010_090000.m4a' });
     const lost = call({ uri: 'content://m/l', displayName: 'Call recording Alisher_241009_090000.m4a' });
     useCalls.getState().set({ enabled: true, consentAt: 1, owner: '7' });
@@ -244,21 +251,18 @@ describe('Recordings screen: Calls section', () => {
     useCalls.getState().linkServerIds(new Map([['cid-k', 'srv-42']]));
     mockNative.permitted = true;
     mockNative.recs = [known, lost];
-    await renderMeetings();
-    await openCallsTab();
+    const { onFind } = await renderPanel();
     await waitFor(() => expect(screen.getByTestId('call-Known_241010_090000.m4a')).toBeTruthy());
     await fireEvent.press(screen.getByTestId('call-Known_241010_090000.m4a'));
     expect(push).toHaveBeenLastCalledWith('/meeting/srv-42');
 
     await fireEvent.press(screen.getByTestId('call-Call recording Alisher_241009_090000.m4a'));
-    await waitFor(() => expect(screen.getByTestId('meetings-search')).toHaveProp('value', 'Alisher'));
-    expect(screen.queryByTestId('calls-list')).toBeNull();
+    expect(onFind).toHaveBeenCalledWith('Alisher');
   });
 
   it('permission blocked: explains and opens the app settings; no calls -> how to turn on recording', async () => {
     useCalls.getState().set({ enabled: true, consentAt: 1, owner: '7' });
-    await renderMeetings();
-    await openCallsTab();
+    await renderPanel();
     expect(screen.getByTestId('calls-permission')).toBeTruthy();
     // Android 13+: tizimdagi nom "Musiqa va audio".
     expect(screen.getByText(/"Musiqa va audio" ruxsatini bering/)).toBeTruthy();
@@ -285,8 +289,7 @@ describe('Recordings screen: Calls section', () => {
     native.audioReadPermission.mockReturnValue('android.permission.READ_EXTERNAL_STORAGE');
     try {
       useCalls.getState().set({ enabled: true, consentAt: 1, owner: '7' });
-      await renderMeetings();
-      await openCallsTab();
+      await renderPanel();
       expect(screen.getByText(/"Fayllar va media" ruxsatini bering/)).toBeTruthy();
     } finally {
       native.audioReadPermission.mockReturnValue('android.permission.READ_MEDIA_AUDIO');
@@ -294,8 +297,7 @@ describe('Recordings screen: Calls section', () => {
   });
 
   it('consent declined: nothing is enabled and no permission is asked', async () => {
-    await renderMeetings();
-    await openCallsTab();
+    await renderPanel();
     answerAlert('Bekor qilish');
     await fireEvent.press(screen.getByTestId('calls-enable'));
     await act(async () => {});

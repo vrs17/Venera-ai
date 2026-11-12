@@ -23,7 +23,7 @@ import { AUDIO_EXTENSIONS, type AudioExtension } from '@/lib/audioTypes';
 import { sha256Hex } from '@/lib/sha256';
 import { uuidV4 } from '@/lib/uuid';
 
-import { importTitle, parseCallFileName, recordedAtMs } from './fileName';
+import { importTitle, parseCallFileName, recordedAtMs, uploadTitle } from './fileName';
 
 /**
  * Yozuv kaliti: MediaStore id'si qayta indekslashda o'zgarishi mumkin - shuning uchun yo'l +
@@ -248,9 +248,11 @@ export async function sendImportedFile(deps: ImportSendDeps, meta: ImportFileMet
         template: 'auto',
         expectedSpeakers: parsed.looksLikeCall ? 2 : null,
         source: 'share',
-        // Qo'ng'iroqqa o'xshamagan fayl ("AUD-20241010-WA0003") nomi sarlavha bo'lmaydi: server uni
-        // foydalanuvchi sarlavhasi deb saqlab, AI sarlavhasini hech qachon qo'ymasdi.
-        title: parsed.looksLikeCall ? importTitle(opts.t, parsed, formatTime(startMs)) : null,
+        // Sarlavha - fayl nomi o'zgarishsiz (ega qarori 2026-11-12): qo'ng'iroq yozuviga o'xshagan nom ham
+        // "Qo'ng'iroq, 16:02" ga aylantirilmaydi. Nom - odam tanlagan narsa, server AI sarlavhasi bilan almashtirmaydi.
+        // Asl nom noma'lum bo'lsa meta ichki nomni ("share_<n>_<i>_..." - native va JS bir xil) beradi: u sarlavha
+        // emas - `null`, server AI sarlavhasini qo'yadi.
+        title: meta.displayName === meta.fileName ? null : uploadTitle(meta.displayName),
         startedAt: new Date(startMs).toISOString(),
         endedAt: meta.durationMs > 0 ? new Date(startMs + meta.durationMs).toISOString() : null,
         // 8-noyabrdagi fayl bugun yuklansa - Plaud'da "Bugun" ostida (`timeline.rowListedAt`).

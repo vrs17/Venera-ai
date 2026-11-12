@@ -9,8 +9,6 @@
  * kerak joyda (rozilik, ruxsat). Rozilik eslatmasi qisqa va oddiy: suhbatdosh ogohlantirilsin.
  */
 const uz = {
-  'calls.tab.recordings': 'Yozuvlar',
-  'calls.tab.calls': "Qo'ng'iroqlar",
   'calls.settingsTitle': "Qo'ng'iroq yozuvlari",
   'calls.introTitle': "Qo'ng'iroqlarni Barno'ga yuboring",
   'calls.introBody': "Telefon ilovasi yozgan qo'ng'iroqlar shu yerda chiqadi. Yuborsangiz - xulosa va vazifalar tayyor bo'ladi.",
@@ -105,8 +103,6 @@ const uz = {
 type K = keyof typeof uz;
 
 const ru: Record<K, string> = {
-  'calls.tab.recordings': 'Записи',
-  'calls.tab.calls': 'Звонки',
   'calls.settingsTitle': 'Записи звонков',
   'calls.introTitle': 'Отправляйте звонки в Barno',
   'calls.introBody': 'Здесь появятся звонки, записанные приложением «Телефон». Отправьте запись - Barno подготовит итог и задачи.',
@@ -198,8 +194,6 @@ const ru: Record<K, string> = {
 };
 
 const en: Record<K, string> = {
-  'calls.tab.recordings': 'Recordings',
-  'calls.tab.calls': 'Calls',
   'calls.settingsTitle': 'Call recordings',
   'calls.introTitle': 'Send your calls to Barno',
   'calls.introBody': 'Calls recorded by the Phone app show up here. Send one to get a summary and action items.',

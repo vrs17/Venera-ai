@@ -176,7 +176,7 @@ describe('Plaud: Audio yuklash', () => {
     expect(push).toHaveBeenCalledTimes(1);
   });
 
-  it('not offered without the native import, on the Calls tab, or when the section is not enabled', async () => {
+  it('not offered without the native import or when the section is not enabled', async () => {
     mockNative.available = false;
     await renderList({ cards: true });
     await waitFor(() => expect(screen.getByTestId('meetings-list')).toBeTruthy());
@@ -186,8 +186,8 @@ describe('Plaud: Audio yuklash', () => {
     mockNative.available = true;
     await renderList({ cards: true });
     expect(await screen.findByTestId('meetings-upload')).toBeTruthy();
-    await press('meetings-tab-calls');
-    expect(screen.queryByTestId('meetings-upload')).toBeNull();
+    // "Qo'ng'iroqlar" tabi yo'q (ega qarori 2026-11-12) - yuklash tugmasi doim ko'rinadi.
+    expect(screen.queryByTestId('meetings-tab-calls')).toBeNull();
     await screen.unmount();
 
     await renderList({ list: jest.fn(async () => Promise.reject(new ApiError(403, 'forbidden', 'no'))) });

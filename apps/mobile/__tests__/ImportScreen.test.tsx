@@ -152,11 +152,11 @@ describe('Import confirm screen', () => {
 
     const rows = await services.queue.list();
     expect(rows).toHaveLength(2);
-    const call = rows.find((r) => r.title === "Qo'ng'iroq: Alisher");
+    // Sarlavha - fayl nomi o'zgarishsiz (ega qarori 2026-11-12).
+    const call = rows.find((r) => r.title === 'Call recording Alisher_241010_143012.m4a');
     const notes = rows.find((r) => r.contentType === 'audio/aac');
     expect(call).toMatchObject({ source: 'share', contentType: 'audio/mp4', language: 'ru', expectedSpeakers: 2, state: 'stopped' });
-    // Qo'ng'iroq bo'lmagan fayl nomi sarlavha emas - server AI sarlavhasini qo'yadi.
-    expect(notes).toMatchObject({ source: 'share', language: 'ru', expectedSpeakers: null, title: null });
+    expect(notes).toMatchObject({ source: 'share', language: 'ru', expectedSpeakers: null, title: 'Mijoz bilan uchrashuv.aac' });
     expect(call?.fileUri).toBe(`file:///doc/recordings/${call?.clientId}.m4a`);
     expect(mockMoved).toEqual(
       expect.arrayContaining([[`file:///data/user/0/app/files/imports/${A}`, `file:///doc/recordings/${call?.clientId}.m4a`]]),
