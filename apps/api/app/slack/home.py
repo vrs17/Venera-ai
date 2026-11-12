@@ -1,4 +1,4 @@
-"""Slack'da «🎙 Plaud» - chatning ichida (Telegram'dagi tugmaga o'xshab) va "Home" varag'ida.
+"""Slack'da «🎙 Plaud» - chatning ichida (Telegram'dagi tugmaga o'xshab); "Home" varag'ida faqat shior.
 
 Slack'da Telegram'dagi kabi doimiy pastki klaviatura yo'q, shuning uchun tugma CHATDA uch
 yo'l bilan qo'l ostida turadi:
@@ -9,7 +9,7 @@ yo'l bilan qo'l ostida turadi:
     oxirgi yozuv bo'yicha savol, `meeting.on_text`);
   * `/plaud` buyrug'i (Bolt `command`, Socket Mode'da ishlaydi) - manifestda slash command
     bo'lsa; bo'lmasa shunchaki chaqirilmaydi.
-"Home" varag'i ham bor (`app_home_opened` -> `views.publish`, ruxsat kerak emas).
+"Home" varag'ida faqat shior (`app_home_opened` -> `views.publish`, ruxsat kerak emas).
 Tugma bosilganda: chatda - faqat bosgan odamga ko'rinadigan (ephemeral) eslatma, Home'dan -
 odamning chatiga xabar (`chat.postMessage` ga foydalanuvchi id'si, `chat:write` bilan DM
 ochiladi).
@@ -39,27 +39,6 @@ _hint_at: dict[str, float] = {}
 _hint_lock = threading.Lock()
 
 TAGLINE = "BRB-TECHning foydali, aniq va xavfsiz AI yordamchisi"
-FEATURES = (
-    "*🎙 Audio → matn* — ovozli xabar yozing yoki audio fayl yuklang (mp3, m4a, aac, wav, ogg; "
-    "3 soat yoki 150 MB gacha). Matn shu chatda chiqadi, bir necha kishi gapirgan bo'lsa — kim gapirgani bilan.\n"
-    "*📋 Qisqa xulosa* — matndan keyin o'zi keladi: maqsad, asosiy fikrlar, qarorlar, vazifalar, ochiq savollar.\n"
-    "*💬 Chat* — savolingizni shu chatga yozing: Barno oxirgi yuborilgan yozuv bo'yicha javob beradi (javob "
-    "boshida qaysi yozuv ekani yoziladi), gap audioning qaysi daqiqasida aytilganini ko'rsatadi va suhbatni eslab "
-    "qoladi — keyingi savolda «batafsilroq» deyish kifoya. Yangi audio yuborsangiz, savollar yangi yozuvga o'tadi; "
-    "oldingi yozuv haqida — o'sha yozuv xabarining thread'ida so'rang. Suhbat har bir odamga alohida; "
-    "«🔄 Yangi suhbat» — boshidan boshlash.\n"
-    "*✅ Vazifalar* — bitta tugma: kim, nima, qachongacha.\n"
-    "*🗂 Boshqa shablon* — bayonnoma, standup, 1:1, savdo qo'ng'irog'i, intervyu, ma'ruza va boshqalar.\n"
-    "*📎 Eksport* — transkript (TXT/SRT), xulosa (MD) yoki to'liq hisobot (Word/PDF) fayli.\n"
-    "*📄 Bayonnoma* — rasmiy bayonnoma loyihasi (Word + PDF): kun tartibi, bayon, raqamlangan qaror bandlari; "
-    "til tanlanadi (o'zbek lotin/kirill, rus, ingliz), «________» joylari qo'lda to'ldiriladi.\n"
-    "*🌐 Boshqa til* — audio rus yoki ingliz tilida bo'lsa, bitta tugma bilan qayta o'giring."
-)
-NOTES = (
-    "Barno hozircha faqat shaxsiy chatda va yozuvlar bilan ishlaydi: chatga yozilgan matn — oxirgi yozuv bo'yicha "
-    "savol (yozuv hali bo'lmasa — yo'riqnoma). Kunlik transkripsiya limiti hamma uchun umumiy — tugasa, audioni "
-    "ertaga yuboring."
-)
 PROMPT = (
     "🎙 *Plaud* — audio yuboring, matnga o'girib, qisqa xulosa beraman.\n"
     "• mikrofon tugmasi bilan ovozli xabar yozing, yoki\n"
@@ -71,19 +50,9 @@ PROMPT = (
 
 
 def view() -> dict[str, Any]:
-    """"Home" varag'i (Block Kit `home` view)."""
-    return {"type": "home", "blocks": [
-        {"type": "header", "text": {"type": "plain_text", "text": "Barno AI"}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": TAGLINE}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": "*🎙 Plaud* — audio yuboring: Barno matnga "
-                                                                 "o'giradi, xulosa qiladi va savollaringizga "
-                                                                 "javob beradi."}},
-        {"type": "actions", "block_id": "barno:home",
-         "elements": [render.button("🎙 Plaud", PLAUD_ACTION, "plaud")]},
-        {"type": "divider"},
-        {"type": "section", "text": {"type": "mrkdwn", "text": "*Nimalar qila oladi:*\n" + FEATURES}},
-        render.context(NOTES),
-    ]}
+    """"Home" varag'i (Block Kit `home` view): faqat shior (ega so'rovi, 2026-11-12 - tugma va imkoniyatlar
+    ro'yxati olib tashlandi; yo'riqnoma chatdagi xabarda, `prompt_blocks`)."""
+    return {"type": "home", "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": TAGLINE}}]}
 
 
 def prompt_blocks() -> list[dict[str, Any]]:

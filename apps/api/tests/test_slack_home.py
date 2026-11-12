@@ -54,21 +54,13 @@ def test_plaud_buyrugi_va_tugma():
 
 
 def test_home_varagi():
+    """Home varag'ida faqat shior: «🎙 Plaud» tugmasi, sarlavha va imkoniyatlar ro'yxati yo'q (ega so'rovi)."""
     client = FakeSlack()
     home.on_open(client, {"type": "app_home_opened", "user": "U1", "tab": "home"})
     [published] = client.published
-    blocks = published["view"]["blocks"]
-    assert published["user_id"] == "U1" and blocks[0]["text"]["text"] == "Barno AI" and home.TAGLINE in blocks[1]["text"]["text"]
-    assert next(b for b in blocks if b["type"] == "actions")["elements"][0]["action_id"] == home.PLAUD_ACTION
-    # Imkoniyatlar ro'yxatida chat: oxirgi yozuv bo'yicha, eskisi - thread'da, suhbat xotirasi va «🔄 Yangi suhbat»;
-    # suhbat har odamniki (Slack'dagi hamma bitta hisobda, lekin bir-birining savolini ko'rmaydi).
-    features = next(b["text"]["text"] for b in blocks if "Nimalar qila oladi" in (b.get("text") or {}).get("text", ""))
-    assert "*💬 Chat*" in features and "suhbatni eslab qoladi" in features and "🔄 Yangi suhbat" in features
-    assert "oxirgi yuborilgan yozuv" in features and "thread'ida so'rang" in features
-    assert "har bir odamga alohida" in features
-    # Eski "thread'dan tashqaridagi matnga javob bermaydi" endi yolg'on - chatdagi matn oxirgi yozuv bo'yicha savol.
-    notes = blocks[-1]["elements"][0]["text"]
-    assert "javob bermaydi" not in notes and "oxirgi yozuv bo'yicha" in notes
+    assert published["user_id"] == "U1"
+    assert published["view"] == {"type": "home", "blocks": [
+        {"type": "section", "text": {"type": "mrkdwn", "text": "BRB-TECHning foydali, aniq va xavfsiz AI yordamchisi"}}]}
 
 
 def test_slack_xatosi_odamni_toxtatmaydi(monkeypatch):
