@@ -897,8 +897,9 @@ def test_normalize():
     assert normalize("nimadir", default=None) is None
     assert normalize(None) == "api"
     # `mobile` - yig'ilish yozuvchisi ilovasi (docs/plans/meeting-recorder.md).
-    assert set(CHANNELS) == {"web", "miniapp", "bot", "desktop", "mobile", "api"}
-    assert normalize("mobile") == "mobile"
+    # `slack` - Slack'dagi Barno AI yordamchisi (2026-11-13, `app/slack/assistant.py`).
+    assert set(CHANNELS) == {"web", "miniapp", "bot", "slack", "desktop", "mobile", "api"}
+    assert normalize("mobile") == "mobile" and normalize("slack") == "slack"
 
 
 def test_umumiy_yozuvchi_testdagi_faylga_yozadi(adb, tmp_path):

@@ -605,6 +605,11 @@ class Settings(BaseSettings):
     #: Slack hisobi -> Barno hisobi (`services/slack_links.py`). Faqat id'lar va vaqtlar;
     #: `data/` gitignore'da, fayl 600.
     slack_links_file: Path = BASE_DIR / "data" / "slack" / "links.json"
+    #: Slack'dagi Barno AI yordamchisi (HR/CRM, `app/slack/assistant.py`, 2026-11-13): odamning joriy suhbati -
+    #: faqat suhbat kaliti va vaqt (fayl 600). Shuncha soat jimlikdan keyin keyingi savol YANGI suhbatda (Telegram
+    #: botdagi `telegram_chat_idle_hours` kabi).
+    slack_assistant_chats_file: Path = BASE_DIR / "data" / "slack" / "assistant_chats.json"
+    slack_chat_idle_hours: float = 6.0
 
     # --- Xodimlar ma'lumotnomasi (kontaktlar) ---
     #: F.I.SH, Telegram, telefon, email - `services/contacts.py`. SHAXSIY

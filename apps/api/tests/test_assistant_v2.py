@@ -194,7 +194,7 @@ def test_kanal_istisnosi_va_yozilishlar(monkeypatch):
     # `tg-bot` - `bot` ning taxallusi, `legacy` - versiyasiz yo'l.
     assert engines.engine_for("bot") == ""
     assert engines.config_state()["byChannel"] == {
-        "web": "v2", "miniapp": "v1", "bot": "", "desktop": "v2", "mobile": "v2", "api": "v2"}
+        "web": "v2", "miniapp": "v1", "bot": "", "slack": "v2", "desktop": "v2", "mobile": "v2", "api": "v2"}
 
 
 def test_notogri_sozlama_yiqitmaydi_va_aytiladi(monkeypatch):

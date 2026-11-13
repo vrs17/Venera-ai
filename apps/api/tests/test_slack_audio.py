@@ -106,7 +106,8 @@ def test_dispetcher_avval_tilni_soraydi(slack, _isolated_meetings, monkeypatch):
 
     first_q, second_q = client.posted
     assert first_q["text"] == "📎 «ovoz.aac» qabul qilindi.\n🌐 Audio qaysi tilda? Tanlang - shundan keyin matnga o'giraman."
-    assert render.lang_marked(first_q) == "F1" and render.lang_marked(second_q) == "F2"
+    assert [b.get("block_id") for b in first_q["blocks"]] == [None, "barno-langs:F1"]
+    assert second_q["blocks"][-1]["block_id"] == "barno-langs:F2"
     assert [(e["action_id"], e["text"]["text"], e["value"]) for e in elements(first_q)] == [
         ("barno_lang_uz", "🇺🇿 O'zbek", "F1"), ("barno_lang_ru", "🇷🇺 Rus", "F1"), ("barno_lang_en", "🇬🇧 Ingliz", "F1")]
     assert not [j for j in jobs if j[0] is meeting.on_message] and slack == [] and _meetings(_isolated_meetings)[1] == 0
@@ -202,9 +203,8 @@ def test_mos_kelmaydigan_format_tugmasiz(slack, monkeypatch):
     assert failed["text"] == "Matnga o'girib bo'lmadi: Bu audio formati qo'llab-quvvatlanmaydi (mp3, m4a, aac, wav)."
     assert elements(failed) == []
     assert [d["ts"] for d in client.deleted] == [client.posted[0]["ts"]]      # "⏳" xabari o'chdi
-    # Xato xabari faylni belgilaydi (chatdagi savol bu audioni kutmaydi), yig'ilish belgisi emas.
-    assert render.fail_marked(failed) == "F4" and render.marked(failed) is None
-    assert failed["blocks"][0]["block_id"] == render.fail_mark("F4") == "barno-fail:F4"
+    # Xato xabarida yig'ilish belgisi yo'q (thread'idagi javob hech qaysi yozuvga bog'lanmaydi).
+    assert render.marked(failed) is None and "block_id" not in failed["blocks"][0]
 
 
 def test_yuklab_bolmasa_qayta_urinish_tugmasi(slack, monkeypatch, _isolated_meetings):
@@ -221,7 +221,6 @@ def test_yuklab_bolmasa_qayta_urinish_tugmasi(slack, monkeypatch, _isolated_meet
     [retry] = elements(failed)
     # "Qayta urinish" tanlangan tilni eslab qoladi.
     assert (retry["action_id"], retry["value"]) == ("barno_retry", "f:F1:en")
-    assert render.fail_marked(failed) == "F1"
 
     monkeypatch.setattr(transcribe, "download", real)
     meeting.on_action(client, {"actions": [retry], "channel": {"id": "D1"}, "message": {}},
@@ -243,7 +242,6 @@ def test_kunlik_limit_tugasa_yozuv_ochiriladi(slack, monkeypatch, _isolated_meet
     [failed] = client.visible()
     assert "limiti tugagan" in failed["text"] and elements(failed) == []
     assert _meetings(_isolated_meetings)[1] == 0
-    assert render.fail_marked(failed) == "F1"
 
 
 def test_hisob_sozlanmagan(slack, monkeypatch):

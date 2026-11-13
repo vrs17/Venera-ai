@@ -126,12 +126,12 @@ def _connect() -> None:
 def _on_message(event: dict[str, Any], client: Any, context: Any) -> None:
     """Bolt tinglovchisi. Navbatga qo'yadi: javob daqiqalab davom etadi. Audioga til savoli shu yerda, darhol
     (`meeting.acknowledge`): navbat band bo'lsa ham odam audiosi qabul qilinganini ko'radi; o'girish til tanlangach
-    (tugma - `_on_action`). Thread'dan tashqaridagi oddiy matn - oxirgi yozuv
-    chati, chatda yozuv bo'lmasa «🎙 Plaud» yo'riqnomasi (`meeting.on_text`): chat tarixi ham
-    navbatda o'qiladi, Bolt ipi Slack'ka murojaat qilmaydi. Chat xabari bayonnoma ishini boshlasa, vazifa uni kutadi
+    (tugma - `_on_action`). Thread'dagi javob - yozuv chati yoki HR/CRM yordamchisi javobining davomi
+    (`meeting.on_message`); thread'dan tashqaridagi oddiy matn - HR/CRM yordamchisi (`assistant.on_text`; ega qarori
+    2026-11-13, "thread qoidasi"). Chat xabari bayonnoma ishini boshlasa, vazifa uni kutadi
     (`meeting._follow_minutes`) - kutish `_sleep` bilan: restartda darhol uziladi. Har xabar (matn, audio bo'lmagan
     fayl) qo'shimcha ravishda arxivga (`keep.py`)."""
-    from . import home, keep, meeting, transcribe
+    from . import assistant, home, keep, meeting, transcribe
 
     pool = _pool
     if pool is None:
@@ -146,7 +146,7 @@ def _on_message(event: dict[str, Any], client: Any, context: Any) -> None:
     elif meeting.wants(event):
         pool.submit(meeting.on_message, client, event, bot_user=bot_user, sleep=_sleep)
     elif home.is_text(event):
-        pool.submit(meeting.on_text, client, event, bot_user=bot_user, sleep=_sleep)
+        pool.submit(assistant.on_text, client, event)
 
 
 def _on_command(ack: Any, body: dict[str, Any], client: Any) -> None:
@@ -180,7 +180,7 @@ def _stamp_team(event: dict[str, Any], context: Any) -> None:
 
 def _on_action(ack: Any, body: dict[str, Any], client: Any) -> None:
     """Tugma va ro'yxat. Slack javobni 3 s ichida kutadi - `ack` darhol, ish navbatda."""
-    from . import home, link, meeting
+    from . import assistant, home, link, meeting
 
     ack()
     pool = _pool
@@ -191,6 +191,9 @@ def _on_action(ack: Any, body: dict[str, Any], client: Any) -> None:
         pool.submit(link.on_action, client, body)
     elif home.is_plaud(body):
         pool.submit(home.on_plaud, client, body)
+    elif assistant.handles(body):
+        # HR/CRM yordamchisi: yangi suhbat, hujjat havolasi, taklifni tasdiqlash, hujjatning boshqa formati.
+        pool.submit(assistant.on_action, client, body)
     else:
         pool.submit(meeting.on_action, client, body, sleep=_sleep)
 

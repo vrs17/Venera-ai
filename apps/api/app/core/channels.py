@@ -3,6 +3,7 @@
     web       veb ilova (`apps/web`)
     miniapp   Telegram mini app (`apps/tg`, `/tg/` ostida)
     bot       Telegram bot - chatning o'zida (`app/bot/`)
+    slack     Slack'dagi Barno AI - shaxsiy chat (`app/slack/assistant.py`, 2026-11-13)
     desktop   desktop klient
     mobile    mobil ilova "Venera Yozuv" (`apps/mobile`, yig'ilish yozuvchisi)
     api       boshqa hamma narsa (curl, skript, eski build)
@@ -15,9 +16,9 @@ klient `X-Venera-Client` sarlavhasini yuboradi (web - `web`, mini app -
 Sarlavha yo'q bo'lsa (eski build hali keshda) - mini app sahifasi `/tg/`
 ostida turadi, ya'ni `Referer` yo'li buni aytadi. Qolgani `api`.
 
-`bot` SARLAVHA ORQALI QABUL QILINMAYDI: bot HTTP'dan kelmaydi, u kanalni
-kod ichida o'zi beradi. Sarlavhadagi `bot` - soxta, va statistikani
-buzmasligi uchun e'tiborga olinmaydi.
+`bot` va `slack` SARLAVHA ORQALI QABUL QILINMAYDI: ular HTTP'dan kelmaydi,
+kanalni kod ichida o'zi beradi. Sarlavhadagi `bot` / `slack` - soxta, va
+statistikani buzmasligi uchun e'tiborga olinmaydi.
 
 Bu faqat STATISTIKA uchun. Kanalga qarab huquq berilmaydi - sarlavhani har
 kim yoza oladi.
@@ -30,12 +31,12 @@ import urllib.parse
 from typing import Any
 
 #: Hamma kanallar - admin panel filtrlari shu tartibda.
-CHANNELS: tuple[str, ...] = ("web", "miniapp", "bot", "desktop", "mobile", "api")
+CHANNELS: tuple[str, ...] = ("web", "miniapp", "bot", "slack", "desktop", "mobile", "api")
 
 #: Klient sarlavhasi.
 HEADER = "X-Venera-Client"
 
-#: Sarlavha orqali e'lon qilinishi mumkin bo'lgan kanallar (`bot` yo'q).
+#: Sarlavha orqali e'lon qilinishi mumkin bo'lgan kanallar (`bot` va `slack` yo'q).
 #: `mobile` - yig'ilish yozuvchisi: uning audio va xulosa chaqiruvlari (GAPI,
 #: Ollama) hisobda alohida ko'rinsin, `api` ga aralashib ketmasin.
 CLIENT_CHANNELS = frozenset({"web", "miniapp", "desktop", "mobile"})

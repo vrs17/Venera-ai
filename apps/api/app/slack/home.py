@@ -1,14 +1,13 @@
 """Slack'da «🎙 Plaud» - chatning ichida (Telegram'dagi tugmaga o'xshab); "Home" varag'ida faqat shior.
 
-Slack'da Telegram'dagi kabi doimiy pastki klaviatura yo'q, shuning uchun tugma CHATDA uch
+Slack'da Telegram'dagi kabi doimiy pastki klaviatura yo'q, shuning uchun tugma CHATDA ikki
 yo'l bilan qo'l ostida turadi:
   * xush kelibsiz xabari - odam Barno chatini ("Messages" varag'i) birinchi marta ochganda
     (chat bo'sh), yo'riqnoma va tugma chatning o'zida;
-  * oddiy matnga javob - chatda hali yozuv bo'lmasa, thread'dan tashqaridagi matnli xabarga
-    yo'riqnoma va tugma qaytariladi, chatga `TEXT_EVERY` da bir marta (yozuv bo'lsa o'sha matn -
-    oxirgi yozuv bo'yicha savol, `meeting.on_text`);
   * `/plaud` buyrug'i (Bolt `command`, Socket Mode'da ishlaydi) - manifestda slash command
     bo'lsa; bo'lmasa shunchaki chaqirilmaydi.
+Thread'dan tashqaridagi oddiy matn - HR/CRM yordamchisiga (`assistant.on_text`; dispetcher shu yerdagi
+`is_text` bilan ajratadi).
 "Home" varag'ida shior va - shaxsiy hisob majburiy bo'lsa (`link.py`) - hisob holati: ulangan bo'lsa
 ism va «Uzish», aks holda «Connect Barno AI account» (`app_home_opened` -> `views.publish`, ruxsat
 kerak emas). Ulanmagan odamga xush kelibsiz xabaridan keyin, `/plaud` va «🎙 Plaud» o'rniga ulash
@@ -17,17 +16,15 @@ Tugma bosilganda: chatda - faqat bosgan odamga ko'rinadigan (ephemeral) eslatma,
 odamning chatiga xabar (`chat.postMessage` ga foydalanuvchi id'si, `chat:write` bilan DM
 ochiladi).
 
-HOZIRCHA audio REJIMSIZ ishlanadi: Slack'dagi Barno faqat audio va yozuvlar bo'yicha savol bilan
-ishlaydi, ya'ni Telegram'dagi kabi "bu yozuv" deb belgilash shart emas. Tugma - nom
-("Plaud") va yo'riqnoma uchun; Slack'ka HR chat qo'shilganda (ega rejasi, 2026-11-04) aynan
-shu tugma Telegram'dagi kabi rejimni yoqadi (`app/bot/plaud.py`).
+REJIM YO'Q (ega qarori 2026-11-13, "thread qoidasi"): audio - yozuv (Plaud), yozuv va bayonnoma savollari -
+o'sha xabarning thread'ida (`meeting.question`), chatning o'ziga yozilgan matn - HR/CRM yordamchisi
+(`assistant.py`). Shuning uchun Telegram'dagi kabi "Plaud rejimini" yoqish shart emas; tugma - nom ("Plaud") va
+yo'riqnoma uchun.
 """
 
 from __future__ import annotations
 
 import logging
-import threading
-import time
 
 from typing import Any
 
@@ -37,9 +34,6 @@ log = logging.getLogger(__name__)
 
 PLAUD_ACTION = "barno_plaud"
 #: Oddiy matnga yo'riqnoma bitta chatga shundan tez takrorlanmaydi (soniya).
-TEXT_EVERY = 600.0
-_hint_at: dict[str, float] = {}
-_hint_lock = threading.Lock()
 
 TAGLINE = "BRB-TECHning foydali, aniq va xavfsiz AI yordamchisi"
 PROMPT = (
@@ -48,9 +42,11 @@ PROMPT = (
     "• audio fayl yuklang: mp3, m4a, aac, wav, ogg — 3 soat yoki 150 MB gacha.\n"
     "Audio kelgach Barno uning tilini so'raydi (o'zbek, rus, ingliz) - tanlang. Xulosa ostida: yuklab olish, "
     "vazifalar, 📄 Bayonnoma (rasmiy hujjat, Word/PDF) va eksport. "
-    "Savol bo'lsa — shu chatga yozing: Barno oxirgi yuborilgan yozuv bo'yicha javob beradi va suhbatni eslab "
-    "qoladi. 📄 Bayonnoma uchun ko'rsatma va tayyor bayonnomadagi o'zgartirishlarni ham shu chatga yozing - Barno "
-    "tushunib, yangi versiyasini yuboradi. Oldingi yozuv haqida — o'sha yozuv xabarining thread'ida so'rang."
+    "Yozuv haqidagi savolni — o'sha yozuv xabarining thread'iga yozing: Barno suhbatni eslab qoladi. 📄 Bayonnoma "
+    "uchun ko'rsatma va o'zgartirishlar — bayonnoma xabari yoki faylining thread'ida, Barno yangi versiyasini "
+    "yuboradi.\n\n"
+    "💬 *Barno AI yordamchisi* — chatning o'ziga yozing: HR hujjatlari va qoidalari, HRM (ta'til, xodimlar) va CRM "
+    "(mijozlar, vazifalar) bo'yicha javob beradi; CRM dagi o'zgarishni siz tasdiqlaganingizdan keyingina bajaradi."
 )
 
 
@@ -82,8 +78,8 @@ def is_plaud(body: dict[str, Any]) -> bool:
 
 
 def is_text(event: dict[str, Any]) -> bool:
-    """Shaxsiy chatdagi, thread'dan tashqaridagi oddiy matn (odam yozgan) - dispetcher uni `meeting.on_text` ga beradi
-    (oxirgi yozuv chati, yozuv bo'lmasa - shu moduldagi yo'riqnoma)."""
+    """Shaxsiy chatdagi, thread'dan tashqaridagi oddiy matn (odam yozgan) - dispetcher uni HR/CRM yordamchisiga beradi
+    (`assistant.on_text`)."""
     if event.get("channel_type") != "im" or event.get("bot_id") or event.get("subtype"):
         return False
     return not event.get("thread_ts") and bool(str(event.get("text") or "").strip()) and not event.get("files")
@@ -107,26 +103,6 @@ def on_open(client: Any, event: dict[str, Any]) -> None:
                 link.gate(client, team, user, event["channel"])
     except Exception as exc:  # noqa: BLE001 - SlackApiError, tarmoq
         log.warning("Slack Home/xush kelibsiz yozilmadi: %s", exc)
-
-
-def on_text(client: Any, event: dict[str, Any]) -> None:
-    """Thread'dan tashqaridagi matn, chatda esa yaroqli yozuv yo'q (`meeting.on_text`; o'girib bo'lmagan audio hisob
-    emas) -> yo'riqnoma va tugma (chatga `TEXT_EVERY` da bir marta). Chat tarixini o'qib bo'lmasa - bu yerga
-    kelmaydi (`render.CHAT_UNREAD`, cheklovsiz)."""
-    channel = event.get("channel")
-    if not channel:
-        return
-    now = time.monotonic()
-    with _hint_lock:
-        if now - _hint_at.get(channel, -TEXT_EVERY) < TEXT_EVERY:
-            return
-        _hint_at[channel] = now
-        if len(_hint_at) > 2000:
-            _hint_at.clear()
-    try:
-        client.chat_postMessage(channel=channel, text=PROMPT, blocks=prompt_blocks())
-    except Exception as exc:  # noqa: BLE001
-        log.warning("Slack Plaud yo'riqnomasi yuborilmadi: %s", exc)
 
 
 def on_command(client: Any, body: dict[str, Any]) -> None:

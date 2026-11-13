@@ -23,7 +23,7 @@ from app.core.config import settings
 from app.services import admin_users
 from app.services.meetings import llm
 from app.services.slack_links import LinkStore
-from app.slack import home, link, meeting, render
+from app.slack import assistant, home, link, meeting, render
 from slack_fakes import AUDIO, BOT_USER, FakeSlack, as_parent, card, drive, send_audio, setup
 from meetings_fakes import FakeAnthropic
 
@@ -99,9 +99,10 @@ def test_ulanmagan_odam_audio_yuborsa_ish_emas_ulash_tugmasi(linking):
 
 def test_matn_va_thread_savoli_ham_ulashni_soraydi_takrorsiz(linking):
     slack = FakeSlack()
-    meeting.on_text(slack, slack.say("D2", "Salom", user="U2", team="T1"), bot_user=BOT_USER)
-    meeting.on_text(slack, slack.say("D2", "Yana", user="U2", team="T1"), bot_user=BOT_USER)
-    assert len(slack.ephemeral) == 1 and slack.posted == []   # yo'riqnoma ham emas, faqat ulash
+    # Chatning o'zidagi matn - HR/CRM yordamchisiga (2026-11-13): ulanmagan odamga javob ham emas, faqat ulash.
+    assistant.on_text(slack, slack.say("D2", "Salom", user="U2", team="T1"))
+    assistant.on_text(slack, slack.say("D2", "Yana", user="U2", team="T1"))
+    assert len(slack.ephemeral) == 1 and slack.posted == []
 
     link._offered.clear()
     question = slack.say("D2", "Kim?", user="U2", team="T1", thread="100.1")
@@ -113,7 +114,7 @@ def test_muddati_otgan_ulanish_va_ochirilgan_hisob(linking):
     slack = FakeSlack()
     links = link.store()
     links.link("T1", "U2", 2, now=time.time() - 31 * 86400)
-    meeting.on_text(slack, slack.say("D2", "Salom", user="U2", team="T1"), bot_user=BOT_USER)
+    assistant.on_text(slack, slack.say("D2", "Salom", user="U2", team="T1"))
     assert link.OFFER_EXPIRED in slack.ephemeral[-1]["blocks"][0]["text"]["text"]
 
     links.link("T1", "U9", 99)                                # bunday hisob yo'q (o'chirilgan)
@@ -126,7 +127,7 @@ def test_bloklangan_hisobga_sababi_aytiladi(linking, client, auth):
     link.store().link("T1", "U2", 2)
     assert client.patch("/api/v1/admin/users/2", headers=auth, json={"disabled": True}).status_code == 200
     slack = FakeSlack()
-    meeting.on_text(slack, slack.say("D2", "Salom", user="U2", team="T1"), bot_user=BOT_USER)
+    assistant.on_text(slack, slack.say("D2", "Salom", user="U2", team="T1"))
     assert slack.ephemeral[-1]["text"] == render.escape(link.BLOCKED) and slack.posted == []
 
 
@@ -249,7 +250,8 @@ def test_ulangan_odamning_yozuvi_va_savoli_ozida_ilova_bilan_bitta(linking, _iso
     slack.parents[summary["ts"]] = as_parent(summary)
     question = slack.say("D2", "Kim hisobot yuboradi?", user="U2", team="T1", thread=summary["ts"])
     meeting.on_message(slack, question, bot_user=BOT_USER)
-    meeting.on_text(slack, slack.say("D2", "Batafsilroq", user="U2", team="T1"), bot_user=BOT_USER)
+    meeting.on_message(slack, slack.say("D2", "Batafsilroq", user="U2", team="T1", thread=summary["ts"]),
+                       bot_user=BOT_USER)
     # So'rovchi yo'q - egasining suhbati: Slack'dagi savollar ilovadagi chat bilan bitta.
     assert [t["question"] for t in rt.store.chat_turns(mid)] == ["Kim hisobot yuboradi?", "Batafsilroq"]
     assert rt.store.chat_turns(mid, asker="slack:U2") == []
@@ -313,7 +315,8 @@ def test_eski_yozuv_umumiy_hisobda_qoladi_kartasi_ishlaydi(users_file, monkeypat
     link.store().link("T1", "U1", 2)
     question = slack.say("D1", "Kim?", user="U1", team="T1", thread=summary["ts"])
     meeting.on_message(slack, question, bot_user=BOT_USER)
-    meeting.on_text(slack, slack.say("D1", "Batafsilroq", user="U1", team="T1"), bot_user=BOT_USER)
+    meeting.on_message(slack, slack.say("D1", "Batafsilroq", user="U1", team="T1", thread=summary["ts"]),
+                       bot_user=BOT_USER)
     # Eski yozuv - avvalgidek har odam o'z suhbatida (umumiy hisobda).
     assert [t["question"] for t in rt.store.chat_turns(mid, asker="slack:U1")] == ["Kim?", "Batafsilroq"]
     assert rt.store.meeting_any(mid)["actor_id"] == 1

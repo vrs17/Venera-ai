@@ -167,7 +167,8 @@ def setup(monkeypatch, users_file, *, seconds: float = 64.0) -> list[str]:
 
 def question_of(client: "FakeSlack", file_id: str) -> dict[str, Any]:
     """Shu audioga Barno'ning til savoli («Audio qaysi tilda?», `render.lang_question`)."""
-    return next(m for m in reversed(client.posted) if render.lang_marked(m) == file_id)
+    return next(m for m in reversed(client.posted)
+                if any(b.get("block_id") == f"barno-langs:{file_id}" for b in m.get("blocks") or []))
 
 
 def choose_language(client: "FakeSlack", question: dict[str, Any], lang: str, rt, *, user: str = "U1",

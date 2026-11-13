@@ -17,14 +17,14 @@ XABARLAR - chatning o'zida (audio thread ichida yuborilgan bo'lsa - o'sha thread
      hujjat 1-3 daqiqada yoziladi, odam format savoli o'rnida "⏳" xabarini ko'radi.
 BAYONNOMA CHATDA (ega so'rovi 2026-11-12): bitta yozuv - bitta suhbat, ko'rsatma ham, o'zgartirish ham shu suhbatda.
   * yozishdan OLDIN - til menyusi xabarining thread'idagi har javob ko'rsatma (`minutes` tegi, `intent` note: chat
-    modelisiz, bepul); chatning o'zida yoki boshqa thread'da yozilganini chat modeli o'zi ajratadi. Til tugmasi
+    modelisiz, bepul); yozuvning boshqa thread'ida yozilganini chat modeli o'zi ajratadi. Til tugmasi
     ko'rsatmalarni qo'llaydi (`minutes.generate`), tayyor hujjatdan keyingi yangi ko'rsatmalar - uning tahriri;
   * yozilgandan KEYIN - natija xabari tahrir eslatmasi va `doc:<til>` belgisi bilan (`render.minutes_hint`): uning
-    yoki Word / PDF faylining (`_doc_of_files`) thread'idagi yoki chatning o'zidagi keyingi matn shu yozuvga va shu
-    til hujjatiga (`minutes_lang`). Chat modeli "o'zgartir" deb tushunsa (yozuv chatida agent bo'g'ini yo'q - amalni
-    Claude tanlaydi, `service._model_answer`) - server yangi versiyani yozadi, Barno uni kutib (`_follow_minutes`)
-    yangi faylni (natija belgisidagi formatda: `doc:<til>:<format>`; eski belgida - Word) va nima o'zgarganini
-    yuboradi.
+    yoki Word / PDF faylining (`_doc_of_files`) thread'idagi keyingi matn shu yozuvga va shu til hujjatiga
+    (`minutes_lang`; chatning o'zi 2026-11-13 dan - HR/CRM yordamchisi). Chat modeli "o'zgartir" deb tushunsa (yozuv
+    chatida agent bo'g'ini yo'q - amalni Claude tanlaydi, `service._model_answer`) - server yangi versiyani yozadi,
+    Barno uni kutib (`_follow_minutes`) yangi faylni (natija belgisidagi formatda: `doc:<til>:<format>`; eski belgida
+    - Word) va nima o'zgarganini yuboradi.
 TRANSKRIPT CHATGA YOZILMAYDI (ega talabi 2026-11-11): uzun matn chatni tushunarsiz qilardi. U
 «📥 Yuklab olish -> Transkript (TXT)» da - .txt fayl kartaning THREAD'iga keladi (asosiy chat toza
 qoladi), Slack'da shu yerdan yuklab olinadi. Istisno - xulosa yozilmagan juda qisqa yozuv: bir-ikki
@@ -36,15 +36,11 @@ xabari ostidagi savol - fayl kaliti orqali (`transcribe.meeting_of_file`).
 YOZUV CHATI (ega talabi 2026-11-11): `service.chat_send`, kanal `slack`. Barno shu yozuvning transkripti,
 xulosasi va shu suhbatdagi oldingi savol-javoblar bilan javob beradi ("batafsilroq", "u kim edi?" kabi davom
 savollari ishlaydi), boshqa yozuvlar aralashmaydi. Javob ostidagi «🔄 Yangi suhbat» xotirani tozalaydi
-(`service.chat_reset`, yumshoq - savol-javoblar bazada qoladi). Savol qayerda yoziladi:
-  * chatning o'zida (thread'dan tashqarida; ega tasdig'i 2026-11-11, "variant A") - chatdagi OXIRGI yozuv
-    bo'yicha (`on_text`, `latest`): javob ham chatning o'zida, boshida «📼 «nom» bo'yicha:», ostidagi tugma
-    yig'ilish belgisini olib yuradi - keyingi savol ham shu yozuvga. Yangi audio yuborilsa savollar unga o'tadi
-    (tili tanlanmaguncha - `render.CHAT_CHOOSE_LANG`, u o'girilguncha - `render.CHAT_PENDING`; o'girib bo'lmasa yoki o'chirilsa - yana oldingi yozuvga, xato
-    xabari audioni `render.fail_mark` bilan belgilaydi); chatda yaroqli yozuv bo'lmasa - «🎙 Plaud» yo'riqnomasi
-    (`home.on_text`), chat tarixini o'qib bo'lmasa - `render.CHAT_UNREAD`;
-  * yozuv xabarining (karta, javob, odamning audio xabari) thread'ida - HAR QANDAY, eski yozuv bo'yicha ham
-    (`question`).
+(`service.chat_reset`, yumshoq - savol-javoblar bazada qoladi). Savol FAQAT yozuv xabarining (karta, javob,
+bayonnoma natijasi yoki fayli, odamning audio xabari) thread'ida - HAR QANDAY, eski yozuv bo'yicha ham (`question`).
+Chatning o'zidagi (thread'dan tashqaridagi) matn - HR/CRM yordamchisiga (`assistant.py`; ega qarori 2026-11-13,
+"thread qoidasi" - 2026-11-11 dagi "chatdagi savol oxirgi yozuvga" o'rniga); yordamchi javobining thread'i ham
+unga (`question` -> `assistant.on_thread`).
 SUHBAT YOZUVNIKI VA ODAMNIKI (thread'niki emas). 2026-11-12 dan har kim O'Z hisobida (`transcribe.account`,
 «Connect Barno AI account» - `link.py`): yozuv uniki, Slack'dagi savollari ilovadagi suhbati bilan BITTA
 (`asker` yo'q - egasining suhbati). Ulanmagan odamga ish bajarilmaydi - ulash xabari (`_gate`). ESKI yozuvlar
@@ -69,7 +65,7 @@ import re
 import threading
 import time
 
-from typing import Any, NamedTuple
+from typing import Any
 
 from ..schemas import meetings as schemas
 from ..schemas.auth import AuthUser
@@ -78,23 +74,11 @@ from ..services.meetings import intake, minutes, service
 from ..services.meetings.errors import MeetingProblem
 from ..services.meetings.intake import (  # noqa: F401 - umumiy qadamlar (`intake.py`)
     SUMMARY_WAIT_SEC, Sleep, filename, summary_error, wait_summary, wait_summary_card)
-from . import home, link, render, transcribe
+from . import assistant, link, render, transcribe
 
 log = logging.getLogger(__name__)
 #: Chat xabari chegarasi (`ChatRequest.message`, `prompts.CHAT_QUESTION_CHARS`).
 QUESTION_CHARS = 1000
-#: Thread'dan tashqaridagi savol: oxirgi yozuv chatning shuncha eng yangi xabari ichidan qidiriladi (`latest`).
-HISTORY = 50
-#: `latest`: chat tarixini o'qib bo'lmadi (Slack xatosi yoki `ok: false`) - `render.CHAT_UNREAD`, yo'riqnoma emas.
-UNREAD = "unread"
-#: `latest`: chatdagi oxirgi audio hali matnga o'girilmoqda - `render.CHAT_PENDING`.
-PENDING = "pending"
-#: `latest`: chatdagi oxirgi audioning tili hali tanlanmagan - `render.CHAT_CHOOSE_LANG`.
-CHOOSE = "choose"
-#: Yig'ilishi hali yo'q (yoki yuklanishi yarim qolgan) audio shuncha vaqtgacha "yo'lda" (Slack'dan yuklab olinmoqda);
-#: undan eskisi - o'girib bo'lmagan (xato xabari o'chirilgan yoki server restartida yozilmay qolgan): "⏳ ...
-#: tayyorlanmoqda" abadiy osilib qolmasin - savol oldingi yozuvga (`latest`).
-AUDIO_PENDING_SEC = 15 * 60
 #: Xulosa yozilmagan (juda qisqa) yozuvning matni shundan qisqa bo'lsa - kartaning o'zida ko'rsatiladi.
 SHORT_TRANSCRIPT_CHARS = 300
 #: Bayonnoma FAYLI (Word / PDF) xabarining thread'i (`_doc_of_files`): uning natija xabari fayldan oldingi shuncha xabar
@@ -192,7 +176,8 @@ def status(client: Any, channel: str, thread: str | None, file: dict[str, Any], 
 
 
 def is_question(event: dict[str, Any]) -> bool:
-    """Shaxsiy chatdagi thread javobi - odam yozgan matn. Thread'siz matn - `on_text` (dispetcherda `home.is_text`)."""
+    """Shaxsiy chatdagi thread javobi - odam yozgan matn. Thread'siz matn - HR/CRM yordamchisiga
+    (`assistant.on_text`, dispetcherda `home.is_text`)."""
     if event.get("channel_type") != "im" or event.get("bot_id") or event.get("subtype"):
         return False
     thread = event.get("thread_ts")
@@ -216,16 +201,16 @@ def handle(client: Any, channel: str, thread: str | None, files: list[dict[str, 
             meeting_id = transcribe.ingest(client, user, file, language=language)
             text = transcribe.wait_transcript(user, meeting_id, sleep=sleep, progress=progress.view)
         except transcribe.Problem as exc:
-            fail(client, channel, thread, str(exc), retry if exc.retry else None, file_id=file["id"],
+            fail(client, channel, thread, str(exc), retry if exc.retry else None,
                  progress=progress)
             continue
         except MeetingProblem as exc:
             fail(client, channel, thread, str(exc.detail), None if exc.status_code in _FINAL else retry,
-                 file_id=file["id"], progress=progress)
+                 progress=progress)
             continue
         except Exception:  # noqa: BLE001 - odam javobsiz qolmasin
             log.exception("Slack audio (%s): kutilmagan xato", file.get("id"))
-            fail(client, channel, thread, "ichki xato.", retry, file_id=file["id"], progress=progress)
+            fail(client, channel, thread, "ichki xato.", retry, progress=progress)
             continue
         deliver(client, channel, thread, user, meeting_id, text, sleep=sleep, progress=progress)
 
@@ -280,21 +265,18 @@ def brief(user: AuthUser, meeting_id: str, *, summary_id: str | None = None, par
 
 
 def fail(client: Any, channel: str, thread: str | None, reason: str, retry: str | None = None, *,
-         file_id: str | None = None, progress: intake.Progress | None = None) -> None:
-    """Sabab - YANGI xabarda (odamga bildirishnoma boradi), jarayon xabari o'chiriladi. `file_id` - xabar qaysi
-    audio haqida (`render.fail_mark`): chatdagi savol (`latest`) o'sha audioni "tayyorlanmoqda" deb kutib qolmaydi."""
+         progress: intake.Progress | None = None) -> None:
+    """Sabab - YANGI xabarda (odamga bildirishnoma boradi), jarayon xabari o'chiriladi."""
     if progress is not None:
         progress.close()
     text = render.escape(f"Matnga o'girib bo'lmadi: {reason}")
     blocks = render.sections(text)
-    if file_id and blocks:
-        blocks[0]["block_id"] = render.fail_mark(file_id)
     if retry:
         blocks.append(render.retry_button(retry))
     post(client, channel, thread, text, blocks)
 
 
-# --- yozuv chati: thread'dagi va chatdagi savol ----------------------------------------------------
+# --- yozuv chati: thread'dagi savol -----------------------------------------------------------------
 
 
 def asker(slack_user: Any) -> str:
@@ -308,8 +290,14 @@ def question(client: Any, event: dict[str, Any], *, bot_user: str | None = None,
     """Thread'dagi savol -> o'sha thread boshidagi xabarning yozuvi (`thread_target`) bo'yicha chat (`chat`): eski
     yozuv haqida ham shunday so'raladi. Thread boshi bayonnoma til menyusi (`minutes` tegi) - xabar hujjat uchun
     KO'RSATMA (`intent` note, chat modelisiz); bayonnoma natijasi (`doc:<til>`) - o'sha til hujjati bo'yicha
-    (`minutes_lang`: o'zgartirish so'rovi shu hujjatning tahriri bo'ladi). Yozuvga bog'liq bo'lmagan thread - jim."""
+    (`minutes_lang`: o'zgartirish so'rovi shu hujjatning tahriri bo'ladi). Thread boshi HR/CRM yordamchisi javobi
+    (`assistant.owns`) - o'sha suhbatga (`assistant.on_thread`). Boshqa thread - jim."""
     channel, thread = event["channel"], event["thread_ts"]
+    parent = _parent(client, channel, thread)
+    chat_id = assistant.owns(parent, bot_user=bot_user)
+    if chat_id:
+        assistant.on_thread(client, event, chat_id)
+        return
     team, person = link.team_of(event), event.get("user")
     try:
         user = transcribe.account(team, person)
@@ -319,7 +307,7 @@ def question(client: Any, event: dict[str, Any], *, bot_user: str | None = None,
     except transcribe.Problem as exc:
         post(client, channel, thread, render.escape(f"Javob berib bo'lmadi: {exc}"))
         return
-    target = thread_target(client, channel, thread, user, bot_user=bot_user)
+    target = thread_target(client, channel, thread, user, bot_user=bot_user, parent=parent)
     if target is None:
         return
     meeting_id, tag = target
@@ -333,137 +321,6 @@ def question(client: Any, event: dict[str, Any], *, bot_user: str | None = None,
          minutes_fmt=render.doc_format(tag), client_id=_client_id(event), sleep=sleep)
 
 
-def on_text(client: Any, event: dict[str, Any], *, bot_user: str | None = None, sleep: Sleep = time.sleep) -> None:
-    """Thread'dan tashqaridagi matn (dispetcher: `home.is_text`) -> chatdagi OXIRGI yozuv (`latest`) bo'yicha chat,
-    javob ham chatning o'zida, boshida qaysi yozuv (`render.chat_title`). Oxirgisi bayonnoma natijasi bo'lsa - o'sha til
-    hujjati bo'yicha (`Recording.lang` -> `minutes_lang`). Oxirgi audioning tili tanlanmagan -
-    `render.CHAT_CHOOSE_LANG`, u hali matnga o'girilmoqda - `render.CHAT_PENDING`; chatda yaroqli yozuv yo'q - avvalgidek «🎙 Plaud» yo'riqnomasi (`home.on_text`, chatga
-    `TEXT_EVERY` da bir marta, hisob ham kerak emas); chat tarixini o'qib bo'lmadi - `render.CHAT_UNREAD`, har
-    savolga (yo'riqnoma emas: yozuv bordir, faqat Slack javob bermadi)."""
-    channel = event.get("channel")
-    if not channel:
-        return
-    team = link.team_of(event)
-    # Avval hisob: ulanmagan odamga yo'riqnoma ham, javob ham emas - ulash xabari.
-    if not _gate(client, team, event.get("user"), channel):
-        return
-    try:
-        found = latest(client, channel, event.get("user"), bot_user=bot_user, team=team)
-    except link.NotLinked as exc:
-        link.offer(client, team, event.get("user"), channel, state=exc.state)
-        return
-    except transcribe.Problem as exc:
-        post(client, channel, None, render.escape(f"Javob berib bo'lmadi: {exc}"))
-        return
-    except MeetingProblem as exc:
-        post(client, channel, None, render.escape(f"Javob berib bo'lmadi: {exc.detail}"))
-        return
-    except Exception:  # noqa: BLE001 - navbatdagi vazifa: xato hech qayerda ko'rinmas, odam javobsiz qolardi
-        log.exception("Slack chatdagi savoli (%s): kutilmagan xato", channel)
-        post(client, channel, None, "Javob berib bo'lmadi: ichki xato.")
-        return
-    if found is None:
-        home.on_text(client, event)
-    elif found == UNREAD:
-        post(client, channel, None, render.CHAT_UNREAD)
-    elif found == PENDING:
-        post(client, channel, None, render.CHAT_PENDING)
-    elif found == CHOOSE:
-        post(client, channel, None, render.CHAT_CHOOSE_LANG)
-    else:
-        chat(client, channel, None, found.user, found.meeting_id, _text(event),
-             who=None if found.own and link.required() else asker(event.get("user")),
-             view=found.view, titled=True, minutes_lang=found.lang, minutes_fmt=found.fmt,
-             client_id=_client_id(event), sleep=sleep)
-
-
-class Recording(NamedTuple):
-    """`latest` topgan yozuv (matni tayyor): yozuv EGASI (`user` - odamning o'zi yoki, eski yozuvda, umumiy
-    hisob), yig'ilish va uning ko'rinishi (`service.detail`). `own` - yozuv so'ragan odamning o'ziniki. `lang` va
-    `fmt` - topilgan xabar bayonnoma natijasi bo'lsa (`doc:<til>[:<format>]` belgisi) - o'sha hujjat tili va fayl
-    formati, aks holda `None`."""
-
-    user: AuthUser
-    meeting_id: str
-    view: dict[str, Any]
-    own: bool = True
-    lang: str | None = None
-    fmt: str | None = None
-
-
-def latest(client: Any, channel: str, person: str | None, *,
-           bot_user: str | None = None, team: str | None = None) -> Recording | str | None:
-    """Chatdagi OXIRGI yozuv. Chat tarixining `HISTORY` ta eng yangi xabari yangisidan boshlab ko'riladi, nomzodlar:
-      * Barno'ning xulosa kartasi, chat javobi yoki bayonnoma natijasi (`render.LATEST_TAGS`; belgiga faqat O'ZIMIZ
-        yozganida ishonamiz, `thread_target` dagidek). Bayonnoma natijasi - yozuv va hujjat tili (`Recording.lang`):
-        keyingi "3-bandni o'zgartir" o'sha hujjatning tahriri. Bayonnoma til menyusi nomzod emas - eski kartada
-        bosilgan tugma savollarni eski yozuvga burib yubormasin;
-      * odamning (`person`) o'zi yuborgan audio - yig'ilishi fayl kalitidan; bir xabarda bir nechta bo'lsa
-        oxirgisidan boshlab (ular ketma-ket o'giriladi).
-    Nomzodning yig'ilishi: matni tayyor - `Recording`; hali o'girilmoqda (qayta o'girish ham) - `PENDING`; o'girib
-    bo'lmagan yoki o'chirilgan - o'tkaziladi, oldingi yozuv qidiriladi. Yig'ilishi yo'q audio: tili hali tanlanmagan
-    (tarixda undan yangiroq javobsiz til savoli, `render.lang_marked`) - `CHOOSE`; aks holda faqat chindan yo'lda
-    bo'lsa `PENDING`: tarixda undan yangiroq o'z xato xabari bo'lsa
-    (`render.fail_mark`) yoki `AUDIO_PENDING_SEC` dan eski bo'lsa - o'girib bo'lmagan, o'tkaziladi.
-    Yaroqli yozuv yo'q - `None` (yo'riqnoma), tarixni o'qib bo'lmadi - `UNREAD`. Slack hisobi birinchi nomzodda
-    olinadi (chatda yozuv bo'lmasa kerak ham emas): `transcribe.Problem` - chaqiruvchiga."""
-    messages = _history(client, channel)
-    if messages is None:
-        return UNREAD
-    now, failed, asking, lookup = time.time(), set(), set(), _Lookup(team, person)
-    for message in messages:
-        if message.get("bot_id"):
-            if bot_user and message.get("user") != bot_user:
-                continue                                    # begona bot - belgisiga ishonilmaydi
-            failure = render.fail_marked(message)
-            if failure:
-                failed.add(failure)
-                continue
-            question_of = render.lang_marked(message)
-            if question_of:
-                asking.add(question_of)                     # til so'ralgan, hali tanlanmagan
-                continue
-            target = render.marked_tag(message, tags=render.LATEST_TAGS)
-            found = lookup.verdict(target[0], lookup.view(target[0])) if target else None
-            if isinstance(found, Recording):
-                return found._replace(lang=render.doc_lang(target[1]), fmt=render.doc_format(target[1]))
-            if found is not None:
-                return found
-        elif person and message.get("user") == person:
-            fresh = now - _sent_at(message) < AUDIO_PENDING_SEC
-            for file in reversed([f for f in message.get("files") or [] if transcribe.is_audio(f) and f.get("id")]):
-                file_id = str(file["id"])
-                meeting_id = lookup.meeting_of_file(file_id)
-                view = lookup.view(meeting_id)
-                if view is None or view["status"] == "uploading":
-                    # Yig'ilish hali yo'q (Slack'dan yuklanmoqda) yoki yuklash yarim qolgan. Yo'ldami yoki o'girib
-                    # bo'lmaganmi - yig'ilishdan bilinmaydi (limit tugasa u o'chiriladi, format yaroqsiz bo'lsa
-                    # yaratilmaydi, server restartida yuklash to'xtaydi): xato belgisi va audio yoshidan.
-                    if view is None and file_id in asking:
-                        return CHOOSE
-                    if fresh and file_id not in failed:
-                        return PENDING
-                    continue
-                found = lookup.verdict(meeting_id, view)
-                if found is not None:
-                    return found
-    return None
-
-
-def _history(client: Any, channel: str) -> list[dict[str, Any]] | None:
-    """Chatning `HISTORY` ta eng yangi xabari (yangisi birinchi); o'qib bo'lmasa (Slack xatosi, `ok: false`) -
-    `None`."""
-    try:
-        found = client.conversations_history(channel=channel, limit=HISTORY)
-    except Exception as exc:  # noqa: BLE001 - SlackApiError, tarmoq
-        log.warning("Slack chat tarixi o'qilmadi (%s): %s", channel, exc)
-        return None
-    if not found.get("ok", True):
-        log.warning("Slack chat tarixi o'qilmadi (%s): %s", channel, found.get("error"))
-        return None
-    return list(found.get("messages") or [])
-
-
 def _sent_at(message: dict[str, Any]) -> float:
     """Slack xabarining vaqti (`ts` - epoch soniya); noma'lum bo'lsa 0, ya'ni "eski"."""
     try:
@@ -472,81 +329,12 @@ def _sent_at(message: dict[str, Any]) -> float:
         return 0.0
 
 
-class _Lookup:
-    """`latest` nomzodlarining yig'ilishi. Hisob birinchi kerak bo'lganda olinadi: chatda yozuv bo'lmasa
-    hisob ham kerak emas (yo'riqnoma hisobsiz chiqadi). Yozuv avval odamning O'Z hisobidan qidiriladi, topilmasa
-    - umumiy hisobdan (ulashdan oldin kelgan ESKI yozuvlar; `transcribe.legacy_account`)."""
-
-    def __init__(self, team: str | None = None, person: str | None = None) -> None:
-        self._team, self._person = team, person
-        self._user: AuthUser | None = None
-        self._legacy: AuthUser | None = None
-        self._legacy_seen = False
-        #: yig'ilish -> uni topgan hisob (egasi).
-        self._holders: dict[str, AuthUser] = {}
-
-    @property
-    def user(self) -> AuthUser:
-        if self._user is None:
-            self._user = transcribe.account(self._team, self._person)
-        return self._user
-
-    @property
-    def legacy(self) -> AuthUser | None:
-        """Umumiy hisob - faqat shaxsiy hisob majburiy bo'lganda va u odamning o'zi bo'lmasa."""
-        if not self._legacy_seen:
-            self._legacy_seen = True
-            if link.required():
-                shared = transcribe.legacy_account()
-                self._legacy = shared if shared is not None and shared.actorId != self.user.actorId else None
-        return self._legacy
-
-    def _holders_in_order(self) -> list[AuthUser]:
-        return [self.user] + ([self.legacy] if self.legacy is not None else [])
-
-    def meeting_of_file(self, file_id: str) -> str | None:
-        """Odamning audio xabari -> yig'ilish (fayl kaliti hisob bo'yicha): o'ziniki, bo'lmasa eski umumiy."""
-        for holder in self._holders_in_order():
-            meeting_id = transcribe.meeting_of_file(holder, file_id)
-            if meeting_id:
-                self._holders[meeting_id] = holder
-                return meeting_id
-        return None
-
-    def view(self, meeting_id: str | None) -> dict[str, Any] | None:
-        """Yig'ilish ko'rinishi; yo'q yoki o'chirilgan (404) - `None`."""
-        if not meeting_id:
-            return None
-        known = self._holders.get(meeting_id)
-        for holder in ([known] if known is not None else self._holders_in_order()):
-            try:
-                found = service.detail(holder, meeting_id)
-            except MeetingProblem as exc:
-                if exc.status_code == 404:
-                    continue
-                raise
-            self._holders[meeting_id] = holder
-            return found
-        return None
-
-    def verdict(self, meeting_id: str, view: dict[str, Any] | None) -> Recording | str | None:
-        """Matni tayyor - `Recording`; hali o'girilmoqda - `PENDING`; o'girib bo'lmagan yoki o'chirilgan - `None`
-        (oldingi yozuv qidiriladi)."""
-        if view is None or view["status"] == "failed":
-            return None
-        if view["transcript"]["available"]:
-            holder = self._holders.get(meeting_id, self.user)
-            return Recording(holder, meeting_id, view, own=holder.actorId == self.user.actorId)
-        return PENDING
-
-
 def chat(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str, text: str, *,
-         who: str | None, view: dict[str, Any] | None = None, titled: bool = False, intent: str | None = None,
-         minutes_lang: str | None = None, minutes_fmt: str | None = None, client_id: str | None = None,
-         sleep: Sleep = time.sleep) -> None:
+         who: str | None, intent: str | None = None, minutes_lang: str | None = None, minutes_fmt: str | None = None,
+         client_id: str | None = None, sleep: Sleep = time.sleep) -> None:
     """Yozuv chatiga savol (`service.chat_send`, kanal `slack`, so'rovchi `who` - `asker`): "⏳" xabari, so'ng uning
-    o'rnida javob (manbalar bilan; `titled` - birinchi qatorda qaysi yozuv) va «🔄 Yangi suhbat»
-    (`render.chat_actions`). Xatoda (chegara, model, yozuv topilmadi) - faqat sabab, tugmasiz.
+    o'rnida javob (manbalar bilan) va «🔄 Yangi suhbat» (`render.chat_actions`). Xatoda (chegara, model, yozuv
+    topilmadi) - faqat sabab, tugmasiz.
 
     BAYONNOMA: `intent` - aniq kirish nuqtasi (menyu thread'i - `note`), `minutes_lang` - odam qaysi til hujjatiga
     javob yozyapti (natija belgisi), `minutes_fmt` - o'sha hujjat qaysi formatda yuborilgan (yangi versiya fayli ham
@@ -557,14 +345,12 @@ def chat(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_
     ts = post(client, channel, thread, "⏳ Javob tayyorlanmoqda…")
     blocks, ref = None, None
     try:
-        view = view or service.detail(user, meeting_id)
+        view = service.detail(user, meeting_id)
         found = service.chat_send(user, meeting_id, text, None, channel="slack", asker=who, client_id=client_id,
                                   intent=intent, minutes_lang=minutes_lang)
         ref = found.get("minutes")
         body = render.answer(found, render.speakers(view["speakers"]), view["language"])
         body += render.minutes_turn_note(ref)
-        if titled:
-            body = f"{render.chat_title(view['title'])}\n{body}"
         blocks = render.sections(body) + [render.chat_actions(meeting_id)]
     except MeetingProblem as exc:
         body = render.escape(f"Javob berib bo'lmadi: {exc.detail}")
@@ -601,19 +387,29 @@ def _client_id(event: dict[str, Any]) -> str | None:
     return f"slack-{raw}" if raw else None
 
 
-def thread_target(client: Any, channel: str, thread: str, user: AuthUser, *,
-                  bot_user: str | None = None) -> tuple[str, str | None] | None:
-    """Thread boshidagi xabar -> (yig'ilish, teg). Barno'ning xabari - belgisi (`render.marked_tag`): xulosa kartasi
-    (""), chat javobi (`chat`), bayonnoma til menyusi (`minutes`), bayonnoma natijasi (`doc:<til>`); belgisiz
-    bayonnoma FAYLI (Word / PDF) - o'z natija xabarining belgisi (`_doc_of_files`). Odamning audio xabari - fayl
-    kaliti, teg `None`. Yozuvga bog'liq bo'lmagan thread - `None`."""
+def _parent(client: Any, channel: str, thread: str) -> dict[str, Any] | None:
+    """Thread boshidagi xabar (`conversations.replies`, bitta xabar); o'qib bo'lmasa yoki yo'q bo'lsa - `None`."""
     try:
         found = client.conversations_replies(channel=channel, ts=thread, limit=1, inclusive=True)
     except Exception as exc:  # noqa: BLE001 - SlackApiError, tarmoq
         log.warning("Slack thread'i o'qilmadi (%s): %s", channel, exc)
         return None
     messages = found.get("messages") or []
-    parent = messages[0] if messages else None
+    return messages[0] if messages else None
+
+
+_UNREAD = object()
+
+
+def thread_target(client: Any, channel: str, thread: str, user: AuthUser, *, bot_user: str | None = None,
+                  parent: Any = _UNREAD) -> tuple[str, str | None] | None:
+    """Thread boshidagi xabar -> (yig'ilish, teg). Barno'ning xabari - belgisi (`render.marked_tag`): xulosa kartasi
+    (""), chat javobi (`chat`), bayonnoma til menyusi (`minutes`), bayonnoma natijasi (`doc:<til>`); belgisiz
+    bayonnoma FAYLI (Word / PDF) - o'z natija xabarining belgisi (`_doc_of_files`). Odamning audio xabari - fayl
+    kaliti, teg `None`. Yozuvga bog'liq bo'lmagan thread - `None`. `parent` - chaqiruvchi o'qigan thread boshi
+    (`question`, ikkinchi so'rov bo'lmasin)."""
+    if parent is _UNREAD:
+        parent = _parent(client, channel, thread)
     if not parent:
         return None
     if parent.get("bot_id") or (bot_user and parent.get("user") == bot_user):
@@ -928,8 +724,8 @@ def _deliver_minutes(client: Any, channel: str, thread: str | None, user: AuthUs
                      view: dict[str, Any], code: str, ts: str | None, fmt: str = "docx") -> None:
     """Tayyor hujjat: odam tanlagan formatdagi BITTA fayl (`fmt`: Word yoki PDF) shu joyga, so'ng "⏳" xabari (`ts`;
     yo'q bo'lsa - yangi xabar) o'rnida natija (`render.minutes_result`) va tahrir eslatmasi (`render.minutes_hint`,
-    `doc:<til>:<format>` belgisi: shu xabar yoki fayl thread'idagi va chatdagi keyingi matn shu hujjat bo'yicha, tahrir
-    fayli ham shu formatda). Format tugmasi (`minutes_doc`) va chatdan boshlangan ish (`_follow_minutes`) uchun umumiy.
+    `doc:<til>:<format>` belgisi: shu xabar yoki fayl thread'idagi keyingi matn shu hujjat bo'yicha, tahrir fayli ham
+    shu formatda). Format tugmasi (`minutes_doc`) va chatdan boshlangan ish (`_follow_minutes`) uchun umumiy.
 
     NEGA BITTA FAYL (ega qarori 2026-11-13). Ilgari Word ham, PDF ham chizilib yuborilardi - odamga odatda bittasi
     kerak, PDF chizish esa og'ir (render navbati). Fayl chizilmasa yoki yuborilmasa natija baribir yetib boradi, sabab
@@ -996,8 +792,8 @@ def _follow_minutes(client: Any, channel: str, thread: str | None, user: AuthUse
 def _minutes_notice(client: Any, channel: str, ts: str | None, thread: str | None, text: str, meeting_id: str,
                     code: str, fmt: str | None = None) -> None:
     """Bayonnoma xato / "hali tayyorlanmoqda" xabari "⏳" o'rnida - yig'ilish belgisi (`doc:<til>[:<format>]`) bilan:
-    shu xabar thread'idagi javob ham, chatdagi keyingi matn ham ("qayta urin", "3-bandni ...") shu yozuv va shu
-    hujjatga boradi, fayli o'sha formatda. Belgisiz xabarning thread'i "jim" edi (`thread_target`)."""
+    shu xabar thread'idagi javob ("qayta urin", "3-bandni ...") shu yozuv va shu hujjatga boradi, fayli o'sha
+    formatda. Belgisiz xabarning thread'i "jim" edi (`thread_target`)."""
     blocks = render.sections(text)
     if blocks and minutes.normalize(code):
         blocks[0] = {**blocks[0], "block_id": render.mark(meeting_id, render.doc_tag(code, fmt))}

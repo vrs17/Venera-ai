@@ -95,7 +95,7 @@ CHANNEL_PREFIX = "channel:"
 #: Admin panelda "hozir nima ishlaydi" ko'rsatiladigan kanallar. `desktop` va
 #: `api` siyosatda bor (kalit saqlasa bo'ladi), lekin bugun ulardan savol
 #: deyarli kelmaydi - kartochkada joy olmasin.
-SHOWN_CHANNELS: tuple[str, ...] = ("web", "miniapp", "bot")
+SHOWN_CHANNELS: tuple[str, ...] = ("web", "miniapp", "bot", "slack")
 
 #: Qoida keshining umri (soniya).
 CACHE_TTL = 5.0

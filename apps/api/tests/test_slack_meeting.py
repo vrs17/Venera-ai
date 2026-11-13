@@ -17,10 +17,9 @@ from app.core.config import settings
 from app.schemas import meetings as schemas
 from app.services.meetings import llm, prompts, service
 from app.services.meetings.chat import CANNED
-from app.slack import home, meeting, render, transcribe
-from slack_fakes import (AUDIO, BOT_USER, FakeSlack, as_parent, card, choose_language, drive, elements, question_of,
-                         send_audio, setup, shown)
-from meetings_fakes import CHAT_ACTION_ANSWER, FakeAnthropic, chat_reply, gapi_segments, run_all
+from app.slack import home, meeting, render
+from slack_fakes import AUDIO, BOT_USER, FakeSlack, as_parent, card, drive, elements, send_audio, setup, shown
+from meetings_fakes import CHAT_ACTION_ANSWER, FakeAnthropic, chat_reply, gapi_segments
 
 
 @pytest.fixture
@@ -179,11 +178,12 @@ def _thread(delivered):
 
 
 def test_kartadagi_eslatma_chat_haqida(delivered):
-    """Eslatma - chatga yozilgan savol shu (oxirgi) yozuv bo'yicha, oldingilari - o'z xabarining thread'ida."""
+    """Eslatma (ega qarori 2026-11-13, "thread qoidasi"): yozuv haqidagi savol - shu xabarning thread'ida, bayonnoma
+    ko'rsatmasi va o'zgartirishi ham; chatning o'ziga yozilgani - Barno AI yordamchisiga (HR, CRM, hujjatlar)."""
     _, _, summary = delivered
     assert render.CHAT_HINT in shown(summary) and "eslab qoladi" in render.CHAT_HINT
-    assert "shu chatga yozing" in render.CHAT_HINT and "thread'ida so'rang" in render.CHAT_HINT
-    assert "Savol bo'lsa, shu xabarga thread'da yozing." not in shown(summary)
+    assert "shu xabarning thread'iga yozing" in render.CHAT_HINT and "Barno AI yordamchisi" in render.CHAT_HINT
+    assert "shu chatga yozing" not in render.CHAT_HINT
 
 
 def test_savol_chatga_slack_kanali_bilan_yoziladi(delivered, _isolated_meetings):
@@ -267,11 +267,6 @@ def test_uzun_javob_tugmasi_oxirgi_xabarda():
 
 
 # --- umumiy hisob: har Slack odamining suhbati o'ziniki ---------------------------------------------------------
-
-#: Ikkinchi audio fayl - boshqa yig'ilish.
-AUDIO2 = {**AUDIO, "id": "F2", "name": "ikkinchi.m4a",
-          "url_private_download": "https://files.slack.com/files-pri/T1-F2/download/ikkinchi.m4a"}
-
 
 def _send(client, rt, file=AUDIO, *, channel="D1", user="U1"):
     """Odam o'z chatiga audio yuboradi (yoki oldin yuborilgan faylni ulashadi) - Bolt yo'li (`wants` ->
@@ -357,375 +352,22 @@ def test_egasining_ilovadagi_suhbati_slack_odamiga_bormaydi(delivered, claude, _
     assert [t["id"] for t in items] == [own.json()["id"], follow.json()["id"]]
 
 
-# --- 💬 chatning o'zidagi savol - oxirgi yozuv bo'yicha (ega tasdig'i 2026-11-11, "variant A") ------------------
-
-
-def _top(client, text="Hisobotni kim yuboradi?", *, channel="D1", user="U1"):
-    """Chatning o'ziga (thread'siz) yozilgan savol - dispetcher yo'li: `home.is_text` -> navbatda `meeting.on_text`."""
-    event = client.say(channel, text, user=user)
-    assert home.is_text(event) and not meeting.wants(event)
-    meeting.on_text(client, event, bot_user=BOT_USER)
-
-
-def test_chatdagi_savol_oxirgi_yozuv_boyicha_xotira_bilan(users_file, monkeypatch, _isolated_meetings, claude):
-    """Chatning o'ziga yozilgan savol - chatdagi OXIRGI yozuv bo'yicha. Javob ham chatda (thread'siz): boshida qaysi
-    yozuv, ostida yig'ilish belgili «🔄 Yangi suhbat» - karta tarixdan chiqib ketsa ham keyingi savol shu yozuvga,
-    suhbat xotirasi bilan."""
-    setup(monkeypatch, users_file)
-    rt = _isolated_meetings
-    client = FakeSlack(files={"F1": AUDIO})
-    mid = _send(client, rt)
-    _top(client, "Hisobotni kim yuboradi?")
-
-    holder, answer = client.posted[-1], client.updated[-1]
-    assert holder["text"] == "⏳ Javob tayyorlanmoqda…" and "thread_ts" not in holder
-    assert answer["ts"] == holder["ts"] and answer["channel"] == "D1"
-    assert answer["text"].startswith("📼 «Slack: ovoz.aac» bo'yicha:\n")
-    assert shown(answer).startswith("📼 «Slack: ovoz.aac» bo'yicha:\n") and "*Manbalar:*" in shown(answer)
-    assert answer["blocks"][-1] == render.chat_actions(mid)
-    assert client.history_reads[-1] == {"channel": "D1", "limit": 50}
-    [turn] = rt.store.chat_turns(mid, asker="slack:U1")
-    assert (turn["question"], turn["channel"]) == ("Hisobotni kim yuboradi?", "slack")
-
-    # Tarixda faqat oxirgi 3 xabar (savol, javob, oldingi savol) - kartaga yetmaydi, yozuvni javobdagi belgi beradi.
-    monkeypatch.setattr(meeting, "HISTORY", 3)
-    _top(client, "Batafsilroq?")
-    one, two = claude.chats()
-    assert [m["role"] for m in one["messages"]] == ["user"]
-    assert [m["role"] for m in two["messages"]] == ["user", "assistant", "user"]
-    assert two["messages"][0]["content"] == prompts.chat_question("Hisobotni kim yuboradi?", "uz")
-    assert client.updated[-1]["text"].startswith("📼 «Slack: ovoz.aac» bo'yicha:\n")
-    assert [t["question"] for t in rt.store.chat_turns(mid, asker="slack:U1")] == [
-        "Hisobotni kim yuboradi?", "Batafsilroq?"]
-    assert rt.store.chat_turns(mid) == []                              # hisob egasining suhbatiga tushmaydi
-
-
-def test_yangi_yozuv_kelsa_savollar_unga_otadi_eskisi_threadda(users_file, monkeypatch, _isolated_meetings, claude):
-    """Yangi audio yuborilsa chatdagi savollar YANGI yozuvga o'tadi (o'z suhbati, xotirasiz); eski yozuv haqida - o'sha
-    yozuv kartasining thread'ida: shu odamning o'sha yozuv bo'yicha suhbati davom etadi."""
-    setup(monkeypatch, users_file)
-    rt = _isolated_meetings
-    client = FakeSlack(files={"F1": AUDIO, "F2": AUDIO2})
-    first = _send(client, rt)
-    old_card = card(client)
-    _top(client, "Birinchi yozuvda kim gapirdi?")
-    second = _send(client, rt, AUDIO2)
-    assert second != first
-    _top(client, "Hisobotni kim yuboradi?")
-
-    answer = client.updated[-1]
-    assert answer["text"].startswith("📼 «Slack: ikkinchi.m4a» bo'yicha:\n") and render.marked(answer) == second
-    assert [m["role"] for m in claude.chats()[-1]["messages"]] == ["user"]
-    assert "Birinchi yozuvda" not in _dump(claude.chats()[-1])
-    assert [t["question"] for t in rt.store.chat_turns(second, asker="slack:U1")] == ["Hisobotni kim yuboradi?"]
-
-    _reply(client, old_card["ts"], "Batafsilroq?")
-    assert client.posted[-1]["thread_ts"] == old_card["ts"]
-    reply = client.updated[-1]
-    assert render.marked(reply) == first and not reply["text"].startswith("📼")
-    assert [m["role"] for m in claude.chats()[-1]["messages"]] == ["user", "assistant", "user"]
-    assert [t["question"] for t in rt.store.chat_turns(first, asker="slack:U1")] == [
-        "Birinchi yozuvda kim gapirdi?", "Batafsilroq?"]
-    # Thread'dagi javob chat tarixida yo'q - chatdagi keyingi savol baribir oxirgi yozuvga.
-    _top(client, "Muddat qachon?")
-    assert render.marked(client.updated[-1]) == second
-
-
-def test_eski_kartadagi_bayonnoma_chatdagi_savolni_burmaydi(users_file, monkeypatch, _isolated_meetings, claude):
-    """Eski yozuv kartasidagi «📄 Bayonnoma»: til menyusi chatga (thread'siz) tushadi va yig'ilish belgisini olib yuradi
-    (`minutes` tegi), lekin u "oxirgi yozuv" emas (`render.LATEST_TAGS` - xulosa kartasi, chat javobi va tayyor
-    bayonnoma natijasi; menyuning o'zi emas): chatdagi savol baribir eng yangi yozuv bo'yicha."""
-    setup(monkeypatch, users_file)
-    rt = _isolated_meetings
-    client = FakeSlack(files={"F1": AUDIO, "F2": AUDIO2})
-    first = _send(client, rt)
-    old_card = card(client)
-    second = _send(client, rt, AUDIO2)
-    _press(client, rt, {"action_id": "barno_minutes", "value": first}, {"ts": old_card["ts"]})
-    menu = client.posted[-1]
-    assert menu["text"] == render.MINUTES_PROMPT and "thread_ts" not in menu and render.marked(menu) == first
-    assert render.marked(menu, tags=render.LATEST_TAGS) is None
-
-    _top(client, "Asosiy qarorlar nima edi?")
-    answer = client.updated[-1]
-    assert answer["text"].startswith("📼 «Slack: ikkinchi.m4a» bo'yicha:\n") and render.marked(answer) == second
-    assert [t["question"] for t in rt.store.chat_turns(second, asker="slack:U1")] == ["Asosiy qarorlar nima edi?"]
-    assert rt.store.chat_turns(first, asker="slack:U1") == []
-
-
-def test_oxirgi_audio_hali_tayyorlanmoqda(users_file, monkeypatch, _isolated_meetings, claude):
-    """Oxirgi audio hali matnga o'girilmoqda - yig'ilishi hali yo'q (Slack'dan yuklanmoqda) yoki bor, lekin matni tayyor
-    emas (qayta o'girish ham): "tayyorlanmoqda" (thread'siz), model chaqirilmaydi, eski yozuvga ham javob berilmaydi.
-    O'girilgach (karta hali chiqmagan bo'lsa ham) - o'sha yozuv bo'yicha javob; o'girib bo'lmagan bo'lsa -
-    "tayyorlanmoqda" emas (abadiy osilib qolardi): savol oldingi yozuvga."""
-    setup(monkeypatch, users_file)
-    rt = _isolated_meetings
-    client = FakeSlack(files={"F1": AUDIO, "F2": AUDIO2})
-    first = _send(client, rt)
-    client.say("D1", files=[AUDIO2])                                   # yangi audio - hali navbatda
-    _top(client)
-    pending = client.posted[-1]
-    assert pending["text"] == render.CHAT_PENDING and "thread_ts" not in pending
-    assert claude.chats() == [] and rt.store.chat_turns(first, asker="slack:U1") == []
-
-    user = transcribe.account()
-    second = transcribe.ingest(client, user, AUDIO2)                   # yuklandi, hali o'girilmagan
-    _top(client)
-    assert client.posted[-1]["text"] == render.CHAT_PENDING and claude.chats() == []
-
-    run_all(rt)                                                        # o'girildi, karta esa hali chatda yo'q
-    _top(client)
-    answer = client.updated[-1]
-    assert answer["text"].startswith("📼 «Slack: ikkinchi.m4a» bo'yicha:\n") and render.marked(answer) == second
-    assert [t["question"] for t in rt.store.chat_turns(second, asker="slack:U1")] == ["Hisobotni kim yuboradi?"]
-
-    # Qayta o'girilmoqda: oxirgi javobning yozuvi bor, matni esa hali yo'q - yana "tayyorlanmoqda".
-    service.retranscribe(user, second, schemas.RetranscribeRequest(language="uz", confirmCharge=True))
-    _top(client)
-    assert client.posted[-1]["text"] == render.CHAT_PENDING and len(claude.chats()) == 1
-
-    rt.store.update_meeting(second, status="failed", error_code="stt_timeout")
-    posted = len(client.posted)
-    _top(client)
-    answer = client.updated[-1]
-    assert answer["text"].startswith("📼 «Slack: ovoz.aac» bo'yicha:\n") and render.marked(answer) == first
-    assert render.CHAT_PENDING not in [m["text"] for m in client.posted[posted:]] and len(claude.chats()) == 2
-
-
-#: Uchinchi audio fayl - "oldingi yozuvi yo'q" chat uchun.
-AUDIO3 = {**AUDIO, "id": "F3", "name": "uchinchi.mp3",
-          "url_private_download": "https://files.slack.com/files-pri/T1-F3/download/uchinchi.mp3"}
-
-
-def _daily_limit(monkeypatch):
-    """Kunlik transkripsiya limiti tugagan (hisob umumiy): yig'ilish yaratiladi, `waiting_quota` da o'chiriladi."""
-    monkeypatch.setattr(settings, "meetings_user_daily_minutes", 0, raising=False)
-
-
-def _not_audio(monkeypatch):
-    """Slack bergan fayl audio emas: yig'ilish umuman yaratilmaydi."""
-    def download(url, dest, limit):
-        dest.write_bytes(b"NOTAUDIO" * 100)
-        return 800, "0" * 64, b"NOTAUDIO"
-
-    monkeypatch.setattr(transcribe, "download", download)
-
-
-@pytest.mark.parametrize(("breaks", "reason"), [(_daily_limit, "limiti tugagan"),
-                                                (_not_audio, "formati qo'llab-quvvatlanmaydi")])
-def test_oxirgi_audio_otmasa_savol_oldingi_yozuvga(users_file, monkeypatch, _isolated_meetings, claude, breaks, reason):
-    """Yangi audioni o'girib bo'lmadi (kunlik limit tugagan yoki format yaroqsiz) - yig'ilishi yo'q: xato xabari faylni
-    belgilaydi (`render.fail_mark`), chatdagi savol esa "tayyorlanmoqda" da abadiy osilib qolmaydi - oldingi yozuv
-    bo'yicha javob, uning suhbati davom etadi. Oldingi yozuv yo'q bo'lsa - «🎙 Plaud» yo'riqnomasi."""
-    setup(monkeypatch, users_file)
-    monkeypatch.setattr(home, "_hint_at", {})
-    rt = _isolated_meetings
-    client = FakeSlack(files={"F1": AUDIO, "F2": AUDIO2, "F3": AUDIO3})
-    first = _send(client, rt)
-    _top(client, "Hisobotni kim yuboradi?")
-
-    breaks(monkeypatch)
-    send_audio(client, client.say("D1", files=[AUDIO2]), rt)
-    failure = client.visible()[-1]
-    assert failure["text"].startswith("Matnga o'girib bo'lmadi: ") and reason in failure["text"]
-    assert render.fail_marked(failure) == "F2" and render.marked(failure) is None
-    assert transcribe.meeting_of_file(transcribe.account(), "F2") is None
-
-    posted = len(client.posted)
-    for text in ("Batafsilroq?", "Muddat qachon?"):
-        _top(client, text)
-        answer = client.updated[-1]
-        assert answer["text"].startswith("📼 «Slack: ovoz.aac» bo'yicha:\n") and render.marked(answer) == first
-    assert render.CHAT_PENDING not in [m["text"] for m in client.posted[posted:]]
-    assert [m["role"] for m in claude.chats()[-1]["messages"]] == ["user", "assistant"] * 2 + ["user"]
-
-    # Boshqa odamning chatida bu birinchi audio edi - oldingi yozuv yo'q: yo'riqnoma (chatga `TEXT_EVERY` da bir marta).
-    send_audio(client, client.say("D2", files=[AUDIO3], user="U2"), rt, user="U2")
-    assert render.fail_marked(client.visible()[-1]) == "F3"
-    posted = len(client.posted)
-    _top(client, "Qarorlar?", channel="D2", user="U2")
-    _top(client, "Javob bormi?", channel="D2", user="U2")
-    assert [m["text"] for m in client.posted[posted:]] == [home.PROMPT] and len(claude.chats()) == 3
-
-
-def test_eski_audio_yigilishsiz_otkaziladi(users_file, monkeypatch, _isolated_meetings, claude):
-    """Yig'ilishi yo'q audio `AUDIO_PENDING_SEC` dan eski (xato xabari o'chirilgan yoki server restartida yozilmay
-    qolgan) - yo'lda emas: savol oldingi yozuvga. Yuklanishi yarim qolgan (`uploading`) yig'ilish ham: eski audioda -
-    o'tkaziladi, yangisida - hali yo'lda, "tayyorlanmoqda"."""
-    setup(monkeypatch, users_file)
-    rt = _isolated_meetings
-    client = FakeSlack(files={"F1": AUDIO, "F2": AUDIO2})
-    old = meeting.AUDIO_PENDING_SEC + 60
-    first = _send(client, rt)
-    client.say("D1", files=[AUDIO2], ago=old)
-    _top(client)
-    answer = client.updated[-1]
-    assert answer["text"].startswith("📼 «Slack: ovoz.aac» bo'yicha:\n") and render.marked(answer) == first
-
-    second = transcribe.ingest(client, transcribe.account(), AUDIO2)
-    rt.store.update_meeting(second, status="uploading")                # yuklash yarim qolgan (server restarti)
-    assert _send(client, rt, channel="D2", user="U2") == first         # oldingi yozuv - o'sha fayl
-    client.say("D2", files=[AUDIO2], user="U2", ago=old)
-    _top(client, channel="D2", user="U2")
-    answer = client.updated[-1]
-    assert answer["channel"] == "D2" and render.marked(answer) == first
-    assert _send(client, rt, channel="D3", user="U3") == first
-    client.say("D3", files=[AUDIO2], user="U3")
-    _top(client, channel="D3", user="U3")
-    assert (client.posted[-1]["channel"], client.posted[-1]["text"]) == ("D3", render.CHAT_PENDING)
-    assert len(claude.chats()) == 2
-
-
-def test_tili_tanlanmagan_audio_chatdagi_savolga_avval_tilni_tanlang(users_file, monkeypatch, _isolated_meetings,
-                                                                    claude):
-    """Yangi audioning tili hali tanlanmagan (til savoli javobsiz): chatdagi savolga «avval tilni tanlang» (thread'siz),
-    model chaqirilmaydi va eski yozuvga ham javob berilmaydi. Til tanlangach - savollar yangi yozuvga."""
-    setup(monkeypatch, users_file)
-    rt = _isolated_meetings
-    client = FakeSlack(files={"F1": AUDIO, "F2": AUDIO2})
-    first = _send(client, rt)
-    meeting.acknowledge(client, client.say("D1", files=[AUDIO2]))
-    _top(client)
-    asked = client.posted[-1]
-    assert asked["text"] == render.CHAT_CHOOSE_LANG and "thread_ts" not in asked
-    assert claude.chats() == [] and rt.store.chat_turns(first, asker="slack:U1") == []
-
-    choose_language(client, question_of(client, "F2"), "uz", rt)
-    second = render.marked(card(client))
-    assert second != first
-    _top(client, "Muddat qachon?")
-    answer = client.updated[-1]
-    assert answer["text"].startswith("📼 «Slack: ikkinchi.m4a» bo'yicha:\n") and render.marked(answer) == second
-
-
-def test_ochirilgan_yozuv_otkaziladi(users_file, monkeypatch, _isolated_meetings, claude):
-    """Oxirgi yozuv o'chirilgan (hisob egasi ilovada o'chirdi): uning kartasi va chat javobi belgisi yo'q yig'ilishni
-    ko'rsatadi - xato emas, o'tkaziladi (eski audiosi ham), savol oldingi yozuv bo'yicha."""
-    setup(monkeypatch, users_file)
-    rt = _isolated_meetings
-    client = FakeSlack(files={"F1": AUDIO, "F2": AUDIO2})
-    first = _send(client, rt)
-    event = client.say("D1", files=[AUDIO2], ago=meeting.AUDIO_PENDING_SEC + 60)
-    send_audio(client, event, rt)
-    second = render.marked(card(client))
-    _top(client, "Hisobotni kim yuboradi?")
-    assert render.marked(client.updated[-1]) == second != first
-
-    service.delete(transcribe.account(), second)
-    _top(client, "Muddat qachon?")
-    answer = client.updated[-1]
-    assert answer["text"].startswith("📼 «Slack: ovoz.aac» bo'yicha:\n") and render.marked(answer) == first
-    assert [t["question"] for t in rt.store.chat_turns(first, asker="slack:U1")] == ["Muddat qachon?"]
-
-
-def test_chatda_yozuv_yoq_yoriqnoma(monkeypatch):
-    """Chatda yozuv yo'q (begona botning belgili xabari hisob emas) - avvalgidek «🎙 Plaud» yo'riqnomasi, chatga
-    `TEXT_EVERY` da bir marta. Tarix o'qilmasa - yo'riqnoma emas, har savolga qisqa sabab. Slack hisobi kerak emas
-    (bu testda sozlanmagan)."""
-    monkeypatch.setattr(home, "_hint_at", {})
-    client = FakeSlack()
-    client.timeline[("D1", "1.1")] = {"type": "message", "bot_id": "B9", "user": "UOTHER", "ts": "1.1", "text": "x",
-                                      "blocks": [render.chat_actions("a" * 32)]}
-    _top(client, "Salom")
-    _top(client, "Yana salom")
-    [hint] = client.posted
-    assert hint["text"] == home.PROMPT and "thread_ts" not in hint and client.updated == []
-    assert len(client.history_reads) == 2
-
-    broken = FakeSlack()
-    broken.history_error = RuntimeError("tarmoq")
-    _top(broken, "Salom", channel="D2")
-    _top(broken, "Yana salom", channel="D2")
-    assert [m["text"] for m in broken.posted] == [render.CHAT_UNREAD] * 2
-
-
-def test_chat_tarixi_oqilmasa_har_savolga_qisqa_sabab(users_file, monkeypatch, _isolated_meetings, claude):
-    """Chat tarixini o'qib bo'lmadi (Slack istisnosi yoki `ok: false`), odamning esa yozuvi bor: «🎙 Plaud» yo'riqnomasi
-    yolg'on bo'lardi (va chatga 10 daqiqada bir marta - ikkinchi savol javobsiz qolardi) - har savolga qisqa sabab
-    (thread'siz), model chaqirilmaydi. Tarix tiklangach - odatdagidek oxirgi yozuv bo'yicha."""
-    setup(monkeypatch, users_file)
-    monkeypatch.setattr(home, "_hint_at", {})
-    rt = _isolated_meetings
-    client = FakeSlack(files={"F1": AUDIO})
-    mid = _send(client, rt)
-    posted, updated = len(client.posted), len(client.updated)
-    client.history_error = RuntimeError("ratelimited")
-    _top(client, "Kim hisobot yuboradi?")
-    _top(client, "Javob bering iltimos")
-    client.history_error = {"ok": False, "error": "ratelimited"}
-    _top(client, "Yana?")
-    sent = client.posted[posted:]
-    assert [m["text"] for m in sent] == [render.CHAT_UNREAD] * 3 and not any("thread_ts" in m for m in sent)
-    assert "thread'ida" in render.CHAT_UNREAD and claude.chats() == [] and len(client.updated) == updated
-
-    client.history_error = None
-    _top(client, "Kim hisobot yuboradi?")
-    assert render.marked(client.updated[-1]) == mid and len(claude.chats()) == 1
-
-
-def test_chatdagi_savol_xatolari_tugmasiz(users_file, monkeypatch, _isolated_meetings):
-    """Xato - thread'dagi savoldagidek: sabab "⏳" o'rnida, tugmasiz (javob yo'q, yozuv belgisi ham); hisob
-    sozlanmagan bo'lsa - sabab chatga."""
-    setup(monkeypatch, users_file)
-    client = FakeSlack(files={"F1": AUDIO})
-    _send(client, _isolated_meetings)
-    monkeypatch.setattr(settings, "meetings_ask_per_hour", 1, raising=False)
-    _top(client, "Birinchi?")
-    _top(client, "Ikkinchi?")
-
-    answered, limited = client.updated[-2:]
-    assert answered["text"].startswith("📼 «Slack: ovoz.aac» bo'yicha:\n")
-    assert limited["text"] == "Javob berib bo'lmadi: So'rovlar ko'p - birozdan keyin qayta urinib ko'ring"
-    assert elements(limited) == [] and render.marked(limited) is None
-    monkeypatch.setattr(settings, "slack_actor_id", "", raising=False)
-    _top(client, "Uchinchi?")
-    assert client.posted[-1]["text"] == "Javob berib bo'lmadi: Slack uchun Venera hisobi sozlanmagan (SLACK_ACTOR_ID)."
-
-
-def test_chatdagi_savol_va_yangi_suhbat_har_odamniki(users_file, monkeypatch, _isolated_meetings, claude):
-    """Bitta faylni ikki kishi o'z chatiga yuborgan (bitta yig'ilish): chatdagi savollarda ham har kimning xotirasi
-    o'ziniki. Chatdagi javob ostidagi «🔄 Yangi suhbat» - tasdiq chatning o'ziga (thread'siz), faqat bosganniki
-    tozalanadi; tasdiq xabari belgisiz - keyingi savol o'sha yozuvga, xotirasiz."""
-    setup(monkeypatch, users_file)
-    rt = _isolated_meetings
-    client = FakeSlack(files={"F1": AUDIO})
-    mid = _send(client, rt, channel="D1", user="U1")
-    assert _send(client, rt, channel="D2", user="U2") == mid
-    _top(client, "A-SAVOL: kim qaysi vazifani oldi?", channel="D1", user="U1")
-    _top(client, "B-SAVOL: budjet qancha?", channel="D2", user="U2")
-    answer_b = client.updated[-1]
-    _top(client, "Batafsilroq", channel="D1", user="U1")
-    _, to_b, follow = claude.chats()
-    assert len(to_b["messages"]) == 1 and "A-SAVOL" not in _dump(to_b)
-    assert "A-SAVOL" in follow["messages"][0]["content"] and "B-SAVOL" not in _dump(follow)
-
-    _reset(client, rt, answer_b, user="U2")
-    done = client.posted[-1]
-    assert (done["channel"], done["text"], "thread_ts" in done) == ("D2", render.CHAT_RESET_DONE, False)
-    assert rt.store.chat_turns(mid, asker="slack:U2") == []
-    assert len(rt.store.chat_turns(mid, asker="slack:U1")) == 2
-    _top(client, "Yana?", channel="D2", user="U2")
-    assert render.marked(client.updated[-1]) == mid
-    assert [m["role"] for m in claude.chats()[-1]["messages"]] == ["user"]
-
-
-def test_dispetcher_chatdagi_matn_navbatda_bir_marta(monkeypatch):
-    """Bolt ipi: chatdagi matn navbatga BIR marta (`meeting.on_text`; yo'riqnoma ham o'sha yerdan - ikki marta emas)
-    va Slack'ka murojaatsiz (tarix navbatda o'qiladi). Bot xabari, `subtype` li xabar (tahrir, bot_message) bu yo'lga
-    tushmaydi; thread'dagi matn - savol (`meeting.on_message`). Ikkalasiga ham restartda uziladigan kutish
-    (`_sleep`): chat xabari bayonnoma ishini boshlasa, vazifa uni kutadi (`meeting._follow_minutes`)."""
+def test_dispetcher_chatdagi_matn_yordamchiga_threaddagisi_savol(monkeypatch):
+    """Bolt ipi (ega qarori 2026-11-13, "thread qoidasi"): chatning o'zidagi matn navbatga BIR marta - HR/CRM
+    yordamchisiga (`assistant.on_text`), Slack'ka murojaatsiz. Bot xabari, `subtype` li xabar (tahrir, bot_message) bu
+    yo'lga tushmaydi; thread'dagi matn - yozuv savoli yoki yordamchi javobining davomi (`meeting.on_message`,
+    restartda uziladigan kutish `_sleep` bilan: chat xabari bayonnoma ishini boshlasa, vazifa uni kutadi)."""
     from types import SimpleNamespace
 
     from app import slack as slack_app
-    from app.slack import keep
+    from app.slack import assistant, keep
 
     jobs = []
     monkeypatch.setattr(slack_app, "_pool", SimpleNamespace(submit=lambda fn, *a, **k: jobs.append((fn, k))))
     client = FakeSlack()
     event = {"type": "message", "channel_type": "im", "channel": "D1", "user": "U1", "ts": "5.1", "text": "Kim?"}
     slack_app._on_message(event, client, {"bot_user_id": BOT_USER})
-    assert [(fn, k) for fn, k in jobs if fn is not keep.record] == [
-        (meeting.on_text, {"bot_user": BOT_USER, "sleep": slack_app._sleep})]
+    assert [(fn, k) for fn, k in jobs if fn is not keep.record] == [(assistant.on_text, {})]
     assert client.posted == [] and client.history_reads == []
 
     for extra in ({"bot_id": "B1"}, {"subtype": "message_changed"}, {"subtype": "bot_message", "bot_id": "B1"}):
@@ -1054,27 +696,26 @@ def _spy_chat(monkeypatch) -> list[dict]:
 
 
 def test_bayonnoma_chatda_eslatmalar_va_belgilar():
-    """Odam bayonnomani chatda boshqarishini qayerdan biladi: kartadagi eslatma, «🎙 Plaud» yo'riqnomasi, menyu va
-    natija ostidagi eslatma. Belgilar: natija (`doc:<til>`) chatdagi keyingi matnni oladi (`LATEST_TAGS`), menyu
-    (`minutes`) - yo'q."""
-    assert render.LATEST_TAGS[:6] == ("", "chat", "doc:uz-latn", "doc:uz-cyrl", "doc:ru", "doc:en")
-    assert {"doc:uz-latn:docx", "doc:en:pdf"} <= set(render.LATEST_TAGS) and len(render.LATEST_TAGS) == 14
-    assert "📄 Bayonnoma uchun ko'rsatma va tayyor bayonnomadagi o'zgartirishlarni" in render.CHAT_HINT
-    assert home.PROMPT.index("yangi versiyasini yuboradi") < home.PROMPT.index("Oldingi yozuv haqida")
+    """Odam bayonnomani qayerda boshqarishini qayerdan biladi: kartadagi eslatma, «🎙 Plaud» yo'riqnomasi, menyu va
+    natija ostidagi eslatma - hammasi thread'da (ega qarori 2026-11-13, "thread qoidasi"; chatning o'zi - HR/CRM
+    yordamchisi). Belgilar: natija (`doc:<til>[:<format>]`), menyu va format savoli (`minutes`)."""
+    assert "📄 Bayonnoma uchun ko'rsatma va o'zgartirishlar - bayonnoma xabari yoki faylining thread'ida" \
+        in render.CHAT_HINT
+    assert home.PROMPT.index("yangi versiyasini") < home.PROMPT.index("Barno AI yordamchisi")
+    assert "thread'iga yozing" in home.PROMPT and "chatning o'ziga yozing" in home.PROMPT
     assert "bayonnoma ko'rsatmalarini" in render.CHAT_RESET_DONE and "saqlanib qoladi" in render.CHAT_RESET_DONE
-    assert render.CHAT_PENDING.endswith("yoki bayonnoma uchun ko'rsatma yozing.")
+    assert "yoki shu chatga" not in render.MINUTES_EDIT_HINT and "thread'da yozing" in render.MINUTES_EDIT_HINT
     mid = "a" * 32
     hint = render.minutes_hint(mid, "ru")
     assert hint == {"type": "context", "block_id": f"barno:{mid}:doc:ru",
                     "elements": [{"type": "mrkdwn", "text": render.MINUTES_EDIT_HINT}]}
     assert render.marked_tag({"blocks": [{"type": "section"}, hint]}) == (mid, "doc:ru")
     assert render.marked_tag({"blocks": render.minutes_menu(mid, "uz-cyrl")}) == (mid, "minutes")
-    assert render.marked_tag({"blocks": render.minutes_menu(mid, "uz-cyrl")}, tags=render.LATEST_TAGS) is None
     assert (render.doc_lang("doc:ru"), render.doc_lang("doc:de"), render.doc_lang("chat"), render.doc_lang(None)) == (
         "ru", None, None, None)
     # Format (2026-11-13): natija belgisida odam tanlagan format; eski belgida - yo'q.
     hint_pdf = render.minutes_hint(mid, "uz-latn", "pdf")
-    assert render.marked_tag({"blocks": [hint_pdf]}, tags=render.LATEST_TAGS) == (mid, "doc:uz-latn:pdf")
+    assert render.marked_tag({"blocks": [hint_pdf]}) == (mid, "doc:uz-latn:pdf")
     assert (render.doc_lang("doc:uz-latn:pdf"), render.doc_format("doc:uz-latn:pdf")) == ("uz-latn", "pdf")
     assert (render.doc_format("doc:ru"), render.doc_format("doc:ru:txt"), render.doc_format("chat")) == (
         None, None, None)
@@ -1084,7 +725,6 @@ def test_bayonnoma_chatda_eslatmalar_va_belgilar():
     assert (render.minutes_file_format(word), render.minutes_file_format({"name": "Протокол - X 2026-11-11.pdf"}),
             render.minutes_file_format({"name": "Hisobot - X.docx"})) == ("docx", "pdf", None)
     assert render.marked_tag({"blocks": render.minutes_formats(mid, "ru")}) == (mid, "minutes")
-    assert render.marked_tag({"blocks": render.minutes_formats(mid, "ru")}, tags=render.LATEST_TAGS) is None
 
     # Chat javobi ostidagi qator: ko'rsatma - eslab qolindi (jami nechta); ish boshlanmagan - sababi; boshlangan ish
     # (yiqilgan bo'lsa ham) - bo'sh: natija alohida xabarda.
@@ -1151,41 +791,8 @@ def test_natija_doc_belgisi(delivered, _isolated_meetings, monkeypatch):
     assert update["text"].startswith("✅ *Bayonnoma tayyor* (Ўзбек (кирилл)): 2 bo'lim, 5 band. Loyiha - ")
     assert update["blocks"][:-1] == render.sections(update["text"])
     assert update["blocks"][-1] == render.minutes_hint(mid, "uz-cyrl", "docx")
-    assert render.marked_tag(update) == (mid, "doc:uz-cyrl:docx") == render.marked_tag(update,
-                                                                                    tags=render.LATEST_TAGS)
+    assert render.marked_tag(update) == (mid, "doc:uz-cyrl:docx")
     assert render.MINUTES_EDIT_HINT in shown(update) and len(client.posted) == before + 1
-
-
-def test_natijadan_keyin_chatdagi_matn_shu_yozuvga(users_file, monkeypatch, _isolated_meetings, claude):
-    """Eski yozuv kartasidan bayonnoma: til menyusi nomzod emas, lekin chatga tushgan NATIJA - nomzod (`doc:<til>`):
-    keyingi chatdagi matn o'sha yozuvga va o'sha til hujjatiga (`minutes_lang`) - «3-bandni o'zgartir» shu hujjatning
-    tahriri bo'ladi. Undan keyingi matn - oxirgi chat javobining yozuviga (hujjat tilini server o'zi tanlaydi)."""
-    setup(monkeypatch, users_file)
-    rt = _isolated_meetings
-    client = FakeSlack(files={"F1": AUDIO, "F2": AUDIO2})
-    first = _send(client, rt)
-    old_card = card(client)
-    second = _send(client, rt, AUDIO2)
-    export_file, _ = _fake_export()
-    monkeypatch.setattr(minutes, "generate", lambda *a, **k: _fake_view(language="ru"))
-    monkeypatch.setattr(minutes, "export_file", export_file)
-    sent = _spy_chat(monkeypatch)
-
-    _press(client, rt, {"action_id": "barno_minutes", "value": first}, {"ts": old_card["ts"]})
-    menu = client.posted[-1]
-    _top(client, "Asosiy qarorlar nima edi?")
-    assert (sent[-1]["meeting"], sent[-1]["minutes_lang"]) == (second, None)          # menyu - nomzod emas
-
-    result = _language(client, rt, first, "ru", {"ts": menu["ts"]})
-    assert "thread_ts" not in client.posted[-1] and render.marked_tag(result) == (first, "doc:ru:docx")
-    _top(client, "3-bandda muddat 1-dekabr bo'lsin")
-    answer = client.updated[-1]
-    assert answer["text"].startswith("📼 «Slack: ovoz.aac» bo'yicha:\n") and render.marked(answer) == first
-    call = sent[-1]
-    assert (call["meeting"], call["minutes_lang"], call["intent"], call["asker"], call["client_id"]) == (
-        first, "ru", None, "slack:U1", None)
-    _top(client, "Yana nima o'zgardi?")
-    assert (sent[-1]["meeting"], sent[-1]["minutes_lang"]) == (first, None)
 
 
 def test_natija_thread_tahrir_oxirigacha(delivered, claude, minutes_chain):

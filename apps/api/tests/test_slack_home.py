@@ -1,5 +1,5 @@
-"""Slack «🎙 Plaud» (`app/slack/home.py`): chatdagi xush kelibsiz xabari, oddiy matnga yo'riqnoma,
-`/plaud`, tugma va "Home" varag'i."""
+"""Slack «🎙 Plaud» (`app/slack/home.py`): chatdagi xush kelibsiz xabari, thread'dan tashqaridagi matnni ajratish
+(`is_text` - HR/CRM yordamchisiga), `/plaud`, tugma va "Home" varag'i."""
 
 from __future__ import annotations
 
@@ -16,9 +16,11 @@ def test_bosh_chat_ochilganda_xush_kelibsiz_tugma_bilan():
     home.on_open(client, {"type": "app_home_opened", "user": "U1", "tab": "messages", "channel": "D1"})
     [sent] = client.posted
     assert sent["channel"] == "D1" and sent["text"].startswith("🎙 *Plaud*")
-    # Savol qoidasi (Home'dagi bilan bir xil): chatga - oxirgi yozuv bo'yicha, oldingi yozuv - o'z thread'ida.
-    assert "shu chatga yozing" in sent["text"] and "oxirgi yuborilgan yozuv" in sent["text"]
-    assert "thread'ida so'rang" in sent["text"] and "suhbatni eslab qoladi" in sent["text"]
+    # Savol qoidasi (ega qarori 2026-11-13, "thread qoidasi"): yozuv haqida - o'sha xabarning thread'ida; chatning
+    # o'ziga yozilgani - Barno AI yordamchisiga (HR, CRM).
+    assert "o'sha yozuv xabarining thread'iga yozing" in sent["text"] and "suhbatni eslab qoladi" in sent["text"]
+    assert "*Barno AI yordamchisi* — chatning o'ziga yozing" in sent["text"] and "CRM" in sent["text"]
+    assert "oxirgi yuborilgan yozuv" not in sent["text"]
     [button] = next(b for b in sent["blocks"] if b["type"] == "actions")["elements"]
     assert button["action_id"] == home.PLAUD_ACTION and button["text"]["text"] == "🎙 Plaud"
     # Chat bo'sh emas - qayta yozilmaydi.
@@ -27,17 +29,14 @@ def test_bosh_chat_ochilganda_xush_kelibsiz_tugma_bilan():
     assert len(client.posted) == 1
 
 
-def test_oddiy_matnga_yoriqnoma_bir_marta(monkeypatch):
-    monkeypatch.setattr(home, "_hint_at", {})
-    client = FakeSlack()
+def test_thread_tashqarisidagi_matn_ajratiladi():
+    """`is_text` - shaxsiy chatda thread'dan tashqaridagi odam matni (dispetcher uni HR/CRM yordamchisiga beradi);
+    thread'dagi savol - `meeting`, bot xabari va kanal - yo'q."""
     event = _text()
     assert home.is_text(event) and not meeting.wants(event)
     assert not home.is_text(_text(thread_ts="0.5"))            # thread'dagi savol - `meeting`
     assert not home.is_text(_text(bot_id="B1")) and not home.is_text(_text(channel_type="channel"))
-    home.on_text(client, event)
-    home.on_text(client, event)
-    assert len(client.posted) == 1 and client.posted[0]["text"].startswith("🎙 *Plaud*")
-    assert any(b["type"] == "actions" for b in client.posted[0]["blocks"])
+    assert not home.is_text(_text(subtype="message_changed")) and not home.is_text(_text(text="   "))
 
 
 def test_plaud_buyrugi_va_tugma():
@@ -63,9 +62,7 @@ def test_home_varagi():
         {"type": "section", "text": {"type": "mrkdwn", "text": "BRB-TECHning foydali, aniq va xavfsiz AI yordamchisi"}}]}
 
 
-def test_slack_xatosi_odamni_toxtatmaydi(monkeypatch):
-    monkeypatch.setattr(home, "_hint_at", {})
-
+def test_slack_xatosi_odamni_toxtatmaydi():
     class Broken(FakeSlack):
         def views_publish(self, **kwargs):
             raise RuntimeError("tarmoq")
@@ -75,6 +72,5 @@ def test_slack_xatosi_odamni_toxtatmaydi(monkeypatch):
 
     client = Broken()
     home.on_open(client, {"user": "U1"})
-    home.on_text(client, _text())
     home.on_command(client, {"channel_id": "D1"})
     home.on_plaud(client, {"user": {"id": "U1"}, "actions": [{"action_id": home.PLAUD_ACTION}]})
