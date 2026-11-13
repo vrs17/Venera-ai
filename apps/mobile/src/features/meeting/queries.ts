@@ -19,6 +19,7 @@ import type {
   Lang,
   Meeting,
   MeetingOrigin,
+  MinutesLanguage,
   PatchActionItemRequest,
   PatchMeetingRequest,
   PatchSegmentRequest,
@@ -27,6 +28,7 @@ import type {
 import { useServices } from '@/services';
 
 import { CHAT_RECHECK_MS, chatOutcomeUnknown, wasDelivered, withTurn } from './chatModel';
+import { minutesDocPollMs } from './minutesModel';
 
 export const qk = {
   config: ['meetings', 'config'] as const,
@@ -38,6 +40,8 @@ export const qk = {
   summary: (id: string, sid: string) => ['meetings', id, 'summaries', sid] as const,
   actionItems: (id: string) => ['meetings', id, 'action-items'] as const,
   chat: (id: string) => ['meetings', id, 'chat'] as const,
+  /** Bitta bayonnoma qatori (chatdagi karta so'raydi) - yozuv prefiksi ostida: yozuv yangilansa u ham. */
+  minutesDoc: (id: string, mid: string) => ['meetings', id, 'minutes', mid] as const,
   myItems: (status: string) => ['action-items', status] as const,
 };
 
@@ -120,6 +124,16 @@ export function useChatHistory(id: string | null, enabled = true) {
   });
 }
 
+/**
+ * Yozish maydoni ustidagi rejim (bayonnoma varag'idan: «Chatda ko'rsatma berish» / «O'zgartirish
+ * so'rash»): keyingi xabar shu niyat bilan ketadi - server chat modelisiz ko'rsatmani eslab qoladi
+ * yoki hujjatning yangi versiyasini yozadi. `language` - qaysi tildagi hujjat.
+ */
+export interface ChatMode {
+  intent: 'note' | 'revise';
+  language?: MinutesLanguage;
+}
+
 /** Chatga yuboriladigan xabar (kanal `mobile` - hook o'zi qo'shadi). */
 export interface ChatSend {
   message: string;
@@ -130,6 +144,9 @@ export interface ChatSend {
    * savol-javob paydo bo'lsa xabar yetib borgan (`useChatOutgoing`).
    */
   clientId: string;
+  /** Rejim chipi bilan yuborilgan xabar (`ChatMode`); yo'q - server o'zi tasniflaydi. */
+  intent?: ChatMode['intent'];
+  minutesLanguage?: MinutesLanguage;
 }
 
 /**
@@ -150,8 +167,16 @@ export function useChatMutations(id: string) {
       mutationKey: chatSendKey(id),
       // Xato javob joyida ("Qayta yuborish" bilan) ko'rsatiladi - global toast kerak emas.
       meta: { silentError: true },
+      // `intent`/`minutesLanguage` tanaga faqat berilganda tushadi (`chatBody`).
       mutationFn: (p: ChatSend) =>
-        meetings.sendChat(id, { message: p.message, language: p.language, channel: 'mobile', clientId: p.clientId }),
+        meetings.sendChat(id, {
+          message: p.message,
+          language: p.language,
+          channel: 'mobile',
+          clientId: p.clientId,
+          intent: p.intent,
+          minutesLanguage: p.minutesLanguage,
+        }),
       onMutate: () => ({ epoch: chatEpoch(id) }),
       // Mutatsiya darajasidagi qayta chaqiruvlar: tab almashib chat yopilgan bo'lsa ham javob keshga
       // yoziladi (javob kutilayotganda "Yangi suhbat" bo'lmagan bo'lsa). Keyin server ro'yxati qayta
@@ -182,6 +207,9 @@ export interface ChatOutgoing {
   clientId: string;
   status: 'pending' | 'error';
   error: unknown;
+  /** Rejim chipi bilan yuborilgan bo'lsa - "Qayta yuborish" ham o'sha niyat va hujjat tili bilan. */
+  intent?: ChatMode['intent'];
+  minutesLanguage?: MinutesLanguage;
 }
 
 /**
@@ -220,7 +248,31 @@ export function useChatOutgoing(id: string, items: readonly ChatTurn[] | undefin
     return () => clearTimeout(timer);
   }, [unsure, qc, id]);
   if (!last || delivered || (last.status !== 'pending' && last.status !== 'error')) return null;
-  return { status: last.status, message: last.sent?.message ?? '', clientId, error: last.error };
+  return {
+    status: last.status,
+    message: last.sent?.message ?? '',
+    clientId,
+    error: last.error,
+    intent: last.sent?.intent,
+    minutesLanguage: last.sent?.minutesLanguage,
+  };
+}
+
+/**
+ * Chatdagi bayonnoma kartasi kuzatadigan qator (`GET /minutes/{id}`) - faqat havola `running` bo'lganda
+ * (`enabled`). Yozilayotgan bo'lsa har 3 s, qator yaratilganiga 10 daqiqa bo'lguncha (`minutesDocPollMs`;
+ * keyin "odatdagidan uzoq" - natija varaqda). Qayta urinish yo'q: 404 (`gone`) darhol ko'rinsin,
+ * o'tkinchi xatoda keyingi so'rov baribir 3 s dan keyin.
+ */
+export function useMinutesDoc(meetingId: string, minutesId: string | null, enabled: boolean) {
+  const { meetings } = useServices();
+  return useQuery({
+    queryKey: qk.minutesDoc(meetingId, minutesId ?? ''),
+    queryFn: () => meetings.minutes(meetingId, minutesId as string),
+    enabled: enabled && !!minutesId,
+    retry: false,
+    refetchInterval: (q) => minutesDocPollMs(q.state.data, q.state.error, q.state.dataUpdatedAt),
+  });
 }
 
 /** Javob kutilyaptimi - SINXRON, keshdan: ikki marta tez bosish ikkita so'rov yubormasin. */

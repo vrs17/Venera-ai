@@ -10,7 +10,12 @@ SHARTNOMA:
         blocks: list[dict]   # pastdagi turlar
 
     def compose(content: dict, *, lang: str, title: str, speakers: dict[str, dict], recorded_at: float,
-                now: float) -> MinutesDoc
+                now: float, revision: int = 0) -> MinutesDoc
+    def numbering(content: dict) -> list[Numbered]          # band raqamlari - `compose` AYNAN shuni chop etadi
+    def sections_of(content: dict) -> list[dict]            # bo'limlar (`Numbered.section` - shu ro'yxatda, 1-based)
+    def items_of(section: dict) -> list                     # bo'lim bandlari (`Numbered.index` - shu ro'yxatda)
+    def outline(content: dict, *, lang: str, speakers: dict[str, dict] | None) -> str   # tahrir uchun NUMBERING
+    def file_title(title, *, lang: str, revision: int = 0) -> str                       # fayl nomi sarlavhasi
 
 BLOK TURLARI (`kind`):
     approval  {lines: [str]}                        tasdiq bloki, o'ng tomonda: label approve, BLANK (bank),
@@ -28,7 +33,12 @@ BLOK TURLARI (`kind`):
     muted     {text: str}                           kulrang izoh (loyiha eslatmasi, aniqlashtirish ro'yxati)
     spacer    {}
 
-QOIDALAR: bandlar BARCHA bo'limlar bo'ylab 1..N uzluksiz; har bo'lim `section` = label section
+SARLAVHA QISMI (`content["header"]`, faqat ega aytgani - `validate`): tashkilot - tasdiq bloki va sarlavhaning
+birinchi qatori, `chairedBy` - meeting_line dagi BLANK o'rniga, shahar - city qatoridagi BLANK o'rniga, rais va
+qatnashchilar - yorliq qiymati. Aytilmagani (yoki minutes-2 hujjatida `header` umuman yo'q) - `BLANK`, bloklar
+avvalgidek baytma-bayt. `revision` (0 - asl) >= 1 bo'lsa loyiha qatorida "2-таҳрир." kabi versiya belgisi.
+
+QOIDALAR: bandlar BARCHA bo'limlar bo'ylab 1..N uzluksiz (`numbering`); har bo'lim `section` = label section
 (`roman`, kun tartibi sarlavhasi); `[S#]` tokenlari (bayon, matn, kichik band, "Бунда", preamble)
 `export.render_tokens` dek ismga, ism yo'q spiker - `BLANK`; `kind == "task"` va `responsible` bo'sh -> matn
 boshida (muddatdan keyin) `BLANK`; `preamble` bo'lmasa label preamble; so'nggi band - nazorat: label control
@@ -73,7 +83,9 @@ _BULLET = re.compile(r"^(?:[-–—•*]|\d{1,2}[.)])\s*")
 _PARAGRAPHS = re.compile(r"\n\s*\n")
 #: Kotibga ma'noli ogohlantirishlar (`validate`): to'qima ism, tasdiqlanmagan raqam, yozuv mosligi.
 #: Qolganlari texnik (`agenda_dropped`, `provider_failed:...`) - hujjatga chiqmaydi.
-HUMAN_WARNINGS = ("ungrounded_name:", "unverified_number:", "script_mismatch")
+HUMAN_WARNINGS = ("ungrounded_name:", "unverified_number:", "script_mismatch", "header_dropped:")
+#: Tahrir promptidagi `NUMBERING` qatorida band matnining eng ko'p uzunligi (belgi).
+OUTLINE_TEXT = 160
 
 Run = tuple[str, dict[str, bool]]
 
@@ -84,6 +96,16 @@ class MinutesDoc:
     title: str
     text_lang: str = "uz-Cyrl-UZ"
     blocks: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Numbered:
+    """Hujjatdagi bitta raqamlangan band (`numbering`)."""
+
+    number: int        # chop etilgan band raqami (bo'limlar bo'ylab uzluksiz)
+    section: int       # 1-based bo'lim (rim raqami `text.roman(section)`); 0 - kod qo'shgan nazorat bandi
+    index: int         # sections[section-1].items ichidagi indeks; -1 - nazorat bandi
+    control: bool = False
 
 
 class _Names:
@@ -202,6 +224,83 @@ def _control(number: int, who: str, lang: str) -> dict[str, Any]:
     return {"kind": "item", "number": f"{number}.", "runs": runs, "sub": [], "follow": None}
 
 
+def sections_of(content: dict[str, Any]) -> list[dict[str, Any]]:
+    """Hujjatdagi bo'limlar (obyekt bo'lmagani tashlanadi) - rim raqami shu ro'yxatdagi o'rni (1-based)."""
+    return [s for s in (content.get("sections") or []) if isinstance(s, dict)]
+
+
+def items_of(section: dict[str, Any]) -> list[Any]:
+    """Bo'lim bandlari (xom ro'yxat: `Numbered.index` shu ro'yxatdagi o'rin)."""
+    return section.get("items") if isinstance(section.get("items"), list) else []
+
+
+def numbering(content: dict[str, Any]) -> list[Numbered]:
+    """Bandlarning chop etiladigan raqamlari - `compose` AYNAN shu ro'yxat bilan raqamlaydi: Word dagi raqamlar va
+    tahrir promptidagi `NUMBERING` (`outline`) hech qachon ajralmaydi. Matnsiz band raqam olmaydi; mazmunda
+    `control` turidagi band bo'lmasa, oxiriga kod qo'shadigan nazorat bandi (`control=True`) kiradi."""
+    out: list[Numbered] = []
+    has_control = False
+    for section_no, section in enumerate(sections_of(content), 1):
+        for index, item in enumerate(items_of(section)):
+            if not isinstance(item, dict) or not export.one_line(item.get("text")):
+                continue
+            out.append(Numbered(len(out) + 1, section_no, index))
+            if str(item.get("kind") or "").strip().lower() == "control":
+                has_control = True
+    if not has_control:
+        out.append(Numbered(len(out) + 1, 0, -1, control=True))
+    return out
+
+
+def _clip(value: str, limit: int) -> str:
+    return value if len(value) <= limit else value[:limit - 1] + "…"
+
+
+def outline(content: dict[str, Any], *, lang: str, speakers: dict[str, dict[str, Any]] | None) -> str:
+    """Tahrir promptining `NUMBERING` bloki: hujjat egasiga Word da qanday ko'rinsa - kun tartibi raqamlari, rim
+    raqamli bo'limlar va uzluksiz band raqamlari (`numbering`) - mazmun kalitlariga bog'lab. Ega "5-band",
+    "2-masala", "III bo'lim" desa, model qaysi kalitni o'zgartirishni shundan biladi. Matnlarda `[S#]` o'rniga ism
+    (Word dagidek); nazorat bandi - kod `controller` dan yozadigan gap, hujjat tilida."""
+    code = text.normalize(lang) or "uz-cyrl"
+    names = _Names(speakers)
+    agenda = [a for a in (content.get("agenda") or []) if isinstance(a, dict)]
+    numbers = numbering(content)
+    lines = [f"Agenda {n} = agenda[{n - 1}]: «{_clip(names.render(entry.get('title')) or BLANK, OUTLINE_TEXT)}»"
+             for n, entry in enumerate(agenda, 1)]
+    for section_no, section in enumerate(sections_of(content), 1):
+        own = [n for n in numbers if n.section == section_no]
+        if not own:
+            span = "no items"
+        elif len(own) == 1:
+            span = f"item {own[0].number}"
+        else:
+            span = f"items {own[0].number}-{own[-1].number}"
+        lines.append(f"Section {text.roman(section_no)} = sections[{section_no - 1}] "
+                     f"(agendaIndex {section.get('agendaIndex')}): {span}")
+        items = items_of(section)
+        for n in own:
+            item = items[n.index]
+            kind = str(item.get("kind") or "other").strip().lower()
+            lines.append(f"  Item {n.number} = sections[{section_no - 1}].items[{n.index}] ({kind}): "
+                         f"«{_clip(names.render(item.get('text')), OUTLINE_TEXT)}»")
+    control = next((n for n in numbers if n.control), None)
+    if control is not None:
+        who = names.person(content.get("controller")) or BLANK
+        lines.append(f"Item {control.number} = the control item added by code from \"controller\": "
+                     f"«{text.label('control', code).format(who=who)}» - to change it, change \"controller\".")
+    return "\n".join(lines)
+
+
+def file_title(title: Any, *, lang: str, revision: int = 0) -> str:
+    """Eksport fayli nomining sarlavhasi: "Баённома - <yig'ilish nomi>"; tahrirda versiya bilan -
+    "Баённома - Haftalik (2-таҳрир)" (`text.label("version")`)."""
+    code = text.normalize(lang) or "uz-cyrl"
+    name = f"{text.label('doc_word', code)} - {export.one_line(title)}".strip(" -")
+    if int(revision or 0) > 0:
+        name = f"{name} ({text.label('version', code).format(n=int(revision) + 1)})"
+    return name
+
+
 def render_notes(content: dict[str, Any], *, speakers: dict[str, dict[str, Any]] | None, lang: str) -> list[str]:
     """Model izohlari (`notes`) - hujjatdagi "Аниқлаштириш керак" ro'yxati va bot xabari uchun BIR XIL."""
     names = _Names(speakers)
@@ -209,28 +308,45 @@ def render_notes(content: dict[str, Any], *, speakers: dict[str, dict[str, Any]]
     return [n for n in (names.note(x, code) for x in (content.get("notes") or [])) if n]
 
 
+def _fill(template: str, value: str) -> str:
+    """Yorliqdagi birinchi `BLANK` o'rniga ega aytgan qiymat; qiymat bo'lmasa yorliq o'zgarmaydi."""
+    return template.replace(BLANK, value, 1) if value else template
+
+
 def compose(content: dict[str, Any], *, lang: str, title: str, speakers: dict[str, dict[str, Any]],
-            recorded_at: float, now: float) -> MinutesDoc:
+            recorded_at: float, now: float, revision: int = 0) -> MinutesDoc:
     code = text.normalize(lang) or "uz-cyrl"
     names = _Names(speakers)
 
     def label(key: str) -> str:
         return text.label(key, code)
 
+    header = content.get("header") if isinstance(content.get("header"), dict) else {}
+
+    def fact(key: str) -> str:
+        """Sarlavha qismidagi ega aytgan qiymat (`[S#]` - ism) yoki bo'sh satr."""
+        value = header.get(key)
+        return names.render(value) if isinstance(value, str) else ""
+
+    people = header.get("attendees") if isinstance(header.get("attendees"), list) else []
+    attendees = ", ".join(x for x in (names.render(a) for a in people if isinstance(a, str)) if x)
+    organization = fact("organization") or BLANK
+    meeting_line = _fill(label("meeting_line"), fact("chairedBy"))
     agenda = [a for a in (content.get("agenda") or []) if isinstance(a, dict)]
-    sections = [s for s in (content.get("sections") or []) if isinstance(s, dict)]
+    sections = sections_of(content)
     blocks: list[dict[str, Any]] = [
-        {"kind": "approval", "lines": [label("approve"), BLANK, BLANK, BLANK, label("approve_date"), label("number")]},
+        {"kind": "approval", "lines": [label("approve"), organization, BLANK, BLANK, label("approve_date"),
+                                       label("number")]},
         {"kind": "spacer"},
         # O'zbekcha - bosh so'z oxirida ("... ҳузурида ўтказилган йиғилиш / Б А Ё Н И"); rus va ingliz
         # tilida hujjat so'zi OLDIN, qaratqich/"of" qatori keyin ("ПРОТОКОЛ / совещания под ...").
         {"kind": "title", "doc": label("doc"),
-         "lines": ([BLANK, label("doc"), label("meeting_line")] if code in ("ru", "en")
-                   else [BLANK, label("meeting_line"), label("doc")])},
+         "lines": ([organization, label("doc"), meeting_line] if code in ("ru", "en")
+                   else [organization, meeting_line, label("doc")])},
         {"kind": "two_col", "left": text.format_date(recorded_at, code) if recorded_at else BLANK,
-         "right": label("city")},
-        {"kind": "label", "label": label("chair"), "value": BLANK},
-        {"kind": "label", "label": label("attendees"), "value": BLANK},
+         "right": _fill(label("city"), fact("city"))},
+        {"kind": "label", "label": label("chair"), "value": fact("chair") or BLANK},
+        {"kind": "label", "label": label("attendees"), "value": attendees or BLANK},
     ]
 
     # Kun tartibi: bandlar ro'yxati, so'zga chiqqanlar (faqat haqiqiy ismlar), har band bayoni.
@@ -250,27 +366,25 @@ def compose(content: dict[str, Any], *, lang: str, title: str, speakers: dict[st
                    "indent": True})
     blocks.append({"kind": "heading", "text": label("decides")})
 
-    # Qarorlar: rim raqamli bo'limlar, bandlar BARCHA bo'limlar bo'ylab uzluksiz raqamlanadi.
-    number = 0
-    has_control = False
-    for index, section in enumerate(sections, 1):
+    # Qarorlar: rim raqamli bo'limlar, bandlar BARCHA bo'limlar bo'ylab uzluksiz raqamlanadi (`numbering` - tahrir
+    # promptidagi raqamlar bilan bir xil).
+    numbers = numbering(content)
+    placed = {(n.section, n.index): n.number for n in numbers if not n.control}
+    for section_no, section in enumerate(sections, 1):
         agenda_index = section.get("agendaIndex")
         agenda_title = ""
         if isinstance(agenda_index, int) and not isinstance(agenda_index, bool) and 1 <= agenda_index <= len(agenda):
             agenda_title = export.one_line(agenda[agenda_index - 1].get("title"))
         # Kun tartibi sarlavhasi "... тўғрисида" bilan tugaydi - bo'lim qolipi "... бўйича:" uni takrorlamasin.
         blocks.append({"kind": "section", "text": label("section").format(
-            roman=text.roman(index), title=text.section_title(agenda_title, code) or BLANK)})
-        for item in section.get("items") if isinstance(section.get("items"), list) else []:
-            if not isinstance(item, dict) or not export.one_line(item.get("text")):
-                continue
-            number += 1
-            blocks.append(_item(item, number, names))
-            if str(item.get("kind") or "").strip().lower() == "control":
-                has_control = True
-    if not has_control:
-        number += 1
-        blocks.append(_control(number, names.person(content.get("controller")) or BLANK, code))
+            roman=text.roman(section_no), title=text.section_title(agenda_title, code) or BLANK)})
+        for index, item in enumerate(items_of(section)):
+            number = placed.get((section_no, index))
+            if number is not None:
+                blocks.append(_item(item, number, names))
+    control = next((n for n in numbers if n.control), None)
+    if control is not None:
+        blocks.append(_control(control.number, names.person(content.get("controller")) or BLANK, code))
 
     blocks.append({"kind": "spacer"})
     blocks.append({"kind": "label", "label": label("approvers"), "value": BLANK})
@@ -285,6 +399,8 @@ def compose(content: dict[str, Any], *, lang: str, title: str, speakers: dict[st
             lines.append(label("warnings").format(n=len(warnings)))
         blocks.append({"kind": "muted", "text": "\n".join(lines)})
     draft = label("draft")
+    if int(revision or 0) > 0:
+        draft = f"{draft} {label('version').format(n=int(revision) + 1)}."
     if now:
         draft = f"{draft} {export.BRAND}, {text.format_date(now, code)}."
     blocks.append({"kind": "muted", "text": draft})

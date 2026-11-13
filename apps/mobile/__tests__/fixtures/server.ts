@@ -8,6 +8,7 @@ import type {
   ActionProposal,
   AskAnswer,
   ChatHistory,
+  ChatMinutesRef,
   ChatRequest,
   ChatReset,
   ChatTurn,
@@ -17,6 +18,8 @@ import type {
   MeetingCard,
   MeetingList,
   MeetingsConfig,
+  MinutesChanges,
+  MinutesHeader,
   MinutesView,
   RegisterDeviceResponse,
   Speaker,
@@ -353,10 +356,25 @@ export const askAnswer = {
   createdAt: '2026-10-09T07:05:00Z',
 } satisfies AskAnswer;
 
-/** Chatdagi savol-javob (backend `ChatTurn`): `AskAnswer` + kanal, javob bergan model va xabar kaliti. */
+/**
+ * Chatdagi savol-javob (backend `ChatTurn`): `AskAnswer` + kanal, javob bergan model, xabar kaliti va
+ * navbat turi (`kind`; bayonnoma amali bo'lsa - `minutes` havolasi).
+ */
 export function chatTurn(over: Partial<ChatTurn> = {}): ChatTurn {
-  return { ...askAnswer, channel: 'mobile', model: 'claude-sonnet-5-5', clientId: null, ...over } satisfies ChatTurn;
+  return { ...askAnswer, channel: 'mobile', model: 'claude-sonnet-5-5', clientId: null, kind: 'chat', minutes: null, ...over } satisfies ChatTurn;
 }
+
+/** Navbatdagi bayonnoma havolasi (backend `ChatMinutes`): default - tahrir (2-versiya) yozilmoqda. */
+export function chatMinutes(over: Partial<ChatMinutesRef> = {}): ChatMinutesRef {
+  return { action: 'revise', language: 'uz-cyrl', id: 'f'.repeat(32), status: 'running', version: 2, notes: null, error: null, ...over } satisfies ChatMinutesRef;
+}
+
+/** Server `chat.CANNED` (uz): aniq niyatli xabarga (rejim chipi) chat modelisiz javob. */
+export const CANNED_NOTE = "Ko'rsatmangiz eslab qolindi - bayonnoma tayyorlanganda hisobga olinadi.";
+export const CANNED_REVISE = "So'rovingiz bo'yicha bayonnomaning yangi versiyasini tayyorlayapman - odatda 1-3 daqiqa.";
+
+/** `chatBackend` dagi n-chi xabar boshlagan tahrir qatorining id'si (`GET /minutes/{id}`). */
+export const revisionId = (n: number) => `m${n}`.padEnd(32, '0');
 
 /**
  * `/meetings/{id}/chat` GET/POST/DELETE - xotirada, backend qoidasi bilan: har yozuvning O'Z
@@ -366,6 +384,10 @@ export function chatTurn(over: Partial<ChatTurn> = {}): ChatTurn {
  *
  * `clientId` (R3-1 idempotentlik): shu yozuvda shu kalitli FAOL savol-javob bo'lsa POST yangisini
  * yaratmaydi - o'shani qaytaradi. Arxivlangani hisobga olinmaydi, boshqa yozuvniki ham.
+ *
+ * Aniq niyat (`intent`, server qoidasi bilan - chat modelisiz): `note` - ko'rsatma eslab qolinadi
+ * (`minutes.notes` - shu yozuvdagi faol ko'rsatmalar soni), `revise` - tahrir boshlanadi (`running`,
+ * 2-versiya, id `revisionId(n)`). Javob - serverning tayyor matni, manba va takliflarsiz.
  */
 export function chatBackend(seed: Record<string, ChatTurn[]> = {}) {
   const live = new Map<string, ChatTurn[]>(Object.entries(seed).map(([id, turns]) => [id, [...turns]]));
@@ -381,17 +403,40 @@ export function chatBackend(seed: Record<string, ChatTurn[]> = {}) {
       const same = body.clientId ? (live.get(id) ?? []).find((x) => x.clientId === body.clientId) : undefined;
       if (same) return same;
       n += 1;
-      const turn = chatTurn({
+      const base = {
         id: `t${n}`.padEnd(32, '0'),
         question: body.message,
-        answer: `[S2] javobi: ${body.message}`,
-        citations: [{ segmentId: 3, start: 9.5, speaker: 'S2', text: 'Men ertaga hisobotni yuboraman.' }],
-        followUps: [`Taklif ${n}a`, `Taklif ${n}b`, `Taklif ${n}c`],
         channel: body.channel ?? 'api',
         model,
         clientId: body.clientId ?? null,
         createdAt: `2026-10-09T08:${String(n).padStart(2, '0')}:00Z`,
-      });
+      };
+      const notes = (live.get(id) ?? []).filter((x) => x.kind === 'note').length + 1;
+      const turn =
+        body.intent === 'note'
+          ? chatTurn({
+              ...base,
+              answer: CANNED_NOTE,
+              citations: [],
+              followUps: [],
+              kind: 'note',
+              minutes: chatMinutes({ action: 'note', language: body.minutesLanguage ?? null, id: null, status: null, version: null, notes }),
+            })
+          : body.intent === 'revise'
+            ? chatTurn({
+                ...base,
+                answer: CANNED_REVISE,
+                citations: [],
+                followUps: [],
+                kind: 'revise',
+                minutes: chatMinutes({ language: body.minutesLanguage ?? 'uz-cyrl', id: revisionId(n) }),
+              })
+            : chatTurn({
+                ...base,
+                answer: `[S2] javobi: ${body.message}`,
+                citations: [{ segmentId: 3, start: 9.5, speaker: 'S2', text: 'Men ertaga hisobotni yuboraman.' }],
+                followUps: [`Taklif ${n}a`, `Taklif ${n}b`, `Taklif ${n}c`],
+              });
       live.set(id, [...(live.get(id) ?? []), turn]);
       return turn;
     },
@@ -427,7 +472,23 @@ export const deviceResponse = {
   expiresAt: '2026-11-08T06:00:00Z',
 } satisfies RegisterDeviceResponse;
 
-/** Bayonnoma qatori (`GET /meetings/{id}/minutes`, server `minutes.view`) - tayyor, eskirmagan. */
+/** Egasi aytgan sarlavha faktlari (server `view.header`, bo'shlarsiz). */
+export function minutesHeader(over: Partial<MinutesHeader> = {}): MinutesHeader {
+  return { organization: null, chairedBy: null, city: null, chair: 'Boshqaruv raisi A.Karimov', attendees: ['[S2]', "B.Aliyev - bo'lim boshlig'i"], ...over } satisfies MinutesHeader;
+}
+
+/** Tahrirning o'zgarishlari (server `minutes.diff.changes`): 3-band o'zgardi, 8-band qo'shildi, rais yangilandi. */
+export function minutesChanges(over: Partial<MinutesChanges> = {}): MinutesChanges {
+  return {
+    items: { changed: [3], added: [8], removed: [] },
+    agenda: { changed: [], added: [], removed: [] },
+    header: ['chair'],
+    other: [],
+    ...over,
+  } satisfies MinutesChanges;
+}
+
+/** Bayonnoma qatori (`GET /meetings/{id}/minutes`, server `minutes.view`) - tayyor, eskirmagan, asl (1-versiya). */
 export function minutesView(over: Partial<MinutesView> = {}): MinutesView {
   return {
     id: 'f'.repeat(32),
@@ -446,6 +507,14 @@ export function minutesView(over: Partial<MinutesView> = {}): MinutesView {
     notes: ['Muddat aniq aytilmagan - 2-band'],
     warnings: [],
     error: null,
+    kind: 'generate',
+    version: 1,
+    parentId: null,
+    request: null,
+    notesApplied: 0,
+    pendingNotes: 0,
+    header: null,
+    changes: null,
     ...over,
   } satisfies MinutesView;
 }

@@ -602,21 +602,37 @@ interface MinutesView {
   agendaCount: number; sectionCount: number; itemCount: number;
   notes: string[]; warnings: string[];            // "to be clarified" notes, validation warnings
   error: { code: string; message: string } | null; // only when failed
+  // 2026-11-12 (directions and chat edits; all fields have defaults for old clients):
+  kind: 'generate' | 'revise';                    // revise = a new version of an existing document
+  version: number;                                // 1 = original, a revision = parent + 1
+  parentId: string | null; request: string | null; // the owner's change request (revise from chat)
+  notesApplied: number; pendingNotes: number;     // chat directions in this document / not yet (ready only)
+  header: { organization: string | null; chairedBy: string | null; city: string | null; chair: string | null;
+            attendees: string[] } | null;         // header facts stated by the owner
+  changes: { items: ChangeSet; agenda: ChangeSet; header: string[]; other: string[] } | null; // vs. parent
 }
+type ChangeSet = { changed: number[]; added: number[]; removed: number[] }; // item numbers as in Word
 ```
-- `GET /meetings/{id}/minutes` → 200 `{"items": [MinutesView]}` (oldest first).
+- `GET /meetings/{id}/minutes` → 200 `{"items": [MinutesView], "notes": number}` (oldest first; `notes` = the
+  owner's active chat directions).
 - `POST /meetings/{id}/minutes`, optional body `{language?: MinutesLang | null, force?: boolean}`;
   no language → from the meeting language (`uz` → `uz-cyrl`, `ru` → `ru`, `en` → `en`).
   - 200 `MinutesView` (ready): a ready document exists for (language, current `transcriptRev`,
-    `MINUTES_VERSION`) and `force` is false.
-  - 200 `MinutesView` (running): the same document is already being written (also from Slack/Telegram),
-    with or without `force`. The second tap joins the first: no second model call, no second rate-limit slot.
+    `READY_VERSIONS`), every active direction is already in it, and `force` is false.
+  - 200 `MinutesView` (running): the newest document of that language is being written (also from
+    Slack/Telegram or a chat edit) and carries every direction; with `force` only an original being written is
+    joined. The second tap joins the first: no second model call, no second rate-limit slot.
+  - 202 `MinutesView` (running, `kind: 'revise'`): a document exists but new directions were given in the chat
+    since - it is not rewritten; a revision applies them and keeps earlier edits (`MEETINGS_MINUTES_EDITS_PER_HOUR`).
   - Otherwise the fast checks run in the request, in this order: 400 `invalid_language`, 404 `not_found`,
-    409 `not_ready` (no transcript yet), 409 `transcript_empty`, 503 `llm_not_configured`, 429
-    `rate_limited` + `Retry-After` (`MEETINGS_MINUTES_PER_HOUR`). Then a `running` row is stored and the
-    model call starts in a background thread pool → 202 `MinutesView` (running). Poll endpoint 34.
+    409 `not_ready` (no transcript yet), 409 `transcript_empty`, 409 `minutes_busy` (3 jobs of that language
+    already live), 503 `llm_not_configured`, 429 `rate_limited` + `Retry-After` (`MEETINGS_MINUTES_PER_HOUR`).
+    Then a `running` row is stored and the model call starts in a background thread pool → 202 `MinutesView`
+    (running). Poll endpoint 34.
   - Background failures end up on the row as `failed` with `error.code` `llm_failed`, `llm_busy`,
-    `llm_rate_limited`, `llm_not_configured` or `internal`. A row left `running` by a crash/restart for
+    `llm_rate_limited`, `llm_not_configured` or `internal`; a revision also `no_change` (the request changed
+    nothing - no new version) or `minutes_outdated` / `minutes_missing` (its base vanished while queued,
+    e.g. the recording was transcribed again). A row left `running` by a crash/restart for
     longer than `MEETINGS_CLAUDE_TIMEOUT` × (`MEETINGS_CLAUDE_RETRIES` + 2) + 300 s (2700 s by default:
     slot wait + every attempt + margin) is reported and stored as `failed` / `interrupted` and is not joined.
 - `GET /meetings/{id}/minutes/{minutesId}` → 200 `MinutesView & {content: object | null}` (`null` unless
@@ -635,15 +651,35 @@ interface MinutesView {
 interface ChatTurn { id: string; question: string; answer: string;
                      citations: { segmentId: number; start: number; speaker: string | null; text: string }[];
                      followUps: string[]; createdAt: string; channel: string | null; model: string | null;
-                     clientId: string | null }
+                     clientId: string | null;
+                     kind: 'chat' | 'note' | 'create' | 'revise';      // 2026-11-12; pre-v8 rows: 'chat'
+                     minutes: ChatMinutes | null }                      // null for 'chat'
+// the bayonnoma action of the turn and the LIVE state of its document row
+interface ChatMinutes { action: 'note' | 'create' | 'revise'; language: MinutesLang | null;
+                        id: string | null;              // minutes row (GET .../minutes/{id}); null = no job
+                        status: 'running' | 'ready' | 'failed' | null; version: number | null;
+                        notes: number | null;           // note turns only: active directions of this asker
+                        error: { code: string; message: string } | null }  // job not started, or row failed
 ```
 - `GET /meetings/{id}/chat` → 200 `{"items": [ChatTurn], "model": "claude-sonnet-5-5"}`: the owner's active
   turns, oldest first. `model` is the first configured link of the chain a message would use (the brain
   `agent` link included), `""` if none. No transcript is needed (the list is just empty).
 - `POST /meetings/{id}/chat` with `{message: string (1..1000, not blank), language?: Lang,
-  channel?: 'mobile' | 'web' | 'miniapp' | 'desktop' | 'api', clientId?: string}` → 200 `ChatTurn`. Errors as
+  channel?: 'mobile' | 'web' | 'miniapp' | 'desktop' | 'api', clientId?: string,
+  intent?: 'note' | 'revise' | null, minutesLanguage?: MinutesLang | null}` → 200 `ChatTurn`. Errors as
   in Ask: 404, 409 `not_ready`, 429 `rate_limited` (one hourly limiter for chat and Ask,
-  `MEETINGS_ASK_PER_HOUR=60`), 503 `llm_unavailable`, 422.
+  `MEETINGS_ASK_PER_HOUR=60`), 503 `llm_unavailable`, 422 (also a bad `intent` or `minutesLanguage`).
+- Bayonnoma in chat (2026-11-12): one conversation per audio also carries the directions for the minutes and
+  the change requests for a finished document. Without `intent` Claude picks the action itself (`none` - a
+  question; `note` - directions for a document that does not exist yet; `create` - prepare / send / update;
+  `revise` - change the existing document) from the current document and state blocks it sees after the
+  transcript; the server checks every precondition. `intent` is an explicit entry point (the app's mode chip):
+  no chat model call and no "ask" token. A `revise` with no document in that language is stored as a direction.
+  A job starts only from a new, active turn (`turn_id` - one turn, one job; a repeated `clientId` returns the
+  same turn). When the turn is stored the answer is always 200; a job that could not start (edit limit,
+  `minutes_busy`, `minutes_outdated`, minutes model not configured) is reported in `turn.minutes.error` with
+  the canned answer "Bayonnoma ishini boshlab bo'lmadi." (ru/en by `language`). The app polls
+  `GET .../minutes/{turn.minutes.id}`; `GET /chat` returns the live state too. The legacy `/ask` never acts.
 - Idempotency (`clientId`, optional; 8..64 chars of `[A-Za-z0-9_-]`, anything else 422): the app gives every
   message a random key and «Qayta yuborish» resends the SAME key, so a retry after an ambiguous failure (proxy
   504, dropped connection, timeout) never creates a second turn. The key is scoped by (meeting, asker, key) and
@@ -662,8 +698,9 @@ interface ChatTurn { id: string; question: string; answer: string;
   transcript, its primary summary notes and the last `MEETINGS_CHAT_HISTORY_TURNS` turns (Claude: as
   user/assistant messages, text only; other chain links: a "Conversation so far" block). Nothing from other
   meetings.
-- Reset is soft: rows get `archived_at` and leave the memory and every list; nothing is deleted. A
-  re-transcription archives every active turn (old citations would point at new lines). If a reset lands while
+- Reset is soft: rows get `archived_at` and leave the memory and every list; nothing is deleted. "Yangi suhbat"
+  also archives that asker's bayonnoma directions (documents stay). A re-transcription archives every active
+  turn except directions (`kind='note'`; old citations would point at new lines). If a reset lands while
   an answer is being written, the answer is still returned, but its turn is stored already archived: it is tied
   to the memory rows it was built on (their ids, not the clock, because times have 1-second resolution). The
   same happens when the transcript changes meanwhile, which also covers a first message with no memory: the

@@ -9,7 +9,9 @@ odatda kirillda - o'zbek yig'ilishning default'i `uz-cyrl`.
 
 BO'SH JOYLAR (ega qarori): bank nomi, shahar, raislik qiluvchi, qatnashuvchilar guruhlari,
 tasdiqlovchi, № va tasdiq sanasi, kelishuvchilar - hozircha `BLANK`; hujjat tizimi (hujjat.brb.uz)
-yoki kotib to'ldiradi. Muddati/mas'uli aytilmagan bandlarda ham mas'ul o'rni `BLANK`.
+yoki kotib to'ldiradi. Muddati/mas'uli aytilmagan bandlarda ham mas'ul o'rni `BLANK`. Yig'ilish egasi
+ko'rsatmada aytgan bo'lsa (2026-11-12, `header`) - bank nomi, "kim huzurida", shahar, rais va qatnashchilar
+o'sha qiymat bilan to'ldiriladi (`compose`); qolgani baribir `BLANK`.
 """
 
 from __future__ import annotations
@@ -53,7 +55,8 @@ def default_lang(meeting_language: Any) -> str:
 #: nomi va xabarlar uchun oddiy so'z, `section` - rim raqamli bo'lim qolipi (`{roman}`, `{title}`),
 #: `control` - nazorat bandi qolipi (`{who}`), `preamble` - model yozmagan bo'lsa, `speaker` - izohlarda ismsiz
 #: spiker (`{n}` - transkriptdagi raqam, bot xabaridagi "3-ishtirokchi" bilan bir xil), `speaker_any` - raqamsiz
-#: qolip "[S#]" o'rniga (model ba'zan uni o'zini yozadi).
+#: qolip "[S#]" o'rniga (model ba'zan uni o'zini yozadi), `version` - tahrir qilingan hujjat versiyasi (`{n}` - 2, 3,
+#: ...; loyiha qatori va fayl nomida).
 LABELS: dict[str, dict[str, str]] = {
     "uz-cyrl": {
         "doc": "Б А Ё Н И", "doc_word": "Баённома", "approve": "ТАСДИҚЛАЙМАН",
@@ -68,6 +71,7 @@ LABELS: dict[str, dict[str, str]] = {
         "draft": "ЛОЙИҲА - «________» жойлари қўлда тўлдирилади; бандлар ёзув асосида тузилган.",
         "notes": "Аниқлаштириш керак:", "speaker": "{n}-иштирокчи", "speaker_any": "иштирокчи",
         "warnings": "Текширув огоҳлантиришлари: {n} (ҳужжат ҳолатида кўринади).",
+        "version": "{n}-таҳрир",
     },
     "uz-latn": {
         "doc": "B A Y O N I", "doc_word": "Bayonnoma", "approve": "TASDIQLAYMAN",
@@ -82,6 +86,7 @@ LABELS: dict[str, dict[str, str]] = {
         "draft": "LOYIHA - «________» joylari qo'lda to'ldiriladi; bandlar yozuv asosida tuzilgan.",
         "notes": "Aniqlashtirish kerak:", "speaker": "{n}-ishtirokchi", "speaker_any": "ishtirokchi",
         "warnings": "Tekshiruv ogohlantirishlari: {n} (hujjat holatida ko'rinadi).",
+        "version": "{n}-tahrir",
     },
     "ru": {
         "doc": "П Р О Т О К О Л", "doc_word": "Протокол", "approve": "УТВЕРЖДАЮ",
@@ -96,6 +101,7 @@ LABELS: dict[str, dict[str, str]] = {
         "draft": "ПРОЕКТ - места «________» заполняются вручную; пункты составлены по записи.",
         "notes": "Требует уточнения:", "speaker": "Участник {n}", "speaker_any": "участник",
         "warnings": "Предупреждений проверки: {n} (см. состояние документа).",
+        "version": "редакция {n}",
     },
     "en": {
         "doc": "M I N U T E S", "doc_word": "Minutes", "approve": "APPROVED",
@@ -110,6 +116,7 @@ LABELS: dict[str, dict[str, str]] = {
         "draft": "DRAFT - the «________» fields are to be filled in by hand; items are based on the recording.",
         "notes": "To be clarified:", "speaker": "Speaker {n}", "speaker_any": "speaker",
         "warnings": "Validation warnings: {n} (see the document status).",
+        "version": "version {n}",
     },
 }
 

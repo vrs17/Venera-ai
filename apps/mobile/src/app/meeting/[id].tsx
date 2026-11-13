@@ -23,6 +23,11 @@
  * Chat tabi (`ChatView`) - BITTA yozuv bo'yicha Barno bilan suhbat: o'z konteynerida, yozish
  * maydoni pastda (pleer ustida). Pleer balandligi o'lchanib chatga beriladi - klaviatura
  * ochilganda maydon pleer ustida emas, klaviatura ustida tursin (pleer uning ostida qoladi).
+ *
+ * Bayonnoma va chat bir-biriga yo'naltiradi (ega so'rovi, 2026-11-12): varaqdagi «Chatda ko'rsatma
+ * berish» / «O'zgartirish so'rash» / «Qayta so'rash» varaqni yopib, Chat tabini rejim chipi (va
+ * qoralama) bilan ochadi; chatdagi kartaning «Ochish»i varaqni o'sha hujjat tilida ochadi. Matn
+ * faqat Chat tabida yoziladi - klaviatura u yerda sinalgan (edge-to-edge modal varaqda - yo'q).
  */
 import { Stack, useLocalSearchParams } from 'expo-router';
 import {
@@ -44,10 +49,10 @@ import { useCallback, useState, type ReactNode } from 'react';
 import { Alert, ScrollView, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
 import { ApiError } from '@/api/client';
-import type { Lang, Meeting } from '@/api/types';
+import type { Lang, Meeting, MinutesLanguage } from '@/api/types';
 import { ActionItemsView } from '@/features/meeting/ActionItemsView';
 import { ActionMenu } from '@/features/meeting/ActionMenu';
-import { ChatView } from '@/features/meeting/ChatView';
+import { ChatView, type ChatDraft } from '@/features/meeting/ChatView';
 import { ExportSheet } from '@/features/meeting/ExportSheet';
 import { formatDateTime } from '@/features/meeting/formatDate';
 import { LocalRecording } from '@/features/meeting/LocalRecording';
@@ -56,7 +61,7 @@ import { MinutesSheet } from '@/features/meeting/MinutesSheet';
 import { MindMapTab } from '@/features/meeting/MindMapView';
 import { leaveRecording } from '@/features/meeting/nav';
 import { AudioDock, useAudioChoice, type AudioChoice, type SeekRequest } from '@/features/meeting/PlayerBar';
-import { useMeeting, useMeetingMutations, useSummaries } from '@/features/meeting/queries';
+import { useMeeting, useMeetingMutations, useSummaries, type ChatMode } from '@/features/meeting/queries';
 import { MeetingStatusPill } from '@/features/meeting/RecordingCard';
 import { RETRANSCRIBE_TITLE, retranscribeTargets } from '@/features/meeting/retranscribe';
 import { SummaryView } from '@/features/meeting/SummaryView';
@@ -214,6 +219,11 @@ function MeetingBody({
   const [menu, setMenu] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [minutesOpen, setMinutesOpen] = useState(false);
+  // Varaq qaysi hujjat tilida ochiladi (chatdagi «Ochish»); null - yig'ilish tilidan (server qoidasi).
+  const [minutesLang, setMinutesLang] = useState<MinutesLanguage | null>(null);
+  // Chat yozish maydoni ustidagi bayonnoma rejimi va qoralama (varaqdan kelinganda).
+  const [chatMode, setChatMode] = useState<ChatMode | null>(null);
+  const [chatDraft, setChatDraft] = useState<ChatDraft | null>(null);
   // "Boshqa tilda qayta o'girish" -> maqsad tilini tanlash varag'i.
   const [relang, setRelang] = useState(false);
   // Xulosa tabida tanlangan xulosa - xarita va eksport ham shundan (null - asosiysi).
@@ -226,6 +236,24 @@ function MeetingBody({
   const exportReady = viewed ? viewed.status === 'ready' : m.primarySummaryId != null && m.summaryStatus === 'ready';
 
   const uploading = !m.upload.complete && !!localRow && localRow.state !== 'done';
+
+  /** Varaqdan chatga: varaq yopiladi, Chat tabi rejim chipi (va "Qayta so'rash"da eski so'rov matni) bilan. */
+  const openChat = useCallback((mode: ChatMode, draft?: string) => {
+    setMinutesOpen(false);
+    setTab('chat');
+    setChatMode(mode);
+    setChatDraft(draft ? { text: draft, nonce: Date.now() } : null);
+  }, []);
+  /** Bayonnoma varag'i: `lang` - chatdagi kartaning «Ochish»i (o'sha hujjat tili), null - ⋮ menyusidan. */
+  const openMinutes = useCallback((lang: MinutesLanguage | null) => {
+    setMinutesLang(lang);
+    setMinutesOpen(true);
+  }, []);
+  /** Rejim tugadi (xabar yuborildi yoki chip yopildi): qoralama ham - qayta ochilganda qaytib chiqmasin. */
+  const clearChatMode = useCallback(() => {
+    setChatMode(null);
+    setChatDraft(null);
+  }, []);
 
   const confirmDelete = () =>
     Alert.alert(t('common.delete'), t('detail.deleteConfirm'), [
@@ -355,7 +383,17 @@ function MeetingBody({
         // Yozish maydoni pastda qotib turadi, ro'yxat o'zi aylanadi - tashqi ScrollView ichiga qo'yilmaydi.
         <View style={s.root}>
           {uploadCard ? <View style={[s.cardGap, s.edgeCard]}>{uploadCard}</View> : null}
-          <ChatView key={m.id} meeting={m} speakers={m.speakers} onSeek={onSeek} bottomInset={dockHeight} />
+          <ChatView
+            key={m.id}
+            meeting={m}
+            speakers={m.speakers}
+            onSeek={onSeek}
+            bottomInset={dockHeight}
+            mode={chatMode}
+            onModeClear={clearChatMode}
+            draft={chatDraft}
+            onOpenMinutes={openMinutes}
+          />
         </View>
       ) : tab === 'summary' && summaryMode === 'map' ? (
         // Xarita o'zi ikki tomonga aylanadi - tashqi ScrollView ichiga qo'yilmaydi.
@@ -400,7 +438,7 @@ function MeetingBody({
         onClose={() => setMenu(false)}
         items={[
           { key: 'export', title: t('recs.export'), icon: Share2, onPress: () => setExporting(true) },
-          { key: 'minutes', title: t('minutes.title'), icon: FilePen, onPress: () => setMinutesOpen(true) },
+          { key: 'minutes', title: t('minutes.title'), icon: FilePen, onPress: () => openMinutes(null) },
           { key: 'retranscribe', title: t('detail.retranscribeOther'), icon: Languages, onPress: () => setRelang(true) },
           { key: 'rename', title: t('tr.rename'), icon: Pencil, onPress: () => setEditTitle(true) },
           { key: 'delete', title: t('common.delete'), icon: Trash, destructive: true, onPress: confirmDelete },
@@ -423,8 +461,11 @@ function MeetingBody({
         onClose={() => setMinutesOpen(false)}
         meetingId={m.id}
         title={m.title}
-        // Hujjat tili default'i yig'ilish tilidan (uz -> kirill, server qoidasi).
+        // Hujjat tili default'i yig'ilish tilidan (uz -> kirill, server qoidasi); chatdan - o'sha hujjat tili.
         meetingLanguage={m.language}
+        initialLanguage={minutesLang ?? undefined}
+        onOpenChat={openChat}
+        speakers={m.speakers}
       />
       <ExportSheet
         visible={exporting}

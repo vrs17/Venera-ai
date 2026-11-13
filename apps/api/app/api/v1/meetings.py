@@ -278,9 +278,15 @@ def chat_history(meeting_id: str, user: AuthUser = Depends(meetings_access)) -> 
 def chat_send(meeting_id: str, body: schemas.ChatRequest, user: AuthUser = Depends(meetings_access)) -> dict:
     """Xabar -> Barno javobi (transkript, xulosa va shu suhbat xotirasi bilan). `async` EMAS: modelni kutish
     (o'nlab soniya) threadpool'da. `clientId` - idempotentlik: o'sha kalit bilan qayta yuborish takror navbat
-    yaratmaydi. Xatolar `/ask` dagidek: 404, 409 `not_ready`, 429, 503 `llm_unavailable`."""
+    yaratmaydi. Xatolar `/ask` dagidek: 404, 409 `not_ready`, 429, 503 `llm_unavailable` (429 / 503 - faqat model
+    javob beradigan navbatda).
+
+    Bayonnoma ham shu chatda: ko'rsatma, "tayyorla", tayyor hujjatdagi o'zgartirish (`turn.kind`, `turn.minutes`).
+    `intent` - aniq kirish nuqtasi (modelsiz), `minutesLanguage` - odam qarab turgan hujjat tili. Navbat saqlansa -
+    doim 200: bayonnoma ishi boshlanmasa sababi `turn.minutes.error` da; hujjat tayyor bo'lishini ilova
+    `GET .../minutes/{turn.minutes.id}` bilan kutadi."""
     return service.chat_send(user, meeting_id, body.message, body.language, channel=body.channel or "api",
-                             client_id=body.clientId)
+                             client_id=body.clientId, intent=body.intent, minutes_lang=body.minutesLanguage)
 
 
 @router.delete("/{meeting_id}/chat", response_model=schemas.ChatReset)
@@ -348,8 +354,11 @@ def list_minutes(meeting_id: str, user: AuthUser = Depends(meetings_access)) -> 
 def create_minutes(meeting_id: str, response: Response, body: schemas.MinutesRequest | None = None,
                    user: AuthUser = Depends(meetings_access)) -> dict:
     """Hujjat FONDA yoziladi (1-3 daqiqa): 202 `running` - ilova `GET .../minutes/{id}` ni so'rab turadi.
-    200 - tayyori bor (`force` bo'lmasa) yoki xuddi shu hujjat hozir yozilmoqda (ikkinchi bosish
-    birinchisiga qo'shiladi: model ham, soatlik chegara ham ikkinchi marta sarflanmaydi)."""
+    202 - yangi hujjat yoki - shu tilda tayyor hujjat bor-u, chatdagi ko'rsatmalardan ba'zilari unda hali yo'q
+    (`pendingNotes`) - uning TAHRIRI (`kind` revise: avvalgi o'zgartirishlar saqlanadi). 200 - tayyori bor va hamma
+    ko'rsatma unda (`force` bo'lmasa) yoki xuddi shu hujjat hozir yozilmoqda (ikkinchi bosish birinchisiga qo'shiladi:
+    model ham, soatlik chegara ham ikkinchi marta sarflanmaydi). 409 `minutes_busy` - shu tilda oldingi o'zgarishlar
+    hali navbatda."""
     body = body or schemas.MinutesRequest()
     view, started = minutes.start(user, meeting_id, body.language, force=body.force)
     if not started:

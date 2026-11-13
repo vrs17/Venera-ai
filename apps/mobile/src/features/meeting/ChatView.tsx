@@ -23,12 +23,19 @@
  * Yozuv o'chirilgan yoki begona (istalgan chat so'rovida `not_found` kodli 404): "Yozuv topilmadi",
  * chat yopiladi (yozish ham, qayta yuborish ham yo'q) va yozuv so'rovi qayta o'qiladi.
  *
+ * Bayonnoma ham shu chatda (ega so'rovi, 2026-11-12): bayonnoma uchun ko'rsatma va tayyor hujjatni
+ * o'zgartirish so'rovi oddiy xabar bo'lib yoziladi - server o'zi tushunadi. Bayonnoma varag'idan
+ * kelinsa yozish maydoni ustida rejim chipi turadi («Bayonnoma uchun ko'rsatma» / «Bayonnomani
+ * o'zgartirish (til)»): keyingi xabar shu niyat bilan ketadi (server chat modelini chaqirmaydi) va chip
+ * yo'qoladi. Amal bo'lgan javob ostida karta (`MinutesActionCard`): eslab qolindi / yozilmoqda / tayyor
+ * («Ochish» - varaq shu tilda) / xato. "Qayta so'rash" varaqdan eski so'rov matnini qoralama qilib beradi.
+ *
  * NIMA UCHUN umumiy ScrollView ichida emas (transkript kabi o'z konteyneri): yozish maydoni
  * pastda qotib turadi, ro'yxat esa uning ustida o'zi aylanadi. Ko'rinish asosiy chatdan
  * (`features/chat/ui`): savol pufakchasi, yozish kartasi, xato qutisi.
  */
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowUp, MessagesSquare, SquarePen } from 'lucide-react-native';
+import { ArrowUp, MessagesSquare, NotebookPen, Pencil, SquarePen, X } from 'lucide-react-native';
 import { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -43,7 +50,7 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native';
 
-import type { ChatTurn, Citation, Lang, Meeting, Speaker } from '@/api/types';
+import type { ChatTurn, Citation, Lang, Meeting, MinutesLanguage, Speaker } from '@/api/types';
 import { useKeyboardPadding } from '@/features/chat/keyboard';
 import { useSettings, useT } from '@/features/settings/settingsStore';
 import { Banner, Button, Chip, EvidenceChip, styles as ui } from '@/ui/components';
@@ -62,11 +69,19 @@ import {
   composerInset,
   newChatClientId,
 } from './chatModel';
-import { isChatSending, useChatHistory, useChatMutations, useChatOutgoing, useMeetingGone, type ChatOutgoing } from './queries';
+import { MinutesActionCard } from './MinutesActionCard';
+import { defaultMinutesLang, MINUTES_LANG_NAME } from './minutesModel';
+import { isChatSending, useChatHistory, useChatMutations, useChatOutgoing, useMeetingGone, type ChatMode, type ChatOutgoing } from './queries';
 import { renderTokens, speakerLabel } from './renderTokens';
 
 /** Pastdan shuncha piksel ichida bo'lsa - "pastda" hisoblanadi (yangi xabarga ergashadi). */
 const NEAR_BOTTOM = 80;
+
+/** Yozish maydoniga qo'yiladigan matn: `nonce` o'zgarganda (yangi qoralama) qo'yiladi, bir marta. */
+export interface ChatDraft {
+  text: string;
+  nonce: number;
+}
 
 export interface ChatViewProps {
   meeting: Meeting;
@@ -74,9 +89,27 @@ export interface ChatViewProps {
   onSeek?: (t: number) => void;
   /** Tab maydoni ostidagi pleer balandligi: klaviatura ochilganda pleer uning ostida qoladi. */
   bottomInset?: number;
+  /** Bayonnoma kartasidagi «Ochish»: varaq shu tilda. */
+  onOpenMinutes?: (lang: MinutesLanguage) => void;
+  /** Yozish maydoni ustidagi rejim (varaqdagi «Chatda ko'rsatma berish» / «O'zgartirish so'rash»). */
+  mode?: ChatMode | null;
+  /** Rejim tugadi: xabar shu rejim bilan yuborildi yoki odam chipni yopdi. */
+  onModeClear?: () => void;
+  /** Qoralama ("Qayta so'rash" - eski so'rov matni). */
+  draft?: ChatDraft | null;
 }
 
-export function ChatView({ meeting, speakers, onSeek, bottomInset = 0 }: ChatViewProps) {
+/**
+ * Chipdagi rejim yuboriladigan ko'rinishda: o'zgartirish so'rovi DOIM hujjat tili bilan (varaq uni beradi;
+ * bo'lmasa - yig'ilish tilidan default, chipda ham o'sha til yoziladi). Ko'rsatma tilga bog'liq emas.
+ */
+function sendableMode(mode: ChatMode | null | undefined, meeting: Meeting): ChatMode | null {
+  if (!mode) return null;
+  if (mode.intent === 'note') return { intent: 'note', language: mode.language };
+  return { intent: 'revise', language: mode.language ?? defaultMinutesLang(meeting.language) };
+}
+
+export function ChatView({ meeting, speakers, onSeek, bottomInset = 0, onOpenMinutes, mode, onModeClear, draft }: ChatViewProps) {
   const t = useT();
   const s = useChatStyles();
   const th = useTheme();
@@ -102,17 +135,32 @@ export function ChatView({ meeting, speakers, onSeek, bottomInset = 0 }: ChatVie
   };
 
   /**
-   * true - yuborildi. Javob kutilayotganda (yoki bo'sh matn) - hech narsa qilinmaydi. `clientId` -
+   * true - yuborildi. Javob kutilayotganda (yoki bo'sh matn) - hech narsa qilinmaydi. `o.clientId` -
    * "Qayta yuborish"da o'sha xabarning kaliti (server takror savol-javob yaratmaydi); yangi xabar -
-   * yangi kalit.
+   * yangi kalit. `o.mode` - xabarning niyati (rejim chipi yoki qayta yuborilayotgan xabarniki): tanaga
+   * `intent` va hujjat tili qo'shiladi. Tezkor va keyingi savol chiplari rejimsiz (server o'zi tasniflaydi).
    */
-  const submit = (text: string, clientId?: string): boolean => {
+  const submit = (text: string, o: { clientId?: string; mode?: ChatMode | null } = {}): boolean => {
     const message = text.trim().slice(0, CHAT_MAX_CHARS);
     if (!message || isChatSending(qc, meeting.id)) return false;
-    send.mutate({ message, language: lang, clientId: clientId || newChatClientId() });
+    send.mutate({
+      message,
+      language: lang,
+      clientId: o.clientId || newChatClientId(),
+      intent: o.mode?.intent,
+      minutesLanguage: o.mode?.language,
+    });
     atBottom.current = true;
     requestAnimationFrame(() => scroller.current?.scrollToEnd({ animated: true }));
     return true;
+  };
+
+  const chipMode = sendableMode(mode, meeting);
+  /** Yozish maydonidagi matn: rejim chipi bo'lsa - shu niyat bilan, yuborilgach chip yo'qoladi. */
+  const sendTyped = (text: string): boolean => {
+    const sent = submit(text, { mode: chipMode });
+    if (sent && chipMode) onModeClear?.();
+    return sent;
   };
 
   const confirmReset = () =>
@@ -194,10 +242,15 @@ export function ChatView({ meeting, speakers, onSeek, bottomInset = 0 }: ChatVie
           <View testID="chat-empty" style={s.empty}>
             <IconTile icon={MessagesSquare} tone="accent" size="lg" />
             <Text style={s.emptyText}>{t('mchat.empty')}</Text>
+            <Text testID="chat-minutes-hint" style={s.emptyHint}>
+              {t('mchat.minutesHint')}
+            </Text>
             <View style={[ui.wrap, s.center]}>
               {quick.map((c) => (
                 <Chip key={c.label} label={c.label} tone="info" onPress={() => submit(c.q)} />
               ))}
+              {/* Rejimsiz: "tayyorlab ber" - server o'zi tushunadi (ko'rsatmalar bilan yozadi). */}
+              <Chip testID="chat-quick-minutes" label={t('mchat.quickMinutes')} tone="accent" onPress={() => submit(t('mchat.quickMinutesText'))} />
             </View>
           </View>
         ) : null}
@@ -206,45 +259,60 @@ export function ChatView({ meeting, speakers, onSeek, bottomInset = 0 }: ChatVie
           : items.map((turn, i) => (
               <TurnView
                 key={turn.id}
+                meetingId={meeting.id}
                 turn={turn}
                 speakers={speakers}
                 lang={lang}
                 onSeek={onSeek}
                 // Takliflar faqat oxirgi javob ostida; javob kutilayotganda - yo'q (yuborib bo'lmaydi).
                 followUps={i === items.length - 1 && !pending ? turn.followUps : []}
-                onFollowUp={submit}
+                onFollowUp={(q) => submit(q)}
+                onOpenMinutes={onOpenMinutes}
               />
             ))}
-        {/* "Qayta yuborish" - O'SHA kalit bilan: server saqlagan bo'lsa takror yaratmaydi. */}
-        {outgoing && !closed ? <OutgoingView outgoing={outgoing} onRetry={() => submit(outgoing.message, outgoing.clientId)} /> : null}
+        {/* "Qayta yuborish" - O'SHA kalit va o'sha niyat bilan: server saqlagan bo'lsa takror yaratmaydi. */}
+        {outgoing && !closed ? <OutgoingView outgoing={outgoing} onRetry={() => submit(outgoing.message, { clientId: outgoing.clientId, mode: outgoingMode(outgoing) })} /> : null}
       </ScrollView>
 
-      {closed ? null : <ChatComposer busy={pending} onSend={submit} />}
+      {closed ? null : <ChatComposer busy={pending} onSend={sendTyped} initial={draft} mode={chipMode} onModeClear={onModeClear} />}
     </View>
   );
 }
 
-/** Bitta savol-javob: savol o'ngda, javob chapda, manbalar va (oxirgisida) keyingi savollar. */
+/** Qayta yuborilayotgan xabarning niyati (rejim chipi bilan yuborilgan bo'lsa). */
+function outgoingMode(o: ChatOutgoing): ChatMode | null {
+  return o.intent ? { intent: o.intent, language: o.minutesLanguage } : null;
+}
+
+/**
+ * Bitta savol-javob: savol o'ngda, javob chapda, bayonnoma amali bo'lsa - uning kartasi, manbalar va
+ * (oxirgisida) keyingi savollar. `kind`/`minutes`siz (eski server, oddiy savol) - avvalgidek.
+ */
 function TurnView({
+  meetingId,
   turn,
   speakers,
   lang,
   onSeek,
   followUps,
   onFollowUp,
+  onOpenMinutes,
 }: {
+  meetingId: string;
   turn: ChatTurn;
   speakers: Speaker[];
   lang: Lang;
   onSeek?: (t: number) => void;
   followUps: string[];
   onFollowUp: (q: string) => void;
+  onOpenMinutes?: (lang: MinutesLanguage) => void;
 }) {
   const s = useChatStyles();
   return (
     <View testID={`chat-turn-${turn.id}`} style={s.turn}>
       <Question text={turn.question} />
       <MarkdownLite text={renderTokens(turn.answer, speakers, lang)} />
+      {turn.minutes ? <MinutesActionCard meetingId={meetingId} turnId={turn.id} minutes={turn.minutes} onOpenMinutes={onOpenMinutes} /> : null}
       {turn.citations.map((c, i) => (
         <CitationRow key={`${c.segmentId}-${i}`} c={c} speakers={speakers} lang={lang} onSeek={onSeek} />
       ))}
@@ -314,16 +382,36 @@ function Question({ text, testID }: { text: string; testID?: string }) {
 /**
  * Yozish kartasi (asosiy chatdagi `Composer` ko'rinishida): ko'p qatorli matn + ↑ yuborish. Matn shu
  * yerda turadi - har harf butun suhbatni qayta chizmasin. Yuborish qabul qilinmasa (javob kutilmoqda)
- * matn o'chmaydi: javob kelgach yuboriladi.
+ * matn o'chmaydi: javob kelgach yuboriladi. Ustida - bayonnoma rejimi chipi (× bilan yopiladi).
+ * `initial` - qoralama: yangi `nonce` kelganda maydonga qo'yiladi (o'sha qoralama ikkinchi marta emas).
  */
-function ChatComposer({ onSend, busy }: { onSend: (text: string) => boolean; busy: boolean }) {
+function ChatComposer({
+  onSend,
+  busy,
+  initial,
+  mode,
+  onModeClear,
+}: {
+  onSend: (text: string) => boolean;
+  busy: boolean;
+  initial?: ChatDraft | null;
+  mode?: ChatMode | null;
+  onModeClear?: () => void;
+}) {
   const t = useT();
   const th = useTheme();
   const s = useChatStyles();
-  const [value, setValue] = useState('');
+  const [value, setValue] = useState(() => initial?.text.slice(0, CHAT_MAX_CHARS) ?? '');
+  // Qaysi qoralama qo'yilgan: render paytida solishtiriladi (React "oldingi prop" usuli) - effekt kerak emas.
+  const [applied, setApplied] = useState(initial?.nonce ?? null);
+  if (initial && initial.nonce !== applied) {
+    setApplied(initial.nonce);
+    setValue(initial.text.slice(0, CHAT_MAX_CHARS));
+  }
   const canSend = !!value.trim() && !busy;
   return (
     <View style={s.composer}>
+      {mode ? <ModeChip mode={mode} onClear={onModeClear} /> : null}
       <View style={s.card}>
         <TextInput
           testID="chat-input"
@@ -357,6 +445,37 @@ function ChatComposer({ onSend, busy }: { onSend: (text: string) => boolean; bus
   );
 }
 
+/** Rejim chipi: keyingi xabar bayonnoma uchun ko'rsatma yoki shu tildagi hujjatni o'zgartirish so'rovi. */
+function ModeChip({ mode, onClear }: { mode: ChatMode; onClear?: () => void }) {
+  const t = useT();
+  const th = useTheme();
+  const s = useChatStyles();
+  const Icon = mode.intent === 'note' ? NotebookPen : Pencil;
+  const label =
+    mode.intent === 'note' ? t('mchat.mode.note') : t('mchat.mode.revise', { lang: MINUTES_LANG_NAME[mode.language ?? 'uz-cyrl'] });
+  return (
+    <View style={s.modeRow}>
+      <View testID="chat-mode" style={s.mode} accessibilityLiveRegion="polite">
+        <Icon size={14} color={th.tones.accent.fg} strokeWidth={2} />
+        <Text style={s.modeText} numberOfLines={1}>
+          {label}
+        </Text>
+        {onClear ? (
+          <Pressable
+            testID="chat-mode-clear"
+            onPress={onClear}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={t('mchat.mode.clear')}
+            style={s.modeClear}>
+            <X size={14} color={th.tones.accent.fg} strokeWidth={2} />
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 function useChatStyles() {
   const th = useTheme();
   return useMemo(() => makeStyles(th), [th]);
@@ -386,8 +505,23 @@ function makeStyles(th: Theme) {
     errorBtnText: { color: th.text, fontWeight: '600', fontSize: 14 },
     empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingVertical: 24, paddingHorizontal: 8 },
     emptyText: { color: th.textMuted, fontSize: 15, lineHeight: 22, textAlign: 'center' },
+    emptyHint: { color: th.textMuted, fontSize: 13, lineHeight: 19, textAlign: 'center' },
     center: { justifyContent: 'center' },
     composer: { paddingHorizontal: 12, paddingTop: 6, paddingBottom: 8 },
+    modeRow: { flexDirection: 'row', marginBottom: 6, marginLeft: 4 },
+    mode: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      maxWidth: '100%',
+      borderRadius: 999,
+      backgroundColor: th.tones.accent.bg,
+      paddingLeft: 10,
+      paddingRight: 6,
+      paddingVertical: 4,
+    },
+    modeText: { flexShrink: 1, color: th.tones.accent.fg, fontSize: 13, fontWeight: '600' },
+    modeClear: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
     card: {
       flexDirection: 'row',
       alignItems: 'flex-end',

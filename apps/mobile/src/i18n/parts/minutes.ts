@@ -8,6 +8,10 @@
  * Matn qoidalari Slack/Telegram'dagi «📄 Bayonnoma» bilan bir xil: hujjat LOYIHA, «________»
  * joylarini kotib yoki hujjat tizimi to'ldiradi; xato SABABni va keyingi qadamni aytadi. Hujjat
  * tillari nomlari (endonim) bu yerda emas - `minutesModel.MINUTES_LANG_NAME`.
+ *
+ * Chatdagi bayonnoma (ega so'rovi, 2026-11-12): ko'rsatma va o'zgartirish so'rovlari yozuv chatida
+ * yoziladi - varaq chatga yo'naltiradi (`minutes.guide`, `minutes.edit`), versiya, so'rov va "nima
+ * o'zgardi" (`minutes.changes.*`) ni ko'rsatadi.
  */
 const uz = {
   'minutes.title': 'Bayonnoma',
@@ -43,6 +47,40 @@ const uz = {
   'minutes.gone': 'Bayonnoma topilmadi - qaytadan tayyorlang',
   'minutes.docNotReady': 'Bayonnoma hali tayyor emas - holatini qayta tekshiring',
   'minutes.notOnServer': 'Bayonnoma serverda hali yoqilmagan - server yangilangach ishlaydi',
+  // Chatdagi bayonnoma: ko'rsatma (yozishdan oldin) va tayyor hujjatni o'zgartirish - varaq chatga yo'naltiradi.
+  'minutes.guide': "Chatda ko'rsatma berish",
+  'minutes.guideHint': "Rais, qatnashchilar, nimaga e'tibor berish - chatga yozing, Barno bayonnomani shunga qarab yozadi",
+  'minutes.guideCount': "Chatdagi ko'rsatmalar: {n} ta - tayyorlashda hisobga olinadi",
+  'minutes.edit': "O'zgartirish so'rash",
+  'minutes.version': '{n}-versiya',
+  'minutes.request': "So'ralgan o'zgarish: {text}",
+  'minutes.revising': 'Yangi versiya tayyorlanmoqda - odatda 1-3 daqiqa',
+  'minutes.pending': "{n} ta yangi ko'rsatma bu bayonnomada hali yo'q",
+  'minutes.applyNotes': "Qo'llash",
+  'minutes.chair': 'Rais: {name}',
+  'minutes.attendees': 'Qatnashchilar: {names}',
+  'minutes.draftPartial': "Bu loyiha: qolgan «________» joylarini kotib yoki hujjat tizimi to'ldiradi.",
+  // "Nima o'zgardi" - raqamlar Word'dagidek; bir band - birlik shakli.
+  'minutes.changes': "O'zgarishlar: {list}",
+  'minutes.changes.item': '{list}-band',
+  'minutes.changes.items': '{list}-bandlar',
+  'minutes.changes.added': "qo'shildi: {list}",
+  'minutes.changes.removed': 'olib tashlandi: {n} ta',
+  'minutes.changes.agenda': 'kun tartibi',
+  'minutes.changes.header': 'sarlavha qismi',
+  'minutes.changes.other': 'boshqa qismlar',
+  'minutes.changes.none': "ko'rsatmalar allaqachon aks etgan - matn o'zgarmadi",
+  'minutes.superseded': "Matn tahrirlangani uchun bayonnoma yangidan yozildi - avvalgi o'zgartirishlar kiritilmagan",
+  'minutes.guidanceTruncated': "Ko'rsatmalar juda ko'p - eng eskilaridan {n} tasi hisobga olinmadi",
+  'minutes.redoConfirm':
+    "Qayta yozilsa hujjat yozuvdan yangidan tuziladi: chatda so'ralgan o'zgartirishlar qo'llanmaydi, ko'rsatmalar qo'llanadi. Davom etasizmi?",
+  'minutes.noChange': "Bayonnomada o'zgarish bo'lmadi - nimani o'zgartirish kerakligini aniqroq yozing",
+  'minutes.outdated': "Yozuv qayta o'girilgan - bayonnomani yangidan tayyorlang",
+  'minutes.missing': "Bu tilda tahrirlash uchun tayyor bayonnoma yo'q - avval tayyorlang",
+  'minutes.editBusy': "Oldingi o'zgartirishlar hali tayyorlanmoqda - tugashini kuting",
+  'minutes.reviseFailed': "Model bayonnomani tahrirlay olmadi - qayta urinib ko'ring",
+  'minutes.editRateLimited': "Bir soatlik tahrir chegarasi tugadi - keyinroq urinib ko'ring",
+  'minutes.resend': "Qayta so'rash",
 } as const;
 
 type K = keyof typeof uz;
@@ -81,6 +119,38 @@ const ru: Record<K, string> = {
   'minutes.gone': 'Протокол не найден - подготовьте заново',
   'minutes.docNotReady': 'Протокол ещё не готов - проверьте его состояние снова',
   'minutes.notOnServer': 'Протоколы на сервере ещё не включены - заработают после обновления сервера',
+  'minutes.guide': 'Дать указания в чате',
+  'minutes.guideHint': 'Председатель, участники, на что обратить внимание - напишите в чат, Barno учтёт это в протоколе',
+  'minutes.guideCount': 'Указаний в чате: {n} - они будут учтены',
+  'minutes.edit': 'Попросить изменения',
+  'minutes.version': 'Версия {n}',
+  'minutes.request': 'Запрошенное изменение: {text}',
+  'minutes.revising': 'Готовится новая версия - обычно 1-3 минуты',
+  'minutes.pending': 'Новых указаний, которых ещё нет в протоколе: {n}',
+  'minutes.applyNotes': 'Внести',
+  'minutes.chair': 'Председатель: {name}',
+  'minutes.attendees': 'Присутствовали: {names}',
+  'minutes.draftPartial': 'Это черновик: оставшиеся поля «________» заполняет секретарь или система документооборота.',
+  'minutes.changes': 'Изменения: {list}',
+  'minutes.changes.item': 'пункт {list}',
+  'minutes.changes.items': 'пункты {list}',
+  'minutes.changes.added': 'добавлены: {list}',
+  'minutes.changes.removed': 'удалено: {n}',
+  'minutes.changes.agenda': 'повестка',
+  'minutes.changes.header': 'реквизиты',
+  'minutes.changes.other': 'другие части',
+  'minutes.changes.none': 'указания уже учтены - текст не изменился',
+  'minutes.superseded': 'Текст изменился, поэтому протокол составлен заново - прежние правки не внесены',
+  'minutes.guidanceTruncated': 'Указаний слишком много - самые старые ({n}) не учтены',
+  'minutes.redoConfirm':
+    'При повторном составлении документ создаётся заново по записи: правки из чата не сохранятся, указания будут учтены. Продолжить?',
+  'minutes.noChange': 'Протокол не изменился - уточните, что именно изменить',
+  'minutes.outdated': 'Запись расшифрована заново - подготовьте протокол заново',
+  'minutes.missing': 'На этом языке нет готового протокола для правки - сначала подготовьте его',
+  'minutes.editBusy': 'Предыдущие изменения ещё готовятся - дождитесь окончания',
+  'minutes.reviseFailed': 'Модели не удалось изменить протокол - попробуйте снова',
+  'minutes.editRateLimited': 'Часовой лимит правок исчерпан - попробуйте позже',
+  'minutes.resend': 'Запросить снова',
 };
 
 const en: Record<K, string> = {
@@ -117,6 +187,37 @@ const en: Record<K, string> = {
   'minutes.gone': 'The minutes were not found - prepare them again',
   'minutes.docNotReady': "The minutes aren't ready yet - check their status again",
   'minutes.notOnServer': "Minutes aren't enabled on the server yet - they'll work once the server is updated",
+  'minutes.guide': 'Give directions in chat',
+  'minutes.guideHint': 'Chair, attendees, what to focus on - write it in the chat and Barno will follow it in the minutes',
+  'minutes.guideCount': 'Directions in chat: {n} - they will be applied',
+  'minutes.edit': 'Request changes',
+  'minutes.version': 'Version {n}',
+  'minutes.request': 'Requested change: {text}',
+  'minutes.revising': 'Preparing a new version - usually 1-3 minutes',
+  'minutes.pending': 'New directions not yet in these minutes: {n}',
+  'minutes.applyNotes': 'Apply',
+  'minutes.chair': 'Chair: {name}',
+  'minutes.attendees': 'Attendees: {names}',
+  'minutes.draftPartial': 'This is a draft: the remaining «________» blanks are filled in by the secretary or the document system.',
+  'minutes.changes': 'Changes: {list}',
+  'minutes.changes.item': 'item {list}',
+  'minutes.changes.items': 'items {list}',
+  'minutes.changes.added': 'added: {list}',
+  'minutes.changes.removed': 'removed: {n}',
+  'minutes.changes.agenda': 'agenda',
+  'minutes.changes.header': 'header',
+  'minutes.changes.other': 'other parts',
+  'minutes.changes.none': 'the directions were already reflected - the text did not change',
+  'minutes.superseded': 'The transcript changed, so the minutes were written anew - earlier edits are not included',
+  'minutes.guidanceTruncated': 'Too many directions - the {n} oldest were not applied',
+  'minutes.redoConfirm': 'Rewriting rebuilds the document from the recording: changes requested in chat are not kept, directions are applied. Continue?',
+  'minutes.noChange': 'The minutes did not change - say more precisely what to change',
+  'minutes.outdated': 'The recording was transcribed again - prepare the minutes anew',
+  'minutes.missing': 'There are no finished minutes in this language to change - prepare them first',
+  'minutes.editBusy': 'Earlier changes are still being prepared - please wait',
+  'minutes.reviseFailed': "The model couldn't change the minutes - try again",
+  'minutes.editRateLimited': 'Hourly limit for changes reached - try again later',
+  'minutes.resend': 'Ask again',
 };
 
 export const minutesPart = { uz, ru, en };

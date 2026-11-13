@@ -131,6 +131,28 @@ describe('meetings API endpoints', () => {
     ]);
   });
 
+  it('26b chat message: the minutes intent and document language go into the body only when set (a plain question keeps its exact body)', async () => {
+    const s = setup();
+    const clientId = '5f0c2a3b-1111-4222-8333-444455556666';
+    await s.m.sendChat(ID, { message: 'Rais - A.Karimov', language: 'uz', channel: 'mobile', clientId, intent: 'note' });
+    await s.m.sendChat(ID, { message: '3-bandda muddat 1-dekabr', language: 'uz', channel: 'mobile', clientId, intent: 'revise', minutesLanguage: 'ru' });
+    await s.m.sendChat(ID, { message: 'Narx qancha?', language: 'uz', channel: 'mobile', clientId, intent: null, minutesLanguage: null });
+    await s.m.sendChat(ID, { message: 'Narx qancha?', language: 'uz', channel: 'mobile', clientId, intent: undefined, minutesLanguage: undefined });
+    expect(s.calls.map((c) => c.body)).toEqual([
+      { message: 'Rais - A.Karimov', language: 'uz', channel: 'mobile', clientId, intent: 'note' },
+      { message: '3-bandda muddat 1-dekabr', language: 'uz', channel: 'mobile', clientId, intent: 'revise', minutesLanguage: 'ru' },
+      { message: 'Narx qancha?', language: 'uz', channel: 'mobile', clientId },
+      { message: 'Narx qancha?', language: 'uz', channel: 'mobile', clientId },
+    ]);
+    expect(s.calls.every((c) => c.method === 'POST' && c.path === `${M}/${ID}/chat`)).toBe(true);
+  });
+
+  it('34a minutes list passes the owner\'s note count through', async () => {
+    const ff = fakeFetch(() => ({ status: 200, json: { items: [], notes: 3 } }));
+    const m = createMeetingsApi(new ApiClient({ baseUrl: 'https://llm.brb-tech.uz', fetch: ff.fetch, tokens: tp }));
+    await expect(m.minutesList(ID)).resolves.toEqual({ items: [], notes: 3 });
+  });
+
   it('34b sends an explicit document language and force (server: plain "uz" = Latin, none = Cyrillic)', async () => {
     const s = setup();
     await s.m.createMinutes(ID, { language: 'uz-latn', force: false });

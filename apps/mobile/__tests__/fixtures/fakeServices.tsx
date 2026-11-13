@@ -56,7 +56,7 @@ export function fakeMeetingsApi(over: Partial<MeetingsApi> = {}): jest.Mocked<Me
     audioUrl: jest.fn((id: string) => `https://x.uz/api/v1/meetings/${id}/audio`),
     actionItemToCrm: jest.fn(async () => ({ status: 'failed' as const, proposal: null, text: null, reason: 'empty', item: null })),
     transcriptExportUrl: jest.fn((id: string, format: string) => `https://x.uz/api/v1/meetings/${id}/transcript/export?format=${format}`),
-    minutesList: jest.fn(async () => ({ items: [] })),
+    minutesList: jest.fn(async () => ({ items: [], notes: 0 })),
     createMinutes: jest.fn(async () => minutesView({ status: 'running', finishedAt: null, sectionCount: 0, itemCount: 0, notes: [] })),
     minutes: jest.fn(async () => ({ ...minutesView(), content: null })),
     minutesExportUrl: jest.fn((id: string, mid: string, format: string) => `https://x.uz/api/v1/meetings/${id}/minutes/${mid}/export?format=${format}`),

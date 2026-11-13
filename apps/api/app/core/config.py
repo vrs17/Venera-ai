@@ -855,6 +855,17 @@ class Settings(BaseSettings):
     meetings_minutes_max_output_tokens: int = 32000
     #: Bitta odamga soatiga shuncha bayonnoma (har biri pullik Claude chaqiruvi).
     meetings_minutes_per_hour: int = 6
+    #: Bayonnoma TAHRIRI (chatdagi o'zgartirish so'rovi yoki yangi ko'rsatmalarni qo'llash; har biri pullik Claude
+    #: chaqiruvi) - so'rovchiga soatiga shuncha (Slack'da har odamga alohida). Yangi hujjat chegarasidan mustaqil.
+    meetings_minutes_edits_per_hour: int = 20
+    #: Tahrir uchun `effort`; bo'sh - `MEETINGS_MINUTES_EFFORT` (high).
+    meetings_minutes_revise_effort: str = ""
+    #: Promptdagi ega ko'rsatmalari blokining chegarasi (belgi): sig'masa eng eskilari tushadi va hujjatda
+    #: `guidance_truncated:<n>` ogohlantirishi.
+    meetings_minutes_guidance_chars: int = 6000
+    #: Chat modeliga ko'rsatiladigan joriy bayonnoma matni chegarasi (belgi, `minutes/state.py`): odam "3-band" desa,
+    #: model hujjatni Word dagidek ko'rib turadi. Uzunrog'i kesiladi; 0 - hujjat matni chatga ko'rsatilmaydi.
+    meetings_chat_minutes_chars: int = 60000
     #: Vazifani CRM ga yuborish (v3 taklifi): odamga soatiga shuncha so'rov va bitta
     #: so'rovning eng uzun kutishi (agent CRM dan loyiha va odamni qidiradi).
     meetings_crm_per_hour: int = 20

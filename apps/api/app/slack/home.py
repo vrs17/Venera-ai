@@ -49,7 +49,8 @@ PROMPT = (
     "Audio kelgach Barno uning tilini so'raydi (o'zbek, rus, ingliz) - tanlang. Xulosa ostida: yuklab olish, "
     "vazifalar, 📄 Bayonnoma (rasmiy hujjat, Word/PDF) va eksport. "
     "Savol bo'lsa — shu chatga yozing: Barno oxirgi yuborilgan yozuv bo'yicha javob beradi va suhbatni eslab "
-    "qoladi. Oldingi yozuv haqida — o'sha yozuv xabarining thread'ida so'rang."
+    "qoladi. 📄 Bayonnoma uchun ko'rsatma va tayyor bayonnomadagi o'zgartirishlarni ham shu chatga yozing - Barno "
+    "tushunib, yangi versiyasini yuboradi. Oldingi yozuv haqida — o'sha yozuv xabarining thread'ida so'rang."
 )
 
 

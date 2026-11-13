@@ -45,6 +45,7 @@ import type {
   MergeSpeakersResponse,
   MinutesDetail,
   MinutesExportFormat,
+  MinutesList,
   MinutesView,
   PatchActionItemRequest,
   PatchMeetingRequest,
@@ -102,6 +103,15 @@ export const SHARE_FILE_TYPES = {
   audio: { ext: 'm4a', mime: 'audio/mp4' },
 } as const;
 export type ShareFileKind = keyof typeof SHARE_FILE_TYPES;
+
+/**
+ * `POST /chat` tanasi: bayonnoma maydonlari (`intent`, `minutesLanguage`) FAQAT berilganda - oddiy
+ * savolning tanasi avvalgidek qoladi (eski server ham, aniq tanani tekshiradigan test ham buzilmaydi).
+ */
+export function chatBody(body: ChatRequest): ChatRequest {
+  const { intent, minutesLanguage, ...rest } = body;
+  return { ...rest, ...(intent ? { intent } : null), ...(minutesLanguage ? { minutesLanguage } : null) };
+}
 
 /** `parts` -> `brief,summary,...` (server tartibida, takrorsiz); bo'sh - parametr yuborilmaydi. */
 export function exportPartsParam(parts?: readonly MeetingExportPart[] | null): string | undefined {
@@ -204,8 +214,9 @@ export function createMeetingsApi(client: ApiClient) {
     chatHistory: (id: string) => client.request<ChatHistory>(`${M}/${enc(id)}/chat`),
     // 26b - javobni Claude yozadi: shu yozuv matni, xulosasi va suhbatning oldingi qismi bilan (o'nlab soniya).
     // `clientId` - idempotentlik kaliti: o'sha kalit bilan qayta yuborish takror savol-javob yaratmaydi.
+    // Bayonnoma amali (ko'rsatma, tayyorlash, o'zgartirish) javobdagi `minutes` da; hujjat fonda yoziladi.
     sendChat: (id: string, body: ChatRequest) =>
-      client.request<ChatTurn>(`${M}/${enc(id)}/chat`, { method: 'POST', body, timeoutMs: AI_TIMEOUT_MS }),
+      client.request<ChatTurn>(`${M}/${enc(id)}/chat`, { method: 'POST', body: chatBody(body), timeoutMs: AI_TIMEOUT_MS }),
     // 26c - "Yangi suhbat": faol savol-javoblar arxivlanadi (serverda qoladi, modelga boshqa bormaydi)
     resetChat: (id: string) => client.request<ChatReset>(`${M}/${enc(id)}/chat`, { method: 'DELETE' }),
     // 28 - pleer `{uri, headers: {Authorization}}` bilan o'zi oladi
@@ -220,8 +231,9 @@ export function createMeetingsApi(client: ApiClient) {
         parts: exportPartsParam(o.parts),
         summaryId: o.summaryId || undefined,
       }),
-    // 34a - bayonnomalar (rasmiy hujjat loyihasi): har til va transkript versiyasi uchun qatorlar
-    minutesList: (id: string) => client.request<{ items: MinutesView[] }>(`${M}/${enc(id)}/minutes`),
+    // 34a - bayonnomalar (rasmiy hujjat loyihasi): har til, transkript versiyasi va tahrir uchun qatorlar
+    // + egasining chatdagi faol ko'rsatmalari soni (`notes`)
+    minutesList: (id: string) => client.request<MinutesList>(`${M}/${enc(id)}/minutes`),
     // 34b - 200 tayyor (yoki allaqachon yozilmoqda), 202 `running` - holat 34c bilan so'raladi
     createMinutes: (id: string, body: CreateMinutesRequest) =>
       client.request<MinutesView>(`${M}/${enc(id)}/minutes`, { method: 'POST', body }),

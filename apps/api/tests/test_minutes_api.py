@@ -14,6 +14,8 @@ from __future__ import annotations
 import threading
 import time
 
+from urllib.parse import quote
+
 import pytest
 
 from app.core.config import settings
@@ -24,7 +26,8 @@ from meetings_fakes import create_meeting, enable, recorded, run_all
 
 BASE = "/api/v1/meetings"
 VIEW_FIELDS = {"id", "meetingId", "language", "status", "createdAt", "finishedAt", "provider", "model",
-               "transcriptRev", "stale", "agendaCount", "sectionCount", "itemCount", "notes", "warnings", "error"}
+               "transcriptRev", "stale", "agendaCount", "sectionCount", "itemCount", "notes", "warnings", "error",
+               "kind", "version", "parentId", "request", "notesApplied", "pendingNotes", "header", "changes"}
 #: `conftest.ADMIN` (actor 1) - Slack/Telegram yo'lini (`minutes.generate`) to'g'ridan-to'g'ri chaqirish uchun.
 ADMIN_USER = AuthUser(actorId=1, email="admin@venera.uz", fullName="Administrator", roles=["ADMIN"])
 
@@ -72,6 +75,17 @@ def _detail(client, auth, mid: str, minutes_id: str) -> dict:
     return response.json()
 
 
+def _note(rt, mid: str, text: str) -> str:
+    """Hisob egasining bayonnoma ko'rsatmasi (`kind='note'` chat navbati) - to'g'ridan-to'g'ri omborga (chat orqali
+    yuborish - `test_meetings_chat`)."""
+    qid = new_id()
+    rt.store.add_question({"id": qid, "meeting_id": mid, "question": text, "answer": "Ko'rsatmangiz eslab qolindi.",
+                           "citations": "[]", "follow_ups": "[]", "kind": "note", "channel": "mobile",
+                           "minutes_json": '{"action":"note","language":null,"instruction":null}',
+                           "created_at": int(time.time())})
+    return qid
+
+
 # --- asosiy yo'l ------------------------------------------------------------------------------------
 
 
@@ -84,9 +98,13 @@ def test_fonda_boshlash_holat_va_eksport(client, auth, ready, jobs):
     assert (started["status"], started["language"], started["meetingId"]) == ("running", "uz-cyrl", mid)
     assert started["error"] is None and started["finishedAt"] is None and started["provider"] is None
     assert started["transcriptRev"] == int(rt.store.meeting_any(mid)["transcript_rev"]) and started["stale"] is False
+    # Asl hujjat: 1-versiya, ota-versiya, so'rov, ko'rsatma va o'zgarishlar yo'q.
+    assert (started["kind"], started["version"], started["parentId"], started["request"]) == ("generate", 1, None, None)
+    assert (started["notesApplied"], started["pendingNotes"]) == (0, 0)
+    assert started["header"] is None and started["changes"] is None
     # Model so'rov ipida chaqirilmadi - ish fon navbatida.
     assert len(jobs) == 1 and _calls(rt) == 0
-    assert client.get(f"{BASE}/{mid}/minutes", headers=auth).json() == {"items": [started]}
+    assert client.get(f"{BASE}/{mid}/minutes", headers=auth).json() == {"items": [started], "notes": 0}
     running = _detail(client, auth, mid, started["id"])
     assert running["status"] == "running" and running["content"] is None
     early = client.get(f"{BASE}/{mid}/minutes/{started['id']}/export", headers=auth)
@@ -194,17 +212,72 @@ def test_ikki_bosish_bitta_model_bitta_chegara(client, auth, ready, jobs, monkey
     assert int(limited.headers["retry-after"]) > 0
 
 
-def test_navbatdagi_ish_tayyorini_oladi(client, auth, ready, jobs):
-    """REST ishi navbatda turganda Slack/Telegram (`generate`) xuddi shu hujjatni yozib qo'ydi: fon ishi
-    modelni qayta chaqirmaydi - tayyor mazmun ilova so'rab turgan qatorga ko'chadi."""
+def test_navbatdagi_ishga_bot_qoshiladi(client, auth, ready, jobs):
+    """REST ishi navbatda turganda Slack/Telegram (`generate`) xuddi shu hujjatni so'radi: yangi qator ham, ikkinchi
+    model chaqiruvi ham yo'q - `generate` navbatdagi ishga qo'shiladi va uning natijasini kutadi (`wait`; bu yerda
+    "kutish" navbatni yuritadi). Tayyor mazmunni ko'chirish yo'li -
+    `test_minutes_service.test_nusxa_yoli_provenance`."""
     mid, rt = ready
     queued = _post(client, auth, mid, language="uz-cyrl").json()
-    sync = minutes.generate(ADMIN_USER, mid, "uz-cyrl")
-    assert sync["id"] != queued["id"] and sync["status"] == "ready" and _calls(rt) == 1
-    drain(jobs)
+    sync = minutes.generate(ADMIN_USER, mid, "uz-cyrl", sleep=lambda _sec: drain(jobs))
+    assert sync["id"] == queued["id"] and sync["status"] == "ready" and _calls(rt) == 1
+    assert len(rt.store.minutes_rows(mid)) == 1
     body = _detail(client, auth, mid, queued["id"])
-    assert body["status"] == "ready" and body["provider"] == "ollama" and _calls(rt) == 1
-    assert body["content"] == _detail(client, auth, mid, sync["id"])["content"]
+    assert body["status"] == "ready" and body["provider"] == "ollama"
+
+
+def test_post_kutilayotgan_korsatma_202_revise(client, auth, ready):
+    """Tayyor hujjat bor, chatda yangi ko'rsatma berildi: til tugmasi hujjatni QAYTADAN yozmaydi - joriy hujjatning
+    tahriri (202, `kind` revise, 2-versiya, ko'rsatma qo'llangan); keyingi bosish bepul (200, o'sha versiya)."""
+    mid, rt = ready
+    head = _post(client, auth, mid, language="uz-cyrl").json()
+    assert client.get(f"{BASE}/{mid}/minutes", headers=auth).json()["notes"] == 0
+    _note(rt, mid, "CHAIR=Alisher Karimov")
+    listed = client.get(f"{BASE}/{mid}/minutes", headers=auth).json()
+    assert listed["notes"] == 1 and listed["items"][0]["pendingNotes"] == 1     # hujjatda hali yo'q
+    started = _post(client, auth, mid, language="uz-cyrl")
+    assert started.status_code == 202, started.text
+    body = started.json()
+    assert set(body) == VIEW_FIELDS and body["status"] == "running"
+    assert (body["kind"], body["version"], body["parentId"], body["request"]) == ("revise", 2, head["id"], None)
+    done = _detail(client, auth, mid, body["id"])
+    assert done["status"] == "ready" and (done["notesApplied"], done["pendingNotes"]) == (1, 0)
+    assert done["header"] == {"organization": None, "chairedBy": None, "city": None, "chair": "Alisher Karimov",
+                              "attendees": []}
+    assert done["changes"] == {"items": {"changed": [], "added": [], "removed": []},
+                               "agenda": {"changed": [], "added": [], "removed": []}, "header": ["chair"], "other": []}
+    assert [c["op"] for c in rt.llm.calls if c["op"].startswith("meeting_minutes")] == \
+        ["meeting_minutes", "meeting_minutes_revise"]
+    again = _post(client, auth, mid, language="uz-cyrl")
+    assert again.status_code == 200 and again.json()["id"] == body["id"] and _calls(rt) == 1
+    listed = client.get(f"{BASE}/{mid}/minutes", headers=auth).json()
+    assert [(i["version"], i["pendingNotes"]) for i in listed["items"]] == [(1, 1), (2, 0)]
+    md = client.get(f"{BASE}/{mid}/minutes/{body['id']}/export?format=md", headers=auth).content.decode("utf-8")
+    assert "Alisher Karimov" in md and "2-таҳрир." in md
+
+
+def test_post_navbat_toliq_409(client, auth, ready, jobs):
+    """Shu tilda 3 ta tahrir navbatda (tirik): to'rtinchisi 409 `minutes_busy` - qator ham, chegara ham yo'q; navbat
+    bo'shagach o'tadi, tahrirlar bir-birining ustiga yozilgan (ota-versiyalar zanjiri)."""
+    mid, rt = ready
+    head = _post(client, auth, mid, language="ru").json()
+    drain(jobs)
+    queued = []
+    for n in range(minutes.MAX_LIVE):
+        _note(rt, mid, f"Ko'rsatma {n + 1}")
+        response = _post(client, auth, mid, language="ru")
+        assert response.status_code == 202 and response.json()["kind"] == "revise", response.text
+        queued.append(response.json()["id"])
+    _note(rt, mid, "To'rtinchi ko'rsatma")
+    busy = _post(client, auth, mid, language="ru")
+    assert busy.status_code == 409 and busy.json()["code"] == "minutes_busy"
+    assert busy.json()["message"] == minutes.FAILURES["minutes_busy"][1] and len(rt.store.minutes_rows(mid)) == 4
+    drain(jobs)
+    chain = [rt.store.minutes_row(mid, i) for i in queued]
+    assert [r["status"] for r in chain] == ["ready"] * 3
+    assert [(r["parent_id"], r["revision"]) for r in chain] == [(head["id"], 1), (queued[0], 2), (queued[1], 3)]
+    later = _post(client, auth, mid, language="ru")
+    assert later.status_code == 202 and later.json()["parentId"] == queued[-1] and later.json()["version"] == 5
 
 
 def test_navbatda_yigilish_ochirilsa_model_chaqirilmaydi(client, auth, ready, jobs):
@@ -213,6 +286,28 @@ def test_navbatda_yigilish_ochirilsa_model_chaqirilmaydi(client, auth, ready, jo
     assert client.delete(f"{BASE}/{mid}", headers=auth).status_code == 200
     drain(jobs)
     assert _calls(rt) == 0 and rt.store.minutes_rows(mid) == []
+
+
+def test_eski_versiya_qayta_ishlatiladi_va_tahrir_fayl_nomi(client, auth, ready):
+    """minutes-2 hujjati (deploydan oldingi) joriy - qayta bosish modelni chaqirmaydi (`READY_VERSIONS`), minutes-1
+    esa qayta yoziladi. Yangi qator transkript avlodini yozadi (tahrir asosi - BASE). Tahrir qatori (`revision` 1)
+    eksportida fayl nomida ham, loyiha qatorida ham versiya belgisi."""
+    mid, rt = ready
+    first = _post(client, auth, mid, language="uz-cyrl").json()
+    row = rt.store.minutes_row(mid, first["id"])
+    assert row["transcript_gen"] == rt.store.meeting_any(mid)["transcript_gen"] and row["revision"] == 0
+    rt.store.update_minutes(first["id"], prompt_version="minutes-2")
+    again = _post(client, auth, mid, language="uz-cyrl")
+    assert again.status_code == 200 and again.json()["id"] == first["id"] and _calls(rt) == 1
+    rt.store.update_minutes(first["id"], revision=1)
+    url = f"{BASE}/{mid}/minutes/{first['id']}/export"
+    md = client.get(f"{url}?format=md", headers=auth)
+    assert md.status_code == 200 and "2-таҳрир." in md.content.decode("utf-8")
+    assert quote("Баённома", safe="") in md.headers["content-disposition"]
+    assert quote("(2-таҳрир)", safe="") in md.headers["content-disposition"]
+    rt.store.update_minutes(first["id"], prompt_version="minutes-1")
+    fresh = _post(client, auth, mid, language="uz-cyrl")
+    assert fresh.status_code == 202 and fresh.json()["id"] != first["id"] and _calls(rt) == 2
 
 
 def test_transkript_tahriridan_keyin_eskirgan_va_yangi_versiya(client, auth, ready):

@@ -198,7 +198,8 @@ _HELP = (
     "• Javob noto'g'ri bo'lsa - ostidagi ⚑ tugmasi bilan xabar bering.\n"
     "• 🎙 <b>Plaud</b> (pastdagi tugma yoki /plaud): audio yuboring - matn, qisqa xulosa, "
     "vazifalar, eksport; yozuv bo'yicha savol uchun «💬 Savol berish» tugmasini bosing yoki "
-    "xulosaga javob (Reply) qilib yozing (ovozli xabar ham bo'ladi) - Barno suhbatni eslab qoladi.\n\n"
+    "xulosaga javob (Reply) qilib yozing (ovozli xabar ham bo'ladi) - Barno suhbatni eslab qoladi. "
+    "Bayonnoma uchun ko'rsatma va tayyor bayonnomadagi o'zgartirishlar ham shunday yoziladi.\n\n"
     "/new - yangi suhbat · /plaud - audio → matn · /start - Barnoni ochish · /logout - botdan chiqish"
 )
 #: `telegram_voice_max_sec` dan uzun ovoz (`{minutes}` - chegara): HR savoli va yozuv bo'yicha ovozli savol.
@@ -990,8 +991,8 @@ class VeneraBot:
                 return
             media = self.plaud.media(msg)
             if media is not None and media["kind"] == "voice" and self.plaud.claims_reply(chat_id, user, msg):
-                # Yozuv xabariga (yoki «💬 Savol berish» so'roviga) ovozli javob - shu yozuv bo'yicha
-                # savol: `wants` dan OLDIN (yangi yozuv bo'lmasin, qurollanish sarflanmasin).
+                # Yozuv xabariga (bayonnoma fayliga ham) yoki Plaud so'roviga (💬 / ✍️ / ✏️) ovozli javob - shu
+                # yozuv chatiga: `wants` dan OLDIN (yangi yozuv bo'lmasin, qurollanish sarflanmasin).
                 log.info("Telegram Plaud (%s): ovozli savol", user.actorId)
                 with bind(user.actorId, "bot"):
                     self._meeting_voice(chat_id, tg_id, user, msg)
@@ -1479,10 +1480,11 @@ class VeneraBot:
             self._ask(chat_id, tg_id, user, text, stt=stt)
 
     def _meeting_voice(self, chat_id: int, tg_id: int, user: AuthUser, msg: dict[str, Any]) -> None:
-        """Yozuv xabariga yoki «💬 Savol berish» so'roviga OVOZLI javob (`plaud.claims_reply`) - shu yig'ilish
-        chatiga savol: matn HR savolidagi AYNI yo'l bilan (`_hear`: chegaralar, arxiv, xato izohlari), so'ng
-        `plaud.on_reply` (eskirgan so'rovni ham u yutadi). HR yordamchisiga ham, yangi yozuvga ham ketmaydi.
-        "🎙 matn" xabarini `on_reply` shu yig'ilishga bog'laydi: unga javob (matn yoki ovoz) ham shu suhbatga."""
+        """Yozuv xabariga (bayonnoma fayli va natijasi ham) yoki Plaud so'roviga («💬 Savol berish», «✍️ Ko'rsatma
+        berish», «✏️ O'zgartirish») OVOZLI javob (`plaud.claims_reply`) - shu yig'ilish chatiga: matn HR savolidagi
+        AYNI yo'l bilan (`_hear`: chegaralar, arxiv, xato izohlari), so'ng `plaud.on_reply` (eskirgan so'rovni ham u
+        yutadi). HR yordamchisiga ham, yangi yozuvga ham ketmaydi. "🎙 matn" xabarini `on_reply` shu yig'ilishga
+        bog'laydi: unga javob (matn yoki ovoz) ham shu suhbatga."""
         heard = self._hear(chat_id, tg_id, user, msg, too_long=_MEETING_VOICE_LONG)
         if heard is None or self.plaud is None:
             return

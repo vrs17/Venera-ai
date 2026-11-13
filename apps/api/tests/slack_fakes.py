@@ -65,15 +65,19 @@ class FakeSlack:
         return {"ok": True}
 
     def say(self, channel: str = "D1", text: str = "", *, user: str = "U1", files: list[dict] | None = None,
-            thread: str | None = None, ago: float = 0.0, team: str | None = None) -> dict:
+            thread: str | None = None, ago: float = 0.0, team: str | None = None,
+            client_msg_id: str | None = None) -> dict:
         """Odam chatga yozdi: thread'dan tashqarida bo'lsa - chat tarixiga. `ts` - Slack'dagidek epoch soniya
         (`ago` soniya oldin; `meeting.AUDIO_PENDING_SEC`). `team` - ish maydoni (prod'da dispetcher Bolt
-        kontekstidan yozadi, `__init__._stamp_team`). Qaytaradi: Bolt `message` hodisasi."""
+        kontekstidan yozadi, `__init__._stamp_team`). `client_msg_id` - Slack odam xabariga beradigan kalit (hodisa
+        qayta kelsa ham o'sha; `meeting._client_id`). Qaytaradi: Bolt `message` hodisasi."""
         self.said += 1
         event = {"type": "message", "channel_type": "im", "channel": channel, "user": user, "text": text,
                  "ts": f"{int(time.time() - ago)}.{self.said:06d}"}
         if team:
             event["team"] = team
+        if client_msg_id:
+            event["client_msg_id"] = client_msg_id
         if files:
             event["files"] = list(files)
         if thread:
@@ -118,6 +122,13 @@ class FakeSlack:
 
     def conversations_replies(self, channel, ts, **kwargs):
         return {"messages": [self.parents[ts]] if ts in self.parents else []}
+
+    def thread_under(self, message: dict[str, Any]) -> str:
+        """Barno'ning chatdagi (thread'dan tashqaridagi) xabari - oxirgi tahriri bilan - thread boshi bo'ldi
+        (`conversations.replies`): odam unga thread'da javob yozadi. Qaytaradi: thread `ts`."""
+        ts = message["ts"]
+        self.parents[ts] = self.timeline[(message["channel"], ts)]
+        return ts
 
 
 def setup(monkeypatch, users_file, *, seconds: float = 64.0) -> list[str]:

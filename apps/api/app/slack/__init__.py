@@ -128,8 +128,9 @@ def _on_message(event: dict[str, Any], client: Any, context: Any) -> None:
     (`meeting.acknowledge`): navbat band bo'lsa ham odam audiosi qabul qilinganini ko'radi; o'girish til tanlangach
     (tugma - `_on_action`). Thread'dan tashqaridagi oddiy matn - oxirgi yozuv
     chati, chatda yozuv bo'lmasa «🎙 Plaud» yo'riqnomasi (`meeting.on_text`): chat tarixi ham
-    navbatda o'qiladi, Bolt ipi Slack'ka murojaat qilmaydi. Har xabar (matn, audio bo'lmagan fayl)
-    qo'shimcha ravishda arxivga (`keep.py`)."""
+    navbatda o'qiladi, Bolt ipi Slack'ka murojaat qilmaydi. Chat xabari bayonnoma ishini boshlasa, vazifa uni kutadi
+    (`meeting._follow_minutes`) - kutish `_sleep` bilan: restartda darhol uziladi. Har xabar (matn, audio bo'lmagan
+    fayl) qo'shimcha ravishda arxivga (`keep.py`)."""
     from . import home, keep, meeting, transcribe
 
     pool = _pool
@@ -143,9 +144,9 @@ def _on_message(event: dict[str, Any], client: Any, context: Any) -> None:
         # Til savoli - darhol, shu ipda; ish til tanlangach (`meeting.start`, tugma navbatda).
         meeting.acknowledge(client, event)
     elif meeting.wants(event):
-        pool.submit(meeting.on_message, client, event, bot_user=bot_user)
+        pool.submit(meeting.on_message, client, event, bot_user=bot_user, sleep=_sleep)
     elif home.is_text(event):
-        pool.submit(meeting.on_text, client, event, bot_user=bot_user)
+        pool.submit(meeting.on_text, client, event, bot_user=bot_user, sleep=_sleep)
 
 
 def _on_command(ack: Any, body: dict[str, Any], client: Any) -> None:

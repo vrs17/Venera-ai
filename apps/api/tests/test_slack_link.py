@@ -264,6 +264,36 @@ def test_ulangan_odamning_yozuvi_va_savoli_ozida_ilova_bilan_bitta(linking, _iso
     assert [t["question"] for t in items.json()["items"]] == ["Kim hisobot yuboradi?", "Batafsilroq"]
 
 
+def test_ulangan_odam_bayonnoma_korsatmasi_ilovadagi_suhbat_bilan_bitta(linking, _isolated_meetings, monkeypatch):
+    """Ulangan odamning O'Z yozuvi: bayonnoma menyusi thread'idagi ko'rsatma egasining suhbatiga (`asker` yo'q -
+    ilovadagi chat bilan bitta), til tugmasi ham egasi nomidan - ko'rsatma hujjatga qo'llanadi (umumiy hisobdagi
+    `slack:<user id>` bo'lsa ko'rsatma topilmasdi)."""
+    link.store().link("T1", "U2", 2)
+    rt = _isolated_meetings
+    monkeypatch.setattr(settings, "meetings_minutes_chain", "ollama", raising=False)
+    slack = FakeSlack(files={"F1": AUDIO})
+    send_audio(slack, slack.say("D2", files=[AUDIO], user="U2", team="T1"), rt, user="U2")
+    summary = card(slack)
+    mid = render.marked(summary)
+    body = {"channel": {"id": "D2"}, "user": {"id": "U2"}, "team": {"id": "T1"}}
+    meeting.on_action(slack, {**body, "actions": [{"action_id": "barno_minutes", "value": mid}],
+                              "message": {"ts": summary["ts"]}}, sleep=drive(rt))
+    menu = slack.posted[-1]
+    thread = slack.thread_under(menu)
+    meeting.on_message(slack, slack.say("D2", "CHAIR=Alisher Karimov", user="U2", team="T1", thread=thread),
+                       bot_user=BOT_USER)
+    [note] = rt.store.chat_turns(mid)
+    assert (note["kind"], note["asker"]) == ("note", None) and rt.store.chat_turns(mid, asker="slack:U2") == []
+
+    meeting.on_action(slack, {**body, "actions": [{"action_id": "barno_minutes_lang_uz-cyrl",
+                                                   "value": f"{mid}|uz-cyrl"}],
+                              "message": {"ts": menu["ts"]}}, sleep=drive(rt))
+    [call] = [c for c in rt.llm.calls if c["op"] == "meeting_minutes"]
+    assert "1. CHAIR=Alisher Karimov" in call["user"]
+    assert "Ko'rsatmalaringiz hisobga olindi (1 ta)." in slack.updated[-1]["text"]
+    assert [row["asker"] for row in rt.store.minutes_rows(mid)] == [None]
+
+
 def test_eski_yozuv_umumiy_hisobda_qoladi_kartasi_ishlaydi(users_file, monkeypatch, tmp_path, _isolated_meetings,
                                                           claude):
     setup(monkeypatch, users_file)

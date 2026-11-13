@@ -258,7 +258,7 @@ def test_migratsiya_v1_dan_v2_ga_malumot_bilan(tmp_path):
     conn.close()
 
     st = MeetingStore(root)
-    assert st.version() == store_mod.SCHEMA_VERSION == 7
+    assert st.version() == store_mod.SCHEMA_VERSION == 8
     # v4: eski yozuvning GAPI hisobi bo'sh - ya'ni birinchi kalit (`GAPI_API_KEY`).
     assert st.rows("SELECT stt_account FROM meetings WHERE id='m1'")[0]["stt_account"] is None
     summary = st.summary("m1", "s1")
@@ -313,7 +313,7 @@ def test_migratsiya_v6_manba_va_royxatdagi_orni(tmp_path):
     conn.close()
 
     st = MeetingStore(root)
-    assert st.version() == store_mod.SCHEMA_VERSION == 7
+    assert st.version() == store_mod.SCHEMA_VERSION == 8
     stored = {r["id"]: r["origin"] for r in st.rows("SELECT id, origin FROM meetings")}
     assert stored == {mid: ("slack" if mid == "slack" else None) for mid, *_ in rows}
 
@@ -339,4 +339,74 @@ def test_migratsiya_v6_manba_va_royxatdagi_orni(tmp_path):
     # Filtr + qidiruv + sahifa birga.
     assert [r["id"] for r in st.list_meetings(7, limit=1, offset=1, origin="upload", sort="listed")[0]] == ["call"]
     assert st.list_meetings(7, limit=5, offset=0, q="qo'ng'iroq", origin="upload")[1] == 2
+    st.close_all()
+
+
+def test_migratsiya_v7_dan_v8_ga(tmp_path):
+    """v7 ombori v8 ga: chat navbati turi/amali/hujjati va bayonnoma qatorining versiya zanjiri, so'rovchi, navbat,
+    so'rov, ko'rsatmalar, transkript avlodi va o'zgarishlar ustunlari. Avlod faqat JORIY transkript versiyasida
+    yozilgan qatorlarga to'ldiriladi; `turn_id` noyob (NULL lar ko'p bo'lishi mumkin). Yordamchilar: `notes` (faqat
+    shu so'rovchining faol ko'rsatmalari, odamning o'z so'zlari), `turn`, `update_turn`, `minutes_by_turn`."""
+    root = tmp_path / "m"
+    root.mkdir()
+    conn = sqlite3.connect(root / "meetings.db")
+    for step in store_mod.MIGRATIONS[:7]:
+        for statement in step:
+            conn.execute(statement)
+    now = int(time.time())
+    conn.execute("INSERT INTO meetings (id, actor_id, client_id, created_at, updated_at, status, transcript_rev, "
+                 "transcript_gen) VALUES ('m1', 7, 'c1', ?, ?, 'ready', 3, 2)", (now, now))
+    for mid, rev in (("cur", 3), ("old", 2)):
+        conn.execute("INSERT INTO minutes (id, meeting_id, language, transcript_rev, prompt_version, status, "
+                     "content_json, created_at) VALUES (?, 'm1', 'uz-cyrl', ?, 'minutes-2', 'ready', '{}', ?)",
+                     (mid, rev, now))
+    conn.execute("INSERT INTO questions (id, meeting_id, question, answer, created_at) "
+                 "VALUES ('q0', 'm1', 'Kim?', '[S1].', ?)", (now,))
+    conn.execute("PRAGMA user_version = 7")
+    conn.commit()
+    conn.close()
+
+    st = MeetingStore(root)
+    assert st.version() == store_mod.SCHEMA_VERSION == 8
+    columns = {r["name"] for r in st.rows("PRAGMA table_info(questions)")}
+    assert {"kind", "minutes_json", "minutes_id"} <= columns
+    columns = {r["name"] for r in st.rows("PRAGMA table_info(minutes)")}
+    assert {"parent_id", "revision", "asker", "turn_id", "request_json", "guidance_json", "transcript_gen",
+            "changes_json"} <= columns
+    rows = {r["id"]: r for r in st.minutes_rows("m1")}
+    assert (rows["cur"]["transcript_gen"], rows["old"]["transcript_gen"]) == (2, None)   # faqat joriy versiyadagi
+    assert rows["cur"]["revision"] == rows["old"]["revision"] == 0 and rows["cur"]["parent_id"] is None
+    assert st.turn("m1", "q0")["kind"] is None and st.turn("m1", "q0")["minutes_json"] is None
+    [index] = [r for r in st.rows("PRAGMA index_list(minutes)") if r["name"] == "minutes_turn"]
+    assert index["unique"] and index["partial"]
+    # Bitta navbat - bitta ish: takror `turn_id` rad etiladi, `NULL` lar esa ko'p.
+    for mid, turn in (("a", None), ("b", None), ("c", "t1")):
+        st.insert_minutes({"id": mid, "meeting_id": "m1", "language": "ru", "transcript_rev": 3,
+                           "prompt_version": "minutes-3", "status": "running", "created_at": now, "turn_id": turn})
+    with pytest.raises(sqlite3.IntegrityError):
+        st.insert_minutes({"id": "d", "meeting_id": "m1", "language": "ru", "transcript_rev": 3,
+                           "prompt_version": "minutes-3", "status": "running", "created_at": now, "turn_id": "t1"})
+    assert st.minutes_by_turn("t1")["id"] == "c" and st.minutes_by_turn("nope") is None
+
+    def turn(qid: str, kind: str | None, *, action: str | None = None, asker: str | None = None) -> None:
+        st.add_question({"id": qid, "meeting_id": "m1", "question": f"{qid} matni", "answer": "!", "kind": kind,
+                         "minutes_json": action, "asker": asker, "created_at": now})
+
+    turn("n1", "note", action='{"action":"note","language":null,"instruction":null}')
+    turn("c1", "create", action='{"action":"create","language":"uz-cyrl","instruction":"Raisni yozing"}')
+    turn("c2", "create", action='{"action":"create","language":"uz-cyrl","instruction":null}')
+    turn("r1", "revise", action='{"action":"revise","language":"uz-cyrl","instruction":"3-band"}')
+    turn("c3", "create", action="[1, 2]")
+    turn("s1", "note", asker="slack:U1")
+    turn("n2", "note")
+    assert [(n["id"], n["text"]) for n in st.notes("m1")] == [("n1", "n1 matni"), ("c1", "c1 matni"),
+                                                               ("n2", "n2 matni")]
+    assert set(st.notes("m1")[0]) == {"id", "text", "created_at"}
+    assert [n["id"] for n in st.notes("m1", asker="slack:U1")] == ["s1"] and st.notes("m2") == []
+    st.archive_questions("m1", now, asker=None)                               # "Yangi suhbat" - ko'rsatmalar ham
+    assert st.notes("m1") == [] and [n["id"] for n in st.notes("m1", asker="slack:U1")] == ["s1"]
+    st.update_turn("r1", minutes_id="c", answer="Tayyorlayapman")
+    changed = st.turn("m1", "r1")
+    assert (changed["minutes_id"], changed["answer"], changed["kind"]) == ("c", "Tayyorlayapman", "revise")
+    assert st.turn("m2", "r1") is None and st.turn("m1", "nope") is None
     st.close_all()

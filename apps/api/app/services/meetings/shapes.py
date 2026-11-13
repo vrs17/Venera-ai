@@ -122,25 +122,37 @@ def ask() -> dict[str, Any]:
     return obj({"answer": STR, "citations": IDS, "followUps": arr(STR)})
 
 
+def chat() -> dict[str, Any]:
+    """Yig'ilish chati (Claude, `meeting_chat`): savol-javob shakli + bayonnoma amali (`minutes`: `action` - none |
+    note | create | revise, hujjat tili, o'zgartirish talqini). `minutes` BIRINCHI - model avval qaror qiladi, javob
+    esa uni tasdiqlaydi. Sxema doim bir xil (har navbatda o'zgarmaydi - xizmat uni bir marta kompilyatsiya qiladi)."""
+    return obj({"minutes": obj({"action": STR, "language": NSTR, "instruction": NSTR}),
+                "answer": STR, "citations": IDS, "followUps": arr(STR)})
+
+
 def minutes() -> dict[str, Any]:
     """Bayonnoma (rasmiy hujjat, `minutes/prompt.py` dagi shakl bilan BIR XIL): kun tartibi bandlari,
     har band bo'yicha bayon, qaror bo'limlari (band = tur, muddat, mas'ullar, matn, kichik bandlar,
-    "Bunda" davomi, manba qatorlar), nazoratchi, izohlar, qamrov. Sarlavhalar, raqamlash va bo'sh
-    joylar ("________") - KOD (`minutes/compose.py`), model emas."""
+    "Bunda" davomi, manba qatorlar), nazoratchi, izohlar, qamrov va sarlavha qismi (`header`: tashkilot,
+    kim huzurida, shahar, rais, qatnashchilar - FAQAT ega aytgani). Sarlavhalar, raqamlash va bo'sh
+    joylar ("________") - KOD (`minutes/compose.py`), model emas. Tahrir (`meeting_minutes_revise`) ham shu shakl."""
     item = obj({"kind": STR, "deadline": NSTR, "deadlineDate": NSTR, "responsible": arr(STR), "text": STR,
                 "subpoints": arr(STR), "followUp": NSTR, "sourceSegmentIds": IDS, "confidence": NUM})
     agenda = obj({"title": STR, "speakers": arr(STR), "report": STR, "sourceSegmentIds": IDS})
     section = obj({"agendaIndex": INT, "items": arr(item)})
+    header = obj({"organization": NSTR, "chairedBy": NSTR, "city": NSTR, "chair": NSTR, "attendees": arr(STR)})
     return obj({"coverage": _COVERAGE, "title": STR, "agenda": arr(agenda), "preamble": NSTR,
-                "sections": arr(section), "controller": NSTR, "notes": arr(STR)})
+                "sections": arr(section), "controller": NSTR, "notes": arr(STR), "header": header})
 
 
 def for_op(op: str, system: str = "") -> dict[str, Any] | None:
-    """Amal (`op`) -> sxema; noma'lum amal - `None` (oddiy JSON rejimi). Yig'ilish chati (`meeting_chat`) -
-    savol-javob bilan bir xil shakl."""
+    """Amal (`op`) -> sxema; noma'lum amal - `None` (oddiy JSON rejimi). Yig'ilish chati (`meeting_chat`, faqat
+    Claude) - `chat` (savol-javob + bayonnoma amali); savol-javob (`meeting_ask`: v3, OpenAI, Ollama, agent) - `ask`;
+    bayonnoma tahriri (`meeting_minutes_revise`) - bayonnoma shakli."""
     if op == "meeting_extract":
         return extract(follow_up='"followUpMessage"' in system)
     builders = {"meeting_map": map_part, "meeting_write": writer, "meeting_verify": verify,
-                "meeting_classify": classify, "meeting_ask": ask, "meeting_chat": ask, "meeting_minutes": minutes}
+                "meeting_classify": classify, "meeting_ask": ask, "meeting_chat": chat, "meeting_minutes": minutes,
+                "meeting_minutes_revise": minutes}
     build = builders.get(op)
     return build() if build else None

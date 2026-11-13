@@ -195,7 +195,8 @@ def grounded(text: str, *, segments: list[dict[str, Any]], sent: set[int], speak
 
 
 def answer_chain(providers: list[Any], *, deadline: float = 0.0, clock: Callable[[], float] = time.monotonic,
-                 agent_ok: bool = True, **kwargs: Any) -> tuple[dict[str, Any], Any]:
+                 agent_ok: bool = True, minutes: Mapping[str, Any] | None = None,
+                 **kwargs: Any) -> tuple[dict[str, Any], Any]:
     """Savol zanjir bo'yicha (`llm.run_chain`): birinchi javob bergan model. Odam kutib
     turibdi - o'z navbatimiz band bo'lsa ham keyingi modelga o'tiladi.
 
@@ -204,7 +205,8 @@ def answer_chain(providers: list[Any], *, deadline: float = 0.0, clock: Callable
     `agent_ok=False` (telefon qo'ng'irog'i) - yangi agent bo'g'ini va shadow YO'Q: bugungi
     zanjir o'zgarmaydi (`brain.meeting_agent_ok`).
     Claude (`converse` bor) - ko'p navbatli chat (`chat.converse`), qolganlari - `answer` (tarix matn bloki).
-    -> (javob, ishlagan provayder)."""
+    `minutes` - bayonnoma bloklari (`{"doc", "state"}`) FAQAT Claude'ga (`converse`): `answer` va shadow avvalgi
+    argumentlarni oladi. -> (javob, ishlagan provayder)."""
     from .chat import converse
     from .llm import DeadlineExceeded, run_chain, within
 
@@ -213,7 +215,7 @@ def answer_chain(providers: list[Any], *, deadline: float = 0.0, clock: Callable
     def attempt(provider: Any, strict: bool) -> dict[str, Any]:
         def run() -> dict[str, Any]:
             if provider.name == "claude" and callable(getattr(provider.client, "converse", None)):
-                return converse(provider.client, **kwargs)
+                return converse(provider.client, minutes=minutes, **kwargs)
             return answer(provider.client, budget=provider.max_prompt_chars, **kwargs)
 
         if ends is None:

@@ -3,8 +3,10 @@
 SHARTNOMA:
 
     class Invalid(ValueError)                  # shakl yaroqsiz (bo'limlar ham, kun tartibi ham yo'q)
-    def validate(data: dict, *, lang: str, segments: list[dict], speakers: list[dict])
-            -> tuple[dict, list[str]]          # (tozalangan mazmun, ogohlantirishlar)
+    def validate(data: dict, *, lang: str, segments: list[dict], speakers: list[dict],
+                 owner: Sequence[str] = ()) -> tuple[dict, list[str]]   # (tozalangan mazmun, ogohlantirishlar)
+    def owner_terms(content: dict) -> list[str]  # tayyor hujjatdagi ism/lavozimlar - keyingi tahrirda ham asosli
+    KEYS, HEADER_KEYS, EMPTY_HEADER            # mazmun kalitlari, sarlavha qismi kalitlari, bo'sh sarlavha
 
 Tekshiruvlar: kalitlar/turlar (`shapes.minutes` shakli; yetishmagan maydon default bilan to'ldiriladi,
 ortiqchasi tashlanadi); matn tozalash (`export.clean`, boshqaruv belgilari, bo'shliqlar); chegaralar
@@ -22,6 +24,18 @@ raqam guruhlari transkriptda bo'lmasa `unverified_number:<raqam>` (matn o'zgarma
 
 YOZUV: `lang` kirill tillari (uz-cyrl, ru) uchun harflarning >= 60% kirill bo'lmasa `script_mismatch`;
 uz-latn/en uchun lotin. Faqat ogohlantirish - hujjat chiqadi.
+
+EGA MATNI (`owner`, 2026-11-12): yig'ilish egasining ko'rsatmalari, o'zgartirish so'rovi, suhbatdagi savollari va
+tahrir asosidagi ismlar (`owner_terms`). Ega - manba: undagi ismlar va raqamlar transkriptdagidek ASOSLI (`BLANK`
+bo'lmaydi, `unverified_number` yo'q). Modelning talqini (chat javobi, `instruction`) bu ro'yxatga KIRMAYDI.
+
+SARLAVHA QISMI (`header`: tashkilot, "kim huzurida", shahar, rais, qatnashchilar) - FAQAT egadan. Ega matni yo'q -
+hammasi bo'sh. Qiymat qoladi, agar (a) shaxs maydonida (rais, "kim huzurida", qatnashchi) kamida bitta so'z egadan
+(ko'rsatma yoki odam o'zi bergan spiker nomi) va (b) egasi aytmagan, transkriptda ISMGA O'XSHASH so'z yo'q; aks holda
+`header_dropped:<kalit>` - bo'sh joy, kotib to'ldiradi. NEGA (a)+(b), "har so'z egadan" emas: ega "rais - alisher
+karimov" deydi, hujjatda esa "А.Каримов" (kirill, bosh harf) yoki ruscha "А.Каримова" (qaratqich) - bular to'g'ri;
+"Председатель Правления" esa egasi aytgan lavozimning tarjimasi bo'lishi mumkin. Transkriptdan olingan begona ism
+(egasi aytmagan qatnashchi) esa (b) bilan tushadi.
 
 NEGA ISMLAR SHUNDAY SOLISHTIRILADI. Transkript ko'pincha lotin o'zbekcha (GAPI), hujjat esa kirillda:
 model "Aziz aka"ni "Азиз" deb yozadi - bu to'qima emas. Shuning uchun ikkala tomon ham `norm` dan keyin
@@ -41,7 +55,7 @@ from __future__ import annotations
 import re
 
 from datetime import date
-from typing import Any
+from typing import Any, Sequence
 
 from .. import export
 from ..summarize import norm
@@ -51,7 +65,12 @@ from .text import BLANK
 #: Band turlari (`shapes.minutes` enum emas - noma'lum `other` ga o'giriladi).
 KINDS = ("acknowledge", "task", "warning", "permission", "control", "other")
 #: Saqlanadigan mazmun kalitlari - `shapes.minutes()` tartibida.
-KEYS = ("coverage", "title", "agenda", "preamble", "sections", "controller", "notes")
+KEYS = ("coverage", "title", "agenda", "preamble", "sections", "controller", "notes", "header")
+#: Sarlavha qismi kalitlari (`shapes.minutes()` dagi `header`) va ega hech narsa aytmagandagi qiymati.
+HEADER_KEYS = ("organization", "chairedBy", "city", "chair", "attendees")
+EMPTY_HEADER: dict[str, Any] = {"organization": None, "chairedBy": None, "city": None, "chair": None, "attendees": []}
+#: Bitta qatorli sarlavha qiymatlari (qatnashchilar - ro'yxat).
+_HEADER_TEXT = ("organization", "chairedBy", "city", "chair")
 
 # Chegaralar (shartnoma). Oshgani qisqartiriladi va ogohlantirish beriladi - hujjat chiqadi.
 MAX_AGENDA = 12
@@ -70,6 +89,10 @@ MAX_DEADLINE = 200
 MAX_RESPONSIBLE = 10
 MAX_NAME = 150
 MAX_IDS = 8
+MAX_HEADER = 200
+MAX_CITY = 80
+MAX_ATTENDEES = 40
+MAX_ATTENDEE = 150
 #: Ogohlantirishlar soni (ko'rinishda ro'yxat sifatida chiqadi) va raqam ogohlantirishlari ulushi.
 MAX_WARNINGS = 60
 MAX_NUMBER_WARNINGS = 20
@@ -122,9 +145,12 @@ def _numbers(value: Any) -> tuple[set[str], set[str]]:
 
 
 class _Ground:
-    """Transkript so'zlari (buklangan), ularning prefikslari, raqamlari va spiker id lari."""
+    """Transkript so'zlari (buklangan), ularning prefikslari, raqamlari va spiker id lari. `owner` - yig'ilish
+    egasining matnlari: ulardagi so'zlar (3+ harflisi ISMGA O'XSHASH ham - ega kichik harf bilan yozsa ham) va
+    raqamlar transkriptdagidek asosli."""
 
-    def __init__(self, segments: list[dict[str, Any]], speakers: list[dict[str, Any]]) -> None:
+    def __init__(self, segments: list[dict[str, Any]], speakers: list[dict[str, Any]],
+                 owner: Sequence[str] = ()) -> None:
         words: set[str] = set()
         self.number_keys: set[str] = set()
         self.number_digits: set[str] = set()
@@ -136,6 +162,14 @@ class _Ground:
             self.number_digits |= digits
             if seg.get("speaker"):
                 self.speaker_ids.add(str(seg["speaker"]))
+        stated: set[str] = set()
+        for said in owner:
+            folded = fold(said).split()
+            words.update(folded)
+            keys, digits = _numbers(said)
+            self.number_keys |= keys
+            self.number_digits |= digits
+            stated.update(w for w in folded if len(w) >= 3)
         #: ISMGA O'XSHASH so'zlar: spiker nomlari va transkriptda BOSH HARF bilan yozilgan so'zlar (GAPI
         #: matni bosh harflarni saqlaydi, 2026-11-04 o'lchov: so'zlarning ~9% i gap o'rtasida bosh harfli).
         #: 5 harfli prefiks tekshiruvi FAQAT shularga: "Komila" oddiy "komil" (to'liq) so'zi orqali asosli
@@ -146,6 +180,7 @@ class _Ground:
                 stripped = token.strip("\"'«»()[],.;:!?-–—")
                 if stripped[:1].isupper():
                     namelike.update(fold(stripped).split())
+        namelike |= stated
         for sp in speakers:
             if sp.get("id"):
                 self.speaker_ids.add(str(sp["id"]))
@@ -153,6 +188,7 @@ class _Ground:
                 words.update(fold(sp["name"]).split())
                 namelike.update(fold(sp["name"]).split())
         self.words = words
+        self.namelike = namelike
         self.prefixes = {w[:k] for w in words for k in range(3, min(len(w), 8) + 1)}
         self.name_prefixes = {w[:5] for w in namelike if len(w) >= 5}
 
@@ -170,13 +206,23 @@ class _Ground:
     def number_ok(self, key: str, digits: str) -> bool:
         return key in self.number_keys or digits in self.number_digits
 
+    def is_namelike(self, word: str) -> bool:
+        """Buklangan so'z ISMGA O'XSHASHmi: transkriptda bosh harf bilan yozilgan, spiker nomi yoki egadan (yoki
+        shulardan birining 5 harfli boshi bilan - qo'shimchali shakl)."""
+        return word in self.namelike or (len(word) >= 5 and word[:5] in self.name_prefixes)
+
 
 class _Checker:
-    """Bitta javob uchun holat: ogohlantirishlar, band hisobi, yozuv tekshiruvi uchun matn."""
+    """Bitta javob uchun holat: ogohlantirishlar, band hisobi, yozuv tekshiruvi uchun matn. `ground` - transkript +
+    ega (ismlar, raqamlar asosli); `owner` - FAQAT ega: uning matnlari va odam o'zi bergan spiker nomlari
+    (`rename_speaker`) - sarlavha qismi shu bilan tekshiriladi."""
 
-    def __init__(self, lang: str, segments: list[dict[str, Any]], speakers: list[dict[str, Any]]) -> None:
+    def __init__(self, lang: str, segments: list[dict[str, Any]], speakers: list[dict[str, Any]],
+                 owner: Sequence[str] = ()) -> None:
         self.lang = lang
-        self.ground = _Ground(segments, speakers)
+        self.ground = _Ground(segments, speakers, owner)
+        self.owner = _Ground([], [sp for sp in speakers if sp.get("name")], owner)
+        self.has_owner = any(str(said or "").strip() for said in owner)
         self.ids = {int(s["id"]) for s in segments if str(s.get("id", "")).lstrip("-").isdigit()}
         self.warnings: list[str] = []
         #: Noasosli (to'qima) ismlar - hujjatning HAMMA matnlarida `BLANK` ga almashtiriladi (`scrub`).
@@ -455,6 +501,79 @@ class _Checker:
         self.prose_of(*out)
         return out
 
+    # --- sarlavha qismi (faqat egadan) ---
+
+    def header(self, raw: Any) -> dict[str, Any]:
+        """`header` -> `HEADER_KEYS` tartibida tozalangan qiymatlar. Obyekt emas (minutes-2 javobi) - bo'sh, jim;
+        ega matni yo'q - bo'sh (to'ldirilgan bo'lsa `header_without_owner`). Qolgan qiymat `header_value` dan o'tadi;
+        o'tmagani tashlanadi (`header_dropped:<kalit>`). Qiymatlar `ungrounded` ga kirmaydi va tozalanmaydi
+        (`scrub`) - ular egadan; yozuv tekshiruvi (`prose`) ularni ham ko'radi."""
+        out: dict[str, Any] = {**EMPTY_HEADER, "attendees": []}
+        if not isinstance(raw, dict):
+            return out
+        if not self.has_owner:
+            if _header_filled(raw):
+                self.warn("header_without_owner")
+            return out
+        for key in _HEADER_TEXT:
+            value = self.optional(raw.get(key), MAX_CITY if key == "city" else MAX_HEADER, f"header_{key}")
+            if not value or _BLANK.match(value):
+                continue
+            kept = self.header_value(value)
+            if kept is None:
+                self.warn(f"header_dropped:{key}")
+                continue
+            out[key] = kept
+            self.prose_of(kept)
+        out["attendees"] = self.attendees(raw.get("attendees"))
+        return out
+
+    def attendees(self, value: Any) -> list[str]:
+        """Qatnashchilar: har biri shaxs qiymati sifatida tekshiriladi, takrorsiz, ko'pi bilan `MAX_ATTENDEES`
+        (`header_capped`); o'tmaganlari tashlanadi - bitta `header_dropped:attendees`."""
+        entries = value if isinstance(value, list) else ([value] if isinstance(value, str) else [])
+        out: list[str] = []
+        dropped = False
+        for entry in entries:
+            name = self.line(entry, MAX_ATTENDEE, "header_attendee")
+            if not name or _BLANK.match(name):
+                continue
+            kept = self.header_value(name)
+            if kept is None:
+                dropped = True
+            elif kept not in out:
+                out.append(kept)
+        if dropped:
+            self.warn("header_dropped:attendees")
+        if len(out) > MAX_ATTENDEES:
+            self.warn("header_capped")
+            out = out[:MAX_ATTENDEES]
+        self.prose_of(*out)
+        return out
+
+    def header_value(self, value: str) -> str | None:
+        """Bitta sarlavha qiymati: qavssiz token ("S2") `[S2]` ko'rinishiga; noma'lum spiker tokeni yoki egadan
+        kelmagan qiymat (`_header_ok`) - `None`."""
+        sid = self.token(value)
+        if sid:
+            value = f"[{sid}]"
+        if any(not self.speaker_known(found) for found in _TOKEN_IN_TEXT.findall(value)):
+            return None
+        return value if self._header_ok(value) else None
+
+    def _header_ok(self, value: str) -> bool:
+        """Qiymat egadan kelganmi (3+ harfli so'zlar bo'yicha): kamida bitta so'z ega matnida bo'lishi shart (a) va
+        egasi aytmagan so'zlardan birortasi transkriptda ismga o'xshash bo'lmasin (b). (a) HAMMA maydonga (2026-11-13):
+        model o'zi "topgan" shahar yoki tashkilot nomi (ega aytmagan) Word sarlavhasiga tushmasin - bo'sh joy qoladi
+        va natijada "aniq aytilmagan qiymatlar bo'sh qoldirildi" deb ko'rsatiladi (`header_dropped:<kalit>`)."""
+        words = [w for w in fold(_TOKEN_IN_TEXT.sub(" ", value)).split() if len(w) >= 3]
+        if not words:
+            return True                                        # faqat token / qisqa qisqartma
+        outsiders = [w for w in words if not self.owner.word_ok(w)]
+        if len(outsiders) == len(words):
+            return False                                       # (a) birorta so'z ham egadan emas
+        return not any(self.ground.is_namelike(w) for w in outsiders)   # (b) egasi aytmagan transkriptdagi ism
+
     def coverage(self, value: Any) -> dict[str, int]:
         first = min(self.ids) if self.ids else 0
         last = max(self.ids) if self.ids else 0
@@ -544,6 +663,47 @@ def _iso_date(value: Any) -> str | None:
         return None
 
 
+def _header_filled(raw: dict[str, Any]) -> bool:
+    """Model sarlavha qismiga biror qiymat yozganmi (bo'sh joy belgisi hisobga olinmaydi)."""
+    def filled(value: Any) -> bool:
+        return isinstance(value, str) and bool(value.strip()) and not _BLANK.match(value.strip())
+    attendees = raw.get("attendees")
+    return any(filled(raw.get(key)) for key in _HEADER_TEXT) or \
+        (isinstance(attendees, list) and any(filled(a) for a in attendees)) or filled(attendees)
+
+
+def owner_terms(content: dict[str, Any] | None) -> list[str]:
+    """Tayyor hujjatdagi (tahrir asosi) ism va lavozimlar - ular avval tekshiruvdan o'tgan (transkriptda bor yoki
+    egadan), shuning uchun keyingi tahrirda ham asosli (`validate(owner=...)`): sarlavha qiymatlari va qatnashchilar,
+    `responsible` (token va `BLANK` emas), `controller` (token emas), kun tartibidagi `speakers` (token emas).
+    Takrorsiz, hujjatdagi tartibda."""
+    out: list[str] = []
+
+    def add(value: Any) -> None:
+        term = export.one_line(value) if isinstance(value, str) else ""
+        if term and not _BLANK.match(term) and not _TOKEN.match(term) and term not in out:
+            out.append(term)
+
+    data = content if isinstance(content, dict) else {}
+    header = data.get("header") if isinstance(data.get("header"), dict) else {}
+    for key in _HEADER_TEXT:
+        add(header.get(key))
+    for name in header.get("attendees") if isinstance(header.get("attendees"), list) else []:
+        add(name)
+    for section in data.get("sections") if isinstance(data.get("sections"), list) else []:
+        items = section.get("items") if isinstance(section, dict) and isinstance(section.get("items"), list) else []
+        for item in items:
+            who = item.get("responsible") if isinstance(item, dict) else None
+            for name in who if isinstance(who, list) else [who]:
+                add(name)
+    add(data.get("controller"))
+    for entry in data.get("agenda") if isinstance(data.get("agenda"), list) else []:
+        spoke = entry.get("speakers") if isinstance(entry, dict) else None
+        for name in spoke if isinstance(spoke, list) else []:
+            add(name)
+    return out
+
+
 def _unwrap(data: dict[str, Any]) -> dict[str, Any]:
     """`{"minutes": {...}}` kabi o'ralgan javob - ichidagi obyekt (bitta bo'lsa)."""
     if "sections" in data or "agenda" in data:
@@ -553,9 +713,11 @@ def _unwrap(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate(data: dict[str, Any], *, lang: str, segments: list[dict[str, Any]],
-             speakers: list[dict[str, Any]]) -> tuple[dict[str, Any], list[str]]:
+             speakers: list[dict[str, Any]], owner: Sequence[str] = ()) -> tuple[dict[str, Any], list[str]]:
     """Model javobi -> (`KEYS` tartibidagi tozalangan mazmun, ogohlantirishlar). `Invalid` - obyekt emas,
-    `sections` ro'yxat emas, yoki tekshiruvdan keyin bo'lim ham, kun tartibi ham qolmadi."""
+    `sections` ro'yxat emas, yoki tekshiruvdan keyin bo'lim ham, kun tartibi ham qolmadi. `owner` - yig'ilish
+    egasining matnlari (ko'rsatmalar, so'rov, tahrir asosidagi ismlar): ulardagi ism va raqamlar asosli, sarlavha
+    qismi (`header`) faqat shulardan."""
     if not isinstance(data, dict):
         raise Invalid("bayonnoma: javob obyekt emas")
     data = _unwrap(data)
@@ -564,7 +726,7 @@ def validate(data: dict[str, Any], *, lang: str, segments: list[dict[str, Any]],
     if sections_raw is not None and not isinstance(sections_raw, list):
         raise Invalid("bayonnoma: sections ro'yxat emas")
     code = text.normalize(lang) or "uz-cyrl"
-    checker = _Checker(code, segments, speakers)
+    checker = _Checker(code, segments, speakers, owner)
     if agenda_raw is not None and not isinstance(agenda_raw, list):
         checker.warn("agenda_invalid")
         agenda_raw = []
@@ -576,6 +738,7 @@ def validate(data: dict[str, Any], *, lang: str, segments: list[dict[str, Any]],
     preamble = checker.optional(data.get("preamble"), MAX_PREAMBLE, "preamble")
     controller = checker.person(data.get("controller"), "controller")
     notes = checker.notes(data.get("notes"))
+    header = checker.header(data.get("header"))
     checker.prose_of(title, preamble)
     checker.check_script()
     if checker.ungrounded:
@@ -595,6 +758,7 @@ def validate(data: dict[str, Any], *, lang: str, segments: list[dict[str, Any]],
         scrubbed = [checker.scrub(n) or "" for n in notes]
         notes = [n for n in dict.fromkeys(scrubbed) if n and not _BLANK.match(n)]
     content = {"coverage": checker.coverage(data.get("coverage")), "title": title, "agenda": agenda,
-               "preamble": preamble, "sections": sections, "controller": controller, "notes": notes}
+               "preamble": preamble, "sections": sections, "controller": controller, "notes": notes,
+               "header": header}
     assert tuple(content) == KEYS
     return content, checker.warnings

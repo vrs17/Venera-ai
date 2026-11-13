@@ -4,9 +4,14 @@
  * `running` - har 3 s so'rash -> tayyor; 10 daqiqadan keyin "keyinroq qarang". Xatolar sababi bilan:
  * internet, chegara (Retry-After), nutqsiz yozuv, model sozlanmagan, PDF yo'q (Word'da), xato qatori
  * (kod bo'yicha), eski server (404 - qayta urinishsiz), yo'qolgan hujjat (ro'yxat yangilanadi).
- * Native qatlam (expo-file-system/legacy, expo-sharing) - soxta; tarmoq yo'q.
+ * Chatdagi bayonnoma: hujjat yo'q - «Chatda ko'rsatma berish» (+ ko'rsatmalar soni), tayyor -
+ * «O'zgartirish so'rash» (chat rejim chipi bilan); versiya, so'rov, nima o'zgardi, egasi aytgan rais;
+ * hali qo'llanmagan ko'rsatmalar («Qo'llash» - `force`siz POST); yangi versiya yozilayotganda oldingisi
+ * ulashiladi; yiqilgan tahrir - «Qayta so'rash» (eski so'rov qoralama bo'lib); 2-versiyadan «Qayta yozish»
+ * tasdiq so'raydi. Native qatlam (expo-file-system/legacy, expo-sharing) - soxta; tarmoq yo'q.
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Alert, type AlertButton } from 'react-native';
 
 import { ApiClient, ApiError } from '@/api/client';
 import { createMeetingsApi, type MeetingsApi } from '@/api/meetings';
@@ -16,7 +21,7 @@ import { MINUTES_POLL_LIMIT_MS, MINUTES_POLL_MS } from '@/features/meeting/minut
 import { useSettings } from '@/features/settings/settingsStore';
 
 import { fakeMeetingsApi, fakeServices, Providers } from './fixtures/fakeServices';
-import { minutesView } from './fixtures/server';
+import { minutesChanges, minutesHeader, minutesView, speakers } from './fixtures/server';
 
 jest.mock('expo-file-system/legacy', () => {
   const downloadAsync = jest.fn();
@@ -131,6 +136,10 @@ describe('MinutesSheet', () => {
     // `provider_failed` - hujjat sifati haqida emas, sanalmaydi.
     expect(screen.getByTestId('minutes-warnings')).toHaveTextContent("Tekshiruvda 2 ta ogohlantirish - hujjatni diqqat bilan ko'zdan kechiring");
     expect(screen.getByTestId('minutes-redo')).toHaveTextContent('Qayta yozish');
+    // Asl hujjat (1-versiya): versiya, so'rov, o'zgarishlar va sarlavha qatorlari yo'q; chatsiz - "O'zgartirish" ham.
+    for (const id of ['minutes-version', 'minutes-request', 'minutes-changes', 'minutes-header', 'minutes-pending', 'minutes-superseded', 'minutes-edit', 'minutes-guide']) {
+      expect([id, screen.queryByTestId(id)]).toEqual([id, null]);
+    }
 
     respond(200, DOCX_HEADERS);
     await press('minutes-share');
@@ -335,5 +344,182 @@ describe('MinutesSheet', () => {
     expect(screen.queryByTestId('minutes-ready')).toBeNull();
     await fireEvent.press(screen.getByTestId('minutes-lang-ru'));
     expect(screen.getByTestId('minutes-ready')).toBeTruthy();
+  });
+
+  it('opened from a chat card («Ochish»): starts in that document language', async () => {
+    await open({ minutesList: jest.fn(async () => ({ items: [minutesView({ language: 'ru' })] })) }, { initialLanguage: 'ru' });
+    expect(screen.getByTestId('minutes-lang-ru')).toBeChecked();
+    expect(screen.getByTestId('minutes-lang-uz-cyrl')).not.toBeChecked();
+    expect(screen.getByTestId('minutes-ready')).toBeTruthy();
+  });
+});
+
+describe('MinutesSheet: directions and edits in chat', () => {
+  const REV = 'r'.repeat(32);
+  const later = '2026-11-06T06:10:00Z';
+
+  it('no document yet: «Chatda ko\'rsatma berish» with the hint and the count of directions -> opens the chat in direction mode', async () => {
+    const onOpenChat = jest.fn();
+    await open({ minutesList: jest.fn(async () => ({ items: [], notes: 2 })) }, { onOpenChat });
+    expect(screen.getByText("Rais, qatnashchilar, nimaga e'tibor berish - chatga yozing, Barno bayonnomani shunga qarab yozadi")).toBeTruthy();
+    expect(screen.getByTestId('minutes-guide-count')).toHaveTextContent("Chatdagi ko'rsatmalar: 2 ta - tayyorlashda hisobga olinadi");
+    expect(screen.getByTestId('minutes-guide')).toHaveTextContent("Chatda ko'rsatma berish");
+    // "Tayyorlash" o'z joyida - ko'rsatma ixtiyoriy.
+    expect(screen.getByTestId('minutes-prepare')).not.toBeDisabled();
+    await press('minutes-guide');
+    expect(onOpenChat).toHaveBeenCalledWith({ intent: 'note' });
+  });
+
+  it('no directions yet (or an older server without the count): the guide without a count', async () => {
+    await open({ minutesList: jest.fn(async () => ({ items: [] })) }, { onOpenChat: jest.fn() });
+    expect(screen.getByTestId('minutes-guide')).toBeTruthy();
+    expect(screen.queryByTestId('minutes-guide-count')).toBeNull();
+  });
+
+  it('an older server (404 on the listing) shows no guide', async () => {
+    await open({ minutesList: jest.fn(async () => Promise.reject(apiErr(404, 'not_found'))) }, { onOpenChat: jest.fn() });
+    expect(screen.queryByTestId('minutes-guide')).toBeNull();
+  });
+
+  it('a ready document: no guide; «O\'zgartirish so\'rash» opens the chat in edit mode for the chosen language', async () => {
+    const onOpenChat = jest.fn();
+    await open({ minutesList: jest.fn(async () => ({ items: [minutesView(), minutesView({ id: REV, language: 'ru' })], notes: 1 })) }, { onOpenChat });
+    expect(screen.queryByTestId('minutes-guide')).toBeNull();
+    expect(screen.getByTestId('minutes-edit')).toHaveTextContent("O'zgartirish so'rash");
+    await press('minutes-edit');
+    expect(onOpenChat).toHaveBeenLastCalledWith({ intent: 'revise', language: 'uz-cyrl' });
+    await fireEvent.press(screen.getByTestId('minutes-lang-ru'));
+    await press('minutes-edit');
+    expect(onOpenChat).toHaveBeenLastCalledWith({ intent: 'revise', language: 'ru' });
+  });
+
+  it('a revised version: version pill, the request, what changed, the owner-stated chair and attendees ([S#] -> name), "the remaining blanks"', async () => {
+    const v2 = minutesView({
+      id: REV,
+      createdAt: later,
+      kind: 'revise',
+      version: 2,
+      parentId: DOC,
+      request: "3-bandda muddat 1-dekabr bo'lsin",
+      changes: minutesChanges(),
+      header: minutesHeader({ attendees: ['[S1]', "B.Aliyev - bo'lim boshlig'i"] }),
+      notesApplied: 1,
+    });
+    await open({ minutesList: jest.fn(async () => ({ items: [minutesView(), v2] })) }, { onOpenChat: jest.fn(), speakers });
+    expect(screen.getByTestId('minutes-version')).toHaveTextContent('2-versiya');
+    expect(screen.getByTestId('minutes-request')).toHaveTextContent("So'ralgan o'zgarish: 3-bandda muddat 1-dekabr bo'lsin");
+    expect(screen.getByTestId('minutes-changes')).toHaveTextContent("O'zgarishlar: 3-band; qo'shildi: 8; sarlavha qismi");
+    expect(screen.getByTestId('minutes-header')).toHaveTextContent("Rais: Boshqaruv raisi A.KarimovQatnashchilar: Aziz, B.Aliyev - bo'lim boshlig'i");
+    expect(screen.getByTestId('minutes-draft')).toHaveTextContent("Bu loyiha: qolgan «________» joylarini kotib yoki hujjat tizimi to'ldiradi.");
+  });
+
+  it('new directions not in the document yet: «Qo\'llash» sends a plain POST (the server writes a directions revision); meanwhile the old version stays shareable', async () => {
+    jest.useFakeTimers();
+    const rev = running({ id: REV, createdAt: later, kind: 'revise', version: 2, parentId: DOC });
+    const createMinutes = jest.fn(async () => rev);
+    const minutes = jest.fn(async () => detail(rev));
+    await open({ minutesList: jest.fn(async () => ({ items: [minutesView({ pendingNotes: 2 })], notes: 2 })), createMinutes, minutes }, { onOpenChat: jest.fn() });
+    expect(screen.getByTestId('minutes-pending')).toHaveTextContent(/^2 ta yangi ko'rsatma bu bayonnomada hali yo'q/);
+    expect(screen.getByTestId('minutes-apply-notes')).toHaveTextContent("Qo'llash");
+    await press('minutes-apply-notes');
+    expect(createMinutes).toHaveBeenCalledWith(ID, { language: 'uz-cyrl', force: false });
+    expect(screen.getByTestId('minutes-running')).toHaveTextContent(/Yangi versiya tayyorlanmoqda - odatda 1-3 daqiqa/);
+    // Oldingi versiya: karta, ulashish va yana o'zgartirish so'rash; "Qayta yozish" va «Qo'llash» yo'q.
+    expect(screen.getByTestId('minutes-ready')).toBeTruthy();
+    expect(screen.getByTestId('minutes-share')).not.toBeDisabled();
+    expect(screen.getByTestId('minutes-edit')).not.toBeDisabled();
+    expect(screen.queryByTestId('minutes-redo')).toBeNull();
+    expect(screen.queryByTestId('minutes-pending')).toBeNull();
+    await advance(MINUTES_POLL_MS);
+    expect(minutes).toHaveBeenCalledWith(ID, REV);
+  });
+
+  it('a revision already running when the sheet opens: the ready card stays, the running card says "a new version"', async () => {
+    jest.useFakeTimers();
+    const rev = running({ id: REV, createdAt: later, kind: 'revise', version: 2, parentId: DOC });
+    await open({ minutesList: jest.fn(async () => ({ items: [minutesView(), rev] })), minutes: jest.fn(async () => detail(rev)) }, { onOpenChat: jest.fn() });
+    expect(screen.getByTestId('minutes-running')).toHaveTextContent(/Yangi versiya tayyorlanmoqda/);
+    expect(screen.getByTestId('minutes-ready')).toHaveTextContent(/Bayonnoma tayyor: 2 bo'lim, 5 band/);
+    expect(screen.getByTestId('minutes-share')).toBeTruthy();
+    expect(screen.getByTestId('minutes-edit')).toBeTruthy();
+  });
+
+  it('a failed edit says why; «Qayta so\'rash» reopens the chat with the old request as a draft (no full rewrite is offered)', async () => {
+    const onOpenChat = jest.fn();
+    const bad = minutesView({
+      id: 'b'.repeat(32),
+      createdAt: later,
+      status: 'failed',
+      kind: 'revise',
+      version: 2,
+      parentId: DOC,
+      request: '3-bandni olib tashlang',
+      error: { code: 'no_change', message: "Bayonnomada o'zgarish bo'lmadi" },
+    });
+    const { meetings } = await open({ minutesList: jest.fn(async () => ({ items: [minutesView(), bad] })) }, { onOpenChat });
+    expect(screen.getByTestId('minutes-failed')).toHaveTextContent("Bayonnomada o'zgarish bo'lmadi - nimani o'zgartirish kerakligini aniqroq yozing");
+    expect(screen.getByTestId('minutes-ready')).toBeTruthy();
+    expect(screen.queryByTestId('minutes-redo')).toBeNull();
+    expect(screen.getByTestId('minutes-resend')).toHaveTextContent("Qayta so'rash");
+    await press('minutes-resend');
+    expect(onOpenChat).toHaveBeenCalledWith({ intent: 'revise', language: 'uz-cyrl' }, '3-bandni olib tashlang');
+    expect(meetings.createMinutes).not.toHaveBeenCalled();
+  });
+
+  it('a failed directions revision (no request) retries without force; a failed rewrite of the original still retries with force', async () => {
+    const bad = minutesView({ id: 'b'.repeat(32), createdAt: later, status: 'failed', kind: 'revise', version: 2, request: null, error: { code: 'llm_failed', message: 'x' } });
+    const { meetings, view } = await open({ minutesList: jest.fn(async () => ({ items: [minutesView({ pendingNotes: 1 }), bad] })) }, { onOpenChat: jest.fn() });
+    expect(screen.getByTestId('minutes-failed')).toHaveTextContent("Model bayonnomani tahrirlay olmadi - qayta urinib ko'ring");
+    // "Qayta urinish" ko'rsatmalarni o'zi qayta qo'llaydi - alohida «Qo'llash» banneri yo'q.
+    expect(screen.queryByTestId('minutes-pending')).toBeNull();
+    expect(screen.getByTestId('minutes-redo')).toHaveTextContent('Qayta urinish');
+    await press('minutes-redo');
+    expect(meetings.createMinutes).toHaveBeenCalledWith(ID, { language: 'uz-cyrl', force: false });
+    await view.unmount();
+
+    const failedRewrite = minutesView({ id: 'b'.repeat(32), createdAt: later, status: 'failed', error: { code: 'llm_busy', message: 'x' } });
+    const again = await open({ minutesList: jest.fn(async () => ({ items: [minutesView(), failedRewrite] })) }, { onOpenChat: jest.fn() });
+    expect(screen.getByTestId('minutes-failed')).toHaveTextContent("Model hozir band - birozdan keyin qayta urinib ko'ring");
+    await press('minutes-redo');
+    expect(again.meetings.createMinutes).toHaveBeenCalledWith(ID, { language: 'uz-cyrl', force: true });
+  });
+
+  it('«Qayta yozish» on version 2+ asks first (chat edits would be lost): cancel does nothing, confirm rewrites with force', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    try {
+      const v2 = minutesView({ id: REV, createdAt: later, kind: 'revise', version: 2, parentId: DOC });
+      const { meetings } = await open({ minutesList: jest.fn(async () => ({ items: [minutesView(), v2] })) });
+      await press('minutes-redo');
+      expect(alert.mock.calls.at(-1)?.slice(0, 2)).toEqual([
+        'Qayta yozish',
+        "Qayta yozilsa hujjat yozuvdan yangidan tuziladi: chatda so'ralgan o'zgartirishlar qo'llanmaydi, ko'rsatmalar qo'llanadi. Davom etasizmi?",
+      ]);
+      let buttons = alert.mock.calls.at(-1)?.[2] as AlertButton[];
+      await act(async () => buttons.find((b) => b.text === 'Bekor qilish')?.onPress?.());
+      expect(meetings.createMinutes).not.toHaveBeenCalled();
+      await press('minutes-redo');
+      buttons = alert.mock.calls.at(-1)?.[2] as AlertButton[];
+      await act(async () => buttons.find((b) => b.text === 'Qayta yozish')?.onPress?.());
+      expect(meetings.createMinutes).toHaveBeenCalledWith(ID, { language: 'uz-cyrl', force: true });
+    } finally {
+      alert.mockRestore();
+    }
+  });
+
+  it('written anew after a transcript edit: a banner says earlier edits are not in it; truncated directions get their own line; neither is counted as a check warning', async () => {
+    const doc = minutesView({ warnings: ['superseded_revisions:2', 'guidance_truncated:3', 'script_mismatch'] });
+    await open({ minutesList: jest.fn(async () => ({ items: [doc] })) });
+    expect(screen.getByTestId('minutes-superseded')).toHaveTextContent("Matn tahrirlangani uchun bayonnoma yangidan yozildi - avvalgi o'zgartirishlar kiritilmagan");
+    expect(screen.getByTestId('minutes-truncated')).toHaveTextContent("Ko'rsatmalar juda ko'p - eng eskilaridan 3 tasi hisobga olinmadi");
+    expect(screen.getByTestId('minutes-warnings')).toHaveTextContent("Tekshiruvda 1 ta ogohlantirish - hujjatni diqqat bilan ko'zdan kechiring");
+  });
+
+  it('«Qo\'llash» while earlier edits fill the queue (409 minutes_busy): the reason and a re-check, not "transcript not ready"', async () => {
+    const createMinutes = jest.fn(async () => Promise.reject(apiErr(409, 'minutes_busy')));
+    await open({ minutesList: jest.fn(async () => ({ items: [minutesView({ pendingNotes: 1 })] })), createMinutes }, { onOpenChat: jest.fn() });
+    await press('minutes-apply-notes');
+    expect(screen.getByTestId('minutes-problem')).toHaveTextContent(/^Oldingi o'zgartirishlar hali tayyorlanmoqda - tugashini kuting/);
+    expect(screen.queryByText(/Yozuv hali matnga o'girilmagan/)).toBeNull();
+    expect(screen.getByText('Qayta tekshirish')).toBeTruthy();
   });
 });

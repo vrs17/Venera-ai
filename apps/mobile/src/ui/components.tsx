@@ -141,13 +141,24 @@ export function StatusChip({ status, progress }: { status: MeetingStatus; progre
   return <Chip label={progress != null && status !== 'ready' && status !== 'failed' ? `${label} ${Math.round(progress)}%` : label} tone={STATUS_TONES[status]} />;
 }
 
-export function Banner({ text, tone = 'warn', action, testID }: { text: string; tone?: Tone; action?: { title: string; onPress: () => void }; testID?: string }) {
+export function Banner({
+  text,
+  tone = 'warn',
+  action,
+  testID,
+}: {
+  text: string;
+  tone?: Tone;
+  /** Bitta keyingi qadam (`testID` - tugmaning o'zi, masalan varaqdagi «Qo'llash»). */
+  action?: { title: string; onPress: () => void; testID?: string };
+  testID?: string;
+}) {
   const th = useTheme();
   const c = th.tones[tone];
   return (
     <View testID={testID} style={[styles.banner, { backgroundColor: c.bg }]}>
       <Text style={[styles.bannerText, { color: c.fg }]}>{text}</Text>
-      {action ? <Button small variant="ghost" title={action.title} onPress={action.onPress} style={styles.bannerAction} /> : null}
+      {action ? <Button small variant="ghost" title={action.title} onPress={action.onPress} style={styles.bannerAction} testID={action.testID} /> : null}
     </View>
   );
 }

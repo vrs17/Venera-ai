@@ -4,7 +4,26 @@
  * aynan bir xil ekanini runtime'da qayd etamiz - kimdir types.ts ga maydon
  * qo'shib, serverni unutsa, shu test eslatadi.
  */
-import { actionItem, askAnswer, card, chatBackend, chatTurn, config, crmProposal, crmState, meeting, minutesView, speakers, summary, summaryCard, transcript } from './fixtures/server';
+import {
+  actionItem,
+  askAnswer,
+  card,
+  chatBackend,
+  chatMinutes,
+  chatTurn,
+  config,
+  crmProposal,
+  crmState,
+  meeting,
+  minutesChanges,
+  minutesHeader,
+  minutesView,
+  revisionId,
+  speakers,
+  summary,
+  summaryCard,
+  transcript,
+} from './fixtures/server';
 
 const keys = (o: object) => Object.keys(o).sort();
 
@@ -45,8 +64,8 @@ describe('API contract field sets (spec 3.1)', () => {
     expect(keys(summary().generatedBy!)).toEqual(['model', 'provider']);
   });
 
-  it('Yozuv chati: ChatTurn = AskAnswer + channel + model + clientId; GET {items, model}; DELETE {archived}', () => {
-    expect(keys(chatTurn())).toEqual([...keys(askAnswer), 'channel', 'clientId', 'model'].sort());
+  it('Yozuv chati: ChatTurn = AskAnswer + channel + model + clientId + kind + minutes; GET {items, model}; DELETE {archived}', () => {
+    expect(keys(chatTurn())).toEqual([...keys(askAnswer), 'channel', 'clientId', 'kind', 'minutes', 'model'].sort());
     const chat = chatBackend();
     expect(keys(chat.history('x'))).toEqual(['items', 'model']);
     expect(keys(chat.send('x', { message: 'q', channel: 'mobile' }))).toEqual(keys(chatTurn()));
@@ -73,13 +92,30 @@ describe('API contract field sets (spec 3.1)', () => {
     expect(chat.history('A').items.map((x) => x.id)).toEqual([again.id]);
   });
 
-  it('Bayonnoma: MinutesView field set (server `minutes.view`)', () => {
+  it('Bayonnoma: MinutesView field set (server `minutes.view`, chatdagi tahrir maydonlari bilan)', () => {
     expect(keys(minutesView())).toEqual(
       [
         'id', 'meetingId', 'language', 'status', 'createdAt', 'finishedAt', 'provider', 'model', 'transcriptRev', 'stale',
         'agendaCount', 'sectionCount', 'itemCount', 'notes', 'warnings', 'error',
+        'kind', 'version', 'parentId', 'request', 'notesApplied', 'pendingNotes', 'header', 'changes',
       ].sort(),
     );
+    expect(keys(minutesHeader())).toEqual(['attendees', 'chair', 'chairedBy', 'city', 'organization']);
+    expect(keys(minutesChanges())).toEqual(['agenda', 'header', 'items', 'other']);
+    expect(keys(minutesChanges().items)).toEqual(['added', 'changed', 'removed']);
+  });
+
+  it('Bayonnoma chatda: ChatMinutes field set; soxta server aniq niyatni server kabi qaytaradi (modelsiz, manbasiz)', () => {
+    expect(keys(chatMinutes())).toEqual(['action', 'error', 'id', 'language', 'notes', 'status', 'version']);
+    const chat = chatBackend();
+    const plain = chat.send('x', { message: 'Narx qancha?', channel: 'mobile' });
+    expect([plain.kind, plain.minutes]).toEqual(['chat', null]);
+    const note = chat.send('x', { message: 'Rais - A.Karimov', channel: 'mobile', intent: 'note' });
+    expect(note).toMatchObject({ kind: 'note', citations: [], followUps: [], minutes: { action: 'note', id: null, notes: 1, error: null } });
+    expect(chat.send('x', { message: 'Kredit qismiga e\'tibor', channel: 'mobile', intent: 'note' }).minutes?.notes).toBe(2);
+    const edit = chat.send('x', { message: '3-bandda muddat 1-dekabr', channel: 'mobile', intent: 'revise', minutesLanguage: 'ru' });
+    expect(edit).toMatchObject({ kind: 'revise', minutes: { action: 'revise', language: 'ru', id: revisionId(4), status: 'running', version: 2 } });
+    expect(keys(edit)).toEqual(keys(chatTurn()));
   });
 
   it('SummaryContent has every section of spec 6.2', () => {

@@ -14,6 +14,14 @@ XABARLAR - chatning o'zida (audio thread ichida yuborilgan bo'lsa - o'sha thread
      shablon bilan xulosa» esa o'chirilgan (ega qarori 2026-11-12) - eski kartada bosilsa `render.TEMPLATE_OFF`.
   2. "📄 Bayonnoma" - til menyusi (lotin/kirill/rus/ingliz), tanlovdan keyin Word va PDF fayl
      (`services.meetings.minutes`): hujjat 1-3 daqiqada yoziladi, odam "⏳" xabarini ko'radi.
+BAYONNOMA CHATDA (ega so'rovi 2026-11-12): bitta yozuv - bitta suhbat, ko'rsatma ham, o'zgartirish ham shu suhbatda.
+  * yozishdan OLDIN - til menyusi xabarining thread'idagi har javob ko'rsatma (`minutes` tegi, `intent` note: chat
+    modelisiz, bepul); chatning o'zida yoki boshqa thread'da yozilganini chat modeli o'zi ajratadi. Til tugmasi
+    ko'rsatmalarni qo'llaydi (`minutes.generate`), tayyor hujjatdan keyingi yangi ko'rsatmalar - uning tahriri;
+  * yozilgandan KEYIN - natija xabari tahrir eslatmasi va `doc:<til>` belgisi bilan (`render.minutes_hint`): uning
+    thread'idagi yoki chatning o'zidagi keyingi matn shu yozuvga va shu til hujjatiga (`minutes_lang`). Chat modeli
+    "o'zgartir" deb tushunsa - server yangi versiyani yozadi, Barno uni kutib (`_follow_minutes`) yangi Word va PDF
+    hamda nima o'zgarganini yuboradi.
 TRANSKRIPT CHATGA YOZILMAYDI (ega talabi 2026-11-11): uzun matn chatni tushunarsiz qilardi. U
 «📥 Yuklab olish -> Transkript (TXT)» da - .txt fayl kartaning THREAD'iga keladi (asosiy chat toza
 qoladi), Slack'da shu yerdan yuklab olinadi. Istisno - xulosa yozilmagan juda qisqa yozuv: bir-ikki
@@ -97,6 +105,11 @@ _FILE = re.compile(r"F[A-Z0-9]{1,40}")
 #: Tili tanlanib, hozir ishlanayotgan fayllar: tugma ikki marta (yoki ikki til) bosilsa audio ikki marta boshlanmasin.
 _started: set[str] = set()
 _started_lock = threading.Lock()
+#: Natijasi kuzatilgan (yoki kuzatilayotgan) chat navbatlari (`chat`): Slack hodisani qayta yuborsa (o'sha
+#: `client_msg_id`) server saqlangan navbatni qaytaradi - fayllar ikkinchi marta chizilib yuklanmasin. FIFO, `_FOLLOWED_MAX`.
+_followed: dict[str, None] = {}
+_followed_lock = threading.Lock()
+_FOLLOWED_MAX = 2000
 
 
 def wants(event: dict[str, Any]) -> bool:
@@ -104,11 +117,13 @@ def wants(event: dict[str, Any]) -> bool:
     return bool(transcribe.audio_files(event)) or is_question(event)
 
 
-def on_message(client: Any, event: dict[str, Any], *, bot_user: str | None = None) -> None:
+def on_message(client: Any, event: dict[str, Any], *, bot_user: str | None = None,
+               sleep: Sleep = time.sleep) -> None:
     """Navbatdagi vazifa: thread'dagi savol. Audio bu yerga kelmaydi - unga til savoli (`acknowledge`), ish esa til
-    tanlangach (`start`)."""
+    tanlangach (`start`). `sleep` - bayonnoma ishini kutish (`_follow_minutes`; dispetcherda - restartda uziladigan
+    `__init__._sleep`)."""
     if is_question(event):
-        question(client, event, bot_user=bot_user)
+        question(client, event, bot_user=bot_user, sleep=sleep)
 
 
 def acknowledge(client: Any, event: dict[str, Any]) -> None:
@@ -281,9 +296,11 @@ def asker(slack_user: Any) -> str:
     return f"slack:{slack_user or ''}"
 
 
-def question(client: Any, event: dict[str, Any], *, bot_user: str | None = None) -> None:
-    """Thread'dagi savol -> o'sha thread boshidagi xabarning yozuvi (`meeting_of_thread`) bo'yicha chat (`chat`):
-    eski yozuv haqida ham shunday so'raladi. Yozuvga bog'liq bo'lmagan thread - jim."""
+def question(client: Any, event: dict[str, Any], *, bot_user: str | None = None, sleep: Sleep = time.sleep) -> None:
+    """Thread'dagi savol -> o'sha thread boshidagi xabarning yozuvi (`thread_target`) bo'yicha chat (`chat`): eski
+    yozuv haqida ham shunday so'raladi. Thread boshi bayonnoma til menyusi (`minutes` tegi) - xabar hujjat uchun
+    KO'RSATMA (`intent` note, chat modelisiz); bayonnoma natijasi (`doc:<til>`) - o'sha til hujjati bo'yicha
+    (`minutes_lang`: o'zgartirish so'rovi shu hujjatning tahriri bo'ladi). Yozuvga bog'liq bo'lmagan thread - jim."""
     channel, thread = event["channel"], event["thread_ts"]
     team, person = link.team_of(event), event.get("user")
     try:
@@ -294,20 +311,24 @@ def question(client: Any, event: dict[str, Any], *, bot_user: str | None = None)
     except transcribe.Problem as exc:
         post(client, channel, thread, render.escape(f"Javob berib bo'lmadi: {exc}"))
         return
-    meeting_id = meeting_of_thread(client, channel, thread, user, bot_user=bot_user)
-    if meeting_id is None:
+    target = thread_target(client, channel, thread, user, bot_user=bot_user)
+    if target is None:
         return
+    meeting_id, tag = target
     try:
         holder = transcribe.owner(user, meeting_id)
     except MeetingProblem as exc:
         post(client, channel, thread, render.escape(f"Javob berib bo'lmadi: {exc.detail}"))
         return
-    chat(client, channel, thread, holder, meeting_id, _text(event), who=who_asks(holder, user, person))
+    chat(client, channel, thread, holder, meeting_id, _text(event), who=who_asks(holder, user, person),
+         intent="note" if tag == "minutes" else None, minutes_lang=render.doc_lang(tag),
+         client_id=_client_id(event), sleep=sleep)
 
 
-def on_text(client: Any, event: dict[str, Any], *, bot_user: str | None = None) -> None:
+def on_text(client: Any, event: dict[str, Any], *, bot_user: str | None = None, sleep: Sleep = time.sleep) -> None:
     """Thread'dan tashqaridagi matn (dispetcher: `home.is_text`) -> chatdagi OXIRGI yozuv (`latest`) bo'yicha chat,
-    javob ham chatning o'zida, boshida qaysi yozuv (`render.chat_title`). Oxirgi audioning tili tanlanmagan -
+    javob ham chatning o'zida, boshida qaysi yozuv (`render.chat_title`). Oxirgisi bayonnoma natijasi bo'lsa - o'sha til
+    hujjati bo'yicha (`Recording.lang` -> `minutes_lang`). Oxirgi audioning tili tanlanmagan -
     `render.CHAT_CHOOSE_LANG`, u hali matnga o'girilmoqda - `render.CHAT_PENDING`; chatda yaroqli yozuv yo'q - avvalgidek «🎙 Plaud» yo'riqnomasi (`home.on_text`, chatga
     `TEXT_EVERY` da bir marta, hisob ham kerak emas); chat tarixini o'qib bo'lmadi - `render.CHAT_UNREAD`, har
     savolga (yo'riqnoma emas: yozuv bordir, faqat Slack javob bermadi)."""
@@ -344,25 +365,28 @@ def on_text(client: Any, event: dict[str, Any], *, bot_user: str | None = None) 
     else:
         chat(client, channel, None, found.user, found.meeting_id, _text(event),
              who=None if found.own and link.required() else asker(event.get("user")),
-             view=found.view, titled=True)
+             view=found.view, titled=True, minutes_lang=found.lang, client_id=_client_id(event), sleep=sleep)
 
 
 class Recording(NamedTuple):
     """`latest` topgan yozuv (matni tayyor): yozuv EGASI (`user` - odamning o'zi yoki, eski yozuvda, umumiy
-    hisob), yig'ilish va uning ko'rinishi (`service.detail`). `own` - yozuv so'ragan odamning o'ziniki."""
+    hisob), yig'ilish va uning ko'rinishi (`service.detail`). `own` - yozuv so'ragan odamning o'ziniki. `lang` -
+    topilgan xabar bayonnoma natijasi bo'lsa (`doc:<til>` belgisi) - o'sha hujjat tili, aks holda `None`."""
 
     user: AuthUser
     meeting_id: str
     view: dict[str, Any]
     own: bool = True
+    lang: str | None = None
 
 
 def latest(client: Any, channel: str, person: str | None, *,
            bot_user: str | None = None, team: str | None = None) -> Recording | str | None:
     """Chatdagi OXIRGI yozuv. Chat tarixining `HISTORY` ta eng yangi xabari yangisidan boshlab ko'riladi, nomzodlar:
-      * Barno'ning xulosa kartasi yoki chat javobi (`render.LATEST_TAGS`; belgiga faqat O'ZIMIZ yozganida ishonamiz,
-        `meeting_of_thread` dagidek). Bayonnoma menyusi kabi tugma natijasi nomzod emas - eski kartada bosilgan
-        tugma savollarni eski yozuvga burib yubormasin;
+      * Barno'ning xulosa kartasi, chat javobi yoki bayonnoma natijasi (`render.LATEST_TAGS`; belgiga faqat O'ZIMIZ
+        yozganida ishonamiz, `thread_target` dagidek). Bayonnoma natijasi - yozuv va hujjat tili (`Recording.lang`):
+        keyingi "3-bandni o'zgartir" o'sha hujjatning tahriri. Bayonnoma til menyusi nomzod emas - eski kartada
+        bosilgan tugma savollarni eski yozuvga burib yubormasin;
       * odamning (`person`) o'zi yuborgan audio - yig'ilishi fayl kalitidan; bir xabarda bir nechta bo'lsa
         oxirgisidan boshlab (ular ketma-ket o'giriladi).
     Nomzodning yig'ilishi: matni tayyor - `Recording`; hali o'girilmoqda (qayta o'girish ham) - `PENDING`; o'girib
@@ -388,8 +412,10 @@ def latest(client: Any, channel: str, person: str | None, *,
             if question_of:
                 asking.add(question_of)                     # til so'ralgan, hali tanlanmagan
                 continue
-            meeting_id = render.marked(message, tags=render.LATEST_TAGS)
-            found = lookup.verdict(meeting_id, lookup.view(meeting_id)) if meeting_id else None
+            target = render.marked_tag(message, tags=render.LATEST_TAGS)
+            found = lookup.verdict(target[0], lookup.view(target[0])) if target else None
+            if isinstance(found, Recording):
+                return found._replace(lang=render.doc_lang(target[1]))
             if found is not None:
                 return found
         elif person and message.get("user") == person:
@@ -504,16 +530,26 @@ class _Lookup:
 
 
 def chat(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str, text: str, *,
-         who: str | None, view: dict[str, Any] | None = None, titled: bool = False) -> None:
+         who: str | None, view: dict[str, Any] | None = None, titled: bool = False, intent: str | None = None,
+         minutes_lang: str | None = None, client_id: str | None = None, sleep: Sleep = time.sleep) -> None:
     """Yozuv chatiga savol (`service.chat_send`, kanal `slack`, so'rovchi `who` - `asker`): "⏳" xabari, so'ng uning
     o'rnida javob (manbalar bilan; `titled` - birinchi qatorda qaysi yozuv) va «🔄 Yangi suhbat»
-    (`render.chat_actions`). Xatoda (chegara, model, yozuv topilmadi) - faqat sabab, tugmasiz."""
+    (`render.chat_actions`). Xatoda (chegara, model, yozuv topilmadi) - faqat sabab, tugmasiz.
+
+    BAYONNOMA: `intent` - aniq kirish nuqtasi (menyu thread'i - `note`), `minutes_lang` - odam qaysi til hujjatiga
+    javob yozyapti (natija belgisi), `client_id` - Slack xabari kaliti (takror hodisa - bitta navbat, bitta ish).
+    Ko'rsatma navbatida javob ostida "eslab qolindi", ish boshlanmagan bo'lsa - sababi (`render.minutes_turn_note`);
+    navbat hujjat ishini boshlagan bo'lsa (`create` / `revise`) - u kutiladi va natijasi yuboriladi
+    (`_follow_minutes`, `sleep` bilan)."""
     ts = post(client, channel, thread, "⏳ Javob tayyorlanmoqda…")
-    blocks = None
+    blocks, ref = None, None
     try:
         view = view or service.detail(user, meeting_id)
-        found = service.chat_send(user, meeting_id, text, None, channel="slack", asker=who)
+        found = service.chat_send(user, meeting_id, text, None, channel="slack", asker=who, client_id=client_id,
+                                  intent=intent, minutes_lang=minutes_lang)
+        ref = found.get("minutes")
         body = render.answer(found, render.speakers(view["speakers"]), view["language"])
+        body += render.minutes_turn_note(ref)
         if titled:
             body = f"{render.chat_title(view['title'])}\n{body}"
         blocks = render.sections(body) + [render.chat_actions(meeting_id)]
@@ -523,6 +559,19 @@ def chat(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_
         log.exception("Slack savoli (%s): kutilmagan xato", meeting_id)
         body = "Javob berib bo'lmadi: ichki xato."
     replace(client, channel, ts, thread, body, blocks)
+    if ref and ref.get("action") in ("create", "revise") and ref.get("id") and _first_follow(found["id"]):
+        _follow_minutes(client, channel, thread, user, meeting_id, ref, who=who, sleep=sleep)
+
+
+def _first_follow(turn_id: str) -> bool:
+    """Shu chat navbatining bayonnoma natijasi hali kuzatilmaganmi (va endi bizniki): takror hodisa - `False`."""
+    with _followed_lock:
+        if turn_id in _followed:
+            return False
+        _followed[turn_id] = None
+        while len(_followed) > _FOLLOWED_MAX:
+            _followed.pop(next(iter(_followed)))
+        return True
 
 
 def _text(event: dict[str, Any]) -> str:
@@ -530,10 +579,20 @@ def _text(event: dict[str, Any]) -> str:
     return render.unescape(str(event.get("text") or "")).strip()[:QUESTION_CHARS]
 
 
-def meeting_of_thread(client: Any, channel: str, thread: str, user: AuthUser, *,
-                      bot_user: str | None = None) -> str | None:
-    """Thread boshidagi xabar -> yig'ilish: Barno'ning transkript/xulosa xabari (`render.mark`)
-    yoki odamning audio xabari (fayl kaliti)."""
+def _client_id(event: dict[str, Any]) -> str | None:
+    """Odam xabarining klient kaliti (`chat_send` ning `client_id` i): Slack odam yozgan xabarga `client_msg_id` beradi
+    va hodisani qayta yuborsa ham o'sha - ikkinchi navbat ham, ikkinchi pullik javob yoki bayonnoma ishi ham yo'q.
+    Kalitsiz xabar - `None`: `ts` kalit qilinmaydi (soxta hodisalar bir xil `ts` ni qayta ishlatadi - har xil
+    savollar bitta navbatga qo'shilib ketardi)."""
+    raw = re.sub(r"[^A-Za-z0-9_-]", "", str(event.get("client_msg_id") or ""))[:58]
+    return f"slack-{raw}" if raw else None
+
+
+def thread_target(client: Any, channel: str, thread: str, user: AuthUser, *,
+                  bot_user: str | None = None) -> tuple[str, str | None] | None:
+    """Thread boshidagi xabar -> (yig'ilish, teg). Barno'ning xabari - belgisi (`render.marked_tag`): xulosa kartasi
+    (""), chat javobi (`chat`), bayonnoma til menyusi (`minutes`), bayonnoma natijasi (`doc:<til>`). Odamning audio
+    xabari - fayl kaliti, teg `None`. Yozuvga bog'liq bo'lmagan thread - `None`."""
     try:
         found = client.conversations_replies(channel=channel, ts=thread, limit=1, inclusive=True)
     except Exception as exc:  # noqa: BLE001 - SlackApiError, tarmoq
@@ -545,7 +604,7 @@ def meeting_of_thread(client: Any, channel: str, thread: str, user: AuthUser, *,
         return None
     if parent.get("bot_id"):
         # Belgiga faqat O'ZIMIZ yozgan xabarda ishonamiz.
-        return render.marked(parent) if not bot_user or parent.get("user") == bot_user else None
+        return render.marked_tag(parent) if not bot_user or parent.get("user") == bot_user else None
     legacy = transcribe.legacy_account() if link.required() else None
     holders = [user] + ([legacy] if legacy is not None and legacy.actorId != user.actorId else [])
     for file in parent.get("files") or []:
@@ -553,8 +612,15 @@ def meeting_of_thread(client: Any, channel: str, thread: str, user: AuthUser, *,
             for holder in holders:
                 meeting_id = transcribe.meeting_of_file(holder, file["id"])
                 if meeting_id:
-                    return meeting_id
+                    return meeting_id, None
     return None
+
+
+def meeting_of_thread(client: Any, channel: str, thread: str, user: AuthUser, *,
+                      bot_user: str | None = None) -> str | None:
+    """Thread boshidagi xabarning yig'ilishi (`thread_target` ning id qismi)."""
+    found = thread_target(client, channel, thread, user, bot_user=bot_user)
+    return found[0] if found else None
 
 
 # --- tugmalar --------------------------------------------------------------------------------
@@ -592,9 +658,10 @@ def on_action(client: Any, body: dict[str, Any], *, sleep: Sleep = time.sleep) -
         elif kind == "barno_tasks":
             tasks(client, channel, thread, user, meeting_id)
         elif kind == "barno_minutes":
-            minutes_menu(client, channel, thread, user, meeting_id)
+            minutes_menu(client, channel, _minutes_spot(message), user, meeting_id)
         elif kind.startswith("barno_minutes_lang"):
-            minutes_doc(client, channel, thread, user, meeting_id, arg)
+            minutes_doc(client, channel, _minutes_spot(message), user, meeting_id, arg,
+                        who=who_asks(user, person, clicker), sleep=sleep)
         elif kind == "barno_template":
             # Eski kartadagi menyu: funksiya o'chirilgan (ega qarori 2026-11-12) - xulosa yozilmaydi.
             post(client, channel, thread, render.TEMPLATE_OFF)
@@ -613,6 +680,15 @@ def on_action(client: Any, body: dict[str, Any], *, sleep: Sleep = time.sleep) -
     except Exception:  # noqa: BLE001
         log.exception("Slack tugmasi (%s): kutilmagan xato", kind)
         post(client, channel, thread, "Bajarib bo'lmadi: ichki xato.")
+
+
+def _minutes_spot(message: dict[str, Any]) -> str | None:
+    """Bayonnoma tugmalari (menyu, til) natijasi qayerga: tugmali xabar thread ICHIDA - o'sha thread'ga; chatning
+    o'zidagi xabar - chatning o'ziga. Thread'i bor xabarga Slack `thread_ts` ni uning o'z `ts` i bilan beradi - shuning
+    uchun bu holat ham chatning o'zi: aks holda menyu thread'idagi ko'rsatmalardan keyin natija o'sha thread'ga
+    tushardi va undagi "o'zgartir" ham ko'rsatma bo'lib qolardi (menyu thread'i - faqat ko'rsatma)."""
+    thread = message.get("thread_ts")
+    return None if thread and thread == message.get("ts") else thread
 
 
 def start(client: Any, channel: str, thread: str | None, file_id: str, lang: str, *, ref: str | None,
@@ -713,35 +789,56 @@ def upload(client: Any, channel: str, thread: str | None, data: bytes, name: str
 
 def minutes_menu(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str) -> None:
     """"📄 Bayonnoma" -> hujjat tili menyusi. Tavsiya - yig'ilish tilidan (`minutes.default_lang`:
-    o'zbek -> kirill), lekin tanlov odamniki (ega qarori: lotin/kirill/rus/ingliz)."""
+    o'zbek -> kirill), lekin tanlov odamniki (ega qarori: lotin/kirill/rus/ingliz). Menyu xabarining thread'i -
+    yozishdan oldingi ko'rsatmalar uchun (`render.MINUTES_PROMPT`, `question`)."""
     view = service.detail(user, meeting_id)
     post(client, channel, thread, render.MINUTES_PROMPT,
          render.minutes_menu(meeting_id, minutes.default_lang(view.get("language"))))
 
 
 def minutes_doc(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str,
-                lang: str) -> None:
-    """Tanlangan tilda bayonnoma: "⏳" xabari, model (1-3 daqiqa, shu ipda), so'ng Word va PDF
-    fayllar, "⏳" o'rniga natija (bo'lim/band soni, izohlar, ogohlantirishlar).
+                lang: str, *, who: str | None, sleep: Sleep = time.sleep) -> None:
+    """Tanlangan tilda bayonnoma (til tugmasi): "⏳" xabari, `minutes.generate` (so'rovchi `who` - bosgan odamning
+    ko'rsatmalari qo'llanadi; yangi ko'rsatma yo'q - tayyori qaytadi, bepul; tayyoridan keyingi ko'rsatmalar - uning
+    tahriri; ish shu ipda 1-3 daqiqa yoki boshqa yo'lning yozilayotgan ishi kutiladi - `sleep`), so'ng Word va PDF
+    fayllar va "⏳" o'rniga natija (`_deliver_minutes`). Kutish tugab ham hujjat hali yozilayotgan bo'lsa -
+    `render.MINUTES_STILL_RUNNING`."""
+    code = minutes.normalize(lang)
+    if code is None:
+        return
+    title = minutes.LANG_TITLES[code]
+    ts = post(client, channel, thread, render.MINUTES_WORKING.format(title=title, verb="tayyorlanmoqda"))
+    try:
+        view = minutes.generate(user, meeting_id, code, asker=who, sleep=sleep)
+    except MeetingProblem as exc:
+        _minutes_notice(client, channel, ts, thread, render.escape(f"Bayonnoma yozilmadi: {exc.detail}"),
+                        meeting_id, code)
+        return
+    except transcribe.Problem as exc:
+        # Kutish paytida server to'xtayapti (`__init__._sleep`) - sabab "⏳" o'rnida.
+        replace(client, channel, ts, thread, render.escape(str(exc)))
+        return
+    except Exception:  # noqa: BLE001 - "⏳" abadiy qolmasin
+        log.exception("Slack bayonnomasi (%s): kutilmagan xato", meeting_id)
+        _minutes_notice(client, channel, ts, thread, "Bayonnoma yozilmadi: ichki xato.", meeting_id, code)
+        return
+    if view["status"] == "running":
+        _minutes_notice(client, channel, ts, thread, render.MINUTES_STILL_RUNNING, meeting_id, code)
+        return
+    _deliver_minutes(client, channel, thread, user, meeting_id, view, code, ts)
+
+
+def _deliver_minutes(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str,
+                     view: dict[str, Any], code: str, ts: str | None) -> None:
+    """Tayyor hujjat: Word va PDF fayllar shu joyga, so'ng "⏳" xabari (`ts`; yo'q bo'lsa - yangi xabar) o'rnida natija
+    (`render.minutes_result`) va tahrir eslatmasi (`render.minutes_hint`, `doc:<til>` belgisi: shu xabar thread'idagi
+    yoki chatdagi keyingi matn shu hujjat bo'yicha). Til tugmasi (`minutes_doc`) va chatdan boshlangan ish
+    (`_follow_minutes`) uchun umumiy.
 
     NEGA WORD HAM, PDF HAM. Ega qarori: asosiy natija Word (kotib «________» joylarini
     to'ldiradi), PDF - ko'rish uchun nusxa. Avval Word yuklanadi - ruxsat yo'q bo'lsa odam
     yo'riqnomani birinchi fayldan keyin oladi, hujjatning o'zi omborda qoladi (qayta bosilsa
     model chaqirilmaydi - `minutes.generate` tayyorini qaytaradi)."""
-    code = minutes.normalize(lang)
-    if code is None:
-        return
-    title = minutes.LANG_TITLES[code]
-    ts = post(client, channel, thread, f"⏳ Bayonnoma ({title}) tayyorlanmoqda… 1-3 daqiqa.")
-    try:
-        view = minutes.generate(user, meeting_id, code)
-    except MeetingProblem as exc:
-        replace(client, channel, ts, thread, render.escape(f"Bayonnoma yozilmadi: {exc.detail}"))
-        return
-    except Exception:  # noqa: BLE001 - "⏳" abadiy qolmasin
-        log.exception("Slack bayonnomasi (%s): kutilmagan xato", meeting_id)
-        replace(client, channel, ts, thread, "Bayonnoma yozilmadi: ichki xato.")
-        return
     # Fayllar ALOHIDA: hujjat yozilgan va saqlangan - PDF chizilmasa (shrift, navbat) yoki fayl
     # yuborilmasa Word va natija baribir yetib boradi, sabab esa natija ostida.
     notes: list[str] = []
@@ -761,7 +858,54 @@ def minutes_doc(client: Any, channel: str, thread: str | None, user: AuthUser, m
     text = render.minutes_result(view, code)
     if notes:
         text += "\n" + "\n".join(f"⚠ {note}" for note in notes)
-    replace(client, channel, ts, thread, text)
+    replace(client, channel, ts, thread, text, render.sections(text) + [render.minutes_hint(meeting_id, code)])
+
+
+def _follow_minutes(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str,
+                    ref: dict[str, Any], *, who: str | None, sleep: Sleep = time.sleep) -> None:
+    """Chat navbati boshlagan bayonnoma ishi (`ChatTurn.minutes`: `create` yoki `revise`, hujjat id'si bilan) - javob
+    ostida, o'sha joyda: "⏳ Bayonnoma (til) tahrirlanmoqda / tayyorlanmoqda" (ish tugagan bo'lsa ham - natija shu
+    xabar o'rnida, fayllardan yuqorida turadi, til tugmasidagidek), ish kutiladi (`minutes.wait`, `sleep`), so'ng:
+    tayyor - Word, PDF va natija (`_deliver_minutes`); yiqilgan - sababi (`minutes.failure_detail`; tahrirda
+    "o'zgarish bo'lmadi" ham); kutish tugab ham yozilmoqda - `render.MINUTES_STILL_RUNNING`."""
+    ts = None
+    code = str(ref.get("language") or "")
+    try:
+        found = minutes.status(user, meeting_id, ref["id"], asker=who)
+        code = found["language"]
+        revising = found.get("kind") == "revise"
+        ts = post(client, channel, thread, render.MINUTES_WORKING.format(
+            title=minutes.LANG_TITLES.get(code, code), verb="tahrirlanmoqda" if revising else "tayyorlanmoqda"))
+        if found["status"] == "running":
+            found = minutes.wait(user, meeting_id, ref["id"], asker=who, sleep=sleep)
+        if found["status"] == "running":
+            _minutes_notice(client, channel, ts, thread, render.MINUTES_STILL_RUNNING, meeting_id, code)
+        elif found["status"] == "failed":
+            head = "Bayonnoma tahrirlanmadi" if revising else "Bayonnoma yozilmadi"
+            _minutes_notice(client, channel, ts, thread, render.escape(f"{head}: {minutes.failure_detail(found)}"),
+                            meeting_id, code)
+        else:
+            _deliver_minutes(client, channel, thread, user, meeting_id, found, code, ts)
+    except transcribe.Problem as exc:
+        # Kutish paytida server to'xtayapti (`__init__._sleep`).
+        replace(client, channel, ts, thread, render.escape(str(exc)))
+    except MeetingProblem as exc:
+        _minutes_notice(client, channel, ts, thread, render.escape(f"Bayonnoma yuborilmadi: {exc.detail}"),
+                        meeting_id, code)
+    except Exception:  # noqa: BLE001 - "⏳" abadiy qolmasin
+        log.exception("Slack bayonnomasi (%s): chatdan boshlangan ish kuzatilmadi", meeting_id)
+        _minutes_notice(client, channel, ts, thread, "Bayonnoma yuborilmadi: ichki xato.", meeting_id, code)
+
+
+def _minutes_notice(client: Any, channel: str, ts: str | None, thread: str | None, text: str, meeting_id: str,
+                    code: str) -> None:
+    """Bayonnoma xato / "hali tayyorlanmoqda" xabari "⏳" o'rnida - yig'ilish belgisi (`doc:<til>`) bilan: shu xabar
+    thread'idagi javob ham, chatdagi keyingi matn ham ("qayta urin", "3-bandni ...") shu yozuv va shu hujjatga boradi.
+    Belgisiz xabarning thread'i "jim" edi (`thread_target`)."""
+    blocks = render.sections(text)
+    if blocks and minutes.normalize(code):
+        blocks[0] = {**blocks[0], "block_id": render.mark(meeting_id, f"{render.DOC_TAG}{code}")}
+    replace(client, channel, ts, thread, text, blocks or None)
 
 
 def relang(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str, lang: str, *,

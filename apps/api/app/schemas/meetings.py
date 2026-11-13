@@ -143,6 +143,14 @@ class AskRequest(BaseModel):
 #: server ichidan (`service.chat_send(..., channel=...)`) keladi.
 ChatChannel = Literal["mobile", "web", "miniapp", "desktop", "api"]
 
+#: Bayonnoma (rasmiy hujjat) tili - `minutes.LANGS`; xulosa tilidan (`Lang`) farqli, o'zbekcha ikki yozuvda.
+MinutesLang = Literal["uz-latn", "uz-cyrl", "ru", "en"]
+#: `running` - fonda yozilmoqda, `ready` - tayyor, `failed` - yozilmadi (`error.code`: `llm_failed`,
+#: `llm_busy`, `llm_rate_limited`, `llm_not_configured`, `internal`, `interrupted`; tahrirda yana `no_change` -
+#: so'rov hujjatni o'zgartirmadi, yangi versiya yo'q, `minutes_outdated` / `minutes_missing` - navbatda turganda
+#: tahrir asosi yo'qoldi).
+MinutesStatus = Literal["running", "ready", "failed"]
+
 
 class ChatRequest(BaseModel):
     """`POST /meetings/{id}/chat` tanasi - yig'ilish chatiga xabar (bitta audio - bitta suhbat)."""
@@ -157,6 +165,12 @@ class ChatRequest(BaseModel):
     #: chegara ham yo'q); shu kalitli xabar hali javob kutyapti - birinchisi kutiladi. Xabar matni solishtirilmaydi.
     #: `null` - kalitsiz (har so'rov yangi navbat). 8-64 belgi, faqat `A-Z a-z 0-9 _ -`; boshqasi - 422.
     clientId: str | None = Field(default=None, min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    #: Bayonnomaning ANIQ kirish nuqtasi (ilova rejim chipi): `note` - ko'rsatma, `revise` - tayyor hujjatdagi
+    #: o'zgartirish. Chat modeli chaqirilmaydi va "ask" soatlik chegarasi olinmaydi. `null` - amalni Barno o'zi
+    #: tanlaydi (savol, ko'rsatma, "tayyorla", o'zgartirish). Boshqa qiymat - 422.
+    intent: Literal["note", "revise"] | None = None
+    #: Odam qaysi til hujjatiga qarab yozyapti (ilova bayonnoma oynasi) - o'zgartirish shu tildagi hujjatga.
+    minutesLanguage: MinutesLang | None = None
 
     @field_validator("message")
     @classmethod
@@ -474,16 +488,40 @@ class QuestionList(BaseModel):
     items: list[AskAnswer]
 
 
+class ChatMinutes(BaseModel):
+    """Chat navbatidagi bayonnoma amali (`ChatTurn.minutes`): nima qilindi va hujjatning JONLI holati."""
+
+    #: `note` - ko'rsatma eslab qolindi, `create` - hujjat so'raldi, `revise` - o'zgartirish so'raldi.
+    action: Literal["note", "create", "revise"]
+    language: MinutesLang | None = None
+    #: Bayonnoma qatori (`GET .../minutes/{id}`): shu navbat boshlagan yoki qayta yuborilgan tayyor hujjat.
+    id: str | None = None
+    #: Jonli holat (`GET /chat` da ham).
+    status: MinutesStatus | None = None
+    version: int | None = None
+    #: Faqat `note` navbatida: faol ko'rsatmalar soni.
+    notes: int | None = None
+    #: Ish boshlanmadi (`id` yo'q: navbat to'la, chegara, hujjat yo'q yoki eskirgan, model sozlanmagan) yoki qator
+    #: `failed` - kod va odamga sabab.
+    error: SummaryErrorOut | None = None
+
+
 class ChatTurn(AskAnswer):
     """Yig'ilish chatining bitta navbati: savol (`question`) va Barno javobi - `AskAnswer` maydonlari bilan."""
 
     #: Qaysi klientdan: mobile | web | miniapp | desktop | api | slack | telegram; `null` - chatdan oldingi qator.
     channel: str | None = None
-    #: Javobni yozgan model (masalan `claude-sonnet-5-5`); `null` - chatdan oldingi qator.
+    #: Javobni yozgan model (masalan `claude-sonnet-5-5`); `null` - chatdan oldingi qator yoki modelsiz navbat
+    #: (aniq bayonnoma niyati).
     model: str | None = None
     #: Xabarning klient kaliti (`ChatRequest.clientId`) - ilova kutilayotgan xabarini shu bilan tanib oladi;
     #: `null` - kalitsiz (botlar, eski qator).
     clientId: str | None = None
+    #: Navbat turi: `chat` - savol-javob, `note` - bayonnoma ko'rsatmasi, `create` - hujjat so'rovi, `revise` -
+    #: o'zgartirish so'rovi.
+    kind: Literal["chat", "note", "create", "revise"] = "chat"
+    #: Bayonnoma amali va hujjatning jonli holati; `chat` navbatida `null`.
+    minutes: ChatMinutes | None = None
 
 
 class ChatHistory(BaseModel):
@@ -500,11 +538,36 @@ class ChatReset(BaseModel):
     archived: int
 
 
-#: Bayonnoma (rasmiy hujjat) tili - `minutes.LANGS`; xulosa tilidan (`Lang`) farqli, o'zbekcha ikki yozuvda.
-MinutesLang = Literal["uz-latn", "uz-cyrl", "ru", "en"]
-#: `running` - fonda yozilmoqda, `ready` - tayyor, `failed` - yozilmadi (`error.code`: `llm_failed`,
-#: `llm_busy`, `llm_rate_limited`, `llm_not_configured`, `internal`, `interrupted`).
-MinutesStatus = Literal["running", "ready", "failed"]
+class MinutesHeader(BaseModel):
+    """Hujjat sarlavha qismining EGA aytgan qiymatlari (`content.header`, faqat to'ldirilganlari keladi; qolgani
+    Word da «________»)."""
+
+    organization: str | None = None
+    #: Sarlavhadagi "<...> huzurida o'tkazilgan yig'ilish" qatoriga.
+    chairedBy: str | None = None
+    city: str | None = None
+    chair: str | None = None
+    attendees: list[str] = Field(default_factory=list)
+
+
+class MinutesChangeSet(BaseModel):
+    """Bandlar yoki kun tartibi masalalari raqamlari (Word dagidek): o'zgargan va qo'shilgan - yangi versiyadagi,
+    olib tashlangan - ota-versiyadagi raqamlar."""
+
+    changed: list[int] = Field(default_factory=list)
+    added: list[int] = Field(default_factory=list)
+    removed: list[int] = Field(default_factory=list)
+
+
+class MinutesChanges(BaseModel):
+    """Tahrir ota-versiyaga nisbatan nimani o'zgartirdi (`minutes.diff.changes`)."""
+
+    items: MinutesChangeSet
+    agenda: MinutesChangeSet
+    #: O'zgargan sarlavha qiymatlari: organization | chairedBy | city | chair | attendees.
+    header: list[str] = Field(default_factory=list)
+    #: Boshqa qismlar: title | preamble | controller | notes.
+    other: list[str] = Field(default_factory=list)
 
 
 class MinutesView(BaseModel):
@@ -527,14 +590,35 @@ class MinutesView(BaseModel):
     itemCount: int
     #: Modelning "Aniqlashtirish kerak" izohlari - hujjatdagidek (`[S#]` o'rniga ism yoki "3-иштирокчи").
     notes: list[str]
-    #: Tekshiruv ogohlantirishlari: `ungrounded_name:<ism>`, `unverified_number:<raqam>`, `script_mismatch`, ...
+    #: Tekshiruv ogohlantirishlari: `ungrounded_name:<ism>`, `unverified_number:<raqam>`, `script_mismatch`,
+    #: `header_dropped:<kalit>`, `superseded_revisions:<n>` (matn tahrirlangani uchun yangidan yozildi - avvalgi n ta
+    #: tahrir kirmagan), `guidance_truncated:<n>` (eng eski n ta ko'rsatma sig'madi), ...
     warnings: list[str]
     #: `{code, message}` - faqat `failed` da.
     error: SummaryErrorOut | None = None
+    #: `generate` - transkriptdan yozilgan asl hujjat, `revise` - tahrir (chatdagi so'rov yoki yangi ko'rsatmalar).
+    kind: Literal["generate", "revise"] = "generate"
+    #: Odamga ko'rinadigan versiya (1 - asl; tahrir - ota + 1).
+    version: int = 1
+    #: Tahrirning ota-versiyasi (`kind` revise).
+    parentId: str | None = None
+    #: O'zgartirish so'rovi - egasining o'z so'zlari; `null` - asl hujjat yoki yangi ko'rsatmalarni qo'llash.
+    request: str | None = None
+    #: Shu hujjatga berilgan ko'rsatmalar soni.
+    notesApplied: int = 0
+    #: Faqat `ready` da: so'rovchining shu hujjatda hali yo'q faol ko'rsatmalari soni (`POST .../minutes` ularni
+    #: qo'llaydi - tahrir, qaytadan yozish emas).
+    pendingNotes: int = 0
+    #: Ega aytgan sarlavha qiymatlari (bo'lmasa `null`).
+    header: MinutesHeader | None = None
+    #: Tahrirda - ota-versiyaga nisbatan o'zgarishlar; asl hujjatda `null`.
+    changes: MinutesChanges | None = None
 
 
 class MinutesList(BaseModel):
     items: list[MinutesView]
+    #: Hisob egasining faol bayonnoma ko'rsatmalari soni (chatda berilgan).
+    notes: int = 0
 
 
 class MinutesDetail(MinutesView):

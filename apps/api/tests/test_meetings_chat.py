@@ -1,7 +1,12 @@
 """Yig'ilish CHATI (bitta audio - bitta suhbat): `GET/POST/DELETE /api/v1/meetings/{id}/chat`, suhbat xotirasi,
 Claude'ning ko'p navbatli so'rovi (prompt keshi, rad-zahirasi), boshqa modellarga matn bloki, umumiy hisobda
 so'rovchi bo'yicha alohida suhbat (Slack, `asker`), qayta o'girish va javob kutilayotgandagi "Yangi suhbat" yoki
-qayta o'girish, klient kaliti (`clientId` - idempotentlik), ombor (v7).
+qayta o'girish, klient kaliti (`clientId` - idempotentlik), ombor (v7, v8).
+
+BAYONNOMA CHATDA (2026-11-12): chat modeli amal tanlaydi (`none` / `note` / `create` / `revise`, soxta javob -
+`chat_reply`), aniq kirish nuqtasi (`intent`) modelsiz, hujjat va holat bloklari (kesh qoidasi), navbatdagi hujjatning
+jonli holati, ish boshlanmasa ham 200, ko'rsatmalar qayta o'girishdan keyin qoladi, ikki yozuv aralashmaydi. Hujjat -
+`FakeLLM` (`MEETINGS_MINUTES_CHAIN=ollama`), fon ishi shu ipda (`minutes.runner`).
 
 Hech bir test tarmoqqa chiqmaydi: Claude - `FakeAnthropic` (`ClaudeChat(client_factory=...)`), Ollama - `FakeLLM`,
 agent - `FakeAgent`.
@@ -23,16 +28,20 @@ from app.schemas import meetings as schemas
 from app.schemas.auth import AuthUser
 from app.services import analytics
 from app.services import meetings as meetings_pkg
-from app.services.meetings import ask, chat, llm, prompts, service, shapes
+from app.services.meetings import ask, chat, llm, minutes, prompts, service, shapes
 from app.services.meetings import store as store_mod
-from app.services.meetings.store import MeetingStore
+from app.services.meetings.minutes import state as minutes_state
+from app.services.meetings.store import MeetingStore, jload
 from app.services.meetings.summarize import LlmUnavailable
-from meetings_fakes import (FakeAnthropic, auto_reply, claude_error, claude_message, create_meeting, enable, recorded,
-                            run_all)
+from meetings_fakes import (CHAT_ACTION_ANSWER, FakeAnthropic, auto_reply, chat_reply, claude_error, claude_message,
+                            create_meeting, enable, recorded, run_all)
 from tests.agent_fakes import FakeAgent, enable_agent
 
 CLAUDE_KEY = "sk-ant-test-CHAT-SECRET"
-TURN_FIELDS = {"id", "question", "answer", "citations", "followUps", "createdAt", "channel", "model", "clientId"}
+TURN_FIELDS = {"id", "question", "answer", "citations", "followUps", "createdAt", "channel", "model", "clientId",
+               "kind", "minutes"}
+#: Amalsiz navbat qayta yuborilganda (`chat.replay`) - `shapes.chat` dagi `minutes` qiymati.
+NO_ACTION = {"action": "none", "language": None, "instruction": None}
 ASK_FIELDS = {"id", "question", "answer", "citations", "followUps", "createdAt"}
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 #: Ilova beradigan klient kaliti shaklida (tasodifiy, URL-xavfsiz).
@@ -56,6 +65,19 @@ def ready(client, auth, monkeypatch, _isolated_meetings) -> str:
     meeting, _ = recorded(client, auth)
     run_all(_isolated_meetings)
     return meeting["id"]
+
+
+@pytest.fixture
+def docs(ready, monkeypatch) -> str:
+    """`ready` + bayonnoma: zanjir `FakeLLM` (`MEETINGS_MINUTES_CHAIN=ollama`), fon ishi shu ipda (deterministik)."""
+    monkeypatch.setattr(settings, "meetings_minutes_chain", "ollama", raising=False)
+    monkeypatch.setattr(minutes, "runner", lambda job: job())
+    return ready
+
+
+def _minutes_calls(rt) -> list[dict]:
+    """Bayonnoma model chaqiruvlari (`FakeLLM`): yangi hujjat va tahrir."""
+    return [c for c in rt.llm.calls if c["op"].startswith("meeting_minutes")]
 
 
 def _url(mid: str) -> str:
@@ -132,16 +154,20 @@ def test_ikkinchi_xabar_birinchi_navbatni_xotira_sifatida_oladi(client, auth, re
     assert two["messages"][0] == one["messages"][0] == {"role": "user",
                                                         "content": prompts.chat_question("Hisobotni kim yuboradi?",
                                                                                          "uz")}
-    # Javob - modelning o'z JSON shakli, faqat MATN ("o'ylash" bloklari saqlanmaydi va qayta yuborilmaydi).
+    # Javob - modelning o'z JSON shakli (`shapes.chat` tartibida: bayonnoma amali birinchi; oddiy navbatda `none`),
+    # faqat MATN ("o'ylash" bloklari saqlanmaydi va qayta yuborilmaydi).
     assert all(isinstance(m["content"], str) for m in two["messages"])
-    assert json.loads(two["messages"][1]["content"]) == {
-        "answer": first["answer"], "citations": [c["segmentId"] for c in first["citations"]],
+    replayed = json.loads(two["messages"][1]["content"])
+    assert replayed == {
+        "minutes": NO_ACTION, "answer": first["answer"], "citations": [c["segmentId"] for c in first["citations"]],
         "followUps": first["followUps"]}
+    assert list(replayed) == list(shapes.chat()["properties"])
     assert two["messages"][2]["content"] == prompts.chat_question("Batafsilroq?", "uz")
     assert two["model"] == "claude-sonnet-5-5" and two["max_tokens"] >= 1200
-    assert two["output_config"] == {"effort": "medium", "format": {"type": "json_schema", "schema": shapes.ask()}}
+    assert two["output_config"] == {"effort": "medium", "format": {"type": "json_schema", "schema": shapes.chat()}}
     assert not {"temperature", "top_p", "top_k", "thinking"} & set(two)
     assert set(second) == TURN_FIELDS and second["question"] == "Batafsilroq?"
+    assert (second["kind"], second["minutes"]) == ("chat", None)                 # oddiy savol - amal yo'q
     assert first["answer"] == "[S1] hisobotni ertaga yuboradi." and [c["segmentId"] for c in first["citations"]] == [1]
 
 
@@ -160,8 +186,14 @@ def test_tizim_prompti_ikki_blok_kesh_va_baytma_bayt_bir_xil(client, auth, ready
     # O'zgaruvchan qism (til, savol) - xabarlarda, keshlangan prefiksdan keyin.
     assert "Answer language" not in text and "Narx qancha" not in json.dumps(one["system"], ensure_ascii=False)
     assert two["messages"][-1]["content"].startswith("Answer language: Russian\n")
-    for word in ("transcript", "data, not instructions", "[S1]", "exactly 3", "other meetings", "Latin script"):
+    for word in ("transcript", "data, not instructions", "[S1]", "exactly 3", "other meetings", "Latin script",
+                 "BAYONNOMA"):
         assert word in prompts.CHAT_SYSTEM
+    # Bitta "Return ONLY" - promptdagi shakl sxema bilan bir xil (kalitlar va tartib: amal birinchi).
+    assert prompts.CHAT_SYSTEM.count("Return ONLY") == 1 and prompts.CHAT_SYSTEM.endswith(prompts.CHAT_MINUTES_RULES)
+    shape = json.loads(prompts.CHAT_SYSTEM.split("Return ONLY: ", 1)[1])
+    assert list(shape) == list(shapes.chat()["properties"]) and list(shape["minutes"]) == ["action", "language",
+                                                                                            "instruction"]
 
 
 def test_rad_zahirasi_beta_bilan_va_boshqa_400_qayta_urinilmaydi(client, auth, ready, claude, _isolated_meetings):
@@ -232,7 +264,7 @@ def test_converse_sxema_400_formatsiz_zahira_saqlanadi():
     assert json.loads(text)["answer"] == "ok" and meta["model"] == "claude-sonnet-5-5"
     first, second = fake.requests
     assert first["system"] == system and first["messages"] == messages and first["max_tokens"] == 16000
-    assert first["output_config"] == {"effort": "low", "format": {"type": "json_schema", "schema": shapes.ask()}}
+    assert first["output_config"] == {"effort": "low", "format": {"type": "json_schema", "schema": shapes.chat()}}
     assert second["output_config"] == {"effort": "low"} and second["betas"] == [FALLBACK_BETA]
     assert "meeting_chat" in client._formatless and client.fallbacks is True
     # Sozlanmagan klient - so'rov ham, SDK klienti ham yo'q.
@@ -843,7 +875,9 @@ def test_arxivdagi_navbat_kalitni_band_qilmaydi(client, auth, ready, claude, _is
 
 @pytest.mark.parametrize("body", [
     {}, {"message": ""}, {"message": "   "}, {"message": "x" * 1001}, {"message": "salom", "channel": "slack"},
-    {"message": "salom", "language": "de"},
+    {"message": "salom", "language": "de"}, {"message": "salom", "intent": "create"},
+    {"message": "salom", "intent": "rewrite"}, {"message": "salom", "minutesLanguage": "uz"},
+    {"message": "salom", "minutesLanguage": "de"},
 ])
 def test_xabar_tekshiruvi_422(client, auth, ready, claude, body):
     response = client.post(_url(ready), headers=auth, json=body)
@@ -949,6 +983,378 @@ def test_xotira_oxirgi_n_navbat_va_belgi_chegarasi(monkeypatch):
     assert chat.channel_of(" Telegram ") == "telegram" and chat.channel_of(None) == "api"
 
 
+# --- bayonnoma chatda (2026-11-12): amal, aniq niyat, bloklar, jonli holat ------------------------------------
+
+
+def test_bayonnoma_bloklari_kesh_qoidasi(client, auth, docs, claude, monkeypatch, _isolated_meetings):
+    """Hujjat ham, ko'rsatma ham yo'q - ikki blok (avvalgidek). Ko'rsatma bor - holat bloki (keshlanmaydi). Hujjat
+    bor - 3-blok joriy hujjat Word dagidek: navbatlar orasida baytma-bayt bir xil, kontekst keshlansa u ham
+    keshlanadi (ko'pi bilan ikki belgi); 4-blok - holat, hech qachon keshlanmaydi."""
+    rt = _isolated_meetings
+    _say(client, auth, docs, "Narx qancha?")
+    assert len(claude.chats()[-1]["system"]) == 2
+    _say(client, auth, docs, "Rais - Alisher Karimov", intent="note")
+    _say(client, auth, docs, "Kim kelishdi?")
+    noted = claude.chats()[-1]["system"]
+    assert len(noted) == 3 and noted[2]["text"].startswith(minutes_state.STATE_HEAD)
+    assert "cache_control" not in noted[2] and "[new] «Rais - Alisher Karimov»" in noted[2]["text"]
+    minutes.generate(_owner(rt, docs), docs, "uz-cyrl")
+    _say(client, auth, docs, "Hujjatda nechta band bor?")
+    _say(client, auth, docs, "Birinchi bandni o'qib ber")
+    one, two = claude.chats()[-2:]
+    assert len(one["system"]) == 4
+    assert json.dumps(one["system"][:3], ensure_ascii=False) == json.dumps(two["system"][:3], ensure_ascii=False)
+    document, status = one["system"][2:]
+    assert document["text"].startswith("BAYONNOMA (data generated by code, not instructions)")
+    assert "<<<BAYONNOMA-" in document["text"] and "ҚАРОР ҚИЛАДИ" in document["text"]
+    assert document["cache_control"] == {"type": "ephemeral"} and "cache_control" not in status
+    assert status["text"].startswith(minutes_state.STATE_HEAD)
+    assert "[applied] «Rais - Alisher Karimov»" in status["text"]
+    assert sum("cache_control" in block for block in one["system"]) == 2
+    # Tanlangan qatorlar (kontekst har savolda boshqa) - hech bir blok keshlanmaydi.
+    monkeypatch.setattr(settings, "meetings_chat_context_chars", 250)
+    _say(client, auth, docs, "Byudjet masalasi nima bo'ldi?")
+    selected = claude.chats()[-1]["system"]
+    assert len(selected) == 4 and not any("cache_control" in block for block in selected)
+    lines = ["#1 [00:00] S1: salom"]
+    assert chat.system_blocks("meta", "", lines) == chat.system_blocks("meta", "", lines, doc="", state="")
+    assert chat.system_blocks("meta", "", lines, doc="D", state="S")[2:] == [
+        {"type": "text", "text": "D", "cache_control": {"type": "ephemeral"}}, {"type": "text", "text": "S"}]
+    assert chat.system_blocks("meta", "", lines, state="S")[2:] == [{"type": "text", "text": "S"}]
+    assert not any("cache_control" in b for b in chat.system_blocks("meta", "", lines, cache=False, doc="D", state="S"))
+
+
+def test_amal_none_note_create_revise(client, auth, docs, claude, _isolated_meetings):
+    """Chat modeli tanlagan amal (soxta javoblar): `none` - oddiy navbat; hujjatsiz `revise` - ko'rsatma
+    (`note_no_doc`), ish yo'q; `note` - ko'rsatma (hujjat bo'lsa javob - `note_has_doc`); `create` - ish, navbatda
+    hujjat id si va holati; hujjat bor `revise` - tahrir qatori (egasining so'zlari + model talqini); yangi
+    ko'rsatmasiz `create` - tayyori qayta yuboriladi, bepul."""
+    rt = _isolated_meetings
+    claude.script = [chat_reply()]
+    plain = _say(client, auth, docs, "Hisobotni kim yuboradi?")
+    assert (plain["kind"], plain["minutes"]) == ("chat", None)
+    assert rt.store.turn(docs, plain["id"])["kind"] is None                      # oddiy navbat - `kind` NULL
+    claude.script = [chat_reply("revise", instruction="Raisni Karimov deb yozish")]
+    early = _say(client, auth, docs, "Raisni Karimov deb yozing")
+    assert (early["kind"], early["answer"]) == ("note", chat.CANNED["note_no_doc"]["uz"])
+    assert early["minutes"] == {"action": "note", "language": "uz-cyrl", "id": None, "status": None, "version": None,
+                                "notes": 1, "error": None}
+    claude.script = [chat_reply("note", instruction="Kredit masalalariga e'tibor berish")]
+    noted = _say(client, auth, docs, "Kredit masalalariga alohida e'tibor bering")
+    assert (noted["kind"], noted["answer"], noted["minutes"]["notes"]) == ("note", CHAT_ACTION_ANSWER, 2)
+    assert rt.store.minutes_rows(docs) == [] and _minutes_calls(rt) == []
+    claude.script = [chat_reply("create")]
+    made = _say(client, auth, docs, "Bayonnoma tayyorlab ber")
+    assert (made["kind"], made["answer"]) == ("create", CHAT_ACTION_ANSWER)
+    [row] = rt.store.minutes_rows(docs)
+    assert made["minutes"] == {"action": "create", "language": "uz-cyrl", "id": row["id"], "status": "ready",
+                               "version": 1, "notes": None, "error": None}
+    assert row["turn_id"] == made["id"] and rt.store.turn(docs, made["id"])["minutes_id"] == row["id"]
+    [call] = _minutes_calls(rt)
+    assert call["op"] == "meeting_minutes" and "OWNER INSTRUCTIONS" in call["user"]
+    assert "1. Raisni Karimov deb yozing" in call["user"] and "2. Kredit masalalariga alohida" in call["user"]
+    claude.script = [chat_reply("note", instruction="Kotib - Bobur")]
+    later = _say(client, auth, docs, "Kotib - Bobur")
+    assert (later["kind"], later["answer"]) == ("note", chat.CANNED["note_has_doc"]["uz"])
+    claude.script = [chat_reply("revise", instruction="Sarlavhani «Yangi sarlavha» qilish")]
+    edited = _say(client, auth, docs, "TITLE=Yangi sarlavha")
+    assert (edited["kind"], edited["answer"]) == ("revise", CHAT_ACTION_ANSWER)
+    revision = rt.store.minutes_by_turn(edited["id"])
+    assert (revision["parent_id"], revision["revision"], revision["status"]) == (row["id"], 1, "ready")
+    assert jload(revision["request_json"]) == {"text": "TITLE=Yangi sarlavha",
+                                               "instruction": "Sarlavhani «Yangi sarlavha» qilish"}
+    assert edited["minutes"] == {"action": "revise", "language": "uz-cyrl", "id": revision["id"], "status": "ready",
+                                 "version": 2, "notes": None, "error": None}
+    call = _minutes_calls(rt)[-1]
+    assert call["op"] == "meeting_minutes_revise" and "Assistant's reading" in call["user"]
+    assert "[new] Kotib - Bobur" in call["user"] and jload(revision["content_json"])["title"] == "Yangi sarlavha"
+    # Yangi ko'rsatma yo'q - "tayyorla" tayyorini qayta yuboradi: yangi qator ham, model chaqiruvi ham yo'q.
+    claude.script = [chat_reply("create")]
+    again = _say(client, auth, docs, "Bayonnomani yana yubor")
+    assert again["minutes"]["id"] == revision["id"] and again["minutes"]["version"] == 2
+    assert len(rt.store.minutes_rows(docs)) == 2 and len(_minutes_calls(rt)) == 2
+    # Butun suhbat bitta: keyingi savolda amalli navbatlar ham xotirada (o'z amali bilan).
+    _say(client, auth, docs, "Nimalarni o'zgartirdik?")
+    replayed = [json.loads(m["content"]) for m in claude.chats()[-1]["messages"] if m["role"] == "assistant"]
+    assert [r["minutes"]["action"] for r in replayed] == ["none", "note", "note", "create", "note", "revise", "create"]
+
+
+def test_aniq_niyat_modelsiz(client, auth, docs, claude, monkeypatch, _isolated_meetings):
+    """Aniq kirish nuqtasi (`intent`): chat modeli ham, "ask" soatlik chegarasi ham yo'q. Ko'rsatma - darhol
+    (tayyor javob, so'rov tilida); o'zgartirish - tahrir ishi (tahrir chegarasi bilan). Slack odamining ko'rsatmasi
+    faqat o'ziniki."""
+    rt = _isolated_meetings
+    monkeypatch.setattr(settings, "meetings_ask_per_hour", 1)
+    service.reset_limits()
+    note = _say(client, auth, docs, "Rais - Alisher Karimov", intent="note", channel="mobile")
+    assert (note["kind"], note["answer"], note["model"], note["citations"], note["followUps"]) == (
+        "note", chat.CANNED["note"]["uz"], None, [], [])
+    assert note["minutes"] == {"action": "note", "language": None, "id": None, "status": None, "version": None,
+                               "notes": 1, "error": None}
+    ru = _say(client, auth, docs, "Kredit masalalariga e'tibor bering", intent="note", language="ru")
+    assert (ru["answer"], ru["minutes"]["notes"]) == (chat.CANNED["note"]["ru"], 2)
+    head = minutes.generate(_owner(rt, docs), docs, "uz-cyrl")
+    assert head["notesApplied"] == 2
+    later = _say(client, auth, docs, "Kotib - Bobur", intent="note")
+    assert later["answer"] == chat.CANNED["note_has_doc"]["uz"]
+    edit = _say(client, auth, docs, "TITLE=Yangi sarlavha", intent="revise", minutesLanguage="uz-cyrl")
+    assert (edit["kind"], edit["answer"]) == ("revise", chat.CANNED["revise"]["uz"])
+    row = rt.store.minutes_row(docs, edit["minutes"]["id"])
+    assert edit["minutes"] == {"action": "revise", "language": "uz-cyrl", "id": row["id"], "status": "ready",
+                               "version": 2, "notes": None, "error": None}
+    assert (row["parent_id"], row["turn_id"], jload(row["request_json"])) == (
+        head["id"], edit["id"], {"text": "TITLE=Yangi sarlavha", "instruction": None})
+    assert claude.chats() == []                                                  # chat modeli chaqirilmadi
+    # "ask" chegarasi (1/soat) olinmagan: model javob beradigan birinchi xabar o'tadi, ikkinchisi - 429.
+    _say(client, auth, docs, "Narx qancha?")
+    assert client.post(_url(docs), headers=auth, json={"message": "Yana?"}).status_code == 429
+    # Slack odami (umumiy hisob): ko'rsatma faqat o'ziniki - egasining ko'rsatmalari va ro'yxatiga kirmaydi.
+    user = _owner(rt, docs)
+    slack = service.chat_send(user, docs, "Qatnashchilar: boshqaruv a'zolari", None, channel="slack",
+                              asker="slack:U1", intent=" NOTE ")
+    assert (slack["kind"], slack["minutes"]["notes"]) == ("note", 1)
+    assert len(rt.store.notes(docs)) == 3 and len(rt.store.notes(docs, asker="slack:U1")) == 1
+    assert slack["id"] not in [t["id"] for t in client.get(_url(docs), headers=auth).json()["items"]]
+    # Noma'lum niyat va til - e'tiborsiz (server ichidan): oddiy navbat, chegara esa allaqachon tugagan.
+    with pytest.raises(service.MeetingProblem) as limited:
+        service.chat_send(user, docs, "Yana?", None, intent="rewrite", minutes_lang="de")
+    assert limited.value.status_code == 429
+
+
+def test_arxivda_tugilgan_navbat_ish_boshlamaydi(client, auth, docs, claude, _isolated_meetings):
+    """"Tayyorla" javobi yozilayotganda «Yangi suhbat» bosildi: navbat arxivda tug'iladi va pullik ish
+    BOSHLANMAYDI (qator ham, model chaqiruvi ham yo'q)."""
+    rt = _isolated_meetings
+    user = _owner(rt, docs)
+    _say(client, auth, docs, "Birinchi savol?")
+
+    def during(request):
+        assert service.chat_reset(user, docs) == {"archived": 1}
+        return chat_reply("create")
+
+    claude.script = [during]
+    late = _say(client, auth, docs, "Bayonnoma tayyorla")
+    assert late["kind"] == "create" and late["minutes"]["id"] is None and late["minutes"]["error"] is None
+    assert rt.store.turn(docs, late["id"])["archived_at"] is not None
+    assert rt.store.minutes_rows(docs) == [] and _minutes_calls(rt) == []
+
+
+def test_clientId_takror_bitta_ish(client, auth, docs, claude, _isolated_meetings):
+    """Ilova o'sha `clientId` bilan qayta yubordi: o'sha navbat (jonli holat bilan), chat modeliga ham, bayonnoma
+    modeliga ham ikkinchi so'rov yo'q - bitta navbat, bitta ish (aniq tahrirda ham)."""
+    rt = _isolated_meetings
+    claude.script = [chat_reply("create")]
+    first = _say(client, auth, docs, "Bayonnoma tayyorla", clientId=KEY)
+    again = _say(client, auth, docs, "Bayonnoma tayyorla", clientId=KEY)
+    assert again == first and first["minutes"]["status"] == "ready"
+    assert len(claude.chats()) == 1 and len(rt.store.minutes_rows(docs)) == 1 and len(_minutes_calls(rt)) == 1
+    edit = _say(client, auth, docs, "TITLE=Bir marta", intent="revise", clientId="k-edit-0001")
+    assert _say(client, auth, docs, "TITLE=Bir marta", intent="revise", clientId="k-edit-0001") == edit
+    assert len(rt.store.minutes_rows(docs)) == 2 and len(_minutes_calls(rt)) == 2 and chat._flights == {}
+
+
+def test_ish_boshlanmasa_200_va_xato(client, auth, docs, claude, monkeypatch, _isolated_meetings):
+    """Ish boshlanmadi (tahrir chegarasi tugagan, bayonnoma modeli sozlanmagan): chat baribir 200, navbat saqlanadi -
+    sabab `minutes.error` da (`id` yo'q), javob - `not_started`."""
+    rt = _isolated_meetings
+    monkeypatch.setattr(settings, "meetings_minutes_edits_per_hour", 1, raising=False)
+    service.reset_limits()
+    minutes.generate(_owner(rt, docs), docs, "uz-cyrl")
+    first = _say(client, auth, docs, "TITLE=Birinchi", intent="revise")
+    assert first["minutes"]["status"] == "ready" and first["minutes"]["error"] is None
+    second = _say(client, auth, docs, "TITLE=Ikkinchi", intent="revise", language="en")
+    assert second["answer"] == chat.CANNED["not_started"]["en"]
+    assert second["minutes"] == {"action": "revise", "language": "uz-cyrl", "id": None, "status": None,
+                                 "version": None, "notes": None,
+                                 "error": {"code": "rate_limited",
+                                           "message": "So'rovlar ko'p - birozdan keyin qayta urinib ko'ring"}}
+    assert jload(rt.store.turn(docs, second["id"])["minutes_json"])["error"]["code"] == "rate_limited"
+    assert len(rt.store.minutes_rows(docs)) == 2                                 # yangi qator yo'q
+    # Model tanlagan "tayyorla", lekin bayonnoma modeli sozlanmagan (Claude kaliti yo'q) - 503 emas, 200 + sabab.
+    monkeypatch.setattr(settings, "meetings_minutes_chain", "claude", raising=False)
+    claude.script = [chat_reply("create", language="ru")]
+    made = _say(client, auth, docs, "Ruscha bayonnoma tayyorla")
+    assert (made["kind"], made["answer"]) == ("create", chat.CANNED["not_started"]["uz"])
+    assert made["minutes"]["language"] == "ru" and made["minutes"]["error"]["code"] == "llm_not_configured"
+    listed = client.get(_url(docs), headers=auth).json()["items"]
+    assert [t["minutes"]["error"]["code"] for t in listed[-2:]] == ["rate_limited", "llm_not_configured"]
+
+
+def test_eski_ask_amalsiz(client, auth, docs, claude, _isolated_meetings):
+    """Eski `/ask` (va `service.ask`) - faqat savol-javob: model amal tanlasa ham ish yo'q, navbat oddiy, bayonnoma
+    bloklari yuborilmaydi."""
+    rt = _isolated_meetings
+    minutes.generate(_owner(rt, docs), docs, "uz-cyrl")
+    _say(client, auth, docs, "Rais - Alisher Karimov", intent="note")
+    claude.script = [chat_reply("revise", instruction="Sarlavhani o'zgartirish")]
+    response = client.post(f"/api/v1/meetings/{docs}/ask", headers=auth, json={"question": "Sarlavhani o'zgartir"})
+    assert response.status_code == 200 and set(response.json()) == ASK_FIELDS
+    row = rt.store.turn(docs, response.json()["id"])
+    assert (row["kind"], row["minutes_json"], row["minutes_id"]) == (None, None, None)
+    assert len(claude.chats()[-1]["system"]) == 2
+    # Model bayonnoma ishini va'da qilmasin - amallar o'chiq (oddiy chatda bu qo'shimcha yo'q).
+    assert claude.chats()[-1]["system"][0]["text"] == f"{prompts.CHAT_SYSTEM}\n\n{prompts.CHAT_MINUTES_OFF}"
+    claude.script = [chat_reply()]
+    _say(client, auth, docs, "Hisobotni kim yuboradi?")
+    assert claude.chats()[-1]["system"][0]["text"] == prompts.CHAT_SYSTEM
+    claude.script = [chat_reply("create")]
+    legacy = service.ask(_owner(rt, docs), docs, "Bayonnoma tayyorla", None)
+    assert (legacy["kind"], legacy["minutes"]) == ("chat", None)
+    assert len(rt.store.minutes_rows(docs)) == 1 and len(_minutes_calls(rt)) == 1
+
+
+def test_get_chat_jonli_holat(client, auth, docs, claude, monkeypatch, _isolated_meetings):
+    """`GET /chat` navbatdagi hujjatning JONLI holatini beradi: yozilmoqda -> tayyor; tahrirda model yiqildi -
+    `REVISE_FAILED`; yozayotgan ip o'lgan (eskirgan `running`) - `interrupted`."""
+    rt = _isolated_meetings
+    minutes.generate(_owner(rt, docs), docs, "uz-cyrl")
+    queue: list = []
+    monkeypatch.setattr(minutes, "runner", queue.append)
+    turn = _say(client, auth, docs, "TITLE=Jonli", intent="revise")
+    assert (turn["minutes"]["status"], turn["minutes"]["version"]) == ("running", 2)
+    [listed] = client.get(_url(docs), headers=auth).json()["items"]
+    assert listed["minutes"] == turn["minutes"] and set(listed) == TURN_FIELDS
+    while queue:
+        queue.pop(0)()
+    [listed] = client.get(_url(docs), headers=auth).json()["items"]
+    assert (listed["minutes"]["status"], listed["minutes"]["version"], listed["minutes"]["error"]) == ("ready", 2, None)
+    rt.llm.script["meeting_minutes_revise"] = ["javob JSON emas"]
+    _say(client, auth, docs, "TITLE=Yomon", intent="revise")
+    while queue:
+        queue.pop(0)()
+    failed = client.get(_url(docs), headers=auth).json()["items"][-1]
+    assert failed["minutes"]["status"] == "failed"
+    assert failed["minutes"]["error"] == {"code": "llm_failed", "message": minutes.REVISE_FAILED}
+    stuck = _say(client, auth, docs, "TITLE=Osilgan", intent="revise")           # navbatda qoldi
+    rt.store.update_minutes(stuck["minutes"]["id"], created_at=int(time.time() - minutes.stale_after() - 60))
+    stale = client.get(_url(docs), headers=auth).json()["items"][-1]
+    assert stale["minutes"]["status"] == "failed"
+    assert stale["minutes"]["error"] == {"code": "interrupted", "message": minutes.INTERRUPTED}
+
+
+def test_qayta_ogirish_korsatmani_saqlaydi_reset_tozalaydi(client, auth, docs, claude, _isolated_meetings):
+    """Qayta o'girish savol-javoblarni arxivlaydi, ko'rsatmalar (`kind='note'`) QOLADI: eski matn hujjati
+    tahrirlanmaydi (sabab navbatda, 200), yangi hujjat ko'rsatma bilan yoziladi. «Yangi suhbat» ko'rsatmalarni ham
+    arxivlaydi, hujjatlar qoladi."""
+    rt = _isolated_meetings
+    note = _say(client, auth, docs, "Rais - Alisher Karimov", intent="note")
+    _say(client, auth, docs, "Hisobotni kim yuboradi?")
+    # Ko'rsatma bergan "tayyorla" (talqinli `create`) ham ko'rsatma - qoladi; talqinsizi - arxivga.
+    claude.script = [chat_reply("create", instruction="Kotib - Bobur Aliyev")]
+    guided = _say(client, auth, docs, "Bayonnomani tayyorla, kotib - Bobur Aliyev")
+    claude.script = [chat_reply("create")]
+    _say(client, auth, docs, "Bayonnomani yana yubor")
+    head = minutes.generate(_owner(rt, docs), docs, "uz-cyrl")
+    response = client.post(f"/api/v1/meetings/{docs}/retranscribe", headers=auth,
+                           json={"language": "ru", "confirmCharge": True})
+    assert response.status_code == 202, response.text
+    run_all(rt)
+    kept, kept_create = client.get(_url(docs), headers=auth).json()["items"]
+    assert (kept["id"], kept["kind"], kept["minutes"]["notes"]) == (note["id"], "note", 2)
+    assert (kept_create["id"], kept_create["kind"]) == (guided["id"], "create")
+    assert [n["text"] for n in rt.store.notes(docs)] == ["Rais - Alisher Karimov",
+                                                          "Bayonnomani tayyorla, kotib - Bobur Aliyev"]
+    stale = _say(client, auth, docs, "TITLE=Eski", intent="revise", minutesLanguage="uz-cyrl")
+    assert stale["minutes"]["error"]["code"] == "minutes_outdated" and stale["minutes"]["id"] is None
+    assert stale["answer"] == chat.CANNED["not_started"]["ru"]                   # yozuv endi ruscha - javob tili ham
+    claude.script = [chat_reply("create")]
+    made = _say(client, auth, docs, "Bayonnomani qaytadan tayyorla")
+    assert made["minutes"]["status"] == "ready" and made["minutes"]["id"] != head["id"]
+    assert "Rais - Alisher Karimov" in _minutes_calls(rt)[-1]["user"]
+    assert "kotib - Bobur Aliyev" in _minutes_calls(rt)[-1]["user"]
+    assert client.delete(_url(docs), headers=auth).json() == {"archived": 4}
+    assert rt.store.notes(docs) == [] and len(rt.store.minutes_rows(docs)) >= 2            # hujjatlar qoladi
+
+
+def test_ikki_yozuv_aralashmaydi(client, auth, docs, claude, _isolated_meetings):
+    """Bitta audio - bitta suhbat: A yozuvidagi ko'rsatma B ning bayonnoma promptiga ham, B chatining bloklariga ham
+    kirmaydi (va aksincha); hujjat bloki faqat o'z yozuviniki."""
+    rt = _isolated_meetings
+    other, _ = recorded(client, auth)
+    run_all(rt)
+    b = other["id"]
+    _say(client, auth, docs, "A-KO'RSATMA: rais Karimov", intent="note")
+    claude.script = [chat_reply("create")]
+    made = _say(client, auth, b, "Bayonnoma tayyorla")
+    assert made["minutes"]["status"] == "ready"
+    prompt_b = _minutes_calls(rt)[-1]["user"]
+    assert "A-KO'RSATMA" not in prompt_b and "OWNER INSTRUCTIONS" not in prompt_b
+    _say(client, auth, b, "B-KO'RSATMA: kredit bo'limi", intent="note")
+    _say(client, auth, b, "Hujjatda nima bor?")
+    to_b = claude.chats()[-1]
+    assert len(to_b["system"]) == 4 and "B-KO'RSATMA" in to_b["system"][3]["text"]
+    assert "A-KO'RSATMA" not in json.dumps(to_b, ensure_ascii=False)
+    _say(client, auth, docs, "Ko'rsatmalarim qaysi?")
+    to_a = claude.chats()[-1]
+    assert len(to_a["system"]) == 3 and "A-KO'RSATMA" in to_a["system"][2]["text"]     # A da hujjat yo'q
+    assert "B-KO'RSATMA" not in json.dumps(to_a, ensure_ascii=False)
+    assert [n["text"] for n in rt.store.notes(docs)] == ["A-KO'RSATMA: rais Karimov"]
+    assert [n["text"] for n in rt.store.notes(b)] == ["B-KO'RSATMA: kredit bo'limi"]
+    assert rt.store.minutes_rows(docs) == []
+
+
+def test_memory_eski_qator_ozgarmaydi(monkeypatch):
+    """Eski (v8 dan oldingi) va oddiy navbat xotirada avvalgi shaklda; amalli navbatda yana `kind` va `minutes`.
+    Qayta yuborishda (`replay`) amal faqat amal, til va talqin (xatosiz); amalsiz - `none`."""
+    monkeypatch.setattr(settings, "meetings_chat_history_turns", 10)
+    monkeypatch.setattr(settings, "meetings_chat_history_chars", 40000)
+    legacy = {"question": "Kim?", "answer": "[S1].", "citations": "[1]", "follow_ups": '["Qachon?"]', "language": "uz"}
+    plain = {**legacy, "kind": None, "minutes_json": None}
+    noted = {**legacy, "question": "Rais - Karimov", "answer": "Eslab qolindi.", "citations": "[]",
+             "follow_ups": "[]", "kind": "note",
+             "minutes_json": json.dumps({"action": "note", "language": "uz-cyrl", "instruction": "Rais Karimov",
+                                         "error": {"code": "rate_limited", "message": "x"}})}
+    old, same, note = chat.memory([legacy, plain, noted])
+    assert old == {"question": "Kim?", "answer": "[S1].", "citations": [1], "followUps": ["Qachon?"], "language": "uz"}
+    assert same == old
+    assert (note["kind"], note["minutes"]["instruction"]) == ("note", "Rais Karimov")
+    replayed = chat.replay([old, note], "uz")
+    assert json.loads(replayed[1]["content"])["minutes"] == NO_ACTION
+    assert json.loads(replayed[3]["content"]) == {
+        "minutes": {"action": "note", "language": "uz-cyrl", "instruction": "Rais Karimov"},
+        "answer": "Eslab qolindi.", "citations": [], "followUps": []}
+
+
+def test_minutes_action_tahlili():
+    """Model javobidagi amal: `{"result": ...}` o'rami, noma'lum / `none` / kalitsiz / JSON emas - `None`, til
+    `minutes.text.normalize` (yolg'iz "uz" - yozuvi noma'lum, `None`), talqin bir qatorga va chegaraga."""
+    def parsed(minutes_value, *, wrap=False):
+        body = {"minutes": minutes_value, "answer": "ok", "citations": [], "followUps": []}
+        return chat.minutes_action(json.dumps({"result": body} if wrap else body, ensure_ascii=False))
+
+    assert parsed({"action": "Revise", "language": "UZ_CYRL", "instruction": "  3-band:\n muddat\t1-dekabr "}) == {
+        "action": "revise", "language": "uz-cyrl", "instruction": "3-band: muddat 1-dekabr"}
+    assert parsed({"action": "note", "language": None, "instruction": None}, wrap=True) == {
+        "action": "note", "language": None, "instruction": None}
+    for odd in ({"action": "none"}, {"action": "delete"}, {"action": None}, {}, "create", None):
+        assert parsed(odd) is None, odd
+    assert chat.minutes_action("Bu JSON emas") is None
+    assert chat.minutes_action('{"answer": "ok", "citations": [], "followUps": []}') is None
+    langs = {"cyrl": "uz-cyrl", "uz-latn": "uz-latn", "RU": "ru", "en": "en", "uz": None, "de": None, "": None}
+    for raw, code in langs.items():
+        assert parsed({"action": "create", "language": raw, "instruction": None})["language"] == code, raw
+    long = parsed({"action": "revise", "language": None, "instruction": "x" * 1500})["instruction"]
+    assert len(long) == chat.INSTRUCTION_CHARS and long.endswith("…")
+    assert parsed({"action": "revise", "language": None, "instruction": {"bad": 1}})["instruction"] is None
+    assert parsed({"action": "create", "language": None, "instruction": "   "})["instruction"] is None
+
+
+def test_boshqa_provayder_aniq_tahrir(client, auth, docs, monkeypatch, _isolated_meetings):
+    """Claude'dan boshqa chat zanjiri (Ollama): aniq `intent="revise"` baribir tahrirlaydi (chat modelisiz); model
+    javob bergan navbat esa amalsiz - Ollama amal qaytarmaydi."""
+    monkeypatch.setattr(settings, "meetings_ask_chain", "ollama", raising=False)
+    rt = _isolated_meetings
+    minutes.generate(_owner(rt, docs), docs, "uz-cyrl")
+    rt.llm.calls.clear()
+    edited = _say(client, auth, docs, "TITLE=Ollama tahriri", intent="revise")
+    assert (edited["minutes"]["status"], edited["minutes"]["version"]) == ("ready", 2)
+    assert rt.llm.ops() == ["meeting_minutes_revise"]
+    assert jload(rt.store.minutes_row(docs, edited["minutes"]["id"])["content_json"])["title"] == "Ollama tahriri"
+    plain = _say(client, auth, docs, "ACTION=revise sarlavhani o'zgartir")
+    assert (plain["kind"], plain["minutes"]) == ("chat", None) and rt.llm.ops()[-1] == "meeting_ask"
+    assert len(rt.store.minutes_rows(docs)) == 2
+
+
 # --- ombor: v7 ------------------------------------------------------------------------------------
 
 
@@ -969,7 +1375,7 @@ def test_migratsiya_v6_dan_v7_ga_savollar_bilan(tmp_path):
     conn.close()
 
     st = MeetingStore(root)
-    assert st.version() == store_mod.SCHEMA_VERSION == 7
+    assert st.version() == store_mod.SCHEMA_VERSION == 8
     columns = {r["name"] for r in st.rows("PRAGMA table_info(questions)")}
     assert {"channel", "model", "language", "archived_at", "asker", "client_id"} <= columns
     [index] = [r for r in st.rows("PRAGMA index_list(questions)") if r["name"] == "questions_client"]
@@ -989,3 +1395,32 @@ def test_migratsiya_v6_dan_v7_ga_savollar_bilan(tmp_path):
     assert st.scalar("SELECT COUNT(*) FROM questions WHERE archived_at = ?", (now,)) == 3   # yumshoq: qatorlar qoladi
     assert st.archive_questions("m1", now + 1) == 0
     st.close_all()
+
+
+def test_bot_tayyor_javoblari_ozbekcha(client, auth, docs, claude, _isolated_meetings):
+    """Botlar (Slack, Telegram) interfeysi o'zbekcha: tayyor javoblar yig'ilish tili rus bo'lsa ham o'zbekcha (bot o'z
+    qatorini o'zbekcha qo'shadi - bitta xabarda ikki til aralashmasin); ilova (REST) - so'rov tilida."""
+    rt = _isolated_meetings
+    rt.store.execute("UPDATE meetings SET language='ru' WHERE id=?", (docs,))
+    user = _owner(rt, docs)
+    for channel, asker in (("telegram", None), ("slack", "slack:U1")):
+        turn = service.chat_send(user, docs, "Rais - Karimov", None, channel=channel, asker=asker, intent="note")
+        assert turn["answer"] == chat.CANNED["note"]["uz"]
+    app = _say(client, auth, docs, "Rais - Karimov", intent="note", language="ru")
+    assert app["answer"] == chat.CANNED["note"]["ru"]
+
+
+def test_model_ozbek_yozuvini_adashtirsa_mavjud_hujjat_tahrirlanadi(client, auth, docs, claude, _isolated_meetings):
+    """Model lotin harfli xabarga "uz-latn" desa, hujjat esa kirillda: mavjud (kirill) hujjat tahrirlanadi - so'rov
+    "bu tilda hujjat yo'q" deb ko'rsatmaga aylanmaydi. Aniq aytilgan boshqa til (rus) - o'zgarmaydi."""
+    rt = _isolated_meetings
+    claude.script = [chat_reply("create")]
+    made = _say(client, auth, docs, "Bayonnoma tayyorlab ber")
+    assert (made["minutes"]["language"], made["minutes"]["status"]) == ("uz-cyrl", "ready")
+    claude.script = [chat_reply("revise", language="uz-latn", instruction="Sarlavhani o'zgartirish")]
+    edited = _say(client, auth, docs, "TITLE=Yangi sarlavha")
+    assert (edited["kind"], edited["minutes"]["language"], edited["minutes"]["version"]) == ("revise", "uz-cyrl", 2)
+    claude.script = [chat_reply("revise", language="ru", instruction="Ruscha hujjatda sarlavhani o'zgartirish")]
+    russian = _say(client, auth, docs, "Ruscha bayonnomada sarlavhani o'zgartiring")
+    assert (russian["kind"], russian["answer"]) == ("note", chat.CANNED["note_no_doc"]["uz"])
+    assert len(_minutes_calls(rt)) == 2

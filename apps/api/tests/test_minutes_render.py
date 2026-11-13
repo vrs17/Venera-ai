@@ -1,7 +1,7 @@
 """Bayonnoma yig'uvchisi (`minutes/compose.py`) va chizuvchisi (`minutes/render.py`).
 
 Tarmoqsiz, modelsiz: mazmun - `meetings_fakes.minutes_reply` (to'rt tilda, promptdagi chiqish tili
-qatori bo'yicha) + `minutes._write` qo'shadigan `quality`/`version`/`language`/`meeting` kalitlari.
+qatori bo'yicha) + `minutes._fill` qo'shadigan `quality`/`version`/`language`/`meeting` kalitlari.
 Tekshiriladi: bloklar tartibi, bandlarning bo'limlar bo'ylab UZLUKSIZ raqamlanishi va nazorat bandi
 oxirida, mas'ulsiz vazifada `BLANK`, rim raqamli bo'lim sarlavhasi, `[S#]` -> ism yoki `BLANK`;
 DOCX (Letter, Arial 13, Times tasdiq bloki, to'q ko'k bo'lim, pastki yozuv yo'q), PDF (Letter,
@@ -508,3 +508,116 @@ def test_bolim_sarlavhasi_komakchini_takrorlamaydi():
     assert t.label("section", "uz-cyrl").format(roman="II", title=t.section_title("Режа тўғрисида", "uz-cyrl")) == \
         "II. Режа бўйича:"
     assert "{n}" in t.label("warnings", "uz-latn") and "{n}" in t.label("warnings", "en")
+
+
+# --- minutes-3: sarlavha qismi, raqamlash, tahrir belgisi ---------------------------------------------------
+
+#: Ega aytgan sarlavha qiymatlari (`validate` dan o'tgan ko'rinishda): S1 nomli, S2 nomsiz.
+HEADER = {"organization": "«Агробанк» АТБ", "chairedBy": "Бошқарув раиси А.Каримов", "city": "Тошкент",
+          "chair": "Бошқарув раиси [S1]", "attendees": ["[S1]", "Д.Раҳимова (бош ҳисобчи)", "[S2]"]}
+
+
+def test_sarlavha_yoq_yoki_bosh_bloklar_ozgarmaydi():
+    """minutes-2 hujjati (`header` yo'q) va bo'sh sarlavha - bloklar baytma-bayt bir xil (asl, `revision=0`)."""
+    from app.services.meetings.minutes import validate
+
+    plain = build()
+    assert build(header={**validate.EMPTY_HEADER, "attendees": []}).blocks == plain.blocks
+    assert build(header={"organization": "  ", "chair": None, "attendees": ["", "  "]}).blocks == plain.blocks
+    assert build(header="buzilgan").blocks == plain.blocks
+    again = compose.compose(content("uz-cyrl"), lang="uz-cyrl", title="Ҳисобот йиғилиши", speakers=SPEAKERS,
+                            recorded_at=RECORDED_AT, now=NOW, revision=0)
+    assert again.blocks == plain.blocks
+
+
+def test_sarlavha_toldiriladi():
+    doc = build(header=HEADER)
+    assert doc.blocks[0]["lines"] == ["ТАСДИҚЛАЙМАН", "«Агробанк» АТБ", BLANK, BLANK, "«__» ____________ 20__ й.",
+                                      "№ ____"]
+    assert doc.blocks[2]["lines"] == ["«Агробанк» АТБ", "Бошқарув раиси А.Каримов ҳузурида ўтказилган йиғилиш",
+                                      "Б А Ё Н И"]
+    assert doc.blocks[3] == {"kind": "two_col", "left": "2025 йил 4 ноябрь", "right": "Тошкент шаҳри"}
+    assert doc.blocks[4] == {"kind": "label", "label": "Раислик қилувчи:", "value": "Бошқарув раиси Aziz Karimov"}
+    assert doc.blocks[5] == {"kind": "label", "label": "Қатнашдилар:",
+                             "value": f"Aziz Karimov, Д.Раҳимова (бош ҳисобчи), {BLANK}"}
+    body = "\n".join(p.text for p in docx_paragraphs(render.docx_bytes(doc)))
+    for value in ("«Агробанк» АТБ", "Бошқарув раиси А.Каримов ҳузурида ўтказилган йиғилиш",
+                  "Раислик қилувчи: Бошқарув раиси Aziz Karimov", "Д.Раҳимова (бош ҳисобчи)"):
+        assert value in body, value
+    tables = Document(io.BytesIO(render.docx_bytes(doc))).tables
+    assert [[c.text for c in row.cells] for row in tables[0].rows] == [["2025 йил 4 ноябрь", "Тошкент шаҳри"]]
+    md = render.markdown(doc)
+    assert "«Агробанк» АТБ  \n" in md and "2025 йил 4 ноябрь    Тошкент шаҳри" in md
+    assert "**Раислик қилувчи:** Бошқарув раиси Aziz Karimov" in md and "[S" not in md
+    # Rus va ingliz: hujjat so'zi oldin, qaratqich/"of" qatori keyin; shahar qolipi tilniki.
+    ru = build("ru", header={"organization": "АКБ «Агробанк»", "chairedBy": "Председателя Правления А.Каримова",
+                             "city": "Ташкент", "chair": None, "attendees": []})
+    assert ru.blocks[2]["lines"] == ["АКБ «Агробанк»", "П Р О Т О К О Л",
+                                     "совещания под председательством Председателя Правления А.Каримова"]
+    assert ru.blocks[3]["right"] == "г. Ташкент" and ru.blocks[4]["value"] == BLANK and ru.blocks[5]["value"] == BLANK
+    en = build("en", header={"organization": None, "chairedBy": None, "city": "Tashkent", "chair": "A. Karimov",
+                             "attendees": ["[S2]"]})
+    assert en.blocks[2]["lines"] == [BLANK, "M I N U T E S", f"of the meeting chaired by {BLANK}"]
+    assert en.blocks[3]["right"] == "Tashkent" and en.blocks[4]["value"] == "A. Karimov"
+    assert en.blocks[5]["value"] == BLANK                                 # nomsiz spiker - bo'sh joy
+
+
+def test_raqamlash_compose_bilan_bir_xil():
+    """`numbering` - Word dagi raqamlar: matnsiz band raqam olmaydi, nazorat bandi (mazmunda `control` bo'lmasa)
+    oxirida; har yozuv mazmundagi bandni ko'rsatadi. `outline` - tahrir promptidagi o'sha raqamlar."""
+    data = content("uz-cyrl")
+    data["sections"][0]["items"].insert(1, {"kind": "task", "text": "   ", "responsible": []})
+    data["sections"][1]["items"].append({"kind": "other", "text": "Бошқа масала [S1] билан.", "responsible": []})
+    numbers = compose.numbering(data)
+    doc = compose.compose(data, lang="uz-cyrl", title="T", speakers=SPEAKERS, recorded_at=RECORDED_AT, now=NOW)
+    assert [n.number for n in numbers] == [int(b["number"].rstrip(".")) for b in items(doc)] == [1, 2, 3, 4, 5]
+    assert [(n.section, n.index, n.control) for n in numbers] == [(1, 0, False), (1, 2, False), (2, 0, False),
+                                                                  (2, 1, False), (0, -1, True)]
+    names = compose._Names(SPEAKERS)
+    for n, block in zip(numbers[:-1], items(doc)[:-1]):
+        assert joined(block).endswith(names.render(data["sections"][n.section - 1]["items"][n.index]["text"]))
+    assert joined(items(doc)[-1]).startswith("5. Ушбу баённома ижросини назорат")
+    lines = compose.outline(data, lang="uz-cyrl", speakers=SPEAKERS).split("\n")
+    assert lines == [
+        "Agenda 1 = agenda[0]: «Режа ижроси тўғрисида»",
+        "Agenda 2 = agenda[1]: «Жорий масалалар тўғрисида»",
+        "Section I = sections[0] (agendaIndex 1): items 1-2",
+        "  Item 1 = sections[0].items[0] (acknowledge): «Aziz Karimov ҳисоботи маълумот учун қабул қилинсин.»",
+        f"  Item 2 = sections[0].items[2] (task): «{BLANK} ҳисобот тайёрлаш вазифаси юклатилсин.»",
+        "Section II = sections[1] (agendaIndex 2): items 3-4",
+        "  Item 3 = sections[1].items[0] (task): «ҳисобот тайёрлаш вазифаси юклатилсин.»",
+        "  Item 4 = sections[1].items[1] (other): «Бошқа масала Aziz Karimov билан.»",
+        "Item 5 = the control item added by code from \"controller\": «Ушбу баённома ижросини назорат қилиш Aziz "
+        "Karimov зиммасига юклатилсин.» - to change it, change \"controller\"."]
+    # Mazmunda nazorat bandi bor - kod qo'shmaydi; uzun matn qisqartiriladi; bo'sh bo'lim - "no items".
+    data["sections"][1]["items"].append({"kind": "control", "text": "Назорат " + "жуда " * 60 + "[S1] зиммасида."})
+    data["sections"].append({"agendaIndex": 2, "items": [{"kind": "task", "text": ""}]})
+    numbers = compose.numbering(data)
+    assert not any(n.control for n in numbers) and numbers[-1] == compose.Numbered(5, 2, 2)
+    doc = compose.compose(data, lang="uz-cyrl", title="T", speakers=SPEAKERS, recorded_at=RECORDED_AT, now=NOW)
+    assert [b["number"] for b in items(doc)] == ["1.", "2.", "3.", "4.", "5."]
+    lines = compose.outline(data, lang="uz-cyrl", speakers=SPEAKERS).split("\n")
+    assert lines[-2].startswith("  Item 5 = sections[1].items[2] (control): «Назорат жуда")
+    assert len(lines[-2].split("«", 1)[1]) == compose.OUTLINE_TEXT + 1 and lines[-2].endswith("…»")
+    assert lines[-1] == "Section III = sections[2] (agendaIndex 2): no items"
+
+
+def test_tahrir_belgisi():
+    """Tahrir (`revision` >= 1): loyiha qatorida versiya belgisi; eksport fayli nomida ham (`file_title`)."""
+    def draft(lang: str, revision: int) -> str:
+        doc = compose.compose(content(lang), lang=lang, title="T", speakers=SPEAKERS, recorded_at=RECORDED_AT,
+                              now=NOW, revision=revision)
+        return doc.blocks[-1]["text"]
+
+    assert draft("uz-cyrl", 1) == f"{text.label('draft', 'uz-cyrl')} 2-таҳрир. {export.BRAND}, 2025 йил 4 ноябрь."
+    assert draft("uz-latn", 2).endswith(f" 3-tahrir. {export.BRAND}, 2025 yil 4 noyabr.")
+    assert draft("ru", 1).endswith(f" редакция 2. {export.BRAND}, 4 ноября 2025 года.")
+    assert draft("en", 1).endswith(f" version 2. {export.BRAND}, 4 November 2025.")
+    assert draft("uz-cyrl", 0) == f"{text.label('draft', 'uz-cyrl')} {export.BRAND}, 2025 йил 4 ноябрь."
+    assert compose.file_title("Haftalik", lang="uz-cyrl", revision=1) == "Баённома - Haftalik (2-таҳрир)"
+    assert compose.file_title("Haftalik", lang="uz-cyrl") == "Баённома - Haftalik"
+    assert compose.file_title("", lang="en", revision=2) == "Minutes (version 3)"
+    assert compose.file_title(" Plan\x01 ", lang="ru", revision=0) == "Протокол - Plan"
+    ascii_name, real_name = export.file_names(compose.file_title("Haftalik", lang="uz-cyrl", revision=1),
+                                              RECORDED_AT, "docx")
+    assert real_name == "Баённома - Haftalik (2-таҳрир) 2025-11-04.docx" and ascii_name.endswith("2025-11-04.docx")

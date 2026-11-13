@@ -2,11 +2,14 @@
  * Bayonnoma varag'ining sof mantig'i: hujjat tili default'i (server `default_lang` bilan bir xil),
  * ro'yxatdan tanlangan til holati, izoh/ogohlantirishni himoyalangan o'qish, xato qatori va server
  * xatosini sababga aylantirish (eski server 404 - "serverda hali yoqilmagan", aniq hujjat yo'q -
- * ro'yxat yangilanadi) va 3 s / 10 daqiqalik so'rash.
+ * ro'yxat yangilanadi) va 3 s / 10 daqiqalik so'rash. Chatdagi bayonnoma: karta holati
+ * (`minutesCardState`), "nima o'zgardi" (`changesText`), sarlavha qatorlari, tahrir xato kodlari va
+ * kartaning so'rovi (`minutesDocPollMs`).
  */
 import { ApiError, AuthRequiredError } from '@/api/client';
 import type { MinutesView } from '@/api/types';
 import {
+  changesText,
   defaultMinutesLang,
   failedText,
   isTransientMinutesError,
@@ -14,19 +17,24 @@ import {
   MINUTES_LANGS,
   MINUTES_POLL_LIMIT_MS,
   MINUTES_POLL_MS,
+  minutesCardState,
+  minutesDocPollMs,
+  minutesHeaderInfo,
   minutesNotes,
   minutesProblem,
   minutesProblemAction,
   minutesProblemText,
   minutesSlot,
   minutesWarnings,
+  notStartedText,
   pollMinutes,
   retryWaitText,
   upsertMinutes,
+  warningNumber,
 } from '@/features/meeting/minutesModel';
 import { makeT } from '@/i18n';
 
-import { minutesView } from './fixtures/server';
+import { chatMinutes, minutesChanges, minutesHeader, minutesView } from './fixtures/server';
 
 const t = makeT('uz');
 const at = (min: number) => new Date(Date.UTC(2026, 10, 6, 6, min)).toISOString();
@@ -56,6 +64,17 @@ describe('minutes: state of the chosen language', () => {
     expect(minutesSlot(items, 'uz-cyrl')).toEqual({ ready: items[2], running: null, failed: null, staleOnly: false });
     expect(minutesSlot(items, 'ru').ready?.id).toBe('ru1');
     expect(minutesSlot(items, 'en')).toEqual({ ready: null, running: null, failed: null, staleOnly: false });
+  });
+
+  it('the current document is the chain tip finished last (an earlier request applied on top of a later one)', () => {
+    const head = minutesView({ id: 'h', createdAt: at(1), finishedAt: at(2) });
+    // R1 oldin so'ralgan, lekin R2 dan KEYIN uning ustiga yozilgan: joriy - R1.
+    const r1 = minutesView({ id: 'r1', createdAt: at(3), finishedAt: at(9), parentId: 'r2', kind: 'revise', version: 3 });
+    const r2 = minutesView({ id: 'r2', createdAt: at(4), finishedAt: at(6), parentId: 'h', kind: 'revise', version: 2 });
+    expect(minutesSlot([head, r1, r2], 'uz-cyrl').ready?.id).toBe('r1');
+    // Ikki mustaqil hujjat (masalan «Qayta yozish»): eng keyin tayyor bo'lgani.
+    const rewrite = minutesView({ id: 'w', createdAt: at(5), finishedAt: at(12) });
+    expect(minutesSlot([head, r1, r2, rewrite], 'uz-cyrl').ready?.id).toBe('w');
   });
 
   it('only a stale document -> nothing to share, "prepare a new one" hint', () => {
@@ -109,6 +128,16 @@ describe('minutes: notes, warnings, failed rows', () => {
     expect(minutesWarnings(null)).toEqual([]);
   });
 
+  it('superseded edits and truncated directions are their own lines, not counted; their numbers are read defensively', () => {
+    const w = ['header_dropped:attendees', 'superseded_revisions:2', 'guidance_truncated:3', 'provider_failed:ollama'];
+    expect(minutesWarnings(w)).toEqual(['header_dropped:attendees']);
+    expect(warningNumber(w, 'superseded_revisions')).toBe(2);
+    expect(warningNumber(w, 'guidance_truncated')).toBe(3);
+    expect(warningNumber(['guidance_truncated:x', 'superseded_revisions:0'], 'guidance_truncated')).toBeNull();
+    expect(warningNumber(['superseded_revisions:0'], 'superseded_revisions')).toBeNull();
+    expect(warningNumber(null, 'superseded_revisions')).toBeNull();
+  });
+
   it('failed rows are explained by error.code only - the technical message is never shown', () => {
     const row = (code: string, message = 'bayonnoma: javob kesildi (max tokens)'): Pick<MinutesView, 'error'> => ({ error: { code, message } });
     expect(failedText(t, row('llm_failed'))).toBe("Model bayonnomani yozolmadi - qayta urinib ko'ring");
@@ -120,6 +149,140 @@ describe('minutes: notes, warnings, failed rows', () => {
     expect(failedText(t, row('something_new', 'raw'))).toBe("Bayonnoma yozilmadi - qayta urinib ko'ring");
     expect(failedText(t, { error: null })).toBe("Bayonnoma yozilmadi - qayta urinib ko'ring");
     for (const code of ['llm_failed', 'llm_busy', 'internal', 'interrupted']) expect(failedText(t, row(code))).not.toMatch(/max tokens|KeyError/);
+  });
+
+  it('chat edits: no change, re-transcribed, no document, queue full; a revision the model could not write says so', () => {
+    const row = (code: string, kind?: 'generate' | 'revise'): Pick<MinutesView, 'error' | 'kind'> => ({ error: { code, message: 'raw' }, kind });
+    expect(failedText(t, row('no_change', 'revise'))).toBe("Bayonnomada o'zgarish bo'lmadi - nimani o'zgartirish kerakligini aniqroq yozing");
+    expect(failedText(t, row('minutes_outdated', 'revise'))).toBe("Yozuv qayta o'girilgan - bayonnomani yangidan tayyorlang");
+    expect(failedText(t, row('minutes_missing', 'revise'))).toBe("Bu tilda tahrirlash uchun tayyor bayonnoma yo'q - avval tayyorlang");
+    expect(failedText(t, row('minutes_busy', 'revise'))).toBe("Oldingi o'zgartirishlar hali tayyorlanmoqda - tugashini kuting");
+    expect(failedText(t, row('llm_failed', 'revise'))).toBe("Model bayonnomani tahrirlay olmadi - qayta urinib ko'ring");
+    // Asl hujjat (yoki eski server - `kind` yo'q) - avvalgidek "yozolmadi".
+    expect(failedText(t, row('llm_failed', 'generate'))).toBe("Model bayonnomani yozolmadi - qayta urinib ko'ring");
+    expect(failedText(t, row('llm_failed'))).toBe("Model bayonnomani yozolmadi - qayta urinib ko'ring");
+    expect(failedText(makeT('ru'), row('no_change', 'revise'))).toBe('Протокол не изменился - уточните, что именно изменить');
+  });
+
+  it('a chat request that could not start the work: the reason by code (edit limit vs minutes limit), unknown codes via err.<code>', () => {
+    expect(notStartedText(t, 'minutes_busy', true)).toBe("Bayonnoma ishi boshlanmadi: Oldingi o'zgartirishlar hali tayyorlanmoqda - tugashini kuting");
+    expect(notStartedText(t, 'rate_limited', true)).toBe("Bayonnoma ishi boshlanmadi: Bir soatlik tahrir chegarasi tugadi - keyinroq urinib ko'ring");
+    expect(notStartedText(t, 'rate_limited', false)).toBe("Bayonnoma ishi boshlanmadi: Bir soatlik bayonnoma chegarasi tugadi - keyinroq urinib ko'ring");
+    expect(notStartedText(t, 'minutes_outdated', true)).toBe("Bayonnoma ishi boshlanmadi: Yozuv qayta o'girilgan - bayonnomani yangidan tayyorlang");
+    expect(notStartedText(t, 'llm_not_configured', false)).toBe('Bayonnoma ishi boshlanmadi: Bayonnoma xizmati hali sozlanmagan - administratorga murojaat qiling');
+    expect(notStartedText(t, 'transcript_empty', false)).toBe("Bayonnoma ishi boshlanmadi: Yozuvda nutq topilmadi - bayonnoma uchun gapirilgan yig'ilish yozuvi kerak");
+    expect(notStartedText(t, 'something_new', false)).toBe('Bayonnoma ishi boshlanmadi: Xatolik yuz berdi (something_new)');
+    expect(notStartedText(makeT('en'), 'minutes_busy', true)).toBe("Work on the minutes didn't start: Earlier changes are still being prepared - please wait");
+  });
+});
+
+describe('minutes: what a revision changed, the owner-stated header', () => {
+  it('names the changed items as numbered in Word (singular and plural), added and removed items, agenda, header and other parts', () => {
+    expect(changesText(t, minutesChanges())).toBe("O'zgarishlar: 3-band; qo'shildi: 8; sarlavha qismi");
+    expect(
+      changesText(t, {
+        items: { changed: [7, 3, 3], added: [8, 9], removed: [4] },
+        agenda: { changed: [2], added: [], removed: [] },
+        header: [],
+        other: ['title'],
+      }),
+    ).toBe("O'zgarishlar: 3, 7-bandlar; qo'shildi: 8, 9; olib tashlandi: 1 ta; kun tartibi; boshqa qismlar");
+    expect(changesText(makeT('ru'), minutesChanges({ items: { changed: [3, 7], added: [], removed: [] }, header: [] }))).toBe('Изменения: пункты 3, 7');
+    expect(changesText(makeT('en'), minutesChanges())).toBe('Changes: item 3; added: 8; header');
+  });
+
+  it('an empty diff (a directions revision already reflected) says the text did not change; no changes (original) - no line', () => {
+    const none = { items: { changed: [], added: [], removed: [] }, agenda: { changed: [], added: [], removed: [] }, header: [], other: [] };
+    expect(changesText(t, none)).toBe("O'zgarishlar: ko'rsatmalar allaqachon aks etgan - matn o'zgarmadi");
+    expect(changesText(t, null)).toBeNull();
+    expect(changesText(t, undefined)).toBeNull();
+    // Buzuq server javobi varaqni buzmaydi.
+    expect(changesText(t, { items: { changed: ['3', -1, 2.5] }, header: 'chair' } as never)).toBe("O'zgarishlar: ko'rsatmalar allaqachon aks etgan - matn o'zgarmadi");
+  });
+
+  it('header: chair and attendees lines only from what the owner stated; any filled value makes the draft note "the remaining blanks"', () => {
+    expect(minutesHeaderInfo(minutesHeader())).toEqual({ chair: 'Boshqaruv raisi A.Karimov', attendees: ['[S2]', "B.Aliyev - bo'lim boshlig'i"], filled: true });
+    expect(minutesHeaderInfo(minutesHeader({ chair: '  ', attendees: [] }))).toEqual({ chair: null, attendees: [], filled: false });
+    expect(minutesHeaderInfo(minutesHeader({ chair: null, attendees: [], city: 'Toshkent' }))).toEqual({ chair: null, attendees: [], filled: true });
+    expect(minutesHeaderInfo(null)).toEqual({ chair: null, attendees: [], filled: false });
+    expect(minutesHeaderInfo({ attendees: 'x' } as never)).toEqual({ chair: null, attendees: [], filled: false });
+  });
+});
+
+describe('minutes: the card under a chat answer', () => {
+  const NOW = Date.parse('2026-11-06T06:02:00Z');
+  const running = (over: Partial<MinutesView> = {}) => minutesView({ status: 'running', finishedAt: null, createdAt: '2026-11-06T06:00:00Z', ...over });
+
+  it('no reference - no card; a direction - saved with the live count (at least 1)', () => {
+    expect(minutesCardState(null)).toBeNull();
+    expect(minutesCardState(undefined)).toBeNull();
+    expect(minutesCardState(chatMinutes({ action: 'note', id: null, status: null, version: null, notes: 3 }))).toEqual({ kind: 'note', n: 3 });
+    expect(minutesCardState(chatMinutes({ action: 'note', id: null, status: null, version: null, notes: null }))).toEqual({ kind: 'note', n: 1 });
+  });
+
+  it('work not started: the error code, and whether it was an edit (for the right limit text)', () => {
+    const error = { code: 'minutes_busy', message: 'Bayonnomaning oldingi o\'zgarishlari hali tayyorlanmoqda' };
+    expect(minutesCardState(chatMinutes({ id: null, status: null, version: null, error }))).toEqual({ kind: 'notStarted', code: 'minutes_busy', revise: true });
+    expect(minutesCardState(chatMinutes({ action: 'create', id: null, status: null, version: null, error: { code: 'rate_limited', message: '' } }))).toEqual({
+      kind: 'notStarted',
+      code: 'rate_limited',
+      revise: false,
+    });
+    // Na id, na xato - ko'rsatadigan narsa yo'q.
+    expect(minutesCardState(chatMinutes({ id: null, status: null, error: null }))).toBeNull();
+  });
+
+  it('running: an edit (or a directions revision, version >= 2) is "a new version"; a first document is "being prepared"', () => {
+    expect(minutesCardState(chatMinutes())).toEqual({ kind: 'running', revise: true, slow: false });
+    expect(minutesCardState(chatMinutes({ action: 'create', version: 1 }))).toEqual({ kind: 'running', revise: false, slow: false });
+    expect(minutesCardState(chatMinutes({ action: 'create', version: 2 }))).toEqual({ kind: 'running', revise: true, slow: false });
+    expect(minutesCardState(chatMinutes({ action: 'create', version: 1 }), { view: running({ kind: 'revise', version: 2 }), at: NOW })).toMatchObject({ revise: true });
+  });
+
+  it('the card\'s own poll overrides the history reference: running -> ready with version and language, or failed with its code', () => {
+    const ref = chatMinutes({ language: 'ru' });
+    expect(minutesCardState(ref, { view: running({ language: 'ru' }), at: NOW })).toEqual({ kind: 'running', revise: true, slow: false });
+    expect(minutesCardState(ref, { view: minutesView({ language: 'ru', kind: 'revise', version: 3 }), at: NOW })).toEqual({ kind: 'ready', version: 3, language: 'ru' });
+    const failed = minutesView({ status: 'failed', kind: 'revise', version: 2, error: { code: 'no_change', message: 'x' } });
+    expect(minutesCardState(ref, { view: failed, at: NOW })).toEqual({ kind: 'failed', code: 'no_change', revise: true });
+    // Tarixdan kelgan tayyor/xato havola - so'rovsiz.
+    expect(minutesCardState(chatMinutes({ status: 'ready', version: 2 }))).toEqual({ kind: 'ready', version: 2, language: 'uz-cyrl' });
+    expect(minutesCardState(chatMinutes({ status: 'failed', error: { code: 'llm_failed', message: 'x' } }))).toEqual({ kind: 'failed', code: 'llm_failed', revise: true });
+  });
+
+  it('a settled history reference wins over an older cached "running" poll answer (rows never go back to running)', () => {
+    const stale = { view: running(), at: NOW };
+    expect(minutesCardState(chatMinutes({ status: 'ready', version: 2 }), stale)).toEqual({ kind: 'ready', version: 2, language: 'uz-cyrl' });
+    const failed = chatMinutes({ status: 'failed', error: { code: 'llm_busy', message: 'x' } });
+    expect(minutesCardState(failed, stale)).toEqual({ kind: 'failed', code: 'llm_busy', revise: true });
+    expect(minutesCardState(chatMinutes({ status: 'ready' }), { error: new ApiError(404, 'minutes_not_found', 'x') })).toMatchObject({ kind: 'ready' });
+  });
+
+  it('still running 10 minutes after the row was created: slow ("the result will be in the sheet")', () => {
+    const v = running();
+    expect(minutesCardState(chatMinutes(), { view: v, at: Date.parse(v.createdAt) + MINUTES_POLL_LIMIT_MS - 1 })).toMatchObject({ slow: false });
+    expect(minutesCardState(chatMinutes(), { view: v, at: Date.parse(v.createdAt) + MINUTES_POLL_LIMIT_MS })).toMatchObject({ slow: true });
+  });
+
+  it('gone: the poll got 404, or the history reference has an id but no status (the row no longer exists)', () => {
+    expect(minutesCardState(chatMinutes(), { error: new ApiError(404, 'minutes_not_found', 'x') })).toEqual({ kind: 'gone' });
+    expect(minutesCardState(chatMinutes({ status: null }))).toEqual({ kind: 'gone' });
+    // O'tkinchi xato - hali yozilmoqda.
+    expect(minutesCardState(chatMinutes(), { error: new ApiError(0, 'network', 'x') })).toEqual({ kind: 'running', revise: true, slow: false });
+  });
+
+  it('the card polls every 3 s while running and only for 10 minutes since the row was created; stops on ready, failed or a fatal error', () => {
+    const v = running();
+    const created = Date.parse(v.createdAt);
+    expect(minutesDocPollMs(undefined, null, 0)).toBe(MINUTES_POLL_MS);
+    expect(minutesDocPollMs(v, null, created + 60_000)).toBe(MINUTES_POLL_MS);
+    expect(minutesDocPollMs(v, null, created + MINUTES_POLL_LIMIT_MS)).toBe(false);
+    expect(minutesDocPollMs(minutesView(), null, created)).toBe(false);
+    expect(minutesDocPollMs(minutesView({ status: 'failed' }), null, created)).toBe(false);
+    expect(minutesDocPollMs(undefined, new ApiError(503, 'unavailable', 'x'), 0)).toBe(MINUTES_POLL_MS);
+    expect(minutesDocPollMs(v, new ApiError(0, 'network', 'x'), created)).toBe(MINUTES_POLL_MS);
+    expect(minutesDocPollMs(undefined, new ApiError(404, 'minutes_not_found', 'x'), 0)).toBe(false);
+    expect(minutesDocPollMs(v, new ApiError(403, 'forbidden', 'x'), created)).toBe(false);
   });
 });
 
@@ -143,6 +306,13 @@ describe('minutes: server error -> reason and next step', () => {
     expect(minutesProblemAction(p)).toBeNull();
     expect(retryWaitText(makeT('ru'), 61)).toBe('2 мин');
     expect(retryWaitText(t, 0)).toBeNull();
+  });
+
+  it('409 minutes_busy on "Qo\'llash" (a directions revision) is the edit queue, not the transcript: re-check', () => {
+    const p = minutesProblem(err(409, 'minutes_busy'), 'create');
+    expect(p).toEqual({ kind: 'editBusy' });
+    expect(minutesProblemText(t, p)).toBe("Oldingi o'zgartirishlar hali tayyorlanmoqda - tugashini kuting");
+    expect(minutesProblemAction(p)).toBe('recheck');
   });
 
   it('409: transcript empty / not ready on create; on export the document itself is not ready -> re-check', () => {

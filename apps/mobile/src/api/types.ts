@@ -356,6 +356,36 @@ export type MinutesLanguage = 'uz-latn' | 'uz-cyrl' | 'ru' | 'en';
 export type MinutesStatus = 'running' | 'ready' | 'failed';
 export type MinutesExportFormat = 'docx' | 'pdf' | 'md';
 
+/**
+ * Hujjat sarlavhasidagi faktlar - FAQAT egasi (chatdagi ko'rsatma yoki o'zgartirish so'rovida) aytgani
+ * (server `content.header`, bo'sh qiymatlarsiz). Aytilmagani Word'da «________» bo'lib qoladi.
+ */
+export interface MinutesHeader {
+  organization: string | null;
+  chairedBy: string | null;
+  city: string | null;
+  /** Rais: lavozim va ism - egasi aytganidek (`[S#]` tokeni bo'lishi mumkin). */
+  chair: string | null;
+  attendees: string[];
+}
+
+/** Bandlar yoki kun tartibi bo'yicha o'zgarish: raqamlar Word'dagidek (olib tashlangani - eski raqami). */
+export interface MinutesChangeSet {
+  changed: number[];
+  added: number[];
+  removed: number[];
+}
+
+/** Tahrir ota-versiyaga nisbatan nimani o'zgartirdi (server `minutes.diff.changes`). */
+export interface MinutesChanges {
+  items: MinutesChangeSet;
+  agenda: MinutesChangeSet;
+  /** O'zgargan sarlavha kalitlari (`MinutesHeader` nomlari). */
+  header: string[];
+  /** `title`, `preamble`, `controller`, `notes` dan o'zgarganlari. */
+  other: string[];
+}
+
 /** `GET /meetings/{id}/minutes` qatori va `POST` javobi (mazmunsiz). */
 export interface MinutesView {
   id: string;
@@ -378,11 +408,33 @@ export interface MinutesView {
   warnings: string[];
   /** Xato bilan tugaganda: kod bo'yicha matn (`message` - texnik sabab, odamga ko'rsatilmaydi). */
   error: { code: string; message: string } | null;
+  // Quyidagilar - chatdagi bayonnoma (ko'rsatma va tahrir) bilan qo'shilgan; eski serverda yo'q.
+  /** `revise` - chatda so'ralgan tahrir yoki yangi ko'rsatmalar qo'llangan versiya (ota-versiya bor). */
+  kind?: 'generate' | 'revise';
+  /** Odamga ko'rinadigan versiya: 1 - asl hujjat, har tahrir +1. */
+  version?: number;
+  parentId?: string | null;
+  /** Shu versiyani boshlagan o'zgartirish so'rovi (egasining so'zlari); ko'rsatmalar tahririda `null`. */
+  request?: string | null;
+  /** Yozishda qo'llangan ko'rsatmalar soni. */
+  notesApplied?: number;
+  /** Faqat tayyor qatorda: egasining shu hujjatda hali yo'q ko'rsatmalari soni («Qo'llash»). */
+  pendingNotes?: number;
+  header?: MinutesHeader | null;
+  /** Tahrirda ota-versiyaga nisbatan o'zgarishlar; asl hujjatda `null`. */
+  changes?: MinutesChanges | null;
 }
 
 /** `GET /meetings/{id}/minutes/{minutesId}`: ko'rinish + mazmun (tayyor bo'lsa). */
 export interface MinutesDetail extends MinutesView {
   content: Record<string, unknown> | null;
+}
+
+/** `GET /meetings/{id}/minutes`: qatorlar (eskidan yangiga) + egasining chatdagi faol ko'rsatmalari soni. */
+export interface MinutesList {
+  items: MinutesView[];
+  /** Eski serverda yo'q (0 deb o'qiladi). */
+  notes?: number;
 }
 
 export interface CreateMinutesRequest {
@@ -753,6 +805,28 @@ export interface AskAnswer {
 export type ChatChannel = 'mobile' | 'web' | 'miniapp' | 'desktop' | 'api' | 'slack' | 'telegram';
 
 /**
+ * Chat navbatining turi: oddiy savol-javob (`chat`) yoki bayonnoma amali - ko'rsatma (`note`), hujjatni
+ * tayyorlash (`create`) yoki tayyor hujjatni o'zgartirish so'rovi (`revise`).
+ */
+export type ChatTurnKind = 'chat' | 'note' | 'create' | 'revise';
+
+/**
+ * Navbat boshlagan bayonnoma amali (backend `ChatMinutes`). `id` bor - ish boshlangan: `status`/`version`
+ * shu qatorning holati (tarix o'qilgan paytdagi), kartaning o'zi `GET /minutes/{id}` bilan kuzatadi.
+ * `id` yo'q va `error` bor - ish boshlanmadi (sababi kodi bilan).
+ */
+export interface ChatMinutesRef {
+  action: 'note' | 'create' | 'revise';
+  language: MinutesLanguage | null;
+  id: string | null;
+  status: MinutesStatus | null;
+  version: number | null;
+  /** Faqat `note` navbatida: egasining faol ko'rsatmalari soni. */
+  notes: number | null;
+  error: { code: string; message: string } | null;
+}
+
+/**
  * Chatdagi bitta savol-javob: `AskAnswer` + kanal va javob bergan model. Suhbat bitta yozuvga
  * tegishli va egasining kanallarida BITTA - Telegram'da berilgan savol ilovada ham ko'rinadi.
  * Slack'da (umumiy hisob) har odamning suhbati alohida - `GET /chat` ularni bermaydi.
@@ -767,6 +841,10 @@ export interface ChatTurn extends AskAnswer {
    * xabarini shu bilan taniydi. Botlar (Slack, Telegram) va kalitsiz yuborilgan qatorlarda `null`.
    */
   clientId: string | null;
+  /** Eski serverda yo'q - oddiy savol-javob (`chat`). */
+  kind?: ChatTurnKind;
+  /** Bayonnoma amali (javob ostidagi karta); oddiy savol-javobda va eski serverda yo'q. */
+  minutes?: ChatMinutesRef | null;
 }
 
 /** `GET /meetings/{id}/chat`: faol (arxivlanmagan) savol-javoblar ESKIDAN YANGIGA. */
@@ -790,6 +868,14 @@ export interface ChatRequest {
    * beradi, "Qayta yuborish" o'sha kalitni qayta yuboradi.
    */
   clientId?: string | null;
+  /**
+   * Aniq kirish nuqtasi (bayonnoma varag'idan ochilgan rejim chipi): server chat modelini chaqirmaydi -
+   * xabar bayonnoma uchun ko'rsatma (`note`) yoki tayyor hujjatni o'zgartirish so'rovi (`revise`).
+   * Yo'q - server xabarni o'zi tasniflaydi (savol, ko'rsatma, tayyorlash yoki o'zgartirish).
+   */
+  intent?: 'note' | 'revise' | null;
+  /** Odam qaysi tildagi hujjat haqida yozyapti (rejim chipidagi til). */
+  minutesLanguage?: MinutesLanguage | null;
 }
 
 /** `DELETE /meetings/{id}/chat` ("Yangi suhbat"): nechta savol-javob arxivlandi (o'chirilmaydi). */

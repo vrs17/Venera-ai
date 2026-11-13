@@ -16,13 +16,22 @@
  * Ulashish ExportSheet bilan bir yo'l (`shareFile.ts`): `.../minutes/{id}/export?format=` fayli
  * `Authorization` bilan keshga, so'ng Android ulashish oynasi. Hujjat LOYIHA ekani doim aytiladi:
  * «________» joylarini kotib yoki hujjat tizimi to'ldiradi.
+ *
+ * Chatdagi bayonnoma (ega so'rovi, 2026-11-12) - matn FAQAT Chat tabida yoziladi (edge-to-edge modal
+ * ichida klaviatura sinalmagan, Chat tabida - sinalgan): hujjat yo'q bo'lsa «Chatda ko'rsatma berish»
+ * (rais, qatnashchilar, nimaga e'tibor - yozishda hisobga olinadi), tayyor bo'lsa «O'zgartirish so'rash»
+ * - varaq yopilib, Chat tabi rejim chipi bilan ochiladi (`onOpenChat`). Har tahrir - yangi versiya: kartada versiya, so'rov, nima
+ * o'zgardi, egasi aytgan rais/qatnashchilar; yangi ko'rsatmalar hali qo'llanmagan bo'lsa - «Qo'llash»
+ * (`force`siz POST - server ularni joriy hujjatga tahrir qilib qo'llaydi). Yangi versiya yozilayotganda
+ * oldingisi ulashilaveradi. Yiqilgan tahrir - «Qayta so'rash» (chatga eski so'rov matni bilan).
+ * «Qayta yozish» 2-versiyadan boshlab tasdiq so'raydi: chatdagi tahrirlar tushib qoladi.
  */
-import { FileCheck, FilePen, FileText, FileType, RotateCcw, Share2, X, type LucideIcon } from 'lucide-react-native';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FileCheck, FilePen, FileText, FileType, MessageSquarePlus, Pencil, RotateCcw, Share2, X, type LucideIcon } from 'lucide-react-native';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { fileNameFromDisposition, headerOf, SHARE_FILE_TYPES } from '@/api/meetings';
-import type { Lang, MinutesLanguage, MinutesView } from '@/api/types';
+import type { Lang, MinutesLanguage, MinutesView, Speaker } from '@/api/types';
 import type { TKey } from '@/i18n';
 import { useSettings, useT } from '@/features/settings/settingsStore';
 import { useOnline } from '@/features/upload/uploadStatus';
@@ -36,10 +45,12 @@ import { useTheme, type Theme } from '@/ui/theme';
 import { iconSize, radius, stroke, type as typeScale } from '@/ui/tokens';
 
 import {
+  changesText,
   defaultMinutesLang,
   failedText,
   MINUTES_LANG_NAME,
   MINUTES_LANGS,
+  minutesHeaderInfo,
   minutesNotes,
   minutesProblem,
   minutesProblemAction,
@@ -48,10 +59,13 @@ import {
   minutesWarnings,
   pollMinutes,
   upsertMinutes,
+  warningNumber,
   type MinutesProblem,
   type MinutesShareFormat,
   type MinutesStage,
 } from './minutesModel';
+import type { ChatMode } from './queries';
+import { renderTokens } from './renderTokens';
 import { downloadForShare, nativeShare, placeForShare } from './shareFile';
 
 export interface MinutesSheetProps {
@@ -62,6 +76,15 @@ export interface MinutesSheetProps {
   title: string;
   /** Yig'ilish tili - hujjat tilining default'i shundan. */
   meetingLanguage: Lang;
+  /** Shu tilda ochilsin (chatdagi kartaning «Ochish»i); yo'q - yig'ilish tilidan. */
+  initialLanguage?: MinutesLanguage;
+  /**
+   * Chatga o'tish (varaq yopiladi, Chat tabi rejim chipi bilan): ko'rsatma berish, o'zgartirish so'rash
+   * yoki yiqilgan so'rovni qayta so'rash (`draft` - eski so'rov matni). Yo'q - bu tugmalar chiqmaydi.
+   */
+  onOpenChat?: (mode: ChatMode, draft?: string) => void;
+  /** Sarlavhadagi `[S#]` tokenlari ismga (egasi odamni faqat spiker sifatida atagan bo'lsa). */
+  speakers?: Speaker[];
 }
 
 const FORMATS: { value: MinutesShareFormat; title: TKey; hint: TKey; icon: LucideIcon; tone: IconTileTone }[] = [
@@ -109,7 +132,7 @@ export function MinutesSheet(props: MinutesSheetProps) {
   );
 }
 
-function MinutesBody({ onClose, meetingId, title, meetingLanguage }: MinutesSheetProps) {
+function MinutesBody({ onClose, meetingId, title, meetingLanguage, initialLanguage, onOpenChat, speakers }: MinutesSheetProps) {
   const th = useTheme();
   const t = useT();
   const s = useMemo(() => makeStyles(th), [th]);
@@ -118,10 +141,12 @@ function MinutesBody({ onClose, meetingId, title, meetingLanguage }: MinutesShee
   const uiLang = useSettings((x) => x.uiLang);
   const online = useOnline();
 
-  const [lang, setLang] = useState<MinutesLanguage>(() => defaultMinutesLang(meetingLanguage));
+  const [lang, setLang] = useState<MinutesLanguage>(() => initialLanguage ?? defaultMinutesLang(meetingLanguage));
   const [format, setFormat] = useState<MinutesShareFormat>(lastFormat);
   // null - ro'yxat hali kelmadi (birinchi ochilish).
   const [items, setItems] = useState<MinutesView[] | null>(null);
+  // Egasining chatdagi faol ko'rsatmalari (ro'yxat javobidan) - "tayyorlashda hisobga olinadi".
+  const [notesCount, setNotesCount] = useState(0);
   const [listing, setListing] = useState(true);
   const [busy, setBusy] = useState<'create' | 'share' | null>(null);
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -143,11 +168,12 @@ function MinutesBody({ onClose, meetingId, title, meetingLanguage }: MinutesShee
   }, []);
 
   /** Ro'yxat javobini holatga yozadi - faqat eng oxirgi so'rovniki (eskisi yangisini bosmasin). */
-  const settleList = useCallback((mine: number, res: { ok: true; items: MinutesView[] } | { ok: false; err: unknown }) => {
+  const settleList = useCallback((mine: number, res: { ok: true; items: MinutesView[]; notes: number } | { ok: false; err: unknown }) => {
     if (!alive.current || mine !== listRun.current) return;
     setListing(false);
     if (res.ok) {
       setItems(res.items);
+      setNotesCount(res.notes);
       setProblem((prev) => (prev?.stage === 'list' ? null : prev));
     } else {
       // Ro'yxat kelmadi - "Tayyorlash" baribir ishlaydi: tayyor hujjat bo'lsa server o'zi qaytaradi.
@@ -160,7 +186,12 @@ function MinutesBody({ onClose, meetingId, title, meetingLanguage }: MinutesShee
   const requestList = useCallback(() => {
     const mine = ++listRun.current;
     meetings.minutesList(meetingId).then(
-      (r) => settleList(mine, { ok: true, items: Array.isArray(r?.items) ? r.items : [] }),
+      (r) =>
+        settleList(mine, {
+          ok: true,
+          items: Array.isArray(r?.items) ? r.items : [],
+          notes: typeof r?.notes === 'number' && r.notes > 0 ? r.notes : 0,
+        }),
       (err: unknown) => settleList(mine, { ok: false, err }),
     );
   }, [meetings, meetingId, settleList]);
@@ -219,11 +250,16 @@ function MinutesBody({ onClose, meetingId, title, meetingLanguage }: MinutesShee
   }, [runningId, isStopped, meetings, meetingId, forget]);
 
   const ready = slot.ready;
+  const failed = slot.failed;
   const phase: Phase =
-    items === null ? 'loading' : slot.running ? (isStopped ? 'stopped' : 'running') : slot.failed ? 'failed' : ready ? 'ready' : 'idle';
+    items === null ? 'loading' : slot.running ? (isStopped ? 'stopped' : 'running') : failed ? 'failed' : ready ? 'ready' : 'idle';
   const locked = busy !== null || listing;
   // Eski server (bayonnoma yo'llari yo'q): "Tayyorlash" ham baribir 404 - tugma qayta urinishga undamaydi.
   const notOnServer = problem?.p.kind === 'notOnServer';
+  // Yiqilgan ko'rsatmalar tahriri (so'rovsiz) - "Qayta urinish" o'zi ularni qayta qo'llaydi.
+  const failedNotes = failed?.kind === 'revise' && !failed.request;
+  // Hali qo'llanmagan ko'rsatmalar: yangi versiya yozilmayotganda va ularni qayta qo'llash tugmasi bo'lmasa.
+  const pendingNotes = ready && (phase === 'ready' || (phase === 'failed' && !failedNotes)) ? (ready.pendingNotes ?? 0) : 0;
 
   const pickLang = (l: MinutesLanguage) => {
     setLang(l);
@@ -252,6 +288,23 @@ function MinutesBody({ onClose, meetingId, title, meetingLanguage }: MinutesShee
     } finally {
       if (alive.current && mine === actRun.current) setBusy(null);
     }
+  };
+
+  /** «Qayta yozish»: chatdagi tahrirlar bor (2-versiyadan) - avval tasdiq, ular tushib qoladi. */
+  const redo = () => {
+    if ((ready?.version ?? 1) < 2) {
+      void prepare(true);
+      return;
+    }
+    Alert.alert(t('minutes.redo'), t('minutes.redoConfirm'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('minutes.redo'), style: 'destructive', onPress: () => void prepare(true) },
+    ]);
+  };
+
+  /** «Qo'llash»: yangi ko'rsatmalar - `force`siz POST, server ularni joriy hujjatga tahrir qilib qo'llaydi. */
+  const applyNotes = () => {
+    if (!locked) void prepare(false);
   };
 
   const share = async (doc: MinutesView, fmt: MinutesShareFormat) => {
@@ -321,6 +374,58 @@ function MinutesBody({ onClose, meetingId, title, meetingLanguage }: MinutesShee
   };
   const nextTitle: TKey | null = next === 'useDocx' ? 'share.useDocx' : next === 'usePdf' ? 'share.usePdf' : next === 'recheck' ? 'minutes.check' : next ? 'common.retry' : null;
 
+  /**
+   * Yiqilgan urinishni qaytarish: so'rovli tahrir - chatda qayta so'rash (eski matn qoralama bo'ladi);
+   * ko'rsatmalar tahriri - `force`siz (server ularni yana qo'llaydi); asl hujjat - avvalgidek (tayyori
+   * bo'lsa `force` - qayta yozish, aks holda oddiy tayyorlash).
+   */
+  const retryFailed = (): ReactNode => {
+    if (!failed) return null;
+    if (failed.kind === 'revise' && failed.request) {
+      if (!onOpenChat) return null;
+      const request = failed.request;
+      return (
+        <Button
+          testID="minutes-resend"
+          title={t('minutes.resend')}
+          icon={Pencil}
+          pill
+          variant={ready ? 'ghost' : 'primary'}
+          disabled={locked}
+          onPress={() => onOpenChat({ intent: 'revise', language: lang }, request)}
+        />
+      );
+    }
+    const force = !failedNotes && ready != null;
+    return ready ? (
+      // Tayyor hujjat ustidan - oxirgi urinishni qaytarish (avvalgi "Qayta yozish" tugmasi joyida).
+      <Button
+        testID="minutes-redo"
+        variant="ghost"
+        pill
+        title={t('common.retry')}
+        loading={busy === 'create'}
+        disabled={locked}
+        onPress={() => void prepare(force)}
+      />
+    ) : (
+      <Button
+        testID="minutes-retry"
+        title={t('common.retry')}
+        icon={RotateCcw}
+        pill
+        loading={busy === 'create'}
+        disabled={locked}
+        onPress={() => void prepare(force)}
+      />
+    );
+  };
+  const recheckButton = (
+    <Button testID="minutes-recheck" title={t('minutes.check')} icon={RotateCcw} variant="secondary" pill loading={listing} onPress={recheck} />
+  );
+  // Hujjat hali yo'q: «Chatda ko'rsatma berish» (yozishdan oldin) - eski serverda va chatsiz chiqmaydi.
+  const showGuide = !ready && (phase === 'idle' || phase === 'failed') && !!onOpenChat && !notOnServer;
+
   return (
     <View style={s.backdrop}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel={t('common.close')} />
@@ -347,6 +452,28 @@ function MinutesBody({ onClose, meetingId, title, meetingLanguage }: MinutesShee
         </View>
 
         <ScrollView style={s.scroll} contentContainerStyle={s.scrollBody} keyboardShouldPersistTaps="handled">
+          {showGuide && onOpenChat ? (
+            <View style={s.card}>
+              <Text style={[typeScale.caption, { color: th.textMuted }]}>{t('minutes.guideHint')}</Text>
+              {notesCount > 0 ? (
+                <Text testID="minutes-guide-count" style={[typeScale.label, { color: th.text }]}>
+                  {t('minutes.guideCount', { n: notesCount })}
+                </Text>
+              ) : null}
+              <Button
+                testID="minutes-guide"
+                variant="ghost"
+                small
+                pill
+                icon={MessageSquarePlus}
+                title={t('minutes.guide')}
+                disabled={busy !== null}
+                style={s.start}
+                onPress={() => onOpenChat({ intent: 'note' })}
+              />
+            </View>
+          ) : null}
+
           <ListGroup header={t('minutes.language')}>
             {MINUTES_LANGS.map((l) => (
               <ListRow
@@ -379,14 +506,18 @@ function MinutesBody({ onClose, meetingId, title, meetingLanguage }: MinutesShee
             <View testID="minutes-running" style={[s.card, s.row]} accessibilityLiveRegion="polite">
               <ActivityIndicator color={th.textMuted} />
               <View style={s.flex}>
-                <Text style={[typeScale.rowTitle, { color: th.text }]}>{t('minutes.running')}</Text>
+                {/* Tahrir (yangi versiya) - oldingi hujjat pastda ulashilaveradi. */}
+                <Text style={[typeScale.rowTitle, { color: th.text }]}>{slot.running?.kind === 'revise' ? t('minutes.revising') : t('minutes.running')}</Text>
                 <Text style={[typeScale.caption, { color: th.textMuted }]}>{t('minutes.runningHint')}</Text>
               </View>
             </View>
           ) : null}
           {stopped?.kind === 'timeout' ? <Banner testID="minutes-slow" tone="warn" text={t('minutes.slow')} /> : null}
-          {phase === 'failed' && slot.failed ? <Banner testID="minutes-failed" tone="bad" text={failedText(t, slot.failed)} /> : null}
-          {ready && (phase === 'ready' || phase === 'failed') ? <ReadyCard view={ready} /> : null}
+          {phase === 'failed' && failed ? <Banner testID="minutes-failed" tone="bad" text={failedText(t, failed)} /> : null}
+          {/* Tayyor hujjat yangi versiya yozilayotganda ham, xatodan keyin ham ko'rinadi va ulashiladi. */}
+          {ready ? (
+            <ReadyCard view={ready} speakers={speakers ?? []} pendingNotes={pendingNotes} onApplyNotes={applyNotes} />
+          ) : null}
           {phase === 'idle' && slot.staleOnly ? <Banner testID="minutes-stale" tone="neutral" text={t('minutes.stale')} /> : null}
 
           {problem ? (
@@ -410,7 +541,7 @@ function MinutesBody({ onClose, meetingId, title, meetingLanguage }: MinutesShee
               </Text>
             </View>
           ) : null}
-          {ready && (phase === 'ready' || phase === 'failed') ? (
+          {ready ? (
             <>
               <Button
                 testID="minutes-share"
@@ -421,29 +552,29 @@ function MinutesBody({ onClose, meetingId, title, meetingLanguage }: MinutesShee
                 disabled={locked}
                 onPress={() => void share(ready, format)}
               />
+              {/* Matn chatda yoziladi: varaq yopiladi, Chat tabi "o'zgartirish (til)" chipi bilan ochiladi. */}
+              {onOpenChat ? (
+                <Button
+                  testID="minutes-edit"
+                  title={t('minutes.edit')}
+                  icon={Pencil}
+                  variant="secondary"
+                  pill
+                  disabled={locked}
+                  onPress={() => onOpenChat({ intent: 'revise', language: lang })}
+                />
+              ) : null}
               {/* Tayyor hujjat ustidan qayta yozish; oxirgi urinish yiqilgan bo'lsa - shu urinishni qaytarish. */}
-              <Button
-                testID="minutes-redo"
-                variant="ghost"
-                pill
-                title={phase === 'failed' ? t('common.retry') : t('minutes.redo')}
-                loading={busy === 'create'}
-                disabled={locked}
-                onPress={() => void prepare(true)}
-              />
+              {phase === 'ready' ? (
+                <Button testID="minutes-redo" variant="ghost" pill title={t('minutes.redo')} loading={busy === 'create'} disabled={locked} onPress={redo} />
+              ) : null}
+              {phase === 'failed' ? retryFailed() : null}
+              {phase === 'stopped' ? recheckButton : null}
             </>
           ) : phase === 'stopped' ? (
-            <Button testID="minutes-recheck" title={t('minutes.check')} icon={RotateCcw} variant="secondary" pill loading={listing} onPress={recheck} />
+            recheckButton
           ) : phase === 'failed' ? (
-            <Button
-              testID="minutes-retry"
-              title={t('common.retry')}
-              icon={RotateCcw}
-              pill
-              loading={busy === 'create'}
-              disabled={locked}
-              onPress={() => void prepare(false)}
-            />
+            retryFailed()
           ) : (
             // Ro'yxat o'qilayotganda va hujjat yozilayotganda - aylanma (bosib bo'lmaydi).
             <Button
@@ -462,41 +593,100 @@ function MinutesBody({ onClose, meetingId, title, meetingLanguage }: MinutesShee
   );
 }
 
-/** Tayyor hujjat: bo'lim/band soni, LOYIHA belgisi, model izohlari va ogohlantirishlar soni. */
-function ReadyCard({ view }: { view: MinutesView }) {
+/**
+ * Tayyor hujjat: bo'lim/band soni, LOYIHA belgisi, versiya (2 dan boshlab), shu versiyani boshlagan
+ * so'rov va nima o'zgardi, egasi aytgan rais/qatnashchilar, model izohlari va ogohlantirishlar soni.
+ * Ostida (bo'lsa): matn tahrirlangani uchun avvalgi tahrirlar tushib qolgani va hali qo'llanmagan
+ * ko'rsatmalar («Qo'llash»).
+ */
+function ReadyCard({
+  view,
+  speakers,
+  pendingNotes,
+  onApplyNotes,
+}: {
+  view: MinutesView;
+  speakers: Speaker[];
+  /** 0 - banner yo'q (masalan yangi versiya allaqachon yozilmoqda). */
+  pendingNotes: number;
+  onApplyNotes: () => void;
+}) {
   const t = useT();
   const th = useTheme();
   const s = useMemo(() => makeStyles(th), [th]);
+  const uiLang = useSettings((x) => x.uiLang);
   const notes = minutesNotes(view.notes);
   const warnings = minutesWarnings(view.warnings);
+  const version = view.version ?? 1;
+  const request = view.request?.trim() ?? '';
+  const changes = changesText(t, view.changes);
+  const header = minutesHeaderInfo(view.header);
+  const name = (v: string) => renderTokens(v, speakers, uiLang);
+  const truncated = warningNumber(view.warnings, 'guidance_truncated');
+  const superseded = warningNumber(view.warnings, 'superseded_revisions') != null;
   return (
-    <View testID="minutes-ready" style={s.card}>
-      <View style={s.row}>
-        <IconTile icon={FileCheck} tone="good" size="sm" />
-        <Text style={[typeScale.rowTitle, s.flex, { color: th.text }]}>
-          {t('minutes.ready', { sections: view.sectionCount, items: view.itemCount })}
-        </Text>
-        <StatusPill label={t('minutes.draftPill')} tone="warn" />
-      </View>
-      <Text testID="minutes-draft" style={[typeScale.caption, { color: th.textMuted }]}>
-        {t('minutes.draft')}
-      </Text>
-      {notes.length ? (
-        <View testID="minutes-notes" style={s.notes}>
-          <Text style={[typeScale.label, { color: th.text }]}>{t('minutes.notes')}</Text>
-          {notes.map((n) => (
-            <Text key={n} style={[typeScale.caption, { color: th.textSoft }]}>
-              {`• ${n}`}
-            </Text>
-          ))}
+    <>
+      <View testID="minutes-ready" style={s.card}>
+        <View style={s.row}>
+          <IconTile icon={FileCheck} tone="good" size="sm" />
+          <Text style={[typeScale.rowTitle, s.flex, { color: th.text }]}>
+            {t('minutes.ready', { sections: view.sectionCount, items: view.itemCount })}
+          </Text>
+          <StatusPill label={t('minutes.draftPill')} tone="warn" />
         </View>
-      ) : null}
-      {warnings.length ? (
-        <Text testID="minutes-warnings" style={[typeScale.caption, { color: th.tones.warn.fg }]}>
-          {t('minutes.warnings', { n: warnings.length })}
+        {version >= 2 ? <StatusPill testID="minutes-version" label={t('minutes.version', { n: version })} tone="info" style={s.start} /> : null}
+        {request ? (
+          <Text testID="minutes-request" style={[typeScale.caption, { color: th.textSoft }]}>
+            {t('minutes.request', { text: request })}
+          </Text>
+        ) : null}
+        {changes ? (
+          <Text testID="minutes-changes" style={[typeScale.caption, { color: th.textSoft }]}>
+            {changes}
+          </Text>
+        ) : null}
+        {header.chair || header.attendees.length ? (
+          <View testID="minutes-header" style={s.notes}>
+            {header.chair ? <Text style={[typeScale.caption, { color: th.text }]}>{t('minutes.chair', { name: name(header.chair) })}</Text> : null}
+            {header.attendees.length ? (
+              <Text style={[typeScale.caption, { color: th.text }]}>{t('minutes.attendees', { names: header.attendees.map(name).join(', ') })}</Text>
+            ) : null}
+          </View>
+        ) : null}
+        <Text testID="minutes-draft" style={[typeScale.caption, { color: th.textMuted }]}>
+          {header.filled ? t('minutes.draftPartial') : t('minutes.draft')}
         </Text>
+        {notes.length ? (
+          <View testID="minutes-notes" style={s.notes}>
+            <Text style={[typeScale.label, { color: th.text }]}>{t('minutes.notes')}</Text>
+            {notes.map((n) => (
+              <Text key={n} style={[typeScale.caption, { color: th.textSoft }]}>
+                {`• ${n}`}
+              </Text>
+            ))}
+          </View>
+        ) : null}
+        {warnings.length ? (
+          <Text testID="minutes-warnings" style={[typeScale.caption, { color: th.tones.warn.fg }]}>
+            {t('minutes.warnings', { n: warnings.length })}
+          </Text>
+        ) : null}
+        {truncated ? (
+          <Text testID="minutes-truncated" style={[typeScale.caption, { color: th.tones.warn.fg }]}>
+            {t('minutes.guidanceTruncated', { n: truncated })}
+          </Text>
+        ) : null}
+      </View>
+      {superseded ? <Banner testID="minutes-superseded" tone="warn" text={t('minutes.superseded')} /> : null}
+      {pendingNotes > 0 ? (
+        <Banner
+          testID="minutes-pending"
+          tone="info"
+          text={t('minutes.pending', { n: pendingNotes })}
+          action={{ title: t('minutes.applyNotes'), onPress: onApplyNotes, testID: 'minutes-apply-notes' }}
+        />
       ) : null}
-    </View>
+    </>
   );
 }
 
@@ -515,6 +705,8 @@ function makeStyles(th: Theme) {
     row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     flex: { flex: 1, minWidth: 0 },
     notes: { gap: 2 },
+    // Ustun ichidagi pill/tugma o'z kengligida (cho'zilmasin).
+    start: { alignSelf: 'flex-start' },
     footer: { paddingHorizontal: 16, paddingTop: 8, gap: 8 },
     status: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   });

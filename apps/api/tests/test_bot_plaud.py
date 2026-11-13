@@ -1,7 +1,8 @@
 """Telegram "🎙 Plaud" (`app/bot/plaud.py`): tugma, ovozli xabar/audio fayl -> transkript va
 "Qisqa xulosa", tugmalar (vazifalar, shablon, eksport, boshqa til), yig'ilish chati: «💬 Savol berish»
 (ForceReply so'rovi) yoki javob (Reply) bilan savol - matn yoki ovoz (`runner._meeting_voice`),
-«🔄 Yangi suhbat», javobning har bo'lagida va ovozli savolning "🎙 matn"ida yig'ilish belgisi.
+«🔄 Yangi suhbat», javobning har bo'lagida va ovozli savolning "🎙 matn"ida yig'ilish belgisi. Bayonnoma chatda
+(2026-11-12): «✍️ Ko'rsatma berish» (yozishdan oldin), hujjat ostidagi «✏️ O'zgartirish», faylga javob - yangi versiya.
 
 Telegram ham, GAPI ham, STT ham, model ham soxta (`test_telegram_bot.FakeTelegram`, `FakeBackend`,
 `meetings_fakes`): hech bir test tarmoqqa chiqmaydi. Fon ishchisi yo'q - kutish o'rniga navbat qo'lda
@@ -37,10 +38,18 @@ OTHER_TG = 5550002
 
 
 class PlaudTelegram(FakeTelegram):
-    """`FakeTelegram` + tahrirdagi tugmalar ham yoziladi: chat javobi "⏳" xabari o'rnida, tugmalari bilan."""
+    """`FakeTelegram` + tahrirdagi tugmalar ham yoziladi (chat javobi "⏳" xabari o'rnida, tugmalari bilan) va
+    yuborilgan faylning xabar id si (bayonnoma fayliga javob - `replied_document`)."""
 
     def edit_message_text(self, chat_id, message_id, text, *, html=True, reply_markup=None):
         self._rec("edit_message_text", chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup)
+
+    def send_document(self, chat_id, filename, content, content_type, *, caption=None, reply_markup=None,
+                      timeout=None):
+        sent = super().send_document(chat_id, filename, content, content_type, caption=caption,
+                                     reply_markup=reply_markup, timeout=timeout)
+        self.calls[-1][1]["message_id"] = sent["message_id"]
+        return sent
 
 
 @pytest.fixture
@@ -103,6 +112,19 @@ def replied(sent):
     """Odam javob (Reply) qilgan bot xabari - Telegram `reply_to_message` da beradigani: teglarsiz matn va
     faqat inline tugmalar (ForceReply qaytmaydi). `sent` - yuborilgan yoki tahrirlangan xabar yozuvi."""
     msg = {"message_id": sent["message_id"], "from": {"is_bot": True}, "text": render.plain(sent["text"])}
+    if "inline_keyboard" in (sent.get("reply_markup") or {}):
+        msg["reply_markup"] = sent["reply_markup"]
+    return msg
+
+
+def replied_document(sent):
+    """Odam javob (Reply) qilgan bot FAYLI - Telegram `reply_to_message` da beradigani: matn yo'q, fayl (nomi, turi),
+    izoh (teglarsiz) va inline tugmalar. `sent` - `send_document` yozuvi (`PlaudTelegram` - xabar id si bilan)."""
+    msg = {"message_id": sent["message_id"], "from": {"is_bot": True},
+           "document": {"file_id": f"FILE-{sent['message_id']}", "file_unique_id": f"UF{sent['message_id']}",
+                        "file_name": sent["filename"], "mime_type": sent["content_type"]}}
+    if sent.get("caption"):
+        msg["caption"] = render.plain(sent["caption"])
     if "inline_keyboard" in (sent.get("reply_markup") or {}):
         msg["reply_markup"] = sent["reply_markup"]
     return msg
@@ -378,11 +400,14 @@ def test_bayonnoma_til_menyusi(world, monkeypatch):
     menu = _last_markup(tg)["inline_keyboard"]
     assert menu == plaud_mod.minutes_menu(mid, "uz")["inline_keyboard"]
     data = [b["callback_data"] for row in menu for b in row]
-    # O'zbek yig'ilish: tavsiya kirill - BIRINCHI; keyin qolgan tillar `LANGS` tartibida; oxirida orqaga.
-    assert data == [f"p:d:{mid}:uz-cyrl", f"p:d:{mid}:uz-latn", f"p:d:{mid}:ru", f"p:d:{mid}:en", f"p:b:{mid}"]
-    assert [b["text"] for row in menu[:-1] for b in row] == [minutes.LANG_TITLES[l] for l in
+    # O'zbek yig'ilish: tavsiya kirill - BIRINCHI; keyin qolgan tillar `LANGS` tartibida; so'ng «✍️ Ko'rsatma
+    # berish» (yozishdan oldin ko'rsatma, 2026-11-12); oxirida orqaga.
+    assert data == [f"p:d:{mid}:uz-cyrl", f"p:d:{mid}:uz-latn", f"p:d:{mid}:ru", f"p:d:{mid}:en", f"p:g:{mid}",
+                    f"p:b:{mid}"]
+    assert [b["text"] for row in menu[:-2] for b in row] == [minutes.LANG_TITLES[l] for l in
                                                              ("uz-cyrl", "uz-latn", "ru", "en")]
-    assert set(data[:-1]) == {f"p:d:{mid}:{lang}" for lang in minutes.LANGS}
+    assert menu[-2] == [{"text": "✍️ Ko'rsatma berish", "callback_data": f"p:g:{mid}"}]
+    assert set(data[:-2]) == {f"p:d:{mid}:{lang}" for lang in minutes.LANGS}
     # Rus yig'ilish - rus birinchi.
     ru = plaud_mod.minutes_menu(mid, "ru")["inline_keyboard"]
     assert ru[0][0]["callback_data"] == f"p:d:{mid}:ru"
@@ -418,7 +443,12 @@ def test_bayonnoma_word_va_pdf_yuboriladi(world, monkeypatch):
     assert pdf["filename"].endswith(".pdf") and pdf["size"] == len(b"pdf")
     assert docx["content_type"] == minutes.FORMATS["docx"][0] and pdf["content_type"] == minutes.FORMATS["pdf"][0]
     assert docx["caption"] == plaud_mod.MINUTES_CAPTION and "«________»" in docx["caption"]
+    assert "«✏️ O'zgartirish»ni bosing yoki shu faylga javob (Reply)" in docx["caption"]
     assert pdf["caption"] is None
+    # Ikkala fayl ostida ham «✏️ O'zgartirish» (shu til) va «💬 Savol berish»; xotirada - bayonnoma xabari, tili bilan.
+    done = plaud_mod.minutes_done_menu(mid, "uz-cyrl")
+    assert docx["reply_markup"] == done and pdf["reply_markup"] == done
+    assert all(plaud._intents[(TG_ID, kw["message_id"])] == ("doc", "uz-cyrl") for kw in (docx, pdf))
     # Yuborilgan fayllarning o'zi arxivda (ega talabi, 2026-11-05): kimga, qaysi yig'ilish va til.
     sent = archive.get().rows(channel="telegram")
     assert [(r["direction"], r["kind"], r["file_name"], r["actor_id"]) for r in sent] == [
@@ -427,6 +457,7 @@ def test_bayonnoma_word_va_pdf_yuboriladi(world, monkeypatch):
     assert (archive.get().root / sent[1]["file_path"]).read_bytes() == b"pdf"
     edited = [kw for n, kw in tg.calls if n == "edit_message_text"][-1]
     assert edited["message_id"] == holder["message_id"]
+    assert edited["reply_markup"] == done and plaud._intents[(TG_ID, holder["message_id"])] == ("doc", "uz-cyrl")
     text = edited["text"]
     assert text.startswith(f"✅ <b>Bayonnoma tayyor</b> ({minutes.LANG_TITLES['uz-cyrl']}): 2 bo'lim, 5 band.")
     assert "❗ <b>Aniqlashtirish kerak:</b>\n• Muddat &lt;aniq&gt; emas\n• Mas'ul aytilmagan" in text
@@ -449,6 +480,9 @@ def test_bayonnoma_yozilmadi_va_fayl_yuborilmadi(world, monkeypatch):
     edited = [kw for n, kw in tg.calls if n == "edit_message_text"][-1]
     assert edited["text"] == "Bayonnoma yozilmadi: Bayonnoma uchun model sozlanmagan"
     assert tg.sent("send_document") == []
+    # Xato xabarida «💬 Savol berish» - yig'ilish belgisi: qayta ishga tushgandan keyin ham javob shu yozuv chatiga.
+    assert edited["reply_markup"] == plaud_mod.ask_menu(mid)
+    assert plaud_mod._MARK.match(edited["reply_markup"]["inline_keyboard"][0][0]["callback_data"]).group(1) == mid
     # Hujjat yozildi, lekin Telegram faylni olmadi - odamga aytiladi, qolgan fayl va natija yuboriladi.
     export_file, _ = _minutes_export()
     monkeypatch.setattr(minutes, "generate", lambda *a, **k: _minutes_view(notes=[]))
@@ -468,7 +502,8 @@ def test_bayonnoma_yozilmadi_va_fayl_yuborilmadi(world, monkeypatch):
     # Ichki xato - "⏳" o'rnida tushunarli sabab.
     monkeypatch.setattr(minutes, "generate", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     bot.handle_update(callback(f"p:d:{mid}:en", message_id=summary_id))
-    assert [kw for n, kw in tg.calls if n == "edit_message_text"][-1]["text"] == "Bayonnoma yozilmadi: ichki xato."
+    crashed = [kw for n, kw in tg.calls if n == "edit_message_text"][-1]
+    assert crashed["text"] == "Bayonnoma yozilmadi: ichki xato." and crashed["reply_markup"] == plaud_mod.ask_menu(mid)
 
 
 def test_bayonnoma_begona_odamga_yopiq(world, monkeypatch):
@@ -612,15 +647,16 @@ def test_uzun_javob_har_bolagida_belgi_chat_tugmalari_oxirgisida(world, monkeypa
     mid, _ = _delivered(bot, tg)
     calls = []
 
-    def chat_send(user, meeting_id, message, language, *, channel="api"):
-        calls.append((user.actorId, meeting_id, message, language, channel))
+    def chat_send(user, meeting_id, message, language, *, channel="api", **kwargs):
+        calls.append((user.actorId, meeting_id, message, language, channel, kwargs))
         text = "\n\n".join(f"{n}-band: " + "batafsil izoh " * 40 for n in range(1, 25))
         return {"id": "q1", "question": message, "answer": text, "citations": [], "followUps": ["a?", "b?", "c?"],
                 "createdAt": "2026-11-11T10:00:00Z", "channel": channel, "model": "claude-sonnet-5-5"}
 
     monkeypatch.setattr(service, "chat_send", chat_send)
     first = _ask_card(bot, tg, "Batafsilroq")
-    assert calls == [(1, mid, "Batafsilroq", None, "telegram")]
+    # Xulosaga javob - aniq niyatsiz (amalni chat modeli tanlaydi) va hujjat tilisiz.
+    assert calls == [(1, mid, "Batafsilroq", None, "telegram", {"intent": None, "minutes_lang": None})]
     holder = next(kw for kw in reversed(tg.sent()) if kw["text"] == "⏳ Javob tayyorlanmoqda…")
     # "⏳" o'rnidagi birinchi bo'lak va o'rtadagilari - «💬 Savol berish» (yig'ilish belgisi), oxirgisi - chat tugmalari.
     assert first["message_id"] == holder["message_id"] and first["reply_markup"] == plaud_mod.ask_menu(mid)
@@ -691,7 +727,9 @@ def test_yangi_suhbat_tugmasi_yumshoq_va_toza_boshlanadi(world):
     bot.handle_update(callback(f"p:n:{mid}", message_id=answer["message_id"]))
     assert [n for n, _ in tg.calls[before:]] == ["answer_callback", "send_message"]
     done = tg.sent()[-1]
-    assert done["text"] == "🔄 Yangi suhbat boshlandi - oldingi savol-javoblar endi hisobga olinmaydi."
+    # Bayonnoma ko'rsatmalari ham suhbat bilan arxivga ketadi, tayyor hujjatlar qoladi (2026-11-12).
+    assert done["text"] == ("🔄 Yangi suhbat boshlandi - oldingi savol-javoblar va bayonnoma ko'rsatmalari endi "
+                            "hisobga olinmaydi (tayyor bayonnomalar saqlanib qoladi).")
     assert done["reply_markup"] == {"inline_keyboard": [[{"text": "💬 Savol berish", "callback_data": f"p:q:{mid}"}]]}
     assert plaud._messages[(TG_ID, done["message_id"])] == mid
     # Yumshoq: navbat chatdan ham, eski ro'yxatdan ham ketdi, qator bazada qoldi.
@@ -961,7 +999,7 @@ def test_tahrir_otmasa_ham_har_bolakda_belgi_va_kutish_xabari_yigilishniki(world
     mid, _ = _delivered(bot, tg)
     real = service.chat_send
 
-    def chat_send(user, meeting_id, message, language, *, channel="api"):
+    def chat_send(user, meeting_id, message, language, *, channel="api", **kwargs):
         text = "\n\n".join(f"{n}-band: " + "batafsil izoh " * 40 for n in range(1, 25))
         return {"id": "q1", "question": message, "answer": text, "citations": [], "followUps": ["a?", "b?", "c?"],
                 "createdAt": "2026-11-11T10:00:00Z", "channel": channel, "model": "claude-sonnet-5-5"}
@@ -989,6 +1027,437 @@ def test_yordam_matnida_yigilish_chati_va_ovozli_savol(world):
     text = tg.sent()[-1]["text"]
     [line] = [line for line in text.splitlines() if "<b>Plaud</b>" in line]
     assert "«💬 Savol berish»" in line and "javob (Reply)" in line and "ovozli xabar ham" in line
-    assert "eslab qoladi" in line
+    assert ("eslab qoladi. Bayonnoma uchun ko'rsatma va tayyor bayonnomadagi o'zgartirishlar ham shunday "
+            "yoziladi.") in line
     # HTML yaroqli: teglar juft, teglardan tashqarida `<`, `>`, `&` yo'q.
     assert render._balanced(text) and not any(c in render._TAG.sub("", text) for c in "<>&")
+
+
+# --- 📄 Bayonnoma chatda (ega so'rovi, 2026-11-12): ✍️ ko'rsatma, ✏️ o'zgartirish, faylga javob ------------------
+
+
+def _queued_minutes(monkeypatch, rt, plaud):
+    """Bayonnoma zanjiri - `FakeLLM`, fon ishlari NAVBATDA (`minutes.runner`): ishlab chiqarishdagidek chat navbati
+    qaytganda hujjat hali yozilmoqda. Plaud kutishi (`sleep`: `minutes.wait`, `intake`) navbatni ham, yig'ilish
+    ishchisini ham yuritadi."""
+    jobs = []
+    monkeypatch.setattr(settings, "meetings_minutes_chain", "ollama")
+    monkeypatch.setattr(minutes, "runner", jobs.append)
+
+    def sleep(_sec):
+        run_all(rt)
+        while jobs:
+            jobs.pop(0)()
+
+    monkeypatch.setattr(plaud, "_sleep", sleep)
+    return jobs
+
+
+def _claude_chat(monkeypatch, rt):
+    """Chat zanjiri - soxta Claude (prod'dagidek `MEETINGS_ASK_CHAIN=claude`): bayonnoma amalini u tanlaydi
+    (`meetings_fakes.chat_auto`: savoldagi `ACTION=` va `LANG=`)."""
+    from app.services.meetings import llm
+    from meetings_fakes import FakeAnthropic
+
+    monkeypatch.setattr(settings, "meetings_ask_chain", "claude", raising=False)
+    fake = FakeAnthropic()
+    rt.ask_claude = llm.ClaudeChat(lambda: "sk-ant-test-TG", "claude-sonnet-5-5", timeout=10, client_factory=fake,
+                                   fallbacks=True)
+    return fake
+
+
+def _recording(monkeypatch):
+    """Haqiqiy `service.chat_send`, bot bergan kanal va bayonnoma kalitlari (`intent`, `minutes_lang`) yozib
+    boriladi."""
+    real, seen = service.chat_send, []
+
+    def chat_send(*args, **kwargs):
+        seen.append({key: kwargs.get(key) for key in ("channel", "intent", "minutes_lang")})
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service, "chat_send", chat_send)
+    return seen
+
+
+def _minutes_calls(rt):
+    """Bayonnoma model chaqiruvlari (`FakeLLM`): yangi hujjat va tahrir."""
+    return [c for c in rt.llm.calls if c["op"].startswith("meeting_minutes")]
+
+
+def _stub_minutes(monkeypatch):
+    """Soxta `generate` va `export_file`: til tugmasi darhol tayyor hujjat (`_minutes_view`) va fayllarni beradi."""
+    export_file, _ = _minutes_export()
+    monkeypatch.setattr(minutes, "generate", lambda *a, **k: _minutes_view())
+    monkeypatch.setattr(minutes, "export_file", export_file)
+
+
+def test_korsatma_tugmasi_prompt_va_javob(world, monkeypatch):
+    """«✍️ Ko'rsatma berish» (til menyusida): ForceReply so'rovi; javob - matn yoki ovoz - `intent="note"` bilan, chat
+    modelisiz; javob ostida ko'rsatmalar soni va `note_menu`. Til bosilganda hujjat shu ko'rsatmalar bilan yoziladi."""
+    bot, tg, rt, plaud = world
+    monkeypatch.setattr(settings, "meetings_minutes_chain", "ollama")
+    mid, summary_id = _delivered(bot, tg)
+    seen = _recording(monkeypatch)
+    bot.handle_update(callback(f"p:d:{mid}", message_id=summary_id))
+    before = len(tg.calls)
+    bot.handle_update(callback(f"p:g:{mid}", message_id=summary_id))
+    assert [n for n, _ in tg.calls[before:]] == ["answer_callback", "send_message"]
+    prompt = tg.sent()[-1]
+    title = rt.store.meeting_any(mid)["title"]
+    assert prompt["text"] == plaud_mod.guide_prompt(title)
+    assert prompt["text"].startswith(f"✍️ <b>{title}</b> bayonnomasi uchun ko'rsatma yozing.\nNimaga e'tibor berish")
+    assert prompt["reply_markup"] == {"force_reply": True,
+                                      "input_field_placeholder": "Rais, qatnashchilar, nimaga e'tibor…"}
+    assert plaud._messages[(TG_ID, prompt["message_id"])] == mid
+    assert plaud._intents[(TG_ID, prompt["message_id"])] == ("note", None)
+    assert _last_markup(tg) == plaud_mod.minutes_menu(mid, "uz")              # til menyusi o'z joyida qoldi
+    # So'rovga javob - ko'rsatma: modelsiz, HR yordamchisiga ham emas.
+    asked = len(rt.llm.calls)
+    bot.handle_update(reply("Rais - Alisher Karimov, qatnashchilar: bo'lim boshliqlari", replied(prompt)))
+    holder = tg.sent()[-1]
+    assert holder["text"] == "⏳ Javob tayyorlanmoqda…" and holder["reply_to"] == 30
+    answer = last_edit(tg)
+    assert answer["message_id"] == holder["message_id"]
+    assert answer["text"] == ("Ko'rsatmangiz eslab qolindi - bayonnoma tayyorlanganda hisobga olinadi.\n\n"
+                              "📝 Ko'rsatma eslab qolindi (jami 1 ta) - bayonnoma tayyorlashda hisobga olinadi.")
+    assert answer["reply_markup"] == plaud_mod.note_menu(mid)
+    assert seen == [{"channel": "telegram", "intent": "note", "minutes_lang": None}]
+    assert len(rt.llm.calls) == asked and bot.backend.questions == []
+    [turn] = rt.store.chat_turns(mid)
+    assert turn["kind"] == "note" and turn["channel"] == "telegram"
+    # Ovozli javob ham - ikkinchi ko'rsatma (so'rov o'sha).
+    _voice_reply(bot, tg, replied(prompt), "Moliyaviy atamalarni o'zgartirmang")
+    assert last_edit(tg)["text"].endswith(
+        "📝 Ko'rsatma eslab qolindi (jami 2 ta) - bayonnoma tayyorlashda hisobga olinadi.")
+    assert seen[-1] == {"channel": "telegram", "intent": "note", "minutes_lang": None}
+    assert [n["text"] for n in rt.store.notes(mid)] == ["Rais - Alisher Karimov, qatnashchilar: bo'lim boshliqlari",
+                                                        "Moliyaviy atamalarni o'zgartirmang"]
+    assert len(rt.llm.calls) == asked and bot.backend.questions == []
+    # «📄 Bayonnoma tayyorlash» - shu xabarda til menyusi; tanlangan tilda hujjat ikkala ko'rsatma bilan yoziladi.
+    bot.handle_update(callback(f"p:d:{mid}", message_id=answer["message_id"]))
+    assert _last_markup(tg) == plaud_mod.minutes_menu(mid, "uz")
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=answer["message_id"]))
+    [call] = _minutes_calls(rt)
+    assert call["op"] == "meeting_minutes" and "OWNER INSTRUCTIONS" in call["user"]
+    assert "Rais - Alisher Karimov" in call["user"] and "Moliyaviy atamalarni o'zgartirmang" in call["user"]
+    result = last_edit(tg)
+    assert result["text"].startswith(f"✅ <b>Bayonnoma tayyor</b> ({minutes.LANG_TITLES['uz-cyrl']}): ")
+    assert "Ko'rsatmalaringiz hisobga olindi (2 ta)." in result["text"].split("\n")[0]
+    # Yana bir ko'rsatma, so'ng o'sha til - qaytadan yozilmaydi: joriy hujjatning ko'rsatmalar tahriri.
+    bot.handle_update(callback(f"p:g:{mid}", message_id=summary_id))
+    bot.handle_update(reply("Nazoratni moliya bo'limiga yuklang", replied(tg.sent()[-1]), message_id=31))
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=summary_id))
+    assert [c["op"] for c in _minutes_calls(rt)] == ["meeting_minutes", "meeting_minutes_revise"]
+    assert last_edit(tg)["text"].startswith(f"✅ <b>Bayonnoma yangilandi</b> ({minutes.LANG_TITLES['uz-cyrl']}, "
+                                            "2-versiya): ko'rsatmalaringiz qo'llandi - ")
+
+
+def test_ozgartirish_tugmasi_prompt_va_tahrir(world, monkeypatch):
+    """«✏️ O'zgartirish» (fayl va natija ostida, `p:w:<id>:<til>`): ForceReply so'rovi; javob - matn yoki ovoz -
+    `intent="revise"` va shu til; javobdan keyin "⏳ … tahrirlanmoqda", yangi versiyaning Word va PDF i (o'sha tugmalar
+    bilan) va "⏳" o'rnida natija: versiya, so'rov va o'zgarishlar."""
+    bot, tg, rt, plaud = world
+    _queued_minutes(monkeypatch, rt, plaud)
+    mid, summary_id = _delivered(bot, tg)
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=summary_id))   # 1-versiya (til tugmasi - shu ipda)
+    done = plaud_mod.minutes_done_menu(mid, "uz-cyrl")
+    docx, pdf = tg.sent("send_document")
+    assert docx["reply_markup"] == done and pdf["reply_markup"] == done and last_edit(tg)["reply_markup"] == done
+    seen = _recording(monkeypatch)
+    lang = minutes.LANG_TITLES["uz-cyrl"]
+    # Word fayli ostidagi ✏️ - so'rov (faqat xotirada: niyat va til).
+    before = len(tg.calls)
+    bot.handle_update(callback(f"p:w:{mid}:uz-cyrl", message_id=docx["message_id"]))
+    assert [n for n, _ in tg.calls[before:]] == ["answer_callback", "send_message"]
+    prompt = tg.sent()[-1]
+    assert prompt["text"] == plaud_mod.edit_prompt(rt.store.meeting_any(mid)["title"], "uz-cyrl")
+    assert f"bayonnomasida ({lang}) nimani o'zgartirish kerak?\nYozing yoki ovozli xabar yuboring" in prompt["text"]
+    assert prompt["reply_markup"] == {"force_reply": True,
+                                      "input_field_placeholder": "Masalan: 3-bandda muddat 1-dekabr"}
+    assert plaud._intents[(TG_ID, prompt["message_id"])] == ("revise", "uz-cyrl")
+    # Matnli javob - tahrir: javob, "⏳ … tahrirlanmoqda", yangi fayllar, natija.
+    docs = len(tg.sent("send_document"))
+    bot.handle_update(reply("TITLE=Moliya qo'mitasi yig'ilishi", replied(prompt)))
+    assert seen == [{"channel": "telegram", "intent": "revise", "minutes_lang": "uz-cyrl"}]
+    holder, working = tg.sent()[-2:]
+    assert holder["text"] == "⏳ Javob tayyorlanmoqda…" and holder["reply_to"] == 30
+    assert working["text"] == f"⏳ Bayonnoma ({lang}) tahrirlanmoqda… 1-3 daqiqa."
+    answer = next(kw for kw in tg.sent("edit_message_text") if kw["message_id"] == holder["message_id"])
+    assert answer["text"] == "So'rovingiz bo'yicha bayonnomaning yangi versiyasini tayyorlayapman - odatda 1-3 daqiqa."
+    assert answer["reply_markup"] == plaud_mod.chat_menu(mid)
+    new_docx, new_pdf = tg.sent("send_document")[docs:]
+    assert new_docx["reply_markup"] == done and new_pdf["reply_markup"] == done
+    assert "2-таҳрир" in new_docx["filename"] and new_docx["filename"].endswith(".docx")
+    assert "2-таҳрир" in new_pdf["filename"] and new_docx["caption"] == plaud_mod.MINUTES_CAPTION
+    result = last_edit(tg)
+    assert result["message_id"] == working["message_id"] and result["reply_markup"] == done
+    assert result["text"].startswith(f"✅ <b>Bayonnoma tahrirlandi</b> ({lang}, 2-versiya): 2 bo'lim, ")
+    assert ("\n\nSo'rov: «TITLE=Moliya qo'mitasi yig'ilishi»\n\n<b>O'zgarishlar:</b> sarlavha o'zgardi."
+            in result["text"])
+    assert all(plaud._intents[(TG_ID, kw["message_id"])] == ("doc", "uz-cyrl") for kw in (new_docx, new_pdf, result))
+    assert [c["op"] for c in _minutes_calls(rt)] == ["meeting_minutes", "meeting_minutes_revise"]
+    assert bot.backend.questions == []
+    # Ovozli javob (natija ostidagi ✏️ dan yangi so'rovga) ham - tahrir, shu tilda.
+    bot.handle_update(callback(f"p:w:{mid}:uz-cyrl", message_id=result["message_id"]))
+    _voice_reply(bot, tg, replied(tg.sent()[-1]), "DROP=1")
+    assert seen[-1] == {"channel": "telegram", "intent": "revise", "minutes_lang": "uz-cyrl"}
+    final = last_edit(tg)
+    assert final["text"].startswith(f"✅ <b>Bayonnoma tahrirlandi</b> ({lang}, 3-versiya): ")
+    assert "So'rov: «DROP=1»" in final["text"]
+    assert "<b>O'zgarishlar:</b> avvalgi 1-band olib tashlandi." in final["text"]
+    rows = rt.store.minutes_rows(mid)
+    assert [(r["revision"], r["status"]) for r in rows] == [(0, "ready"), (1, "ready"), (2, "ready")]
+    assert bot.backend.questions == []
+
+
+def test_bayonnoma_tahriri_oxirigacha_qayta_bosish_bepul(world, monkeypatch):
+    """Oxirigacha (`FakeLLM`): til -> 1-versiya; ✏️ "TITLE=…" -> 2-versiyaning fayllari; o'sha tilni qayta bosish -
+    model chaqirilmaydi, 2-versiya qayta yuboriladi (tahrir yo'qolmaydi)."""
+    bot, tg, rt, plaud = world
+    _queued_minutes(monkeypatch, rt, plaud)
+    mid, summary_id = _delivered(bot, tg)
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=summary_id))
+    first = [d["filename"] for d in tg.sent("send_document")]
+    assert len(first) == 2 and not any("таҳрир" in name for name in first)
+    bot.handle_update(callback(f"p:w:{mid}:uz-cyrl", message_id=tg.sent("send_document")[0]["message_id"]))
+    bot.handle_update(reply("TITLE=Yangi sarlavha", replied(tg.sent()[-1])))
+    second = [d["filename"] for d in tg.sent("send_document")[2:]]
+    assert len(second) == 2 and all("2-таҳрир" in name for name in second)
+    calls = len(rt.llm.calls)
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=summary_id))
+    assert len(rt.llm.calls) == calls and len(rt.store.minutes_rows(mid)) == 2
+    assert [d["filename"] for d in tg.sent("send_document")[4:]] == second
+    assert last_edit(tg)["text"].startswith(f"✅ <b>Bayonnoma tahrirlandi</b> ({minutes.LANG_TITLES['uz-cyrl']}, "
+                                            "2-versiya): ")
+
+
+def test_hujjatga_javob_avto(world, monkeypatch):
+    """Bayonnoma fayliga (Word / PDF) yoki natijasiga javob (Reply) - matn ham, ovoz ham: aniq niyatsiz (amalni chat
+    modeli tanlaydi), lekin hujjat tili ma'lum (`minutes_lang`); HR yordamchisiga ketmaydi."""
+    bot, tg, rt, plaud = world
+    mid, summary_id = _delivered(bot, tg)
+    _stub_minutes(monkeypatch)
+    bot.handle_update(callback(f"p:d:{mid}:uz-latn", message_id=summary_id))
+    docx, pdf = tg.sent("send_document")
+    result = last_edit(tg)
+    seen = _recording(monkeypatch)
+    bot.handle_update(reply("3-bandda muddat qachon?", replied_document(docx)))
+    assert tg.sent()[-1]["text"] == "⏳ Javob tayyorlanmoqda…" and "📌 <b>Manbalar:</b>" in last_edit(tg)["text"]
+    bot.handle_update(reply("Kim mas'ul?", replied_document(pdf), message_id=31))
+    bot.handle_update(reply("Yana?", replied(result), message_id=32))
+    _voice_reply(bot, tg, replied_document(docx), "Qaror nima?")
+    assert seen == [{"channel": "telegram", "intent": None, "minutes_lang": "uz-latn"}] * 4
+    assert [t["question"] for t in rt.store.chat_turns(mid)] == ["3-bandda muddat qachon?", "Kim mas'ul?", "Yana?",
+                                                                 "Qaror nima?"]
+    assert bot.backend.questions == []
+
+
+def test_avto_niyat_claude_tayyorlash_va_tahrir(world, monkeypatch):
+    """Haqiqiy chat (soxta Claude - amalni u tanlaydi): xulosaga javob "tayyorla" - hujjat yoziladi ("⏳ …
+    tayyorlanmoqda", fayllar, natija); Word fayliga javob "o'zgartir" (tili aytilmagan - fayl tilidan) - yangi
+    versiya."""
+    bot, tg, rt, plaud = world
+    _queued_minutes(monkeypatch, rt, plaud)
+    fake = _claude_chat(monkeypatch, rt)
+    mid, _ = _delivered(bot, tg)
+    lang = minutes.LANG_TITLES["uz-cyrl"]
+    bot.handle_update(reply("ACTION=create", replied(card(tg))))
+    assert fake.ops() == ["meeting_chat"]
+    working = tg.sent()[-1]
+    assert working["text"] == f"⏳ Bayonnoma ({lang}) tayyorlanmoqda… 1-3 daqiqa."
+    docx, pdf = tg.sent("send_document")
+    assert docx["reply_markup"] == plaud_mod.minutes_done_menu(mid, "uz-cyrl")
+    created = last_edit(tg)
+    assert created["message_id"] == working["message_id"]
+    assert created["text"].startswith(f"✅ <b>Bayonnoma tayyor</b> ({lang}): ")
+    bot.handle_update(reply("ACTION=revise TITLE=Kengash yig'ilishi", replied_document(docx), message_id=31))
+    assert fake.ops() == ["meeting_chat", "meeting_chat"]
+    assert tg.sent()[-1]["text"] == f"⏳ Bayonnoma ({lang}) tahrirlanmoqda… 1-3 daqiqa."
+    revised = last_edit(tg)
+    assert revised["text"].startswith(f"✅ <b>Bayonnoma tahrirlandi</b> ({lang}, 2-versiya): ")
+    assert "<b>O'zgarishlar:</b> sarlavha o'zgardi." in revised["text"]
+    assert len(tg.sent("send_document")) == 4
+    assert [t["kind"] for t in rt.store.chat_turns(mid)] == ["create", "revise"]
+    assert bot.backend.questions == []
+
+
+def test_tahrir_ozgarmasa_yoki_ish_boshlanmasa(world, monkeypatch):
+    """O'zgarishsiz so'rov - yangi versiya yo'q: "Bayonnoma tahrirlanmadi: …" va «✏️ O'zgartirish» (qayta so'rash).
+    Ish boshlanmasa (tahrir chegarasi) - javobda sababi; bayonnoma "⏳" i ham, fayl ham yo'q."""
+    bot, tg, rt, plaud = world
+    _queued_minutes(monkeypatch, rt, plaud)
+    monkeypatch.setattr(settings, "meetings_minutes_edits_per_hour", 1)
+    mid, summary_id = _delivered(bot, tg)
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=summary_id))
+    docs = len(tg.sent("send_document"))
+    bot.handle_update(callback(f"p:w:{mid}:uz-cyrl", message_id=summary_id))
+    bot.handle_update(reply("NOOP", replied(tg.sent()[-1])))
+    failed = last_edit(tg)
+    assert failed["text"] == ("Bayonnoma tahrirlanmadi: Bayonnomada o'zgarish bo'lmadi - nimani o'zgartirish "
+                              "kerakligini aniqroq yozing (masalan: «3-bandda muddat - 1-dekabr»)")
+    assert failed["reply_markup"] == plaud_mod.minutes_done_menu(mid, "uz-cyrl")
+    assert len(tg.sent("send_document")) == docs
+    bot.handle_update(callback(f"p:w:{mid}:uz-cyrl", message_id=failed["message_id"]))
+    sent = len(tg.sent())
+    bot.handle_update(reply("TITLE=Yangi", replied(tg.sent()[-1]), message_id=31))
+    answer = last_edit(tg)
+    assert answer["text"] == ("Bayonnoma ishini boshlab bo'lmadi.\n\n"
+                              "⚠ So'rovlar ko'p - birozdan keyin qayta urinib ko'ring")
+    assert answer["reply_markup"] == plaud_mod.chat_menu(mid)
+    assert len(tg.sent()) == sent + 1 and len(tg.sent("send_document")) == docs      # faqat "⏳ Javob"
+    assert [r["status"] for r in rt.store.minutes_rows(mid)] == ["ready", "failed"]
+
+
+def test_bayonnoma_hali_tayyorlanmoqda(world, monkeypatch):
+    """Kutish chegarasidan keyin ham yozilmoqda: til tugmasi ham, chat navbati boshlagan ish ham - "hali
+    tayyorlanmoqda" (natija keyin til tugmasidan bepul olinadi); tayyor bo'lmagan hujjat eksport qilinmaydi."""
+    bot, tg, rt, plaud = world
+    mid, summary_id = _delivered(bot, tg)
+    monkeypatch.setattr(minutes, "generate", lambda *a, **k: _minutes_view(status="running"))
+    monkeypatch.setattr(minutes, "export_file",
+                        lambda *a, **k: pytest.fail("tayyor bo'lmagan hujjat eksport qilinmaydi"))
+    bot.handle_update(callback(f"p:d:{mid}:ru", message_id=summary_id))
+    assert last_edit(tg)["text"] == plaud_mod.MINUTES_STILL_RUNNING and tg.sent("send_document") == []
+    turn = {"id": "q1", "question": "Tayyorla", "answer": "Tushunarli.", "citations": [], "followUps": [],
+            "createdAt": "2026-11-12T10:00:00Z", "channel": "telegram", "model": "claude-sonnet-5-5", "kind": "create",
+            "minutes": {"action": "create", "language": "ru", "id": "cd" * 16, "status": "running", "version": 1,
+                        "notes": None, "error": None}}
+    waited = []
+    monkeypatch.setattr(service, "chat_send", lambda *a, **k: turn)
+    monkeypatch.setattr(minutes, "status", lambda *a, **k: _minutes_view(id="cd" * 16, status="running"))
+    monkeypatch.setattr(minutes, "wait", lambda *a, **k: waited.append(k) or _minutes_view(status="running"))
+    bot.handle_update(reply("Bayonnomani rus tilida tayyorla", replied(card(tg))))
+    working = tg.sent()[-1]
+    assert working["text"] == f"⏳ Bayonnoma ({minutes.LANG_TITLES['ru']}) tayyorlanmoqda… 1-3 daqiqa."
+    assert waited == [{"sleep": plaud._sleep}]
+    assert last_edit(tg)["message_id"] == working["message_id"]
+    assert last_edit(tg)["text"] == plaud_mod.MINUTES_STILL_RUNNING and tg.sent("send_document") == []
+
+
+def test_qayta_ishga_tushgandan_keyin_bayonnoma_sorovlari_va_fayli(world, monkeypatch):
+    """Qayta ishga tushgandan keyin (xotira bo'sh): eski ✍️ / ✏️ so'roviga javob - matn ham, ovoz ham - izoh bilan
+    yutiladi (`STALE_GUIDE` / `STALE_EDIT`; HR ga ham, chatga ham emas); faylga javob esa tugmasidagi `p:w` dan
+    yig'ilishni ham, tilni ham topadi."""
+    bot, tg, rt, plaud = world
+    mid, summary_id = _delivered(bot, tg)
+    _stub_minutes(monkeypatch)
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=summary_id))
+    docx = tg.sent("send_document")[0]
+    bot.handle_update(callback(f"p:g:{mid}", message_id=summary_id))
+    guide = tg.sent()[-1]
+    bot.handle_update(callback(f"p:w:{mid}:uz-cyrl", message_id=docx["message_id"]))
+    edit = tg.sent()[-1]
+    plaud._messages.clear()
+    plaud._intents.clear()
+    llm_calls = len(rt.llm.calls)
+    bot.handle_update(reply("Rais - Karimov", replied(guide)))
+    assert tg.sent()[-1]["text"] == plaud_mod.STALE_GUIDE and tg.sent()[-1]["reply_to"] == 30
+    assert plaud_mod.STALE_GUIDE == ("Bu so'rov eskirgan - «📄 Bayonnoma» menyusidagi «✍️ Ko'rsatma berish»ni "
+                                     "qayta bosing.")
+    bot.handle_update(reply("3-bandni o'chiring", replied(edit), message_id=31))
+    assert tg.sent()[-1]["text"] == plaud_mod.STALE_EDIT and tg.sent()[-1]["reply_to"] == 31
+    assert plaud_mod.STALE_EDIT == "Bu so'rov eskirgan - bayonnoma ostidagi «✏️ O'zgartirish» tugmasini qayta bosing."
+    _voice_reply(bot, tg, replied(edit), "3-bandni o'chiring")
+    assert tg.sent()[-1]["text"] == plaud_mod.STALE_EDIT
+    assert bot.backend.questions == [] and rt.store.chat_turns(mid) == [] and len(rt.llm.calls) == llm_calls
+    seen = _recording(monkeypatch)
+    bot.handle_update(reply("Kim mas'ul?", replied_document(docx), message_id=32))
+    assert tg.sent()[-1]["text"] == "⏳ Javob tayyorlanmoqda…"
+    assert seen == [{"channel": "telegram", "intent": None, "minutes_lang": "uz-cyrl"}] and bot.backend.questions == []
+
+
+def test_begona_p_g_p_w(world):
+    """Begona odam ✍️ / ✏️ ni bossa - faqat ogohlantirish (so'rov yuborilmaydi); noma'lum til yoki ortiqcha qism -
+    "Tugma eskirgan"."""
+    bot, tg, rt, plaud = world
+    mid, summary_id = _delivered(bot, tg)
+    for data in (f"p:g:{mid}", f"p:w:{mid}:uz-cyrl"):
+        before = len(tg.calls)
+        bot.handle_update(callback(data, message_id=summary_id, tg_id=OTHER_TG))
+        assert [n for n, _ in tg.calls[before:]] == ["answer_callback"]
+        assert tg.calls[-1][1]["alert"] and tg.calls[-1][1]["text"].startswith("Bajarib bo'lmadi")
+    for data in (f"p:w:{mid}:de", f"p:w:{mid}", f"p:w:{mid}:ru:x", f"p:g:{mid}:x"):
+        before = len(tg.calls)
+        bot.handle_update(callback(data, message_id=summary_id))
+        assert [n for n, _ in tg.calls[before:]] == ["answer_callback"]
+        assert tg.calls[-1][1]["text"] == "Tugma eskirgan"
+    assert not plaud._intents
+
+
+def test_bayonnoma_chati_sof_funksiyalar():
+    mid = "ab" * 16
+    # So'rovlar: matni, turi (Telegram javobdagi xabarni teglarsiz beradi); odamniki yoki boshqa bot xabari - emas.
+    guide = plaud_mod.guide_prompt("Reja <2026>")
+    assert guide == ("✍️ <b>Reja &lt;2026&gt;</b> bayonnomasi uchun ko'rsatma yozing.\n"
+                     "Nimaga e'tibor berish, rais va qatnashchilar, tuzilma, atamalar - matn yoki ovozli xabar bilan "
+                     "javob (Reply) qilib yozing. Keyin «📄 Bayonnoma» tugmasidan hujjat tilini tanlang.")
+    edit = plaud_mod.edit_prompt(None, "ru")
+    assert edit == (f"✏️ <b>Yozuv</b> bayonnomasida ({minutes.LANG_TITLES['ru']}) nimani o'zgartirish kerak?\n"
+                    "Yozing yoki ovozli xabar yuboring, masalan: «3-bandda muddat 1-dekabr bo'lsin», «raisni Alisher "
+                    "Karimov deb yozing». Barno faqat so'ralgan joyni o'zgartiradi va yangi Word va PDF yuboradi.")
+
+    def from_bot(text):
+        return {"from": {"is_bot": True}, "text": render.plain(text)}
+
+    kinds = [plaud_mod.prompt_kind(from_bot(t)) for t in (plaud_mod.ask_prompt("R"), guide, edit)]
+    assert kinds == ["ask", "note", "revise"]
+    assert plaud_mod.prompt_kind(from_bot(guide.replace("️", ""))) == "note"     # emoji tanlagichisiz ham
+    assert plaud_mod.prompt_kind({"from": {"is_bot": False}, "text": render.plain(edit)}) is None
+    for text in (plaud_mod.NOTE_SAVED.format(n=1), "✏️ Boshqa xabar", plaud_mod._HINT, plaud_mod.MINUTES_CAPTION):
+        assert plaud_mod.prompt_kind(from_bot(text)) is None and not plaud_mod.is_prompt(from_bot(text))
+    assert plaud_mod.is_prompt(from_bot(guide)) and plaud_mod.is_prompt(from_bot(edit))
+    # Tugmalar: 64 bayt chegarasida; `p:g` / `p:w` ham yig'ilish belgisi, `p:w` - tili bilan.
+    assert plaud_mod.minutes_done_menu(mid, "uz-cyrl") == {"inline_keyboard": [
+        [{"text": "✏️ O'zgartirish", "callback_data": f"p:w:{mid}:uz-cyrl"}],
+        [{"text": "💬 Savol berish", "callback_data": f"p:q:{mid}"}]]}
+    assert plaud_mod.note_menu(mid) == {"inline_keyboard": [
+        [{"text": "📄 Bayonnoma tayyorlash", "callback_data": f"p:d:{mid}"}],
+        [{"text": "💬 Yana savol", "callback_data": f"p:q:{mid}"},
+         {"text": "🔄 Yangi suhbat", "callback_data": f"p:n:{mid}"}]]}
+    assert max(len(f"p:w:{mid}:{lang}".encode()) for lang in minutes.LANGS) <= render.CALLBACK_MAX
+    for data in (f"p:g:{mid}", f"p:w:{mid}:uz-latn"):
+        assert plaud_mod._MARK.match(data).group(1) == mid
+    assert plaud_mod._marks({"reply_markup": plaud_mod.minutes_done_menu(mid, "en")}) == (mid, "en")
+    assert plaud_mod._marks({"reply_markup": plaud_mod.chat_menu(mid)}) == (mid, None)
+    other = "cd" * 16
+    foreign = {"inline_keyboard": [[{"callback_data": f"p:q:{mid}"}], [{"callback_data": f"p:w:{other}:en"}]]}
+    assert plaud_mod._marks({"reply_markup": foreign}) == (mid, None)
+    unknown = {"inline_keyboard": [[{"callback_data": f"p:w:{mid}:de"}]]}
+    assert plaud_mod._marks({"reply_markup": unknown}) == (mid, None)
+    assert plaud_mod._marks({"text": "x"}) is None
+    # Natija: so'rov bo'yicha tahrir, ko'rsatmalar tahriri (o'zgarishsiz ham), asl hujjat (ko'rsatmalar soni bilan).
+    empty = {"changed": [], "added": [], "removed": []}
+    changes = {"items": {"changed": [3], "added": [8], "removed": []}, "agenda": empty, "header": ["chair"],
+               "other": []}
+    revised = plaud_mod.minutes_html(_minutes_view(notes=[], kind="revise", version=2, notesApplied=1,
+                                                   request="3-bandda <muddat>\n1-dekabr", changes=changes), "uz-cyrl")
+    assert revised == (f"✅ <b>Bayonnoma tahrirlandi</b> ({minutes.LANG_TITLES['uz-cyrl']}, 2-versiya): 2 bo'lim, "
+                       "5 band.\n\nSo'rov: «3-bandda &lt;muddat&gt; 1-dekabr»"
+                       "\n\n<b>O'zgarishlar:</b> 3-band o'zgardi; 8-band qo'shildi; rais yangilandi.")
+    noted = plaud_mod.minutes_html(_minutes_view(notes=[], kind="revise", version=3, request=None,
+                                                 changes=minutes.diff.changes({}, {})), "en")
+    assert noted == (f"✅ <b>Bayonnoma yangilandi</b> ({minutes.LANG_TITLES['en']}, 3-versiya): ko'rsatmalaringiz "
+                     "qo'llandi - 2 bo'lim, 5 band.\n\n"
+                     "Ko'rsatmalar bayonnomada allaqachon aks etgan - matn o'zgarmadi.")
+    fresh = plaud_mod.minutes_html(_minutes_view(
+        notes=[], notesApplied=2, warnings=["header_dropped:attendees", "header_dropped:chair", "header_capped",
+                                            "superseded_revisions:2", "guidance_truncated:3"]), "ru")
+    assert fresh == (f"✅ <b>Bayonnoma tayyor</b> ({minutes.LANG_TITLES['ru']}): 2 bo'lim, 5 band. Ko'rsatmalaringiz "
+                     "hisobga olindi (2 ta).\n\n"
+                     "Ko'rsatmada aniq aytilmagan sarlavha qiymatlari bo'sh qoldirildi: qatnashchilar, rais.\n\n"
+                     "⚠ Matn tahrirlangani uchun bayonnoma yangidan yozildi - avvalgi 2 ta o'zgartirish kiritilmagan, "
+                     "kerak bo'lsa qayta yozing.\n\n"
+                     "⚠ Ko'rsatmalar juda ko'p - eng eskilaridan 3 tasi hisobga olinmadi.")
+    # Chat javobi ostidagi bayonnoma qatori.
+    assert plaud_mod.minutes_note(None) == "" and plaud_mod.minutes_note({"action": "create", "id": "x"}) == ""
+    assert plaud_mod.minutes_note({"action": "note", "notes": 3}) == (
+        "\n\n📝 Ko'rsatma eslab qolindi (jami 3 ta) - bayonnoma tayyorlashda hisobga olinadi.")
+    assert plaud_mod.minutes_note({"action": "revise", "id": None,
+                                   "error": {"code": "minutes_busy", "message": "Band <1>"}}) == "\n\n⚠ Band &lt;1&gt;"
+    # Matnlar: yordam, Plaud tavsifi va yangi suhbat - bayonnoma haqida ham.
+    assert plaud_mod._HINT.endswith(" Bayonnoma uchun ko'rsatmani ham shunday yozsa bo'ladi.")
+    assert plaud_mod.PROMPT.endswith("\n\nBayonnoma uchun ko'rsatma bermoqchi yoki tayyor bayonnomani o'zgartirmoqchi "
+                                     "bo'lsangiz - «📄 Bayonnoma» menyusidagi «✍️ Ko'rsatma berish»ni bosing yoki "
+                                     "bayonnomaga javob (Reply) qilib yozing: Barno tushunib, yangi versiyasini "
+                                     "yuboradi.")
+    assert render._balanced(plaud_mod.PROMPT)

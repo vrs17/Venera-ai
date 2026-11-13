@@ -181,8 +181,34 @@ _V7: tuple[str, ...] = (
     "ALTER TABLE meetings ADD COLUMN transcript_gen INTEGER NOT NULL DEFAULT 0",
 )
 
+#: v8 (2026-11-12): BAYONNOMA CHATDA (ega so'rovi) - yozishdan oldingi ko'rsatma va tayyor hujjatni chatda
+#: tahrirlash. Chat navbati: turi (`kind`: NULL - savol-javob, `note` - ko'rsatma, `create` - hujjat so'rovi,
+#: `revise` - o'zgartirish so'rovi), amal (`minutes_json`: {"action","language","instruction","error"?}) va shu navbat
+#: boshlagan hujjat (`minutes_id`, FK yo'q - `summary_item_id` kabi, kaskad yig'ilishdan). Hujjat qatori: versiya
+#: zanjiri (`parent_id`; `revision` 0 - asl, tahrir = ota + 1), so'rovchi (`asker`, `questions.asker` bilan bir xil),
+#: qaysi navbatdan (`turn_id` - bitta navbat, bitta ish), o'zgartirish so'rovi (`request_json`: {"text","instruction"}),
+#: yozishda berilgan ko'rsatmalar (`guidance_json`: {"notes":[{"id","text"}],"dropped":n}), transkript avlodi
+#: (`transcript_gen`) va ota-versiyaga nisbatan o'zgarishlar (`changes_json`). Joriy matn bo'yicha yozilgan eski
+#: qatorlarning avlodi to'ldiriladi (boshqalari NULL - tahrir asosi emas).
+_V8: tuple[str, ...] = (
+    "ALTER TABLE questions ADD COLUMN kind TEXT",
+    "ALTER TABLE questions ADD COLUMN minutes_json TEXT",
+    "ALTER TABLE questions ADD COLUMN minutes_id TEXT",
+    "ALTER TABLE minutes ADD COLUMN parent_id TEXT",
+    "ALTER TABLE minutes ADD COLUMN revision INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE minutes ADD COLUMN asker TEXT",
+    "ALTER TABLE minutes ADD COLUMN turn_id TEXT",
+    "ALTER TABLE minutes ADD COLUMN request_json TEXT",
+    "ALTER TABLE minutes ADD COLUMN guidance_json TEXT",
+    "ALTER TABLE minutes ADD COLUMN transcript_gen INTEGER",
+    "ALTER TABLE minutes ADD COLUMN changes_json TEXT",
+    "UPDATE minutes SET transcript_gen = (SELECT m.transcript_gen FROM meetings m WHERE m.id = minutes.meeting_id) "
+    "WHERE transcript_rev = (SELECT m.transcript_rev FROM meetings m WHERE m.id = minutes.meeting_id)",
+    "CREATE UNIQUE INDEX minutes_turn ON minutes(turn_id) WHERE turn_id IS NOT NULL",
+)
+
 #: `MIGRATIONS[i]` fayl `user_version = i` dan `i + 1` ga o'tkazadi. FAQAT OXIRIGA.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4, _V5, _V6, _V7)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4, _V5, _V6, _V7, _V8)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 #: Yozuv manbasi (Plaud filtri; mobil `MeetingOrigin`). `recording` - telefonda yozilgan, `upload` - telefondan
@@ -589,6 +615,10 @@ class MeetingStore:
         sets = ", ".join(f"{name}=?" for name in fields)
         self.execute(f"UPDATE minutes SET {sets} WHERE id=?", list(fields.values()) + [minutes_id])
 
+    def minutes_by_turn(self, turn_id: str) -> dict[str, Any] | None:
+        """Shu chat navbati boshlagan hujjat qatori (`turn_id` - noyob indeks: bitta navbat, bitta ish) yoki `None`."""
+        return self.row("SELECT * FROM minutes WHERE turn_id=?", (str(turn_id),))
+
     # --- vazifalar ----------------------------------------------------------------
 
     def action_items(self, meeting_id: str) -> list[dict[str, Any]]:
@@ -667,6 +697,30 @@ class MeetingStore:
         cols = ", ".join(fields)
         marks = ", ".join("?" for _ in fields)
         self.execute(f"INSERT INTO questions ({cols}) VALUES ({marks})", tuple(fields.values()))
+
+    def turn(self, meeting_id: str, turn_id: str) -> dict[str, Any] | None:
+        """Shu yig'ilishning bitta chat navbati (arxivdagisi ham) yoki `None`."""
+        return self.row("SELECT * FROM questions WHERE id=? AND meeting_id=?", (str(turn_id), str(meeting_id)))
+
+    def update_turn(self, turn_id: str, **fields: Any) -> None:
+        """Navbat maydonlarini yangilaydi (masalan `minutes_id`, `minutes_json`, `answer`)."""
+        sets = ", ".join(f"{name}=?" for name in fields)
+        self.execute(f"UPDATE questions SET {sets} WHERE id=?", list(fields.values()) + [str(turn_id)])
+
+    def notes(self, meeting_id: str, *, asker: str | None = None) -> list[dict[str, Any]]:
+        """Shu so'rovchining (`None` - hisob egasi) FAOL bayonnoma ko'rsatmalari, ESKISI birinchi ->
+        [{"id", "text", "created_at"}]. Ko'rsatma - `kind='note'` navbati yoki ko'rsatma ham bergan hujjat so'rovi
+        (`kind='create'` va `minutes_json.instruction` bor). Matn - doim odamning O'Z so'zlari (`question`), modelning
+        talqini (`instruction`) emas: egasining ism va raqamlari aynan u yozgandek boradi."""
+        out: list[dict[str, Any]] = []
+        for row in self.chat_turns(meeting_id, asker=asker):
+            kind = row.get("kind")
+            action = jload(row.get("minutes_json"))
+            directed = kind == "create" and isinstance(action, dict) and bool(action.get("instruction"))
+            if kind == "note" or directed:
+                out.append({"id": row["id"], "text": str(row.get("question") or ""),
+                            "created_at": row.get("created_at")})
+        return out
 
     #: Shu so'rovchining shu klient kalitli FAOL navbati - (yig'ilish, kalit, so'rovchi); `turn_by_client` va
     #: `add_turn` dagi takror tekshiruvi AYNAN bitta shart bilan.

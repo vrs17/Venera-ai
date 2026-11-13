@@ -16,7 +16,7 @@ import * as PathsMod from '@/lib/paths';
 import { useSettings } from '@/features/settings/settingsStore';
 
 import { fakeMeetingsApi, fakeServices, Providers } from './fixtures/fakeServices';
-import { meeting, summary, summaryCard, transcript } from './fixtures/server';
+import { meeting, minutesView, summary, summaryCard, transcript } from './fixtures/server';
 
 const ID = 'a'.repeat(32);
 
@@ -359,6 +359,43 @@ describe('Meeting detail', () => {
     } finally {
       alert.mockRestore();
     }
+  });
+
+  it('Bayonnoma sheet -> «Chatda ko\'rsatma berish»: the sheet closes, the Chat tab opens with the direction chip; the next message goes as a direction', async () => {
+    const api = fakeMeetingsApi({ minutesList: jest.fn(async () => ({ items: [], notes: 1 })) });
+    await open(api, { withHeader: true });
+    await waitFor(() => expect(screen.getByTestId('meeting-menu')).toBeTruthy());
+    await fireEvent.press(screen.getByTestId('meeting-menu'));
+    await fireEvent.press(screen.getByTestId('menu-minutes'));
+    expect(await screen.findByTestId('minutes-guide-count')).toHaveTextContent("Chatdagi ko'rsatmalar: 1 ta - tayyorlashda hisobga olinadi");
+    await fireEvent.press(screen.getByTestId('minutes-guide'));
+    await waitFor(() => expect(screen.queryByTestId('minutes-sheet')).toBeNull());
+    expect(screen.getByTestId('tab-chat').props.accessibilityState).toMatchObject({ selected: true });
+    expect(await screen.findByTestId('chat-mode')).toHaveTextContent("Bayonnoma uchun ko'rsatma");
+    await fireEvent.changeText(screen.getByTestId('chat-input'), 'Rais - A.Karimov, kredit qismiga e\'tibor bering');
+    await fireEvent.press(screen.getByTestId('chat-send'));
+    await waitFor(() =>
+      expect(api.sendChat).toHaveBeenCalledWith(ID, expect.objectContaining({ message: "Rais - A.Karimov, kredit qismiga e'tibor bering", channel: 'mobile', intent: 'note' })),
+    );
+    await waitFor(() => expect(screen.queryByTestId('chat-mode')).toBeNull());
+    expect(await screen.findByTestId(`mchat-minutes-${'t1'.padEnd(32, '0')}`)).toHaveTextContent(/Bayonnoma uchun ko'rsatma eslab qolindi/);
+  });
+
+  it('a ready bayonnoma -> «O\'zgartirish so\'rash»: the Chat tab opens with the edit chip for that document language', async () => {
+    const api = fakeMeetingsApi({ minutesList: jest.fn(async () => ({ items: [minutesView()], notes: 0 })) });
+    await open(api, { withHeader: true });
+    await waitFor(() => expect(screen.getByTestId('meeting-menu')).toBeTruthy());
+    await fireEvent.press(screen.getByTestId('meeting-menu'));
+    await fireEvent.press(screen.getByTestId('menu-minutes'));
+    await fireEvent.press(await screen.findByTestId('minutes-edit'));
+    await waitFor(() => expect(screen.queryByTestId('minutes-sheet')).toBeNull());
+    expect(screen.getByTestId('tab-chat').props.accessibilityState).toMatchObject({ selected: true });
+    expect(await screen.findByTestId('chat-mode')).toHaveTextContent("Bayonnomani o'zgartirish (O'zbekcha (kirill))");
+    // Menyudan qayta ochilsa - yana yig'ilish tilidan (kirill).
+    await fireEvent.press(screen.getByTestId('meeting-menu'));
+    await fireEvent.press(screen.getByTestId('menu-minutes'));
+    expect(await screen.findByTestId('minutes-sheet')).toBeTruthy();
+    expect(screen.getByTestId('minutes-lang-uz-cyrl')).toBeChecked();
   });
 
   it('a Russian meeting can be re-transcribed in Uzbek; cancelling the confirmation changes nothing', async () => {

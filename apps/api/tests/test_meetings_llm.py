@@ -380,6 +380,12 @@ def test_sxema_prompt_shakli_bilan_bir_xil():
     assert "followUpMessage" in shapes.for_op("meeting_extract", prompts.extract_system("follow_up"))["properties"]
     assert "followUpMessage" not in shapes.for_op("meeting_extract", prompts.extract_system("general"))["properties"]
     assert shapes.for_op("meeting_ask") == shapes.ask() and shapes.for_op("group") is None
+    # Yig'ilish chati (Claude) - savol-javob + bayonnoma amali, amal BIRINCHI; bayonnoma tahriri - bayonnoma shakli.
+    assert shapes.for_op("meeting_chat") == shapes.chat() and list(shapes.chat()["properties"]) == [
+        "minutes", "answer", "citations", "followUps"]
+    assert shapes.chat()["properties"]["minutes"] == shapes.obj({"action": shapes.STR, "language": shapes.NSTR,
+                                                                 "instruction": shapes.NSTR})
+    assert shapes.for_op("meeting_minutes_revise") == shapes.minutes() == shapes.for_op("meeting_minutes")
 
     def strict_ok(node) -> None:
         if isinstance(node, dict):
@@ -391,7 +397,8 @@ def test_sxema_prompt_shakli_bilan_bir_xil():
             for value in node:
                 strict_ok(value)
 
-    for build in (shapes.extract, shapes.map_part, shapes.writer, shapes.verify, shapes.classify, shapes.ask):
+    for build in (shapes.extract, shapes.map_part, shapes.writer, shapes.verify, shapes.classify, shapes.ask,
+                  shapes.chat, shapes.minutes):
         strict_ok(build())
 
 
@@ -1303,6 +1310,8 @@ def test_claude_zanjir_nomlari_va_provayderlar(_isolated_meetings, chain, claude
 
 
 def test_claude_savol_javob(client, auth, monkeypatch, chain, _isolated_meetings, claude_fake):
+    """Eski `/ask` ham chat navbati: Claude'da ko'p navbatli chat (`meeting_chat`, `shapes.chat` - amal maydoni
+    bilan), lekin bayonnoma amali yo'q (`actions=False`)."""
     rt = _isolated_meetings
     row = _ready(client, auth, monkeypatch, rt)                       # xulosa - Ollama (default zanjir)
     chain("ollama", ask="claude,ollama")
@@ -1310,8 +1319,21 @@ def test_claude_savol_javob(client, auth, monkeypatch, chain, _isolated_meetings
     response = client.post(f"/api/v1/meetings/{row['id']}/ask", headers=auth, json={"question": "Kim yuboradi?"})
     assert response.status_code == 200, response.text
     assert response.json()["answer"] == "[S1] hisobotni ertaga yuboradi." and rt.llm.calls == []
-    assert claude_fake.ops() == ["meeting_ask"]
-    assert claude_fake.requests[0]["output_config"]["format"]["schema"] == shapes.ask()
+    assert claude_fake.ops() == ["meeting_chat"]
+    assert claude_fake.requests[0]["output_config"]["format"]["schema"] == shapes.chat()
+
+
+def test_claude_bayonnoma_tahriri_sxemasi_va_effort(claude_fake):
+    """Bayonnoma tahriri (`meeting_minutes_revise`) - bayonnoma sxemasi bilan, `options.effort` (dvigatel tahrir
+    effort'ini beradi: `MEETINGS_MINUTES_REVISE_EFFORT`, bo'sh - `MEETINGS_MINUTES_EFFORT`)."""
+    chat = llm.ClaudeChat(lambda: CLAUDE_KEY, "claude-sonnet-5-5", timeout=10, effort="medium",
+                          client_factory=claude_fake)
+    claude_fake.script = ['{"title": "ok"}']
+    text, _ = chat.complete_meta("REVISION RULES ...", "u", op="meeting_minutes_revise", format="json",
+                                 options={"effort": "max"})
+    request = claude_fake.requests[0]
+    assert json.loads(text) == {"title": "ok"} and claude_fake.ops() == ["meeting_minutes_revise"]
+    assert request["output_config"] == {"effort": "max", "format": {"type": "json_schema", "schema": shapes.minutes()}}
 
 
 def test_claude_workspace_sarlavhasi(_isolated_meetings):

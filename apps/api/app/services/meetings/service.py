@@ -23,7 +23,7 @@ import uuid
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from ...core.config import settings
 from ...schemas.auth import AuthUser
@@ -92,14 +92,29 @@ _limiters: dict[tuple[str, int], RateLimiter] = {}
 _limiters_lock = threading.Lock()
 
 
-def _rate(name: str, actor_id: int, limit: int, window: float = 3600.0) -> None:
-    """Soatlik chegara: oshsa 429 `rate_limited` + `Retry-After`."""
+def _rate_key(actor_id: int, scope: str | None) -> Any:
+    """Chegara kaliti: hisob (`actor_id`) yoki hisob ichidagi so'rovchi (`scope`, masalan `slack:<id>` - umumiy
+    hisobda har odamga alohida chegara)."""
+    return (int(actor_id), scope) if scope is not None else int(actor_id)
+
+
+def _rate(name: str, actor_id: int, limit: int, window: float = 3600.0, *, scope: str | None = None) -> None:
+    """Soatlik chegara: oshsa 429 `rate_limited` + `Retry-After`. `scope` - hisob ichida kim (`_rate_key`)."""
     with _limiters_lock:
         limiter = _limiters.setdefault((name, int(limit)), RateLimiter(limit=max(1, int(limit)), window=window))
-    wait = limiter.take(int(actor_id))
+    wait = limiter.take(_rate_key(actor_id, scope))
     if wait is not None:
         raise MeetingProblem(429, "rate_limited", "So'rovlar ko'p - birozdan keyin qayta urinib ko'ring",
                              headers={"Retry-After": str(wait)})
+
+
+def _refund(name: str, actor_id: int, limit: int, *, scope: str | None = None) -> None:
+    """`_rate` olgan joyni qaytaradi - ish bajarilmay qoldi (masalan bayonnoma tahririning asosi navbatda turganda
+    yo'qoldi). Chegara hali yaratilmagan bo'lsa - hech narsa."""
+    with _limiters_lock:
+        limiter = _limiters.get((name, int(limit)))
+    if limiter is not None:
+        limiter.give_back(_rate_key(actor_id, scope))
 
 
 def reset_limits() -> None:
@@ -557,9 +572,11 @@ def retranscribe(user: AuthUser, meeting_id: str, body: Any, now: float | None =
                      "AND crm_token IS NULL", (m["id"],))
         conn.execute("UPDATE action_items SET source_ids='[]' WHERE meeting_id=?", (m["id"],))
         # Chat: eski matn bo'yicha javoblar (manba id lari yangi matnda boshqa qatorni ko'rsatadi) xotiraga ham,
-        # ro'yxatga ham bormasin - HAMMA so'rovchining faol navbatlari arxivga (yumshoq, qatorlar qoladi).
-        conn.execute("UPDATE questions SET archived_at=? WHERE meeting_id=? AND archived_at IS NULL",
-                     (int(now), m["id"]))
+        # ro'yxatga ham bormasin - HAMMA so'rovchining faol navbatlari arxivga (yumshoq, qatorlar qoladi). Bayonnoma
+        # ko'rsatmalari matn qatorlariga tayanmaydi - QOLADI va yangi matn bo'yicha hujjatga ham beriladi. Ko'rsatma -
+        # `store.notes` dagi ta'rif: `kind='note'` yoki talqinli `create` ("tayyorla, rais - Karimov").
+        conn.execute("UPDATE questions SET archived_at=? WHERE meeting_id=? AND archived_at IS NULL "
+                     f"AND NOT ({NOTE_TURN_SQL})", (int(now), m["id"]))
         conn.execute("DELETE FROM segments WHERE meeting_id=?", (m["id"],))
         conn.execute("DELETE FROM speakers WHERE meeting_id=?", (m["id"],))
         conn.execute(
@@ -1265,21 +1282,67 @@ def _question_view(q: dict[str, Any], by_id: dict[int, dict[str, Any]]) -> dict[
             "clientId": q.get("client_id")}
 
 
-def _turn_view(q: dict[str, Any], by_id: dict[int, dict[str, Any]]) -> dict[str, Any]:
+def _turn_view(q: dict[str, Any], by_id: dict[int, dict[str, Any]], *, store: Any = None,
+               docs: Mapping[str, dict[str, Any]] | None = None,
+               notes: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Any]:
     """Chat navbati: savol-javob ko'rinishi (klient kaliti bilan) + qaysi kanaldan kelgani va qaysi model javob
-    bergani (eski qatorda `None`). Eski `/ask` va `/questions` javob modeli (`AskAnswer`) ortiqcha maydonlarni
-    ko'rsatmaydi."""
-    return {**_question_view(q, by_id), "channel": q.get("channel"), "model": q.get("model")}
+    bergani (eski qatorda `None`), navbat turi (`kind`: chat | note | create | revise; eski qator - chat) va
+    bayonnoma amali (`minutes` - `_minutes_ref`, jonli holat bilan; oddiy navbatda `None`). Eski `/ask` va
+    `/questions` javob modeli (`AskAnswer`) ortiqcha maydonlarni ko'rsatmaydi."""
+    return {**_question_view(q, by_id), "channel": q.get("channel"), "model": q.get("model"),
+            "kind": q.get("kind") or "chat",
+            "minutes": _minutes_ref(store or runtime().store, q, docs=docs, notes=notes)}
+
+
+def _minutes_ref(store: Any, q: Mapping[str, Any], *, docs: Mapping[str, dict[str, Any]] | None = None,
+                 notes: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Any] | None:
+    """Bayonnoma amali navbatining hujjat ma'lumoti -> {action, language, id, status, version, notes, error}; amalsiz
+    navbat - `None`. `id` - shu navbat boshlagan (yoki qayta yuborilgan tayyor) hujjat qatori: holat, versiya va til
+    o'sha qatordan, JONLI (eskirgan `running` - `interrupted`, `minutes._settle`). `error` - qator yiqilgan bo'lsa uning
+    sababi (`minutes.failure_detail`), aks holda ish boshlanmaganining sababi (`minutes_json.error`; `id` yo'q).
+    `notes` - faqat ko'rsatma navbatida: so'rovchining faol ko'rsatmalari soni. `docs` (qatorlar, id bo'yicha) va
+    `notes` - ro'yxat uchun oldindan o'qilgani (`chat_history`); berilmasa - ombordan."""
+    kind = q.get("kind")
+    if not kind:
+        return None
+    from . import minutes as minutes_mod
+
+    data = jload(q.get("minutes_json"))
+    data = data if isinstance(data, dict) else {}
+    error = data.get("error") if isinstance(data.get("error"), dict) else None
+    ref: dict[str, Any] = {
+        "action": kind, "language": minutes_mod.normalize(data.get("language")), "id": q.get("minutes_id") or None,
+        "status": None, "version": None, "notes": None,
+        "error": {"code": str(error.get("code") or "internal"), "message": str(error.get("message") or "")}
+        if error else None}
+    row = None
+    if ref["id"]:
+        row = docs.get(ref["id"]) if docs is not None else store.minutes_row(q["meeting_id"], ref["id"])
+    if row is not None:
+        row = minutes_mod._settle(store, row, time.time())
+        ref.update(language=row["language"], status=row["status"], version=int(row.get("revision") or 0) + 1)
+        if row["status"] == "failed":
+            code = row.get("error_code") or "llm_failed"
+            ref["error"] = {"code": code, "message": minutes_mod.failure_detail(
+                {"error": {"code": code}, "kind": minutes_mod._kind(row)})}
+    if kind == "note":
+        ref["notes"] = len(notes if notes is not None else store.notes(q["meeting_id"], asker=q.get("asker")))
+    return ref
 
 
 def chat_history(user: AuthUser, meeting_id: str) -> dict[str, Any]:
     """Yig'ilish chati: hisob EGASINING faol navbatlari (ESKISI birinchi; boshqa so'rovchilarniki - Slack -
-    ko'rinmaydi) va hozir javob beradigan model nomi (`""` - sozlanmagan). Transkript shart emas (tayyor
+    ko'rinmaydi) va hozir javob beradigan model nomi (`""` - sozlanmagan). Bayonnoma amali navbatlarida hujjatning
+    JONLI holati (`_minutes_ref`; qatorlar va ko'rsatmalar bir marta o'qiladi). Transkript shart emas (tayyor
     bo'lmasa ro'yxat shunchaki bo'sh)."""
     rt = runtime()
+    store = rt.store
     m = _owned(user.actorId, meeting_id)
-    by_id = {int(s["id"]): s for s in rt.store.segments(m["id"])}
-    return {"items": [_turn_view(q, by_id) for q in rt.store.chat_turns(m["id"])], "model": _chat_model(rt, m)}
+    by_id = {int(s["id"]): s for s in store.segments(m["id"])}
+    docs = {r["id"]: r for r in store.minutes_rows(m["id"])}
+    notes = store.notes(m["id"], asker=None)
+    return {"items": [_turn_view(q, by_id, store=store, docs=docs, notes=notes) for q in store.chat_turns(m["id"])],
+            "model": _chat_model(rt, m)}
 
 
 def _chat_model(rt: Any, m: dict[str, Any]) -> str:
@@ -1296,8 +1359,20 @@ def _chat_model(rt: Any, m: dict[str, Any]) -> str:
     return next((p.model for p in providers if p.configured), "")
 
 
+#: Chat xabarining ANIQ bayonnoma niyati (`ChatRequest.intent`, Slack bayonnoma menyusi threadi, Telegram ✍️ / ✏️,
+#: ilova rejim chipi): `note` - ko'rsatma, `revise` - tayyor hujjatdagi o'zgartirish. Chat modeli chaqirilmaydi.
+CHAT_INTENTS: tuple[str, ...] = ("note", "revise")
+#: Bot kanallari (`questions.channel`): interfeysi o'zbekcha - chatdagi tayyor javoblar ham o'zbekcha (`_chat_answer`).
+BOT_CHANNELS = ("slack", "telegram")
+#: Bayonnoma ko'rsatmasi bo'lgan chat navbati (SQL; `store.notes` bilan bir xil ta'rif): `kind='note'` yoki talqini
+#: (`minutes_json.instruction`) bo'sh bo'lmagan `create`. `CASE` - buzuq JSON so'rovni yiqitmasin.
+NOTE_TURN_SQL = ("COALESCE(kind, '') = 'note' OR (COALESCE(kind, '') = 'create' AND NULLIF(CASE WHEN "
+                 "json_valid(minutes_json) THEN json_extract(minutes_json, '$.instruction') END, '') IS NOT NULL)")
+
+
 def chat_send(user: AuthUser, meeting_id: str, message: str, language: str | None, *,
-              channel: str = "api", asker: str | None = None, client_id: str | None = None) -> dict[str, Any]:
+              channel: str = "api", asker: str | None = None, client_id: str | None = None,
+              intent: str | None = None, minutes_lang: str | None = None, actions: bool = True) -> dict[str, Any]:
     """Yig'ilish chatiga xabar -> javob navbati (`_turn_view`). Javob shu yig'ilishning transkripti, asosiy
     xulosasi va suhbat xotirasi (`chat.memory`) bilan - hisob egasining mobil ilova, web va Telegram'dagi
     savollari bitta suhbat. `asker` - UMUMIY hisobda kim so'rayapti (Slack: `slack:<user id>`; ochiq matn,
@@ -1310,17 +1385,27 @@ def chat_send(user: AuthUser, meeting_id: str, message: str, language: str | Non
     chegara va modeldan OLDIN: (yig'ilish, so'rovchi, kalit) bo'yicha FAOL navbat bor - o'sha qaytadi; shu kalitli
     xabar shu jarayonda hali javob kutyapti - birinchisi kutiladi (`MEETINGS_ASK_DEADLINE` + `chat.WAIT_EXTRA_SEC`
     gacha) va yana qaraladi; hech narsa saqlanmagan bo'lsa (birinchisi yiqildi) - oddiy urinish. Xatolar `/ask`
-    dagidek: 404, 409 `not_ready`, 429 `rate_limited` (savol bilan UMUMIY soatlik chegara), 503 `llm_unavailable`."""
+    dagidek: 404, 409 `not_ready`, 429 `rate_limited` (savol bilan UMUMIY soatlik chegara), 503 `llm_unavailable`.
+
+    BAYONNOMA (2026-11-12, ega so'rovi): xabar shu yozuv bayonnomasi uchun ko'rsatma yoki tayyor hujjatdagi
+    o'zgartirish ham bo'lishi mumkin - suhbat baribir bitta. `intent` - ANIQ kirish nuqtasi (`CHAT_INTENTS`;
+    boshqa qiymat - `None`): chat modeli ham, "ask" chegarasi ham yo'q (429 / 503 faqat oddiy navbatda). Aks holda
+    amalni chat modeli tanlaydi (`chat.minutes_action`). `minutes_lang` - odam qaysi til hujjatiga qarab yozyapti
+    (`minutes.normalize`; noto'g'ri - `None`). `actions=False` - eski `/ask`: amal ham, bayonnoma bloklari ham yo'q.
+    Bayonnoma ishi faqat YANGI va FAOL navbatdan boshlanadi (`turn_id` - bitta navbat, bitta ish); boshlanmasa
+    ham navbat saqlanadi (200), sababi `minutes.error` da."""
     rt = runtime()
     asker = chat_mod.asker_of(asker)
     client_id = chat_mod.client_id_of(client_id)
+    wanted = {"intent": _chat_intent(intent), "minutes_lang": _minutes_lang(minutes_lang), "actions": bool(actions)}
     until = time.monotonic() + float(settings.meetings_ask_deadline) + chat_mod.WAIT_EXTRA_SEC
     while True:
         # Har aylanishda qaytadan: kutish paytida yozuv o'chirilgan yoki qayta o'girilgan bo'lishi mumkin.
         m = _owned(user.actorId, meeting_id)
         _require_transcript(m)
         if client_id is None:
-            return _chat_answer(rt, user, m, message, language, channel=channel, asker=asker, client_id=None)
+            return _chat_answer(rt, user, m, message, language, channel=channel, asker=asker, client_id=None,
+                                **wanted)
         done = _client_turn(rt, m, client_id, asker)
         if done is not None:
             return done
@@ -1330,30 +1415,99 @@ def chat_send(user: AuthUser, meeting_id: str, message: str, language: str | Non
             try:
                 # Oldingi urinish tekshiruv bilan egallash orasida saqlab, kalitni bo'shatgan bo'lishi mumkin.
                 return _client_turn(rt, m, client_id, asker) or _chat_answer(
-                    rt, user, m, message, language, channel=channel, asker=asker, client_id=client_id)
+                    rt, user, m, message, language, channel=channel, asker=asker, client_id=client_id, **wanted)
             finally:
                 chat_mod.release(key, event)
         left = until - time.monotonic()
         if left <= 0:
             # Birinchi urinish o'z muddatidan ham oshdi: oddiy urinish (saqlashda baribir takror yozilmaydi).
-            return _chat_answer(rt, user, m, message, language, channel=channel, asker=asker, client_id=client_id)
+            return _chat_answer(rt, user, m, message, language, channel=channel, asker=asker, client_id=client_id,
+                                **wanted)
         log.info("Yig'ilish %s: shu klient kalitli xabar hali javob kutmoqda - birinchisi kutiladi", m["id"])
         event.wait(left)
 
 
+def _chat_intent(value: Any) -> str | None:
+    """Aniq bayonnoma niyati (`CHAT_INTENTS`); bo'sh yoki noma'lum - `None` (amalni chat modeli tanlaydi)."""
+    name = str(value or "").strip().lower()
+    return name if name in CHAT_INTENTS else None
+
+
+def _minutes_lang(value: Any) -> str | None:
+    """Odam qarab turgan hujjat tili -> kanonik kod (`minutes.normalize`); bo'sh yoki noto'g'ri - `None`."""
+    if not value:
+        return None
+    from . import minutes as minutes_mod
+
+    return minutes_mod.normalize(value)
+
+
 def _client_turn(rt: Any, m: dict[str, Any], client_id: str, asker: str | None) -> dict[str, Any] | None:
     """Shu so'rovchining shu klient kalitli FAOL navbati (`_turn_view`) yoki `None`: xabar qayta yuborilgan, javob
-    allaqachon saqlangan - modelga ham, soatlik chegaraga ham bormaymiz."""
+    allaqachon saqlangan - modelga ham, soatlik chegaraga ham, bayonnoma ishiga ham bormaymiz."""
     stored = rt.store.turn_by_client(m["id"], client_id, asker=asker)
     if stored is None:
         return None
     log.info("Yig'ilish %s: takroriy chat xabari (o'sha klient kaliti) - saqlangan navbat qaytdi", m["id"])
-    return _turn_view(stored, {int(s["id"]): s for s in rt.store.segments(m["id"])})
+    return _turn_view(stored, {int(s["id"]): s for s in rt.store.segments(m["id"])}, store=rt.store)
 
 
 def _chat_answer(rt: Any, user: AuthUser, m: dict[str, Any], message: str, language: str | None, *,
-                 channel: str, asker: str | None, client_id: str | None) -> dict[str, Any]:
-    """`chat_send` ning bitta urinishi: soatlik chegara, kontekst va xotira, model zanjiri, saqlash."""
+                 channel: str, asker: str | None, client_id: str | None, intent: str | None = None,
+                 minutes_lang: str | None = None, actions: bool = True) -> dict[str, Any]:
+    """`chat_send` ning bitta urinishi: aniq niyat (`_explicit_answer`, modelsiz) yoki model javobi
+    (`_model_answer`: soatlik chegara, kontekst va xotira, bayonnoma bloklari, model zanjiri, model tanlagan amal);
+    navbat saqlanadi va kerak bo'lsa bayonnoma ishi boshlanadi (`_start_minutes`)."""
+    store = rt.store
+    language = language or m.get("language") or "uz"
+    # Tayyor javoblar (`CANNED`) kanal interfeysi tilida: botlar (Slack, Telegram) o'zbekcha va o'z qatorlarini ham
+    # ("📝 ... eslab qolindi", "⏳ ...") o'zbekcha qo'shadi - rus yig'ilishida bitta xabarda ikki til aralashmasin.
+    # Ilova o'z interfeysi tilini (`language`) yuboradi.
+    bot = chat_mod.channel_of(channel) in BOT_CHANNELS
+    canned = "uz" if bot or language not in chat_mod.CANNED_LANGS else language
+    row = {"id": new_id(), "meeting_id": m["id"], "question": message.strip()[:prompts.CHAT_QUESTION_CHARS],
+           "channel": chat_mod.channel_of(channel), "asker": asker, "client_id": client_id, "language": language}
+    if actions and intent in CHAT_INTENTS:
+        q, by_id, action, job = _explicit_answer(store, m, row, intent, minutes_lang, canned)
+    else:
+        q, by_id, action, job = _model_answer(rt, user, m, message, row, minutes_lang=minutes_lang,
+                                              actions=actions, canned=canned)
+    if job and q["id"] == row["id"] and q["archived_at"] is None:
+        # Faqat YANGI va FAOL navbat ish boshlaydi: takror (klient kaliti) yoki arxivda tug'ilgan navbat ("Yangi
+        # suhbat", qayta o'girish javob kutilayotganda) - pullik ish yo'q.
+        _start_minutes(store, user, m, row["id"], job, action, row["question"], asker=asker, canned=canned)
+    return _turn_view(store.turn(m["id"], q["id"]) or q, by_id, store=store)
+
+
+def _explicit_answer(store: Any, m: dict[str, Any], row: dict[str, Any], intent: str, minutes_lang: str | None,
+                     canned: str) -> tuple[dict[str, Any], dict[int, Any], dict[str, Any], tuple[str, str] | None]:
+    """ANIQ kirish nuqtasi: chat modeli ham, "ask" chegarasi ham yo'q. Ko'rsatma - darhol saqlanadi, bepul (hujjat
+    bor bo'lsa javob uni qo'llash yo'lini aytadi); o'zgartirish - tahrir ishi yoki, bu tilda hujjat umuman yo'q
+    bo'lsa, ko'rsatma (`_revise_or_note`). -> (navbat, segmentlar id bo'yicha, amal, ish)."""
+    from . import minutes as minutes_mod
+
+    current = minutes_mod.current_lang(store, m)
+    if intent == "note":
+        kind, job = "note", None
+        action = {"action": "note", "language": minutes_lang, "instruction": None}
+        answer = chat_mod.CANNED["note_has_doc" if current else "note"][canned]
+    else:
+        lang = minutes_lang or current or minutes_mod.default_lang(m.get("language"))
+        kind, action, answer, job = _revise_or_note(store, m, lang, instruction=None,
+                                                    model_answer=chat_mod.CANNED["revise"][canned], canned=canned)
+    q = _save_turn(store, {**row, "answer": answer, "citations": "[]", "follow_ups": "[]", "model": None,
+                           "kind": kind, "minutes_json": jdump(action), "created_at": int(time.time())},
+                   used=(), gen=int(m.get("transcript_gen") or 0))
+    log.info("Yig'ilish %s: chatda bayonnoma navbati (%s, aniq kirish - modelsiz)", m["id"], kind)
+    return q, {int(s["id"]): s for s in store.segments(m["id"])}, action, job
+
+
+def _model_answer(rt: Any, user: AuthUser, m: dict[str, Any], message: str, row: dict[str, Any], *,
+                  minutes_lang: str | None, actions: bool,
+                  canned: str) -> tuple[dict[str, Any], dict[int, Any], dict[str, Any] | None, tuple[str, str] | None]:
+    """Model javobi: soatlik chegara, kontekst va xotira, bayonnoma bloklari (`actions`), model zanjiri; model tanlagan
+    amal (`_action_turn`) navbatga yoziladi (oddiy navbat - avvalgi maydonlar, `kind` siz). -> (navbat, segmentlar id
+    bo'yicha, amal, ish)."""
     store = rt.store
     _rate("ask", user.actorId, settings.meetings_ask_per_hour)
     segments = [{"id": int(s["id"]), "start": float(s["start"]), "end": float(s["end"]), "speaker": s["speaker"],
@@ -1365,11 +1519,10 @@ def _chat_answer(rt: Any, user: AuthUser, m: dict[str, Any], message: str, langu
     meta = prompts.meta_line(day.date(), dates.WEEKDAYS["en"][day.weekday()], float(m.get("duration_sec") or 0),
                              [{"id": sp["id"], "name": sp.get("name")} for sp in speakers],
                              bool(m.get("speakers_available")), call=m.get("source") == "call")
-    language = language or m.get("language") or "uz"
-    channel = chat_mod.channel_of(channel)
     keep = int(settings.meetings_chat_history_turns or 0)
-    loaded = store.chat_turns(m["id"], limit=keep, asker=asker) if keep > 0 else []
+    loaded = store.chat_turns(m["id"], limit=keep, asker=row["asker"]) if keep > 0 else []
     history = chat_mod.memory(loaded)
+    blocks = _minutes_blocks(store, m, row["asker"], minutes_lang) if actions else None
     from .. import brain as _brain
     from ..analytics import bind
 
@@ -1380,36 +1533,139 @@ def _chat_answer(rt: Any, user: AuthUser, m: dict[str, Any], message: str, langu
             # Telefon qo'ng'irog'i - yangi agent yo'li (bo'g'in va shadow) yo'q (`brain.meeting_agent_ok`).
             result, used = ask_mod.answer_chain(
                 providers, deadline=settings.meetings_ask_deadline, agent_ok=_brain.meeting_agent_ok(m),
-                question=message, language=language, meta=meta, segments=segments,
+                minutes=blocks, question=message, language=row["language"], meta=meta, segments=segments,
                 speakers=[{"id": sp["id"], "name": sp.get("name")} for sp in speakers], summary=summary,
                 history=history)
     except (LlmUnavailable, LlmFailed, LlmRateLimited, LlmBusy):
         raise MeetingProblem(503, "llm_unavailable", "Model hozir javob bera olmayapti - keyinroq urinib ko'ring")
-    qid = new_id()
-    try:
-        # Javob qurilgan xotira qatorlari va savol boshidagi matn versiyasi bilan BITTA tranzaksiyada: kutish paytida
-        # suhbat tozalangan yoki matn almashgan bo'lsa navbat arxivda tug'iladi (javob baribir qaytadi - odam so'ragan
-        # edi); shu kalitli navbatni boshqa urinish saqlab ulgurgan bo'lsa - o'sha qaytadi.
-        q = store.add_turn(
-            {"id": qid, "meeting_id": m["id"], "question": message.strip()[:prompts.CHAT_QUESTION_CHARS],
-             "answer": result["answer"], "citations": jdump(result["citations"]),
-             "follow_ups": jdump(result["followUps"]), "channel": channel, "asker": asker, "client_id": client_id,
-             "model": str(result.get("model") or used.model)[:80], "language": language,
-             "created_at": int(time.time())},
-            used=[r["id"] for r in loaded], gen=int(m.get("transcript_gen") or 0))
-    except sqlite3.IntegrityError as exc:
-        if "FOREIGN KEY" not in str(exc):
-            raise
-        # Javob kutilayotganda yozuv o'chirildi (boshqa qurilma, saqlash muddati) - 500 emas, oddiy 404.
-        raise not_found() from None
-    if q["id"] != qid:
+    found = result.pop("minutes", None)
+    kind = action = job = None
+    answer = result["answer"]
+    if actions and found:
+        kind, action, answer, job = _action_turn(store, m, found, minutes_lang, answer, canned)
+    turn = {**row, "answer": answer, "citations": jdump(result["citations"]), "follow_ups": jdump(result["followUps"]),
+            "model": str(result.get("model") or used.model)[:80], "created_at": int(time.time())}
+    if kind:
+        turn.update(kind=kind, minutes_json=jdump(action))
+    # Javob qurilgan xotira qatorlari va savol boshidagi matn versiyasi bilan BITTA tranzaksiyada: kutish paytida
+    # suhbat tozalangan yoki matn almashgan bo'lsa navbat arxivda tug'iladi (javob baribir qaytadi - odam so'ragan
+    # edi); shu kalitli navbatni boshqa urinish saqlab ulgurgan bo'lsa - o'sha qaytadi.
+    q = _save_turn(store, turn, used=[r["id"] for r in loaded], gen=int(m.get("transcript_gen") or 0))
+    if q["id"] != row["id"]:
         log.info("Yig'ilish %s: chatga %s javob berdi, lekin shu klient kalitli navbat allaqachon saqlangan - o'sha "
                  "qaytdi", m["id"], used.name)
     else:
-        log.info("Yig'ilish %s: chatga %s javob berdi (%s, xotirada %d navbat%s)", m["id"], used.name, channel,
-                 len(history), ", kutish paytida suhbat tozalangan yoki matn almashgan - navbat arxivda"
+        log.info("Yig'ilish %s: chatga %s javob berdi (%s, xotirada %d navbat%s%s)", m["id"], used.name,
+                 row["channel"], len(history), f", bayonnoma amali {kind}" if kind else "",
+                 ", kutish paytida suhbat tozalangan yoki matn almashgan - navbat arxivda"
                  if q["archived_at"] is not None else "")
-    return _turn_view(q, {s["id"]: s for s in segments})
+    return q, {s["id"]: s for s in segments}, action, job
+
+
+def _minutes_blocks(store: Any, m: dict[str, Any], asker: str | None, lang: str | None) -> dict[str, str]:
+    """Chat modeliga bayonnoma bloklari (`minutes.state.chat_blocks`: joriy hujjat va holat, faqat shu yozuvniki va
+    shu so'rovchining ko'rsatmalari). Ularni o'qishdagi xato chatni yiqitmaydi - bloklarsiz javob beriladi."""
+    from . import minutes as minutes_mod
+
+    try:
+        doc, state = minutes_mod.state.chat_blocks(store, m, asker=asker, lang=lang)
+    except Exception:                                            # noqa: BLE001
+        log.exception("Yig'ilish %s: bayonnoma holati o'qilmadi - chat bloklarsiz", m["id"])
+        doc, state = "", ""
+    return {"doc": doc, "state": state}
+
+
+def _action_turn(store: Any, m: dict[str, Any], found: Mapping[str, Any], minutes_lang: str | None, answer: str,
+                 canned: str) -> tuple[str, dict[str, Any], str, tuple[str, str] | None]:
+    """Chat modeli tanlagan amal -> (tur, amal, javob, ish). Hujjat tili: model aytgani, so'ng odam qarab turgan
+    hujjat (`minutes_lang`), so'ng eng yangi joriy hujjat tili, so'ng yig'ilish tilidan (`default_lang`). `note` -
+    hujjat bor bo'lsa javob uni qo'llash yo'lini aytadi (`note_has_doc`); `create` - `minutes.start`; `revise` -
+    `_revise_or_note`."""
+    from . import minutes as minutes_mod
+
+    current = minutes_mod.current_lang(store, m)
+    lang = found.get("language") or minutes_lang or current or minutes_mod.default_lang(m.get("language"))
+    if found["action"] == "revise" and found.get("language"):
+        lang = _doc_script(store, m, lang, minutes_lang or current)
+    action = {**found, "language": lang}
+    if found["action"] == "note":
+        return "note", action, (chat_mod.CANNED["note_has_doc"][canned] if current else answer), None
+    if found["action"] == "create":
+        return "create", action, answer, ("start", lang)
+    return _revise_or_note(store, m, lang, instruction=found.get("instruction"), model_answer=answer, canned=canned)
+
+
+def _doc_script(store: Any, m: dict[str, Any], lang: str, known: str | None) -> str:
+    """Model o'zbekcha hujjatning YOZUVINI adashtirishi mumkin (lotin harfli xabar - "uz-latn", hujjat esa kirillda):
+    model aytgan o'zbekcha tilda hujjat ham, yozilayotgan ish ham yo'q, odam qarab turgan (yoki eng yangi) hujjat esa
+    boshqa o'zbekcha yozuvda bo'lsa - o'sha tahrirlanadi; aks holda so'rov "bu tilda hujjat yo'q" deb ko'rsatmaga
+    aylanib qolardi. Boshqa til (rus, ingliz) aniq aytilgan - o'zgarmaydi."""
+    from . import minutes as minutes_mod
+
+    if not known or known == lang or not (lang.startswith("uz") and known.startswith("uz")):
+        return lang
+    base, _ = minutes_mod.base_row(store, m, lang)
+    if base is not None or minutes_mod._live_rows(store, m["id"], lang, time.time()):
+        return lang
+    return known
+
+
+def _revise_or_note(store: Any, m: dict[str, Any], lang: str, *, instruction: str | None, model_answer: str,
+                    canned: str) -> tuple[str, dict[str, Any], str, tuple[str, str] | None]:
+    """O'zgartirish so'rovi: shu tilda tahrirlanadigan hujjat (BASE) yoki yozilayotgan ish bor - tahrir ("revise",
+    ish); bu tilda hujjat umuman yo'q (`minutes_missing`) - so'rov KO'RSATMA bo'lib saqlanadi va hujjat
+    tayyorlanganda qo'llanadi (`note_no_doc`, ish yo'q). Yozuv qayta o'girilgan (`minutes_outdated`) - tahrir yo'li:
+    `minutes.revise` 409 beradi va sabab navbatga yoziladi. -> (tur, amal, javob, ish)."""
+    from . import minutes as minutes_mod
+
+    base, reason = minutes_mod.base_row(store, m, lang)
+    if base is None and reason == "minutes_missing" and not minutes_mod._live_rows(store, m["id"], lang, time.time()):
+        return ("note", {"action": "note", "language": lang, "instruction": instruction},
+                chat_mod.CANNED["note_no_doc"][canned], None)
+    return "revise", {"action": "revise", "language": lang, "instruction": instruction}, model_answer, ("revise", lang)
+
+
+def _start_minutes(store: Any, user: AuthUser, m: dict[str, Any], turn_id: str, job: tuple[str, str],
+                   action: Mapping[str, Any], text: str, *, asker: str | None, canned: str) -> None:
+    """Navbat boshlagan bayonnoma ishi: `("start", til)` - `minutes.start` (hujjat yo'q - yoziladi; tayyori bor va
+    yangi ko'rsatma yo'q - qayta yuboriladi, bepul; yangi ko'rsatmalar - joriy hujjatning tahriri), `("revise", til)`
+    - `minutes.revise` (egasining so'zlari va chat modelining talqini). Qator navbatga bog'lanadi (`minutes_id`). Ish
+    boshlanmasa (navbat to'la, chegara, asos yo'q, model sozlanmagan) navbat baribir saqlangan: sabab
+    `minutes_json.error` ga, javob - `not_started`; chatning o'zi 200."""
+    from . import minutes as minutes_mod
+    from ..analytics import bind
+
+    try:
+        with bind(user.actorId):
+            if job[0] == "start":
+                view, _ = minutes_mod.start(user, m["id"], job[1], asker=asker, turn_id=turn_id)
+            else:
+                view, _ = minutes_mod.revise(user, m["id"], job[1],
+                                             {"text": text, "instruction": action.get("instruction")},
+                                             asker=asker, turn_id=turn_id)
+    except MeetingProblem as exc:
+        error = {"code": exc.code, "message": str(exc.detail)}
+    except Exception:                                            # noqa: BLE001
+        log.exception("Yig'ilish %s: chat navbatidan bayonnoma ishi boshlanmadi (kutilmagan xato)", m["id"])
+        error = {"code": "internal", "message": minutes_mod.FAILURES["internal"][1]}
+    else:
+        store.update_turn(turn_id, minutes_id=view["id"])
+        log.info("Yig'ilish %s: chat navbati bayonnoma %s ga bog'landi (%s)", m["id"], view["id"], job[0])
+        return
+    log.info("Yig'ilish %s: chat navbatidan bayonnoma ishi boshlanmadi (%s)", m["id"], error["code"])
+    store.update_turn(turn_id, minutes_json=jdump({**action, "error": error}),
+                      answer=chat_mod.CANNED["not_started"][canned])
+
+
+def _save_turn(store: Any, row: dict[str, Any], *, used: Sequence[str], gen: int) -> dict[str, Any]:
+    """`store.add_turn` (takror va arxivda tug'ish - o'sha tranzaksiyada). Javob kutilayotganda yozuv o'chirilgan
+    bo'lsa (boshqa qurilma, saqlash muddati; tashqi kalit) - 500 emas, oddiy 404."""
+    try:
+        return store.add_turn(row, used=used, gen=gen)
+    except sqlite3.IntegrityError as exc:
+        if "FOREIGN KEY" not in str(exc):
+            raise
+        raise not_found() from None
 
 
 def chat_reset(user: AuthUser, meeting_id: str, now: float | None = None, *,
@@ -1427,8 +1683,8 @@ def chat_reset(user: AuthUser, meeting_id: str, now: float | None = None, *,
 def ask(user: AuthUser, meeting_id: str, question: str, language: str | None, *,
         channel: str = "api") -> dict[str, Any]:
     """Eski savol-javob (`/ask`: eski ilovalar va web) - endi hisob egasining chat navbati (`chat_send`): o'sha
-    ko'rinish, suhbat xotirasi bilan."""
-    return chat_send(user, meeting_id, question, language, channel=channel)
+    ko'rinish, suhbat xotirasi bilan. Bayonnoma amali yo'q (`actions=False`) - faqat savol-javob."""
+    return chat_send(user, meeting_id, question, language, channel=channel, actions=False)
 
 
 def _ask_providers(rt: Any, user: AuthUser) -> list[Any]:

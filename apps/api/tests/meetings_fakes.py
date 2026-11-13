@@ -228,18 +228,76 @@ def auto_reply(op: str, system: str, user: str) -> str:
         refs = re.findall(r"^([AD]\d+) \|", user, flags=re.MULTILINE)
         return json.dumps({"results": [{"id": r, "supported": True, "ownerCorrect": True, "dueCorrect": True,
                                         "note": None} for r in refs]})
-    if op == "meeting_minutes":
-        return json.dumps(minutes_reply(lines, user), ensure_ascii=False)
+    if op in ("meeting_minutes", "meeting_minutes_revise"):
+        # Tahrir prompti joriy hujjatni MINUTES chegarasida beradi (Claude sxemasi ikkalasida bir xil).
+        reply = revision_reply(user) if "<<<MINUTES-" in user else minutes_reply(lines, user)
+        return json.dumps(reply, ensure_ascii=False)
     if op == "meeting_ask":
         first = lines[0]["id"] if lines else 1
         return json.dumps({"answer": "[S1] hisobotni ertaga yuboradi.", "citations": [first, 99999],
                            "followUps": ["Kim?", "Qachon?", "Nima?"]}, ensure_ascii=False)
+    if op == "meeting_chat":
+        return chat_auto(lines, user)
     return "{}"
+
+
+#: Chat (`meeting_chat`) amalsiz javobining matni - `auto_reply` va `chat_reply` default'i.
+CHAT_ANSWER = "[S1] hisobotni ertaga yuboradi."
+#: Soxta chat modeli amal tanlaganda (`ACTION=`) javobi.
+CHAT_ACTION_ANSWER = "Tushunarli - bayonnoma bo'yicha bajaraman."
+
+
+def chat_reply(action: str = "none", *, language: str | None = None, instruction: str | None = None,
+               answer: str | None = None, citations: list[int] | None = None,
+               follow_ups: list[str] | None = None) -> str:
+    """Chat modeli javobi `shapes.chat` shaklida (`FakeAnthropic.script` uchun): bayonnoma amali (`action`, til,
+    talqin) va javob. Amalsiz - `CHAT_ANSWER` va [1] manba; amalli - `CHAT_ACTION_ANSWER`, manbasiz."""
+    plain = action == "none"
+    return json.dumps({"minutes": {"action": action, "language": language, "instruction": instruction},
+                       "answer": answer or (CHAT_ANSWER if plain else CHAT_ACTION_ANSWER),
+                       "citations": citations if citations is not None else ([1] if plain else []),
+                       "followUps": follow_ups if follow_ups is not None else ["Kim?", "Qachon?", "Nima?"]},
+                      ensure_ascii=False)
+
+
+def chat_auto(lines: list[dict[str, Any]], user: str) -> str:
+    """`meeting_chat` ning avtomatik javobi: oxirgi savolda `ACTION=<note|create|revise>` (va ixtiyoriy
+    `LANG=<til>`) bo'lsa - o'sha bayonnoma amali (talqin - savolning qolgan matni; `create` da yo'q), aks holda
+    amalsiz savol-javob (`CHAT_ANSWER`, birinchi qator va mavjud bo'lmagan 99999 manba)."""
+    asked = re.findall(r"^Question: (.*)$", user, flags=re.MULTILINE)
+    last = asked[-1] if asked else ""
+    found = re.search(r"\bACTION=(\w+)", last)
+    if not found:
+        first = lines[0]["id"] if lines else 1
+        return chat_reply(citations=[first, 99999])
+    lang = re.search(r"\bLANG=([\w-]+)", last)
+    rest = " ".join(re.sub(r"\b(?:ACTION|LANG)=[\w-]+", " ", last).split())
+    return chat_reply(found.group(1), language=lang.group(1) if lang else None,
+                      instruction=None if found.group(1) == "create" else (rest or None))
+
+
+def fenced(user: str, head: str, tag: str) -> str | None:
+    """Promptdagi QATOR BOSHIDAGI `head` sarlavhali (masalan "CHANGE REQUEST" - "EARLIER CHANGE REQUESTS" emas), `tag`
+    nonce chegarasidagi blok matni (`<<<TAG-x` ... `TAG-x>>>`) yoki `None`."""
+    found = re.search(r"^" + re.escape(head) + r"[^\n]*\n<<<" + tag + r"-(\w+)\n(.*?)\n" + tag + r"-\1>>>", user,
+                      flags=re.DOTALL | re.MULTILINE)
+    return found.group(2) if found else None
+
+
+def directive(block: str | None, name: str) -> str | None:
+    """Ega blokidagi soxta ko'rsatma `NAME=<qiymat>` (qator oxirigacha) - birinchisi yoki `None`."""
+    for line in (block or "").splitlines():
+        found = re.search(rf"\b{name}=(.+)$", line)
+        if found and found.group(1).strip():
+            return found.group(1).strip()
+    return None
 
 
 def minutes_reply(lines: list[dict[str, Any]], user: str) -> dict[str, Any]:
     """Bayonnoma JSON i (`shapes.minutes` shakli) - promptdagi chiqish tiliga mos yozuvda. Ikki
-    kun tartibi bandi, ikki bo'lim, [S#] tokenli mas'ullar, bitta kichik bandli va "Bunda" li band."""
+    kun tartibi bandi, ikki bo'lim, [S#] tokenli mas'ullar, bitta kichik bandli va "Bunda" li band.
+    Sarlavha qismi bo'sh; OWNER INSTRUCTIONS blokidagi `CHAIR=<x>` - rais, `RESPONSIBLE=<x>` - birinchi vazifa
+    bandining mas'uli (matnida ham)."""
     own = [x for x in lines if not x["context"]] or [{"id": 1, "speaker": "S1", "text": ""}]
     first, last = own[0], own[-1]
     mid = own[len(own) // 2]
@@ -274,6 +332,12 @@ def minutes_reply(lines: list[dict[str, Any]], user: str) -> dict[str, Any]:
     item = lambda kind, text, **kw: {"kind": kind, "deadline": None, "deadlineDate": None, "responsible": [],  # noqa: E731
                                      "text": text, "subpoints": [], "followUp": None,
                                      "sourceSegmentIds": [first["id"]], "confidence": 0.9, **kw}
+    owner = fenced(user, "OWNER INSTRUCTIONS", "OWNER")
+    who = directive(owner, "RESPONSIBLE")
+    task = item("task", f"[{spk[-1]}] {t['task']}", deadline=t["dl"], responsible=[f"[{spk[-1]}]"],
+                subpoints=[t["sub"]], followUp=t["fu"], sourceSegmentIds=[mid["id"], last["id"]])
+    if who:
+        task.update(responsible=[who], text=f"{who} {t['task']}")
     return {
         "coverage": {"firstId": first["id"], "lastId": last["id"]},
         "title": t["title"],
@@ -281,16 +345,51 @@ def minutes_reply(lines: list[dict[str, Any]], user: str) -> dict[str, Any]:
                    {"title": t["a2"], "speakers": spk[-1:], "report": t["r2"], "sourceSegmentIds": [mid["id"]]}],
         "preamble": t["pre"],
         "sections": [
-            {"agendaIndex": 1, "items": [
-                item("acknowledge", f"[{spk[0]}] {t['ack']}"),
-                item("task", f"[{spk[-1]}] {t['task']}", deadline=t["dl"], responsible=[f"[{spk[-1]}]"],
-                     subpoints=[t["sub"]], followUp=t["fu"], sourceSegmentIds=[mid["id"], last["id"]]),
-            ]},
+            {"agendaIndex": 1, "items": [item("acknowledge", f"[{spk[0]}] {t['ack']}"), task]},
             {"agendaIndex": 2, "items": [item("task", t["task"], responsible=[], sourceSegmentIds=[last["id"]])]},
         ],
         "controller": t["ctl"],
         "notes": [],
+        "header": {"organization": None, "chairedBy": None, "city": None, "chair": directive(owner, "CHAIR"),
+                   "attendees": []},
     }
+
+
+def revision_reply(user: str) -> dict[str, Any]:
+    """Bayonnoma TAHRIRI (`prompt.build_revision`): CURRENT MINUTES chegarasidagi JSON, so'ralgani qo'llangan.
+    Ko'rsatmalar CHANGE REQUEST blokidan (u yo'q bo'lsa - OWNER INSTRUCTIONS dagi `[new]` qatorlardan):
+    `TITLE=<x>` - sarlavha, `DROP=<n>` - matnli n-band olib tashlanadi, `CHAIR=<x>` - rais, `NOOP` - o'zgarishsiz;
+    hech biri yo'q - sarlavhaga " (tahrir)" qo'shiladi."""
+    doc = json.loads(fenced(user, "CURRENT MINUTES", "MINUTES") or "{}")
+    request = fenced(user, "CHANGE REQUEST", "OWNER")
+    if request is None:
+        notes = fenced(user, "OWNER INSTRUCTIONS", "OWNER") or ""
+        request = "\n".join(line for line in notes.splitlines() if "[new]" in line)
+    if re.search(r"\bNOOP\b", request):
+        return doc
+    title, drop, chair = directive(request, "TITLE"), directive(request, "DROP"), directive(request, "CHAIR")
+    if title:
+        doc["title"] = title
+    if drop and drop.isdigit():
+        _drop_item(doc, int(drop))
+    if chair:
+        doc["header"] = {**(doc.get("header") or {}), "chair": chair}
+    if not (title or drop or chair):
+        doc["title"] = f"{doc.get('title') or ''} (tahrir)"
+    return doc
+
+
+def _drop_item(doc: dict[str, Any], number: int) -> None:
+    """Matnli bandlar orasida `number`-chisini (Word dagi raqam tartibida) olib tashlaydi."""
+    seen = 0
+    for section in doc.get("sections") or []:
+        items = section.get("items") or []
+        for index, item in enumerate(items):
+            if str(item.get("text") or "").strip():
+                seen += 1
+                if seen == number:
+                    del items[index]
+                    return
 
 
 class FakeLLM:
@@ -642,10 +741,11 @@ class FakeAnthropic:
     (kwargs aynan), natija - `with ... as stream: stream.get_final_message()`. `beta.messages.stream` (chatdagi
     rad-zahirasi) - o'sha `requests` ga, qo'shimcha `betas` / `fallbacks` kalitlari bilan.
 
-    `script` - navbat: matn (-> `claude_message`), tayyor `Message`, istisno (`claude_error`) yoki
-    `fn(kwargs) -> shulardan biri`; bo'sh bo'lsa so'rovdagi JSON sxemadan aniqlangan `op` bo'yicha
-    `auto_reply` (`shapes.*` bilan solishtirib - `op_of`; chat sxemasi savol-javobniki - `meeting_ask`).
-    Istisno real SDK dagidek `with` ga kirishda (`__enter__`) otiladi - so'rov o'shanda ketadi."""
+    `script` - navbat: matn (-> `claude_message`; chat uchun `chat_reply`), tayyor `Message`, istisno (`claude_error`)
+    yoki `fn(kwargs) -> shulardan biri`; bo'sh bo'lsa so'rovdagi JSON sxemadan aniqlangan `op` bo'yicha `auto_reply`
+    (`shapes.*` bilan solishtirib - `op_of`; chat - `meeting_chat`, `shapes.chat`: savolda `ACTION=` bo'lsa -
+    bayonnoma amali, `chat_auto`). Istisno real SDK dagidek `with` ga kirishda (`__enter__`) otiladi - so'rov
+    o'shanda ketadi."""
 
     def __init__(self) -> None:
         self.inits: list[dict[str, Any]] = []
@@ -662,7 +762,8 @@ class FakeAnthropic:
     @staticmethod
     def op_of(request: dict[str, Any]) -> str:
         """So'rovdagi `output_config.format.schema` -> amal (`shapes.for_op` ning teskarisi);
-        sxemasiz so'rov - `meeting_extract` (`FakeOpenAI` kabi); noma'lum sxema - `?`."""
+        sxemasiz so'rov - `meeting_extract` (`FakeOpenAI` kabi); noma'lum sxema - `?`. Bayonnoma tahririning sxemasi
+        bayonnomaniki bilan bir xil - tizim promptidagi "REVISION RULES" bo'yicha `meeting_minutes_revise`."""
         from app.services.meetings import shapes
 
         schema = ((request.get("output_config") or {}).get("format") or {}).get("schema")
@@ -671,8 +772,11 @@ class FakeAnthropic:
         known = (("meeting_extract", shapes.extract()), ("meeting_extract", shapes.extract(follow_up=True)),
                  ("meeting_map", shapes.map_part()), ("meeting_write", shapes.writer()),
                  ("meeting_verify", shapes.verify()), ("meeting_classify", shapes.classify()),
-                 ("meeting_ask", shapes.ask()), ("meeting_minutes", shapes.minutes()))
-        return next((op for op, candidate in known if schema == candidate), "?")
+                 ("meeting_ask", shapes.ask()), ("meeting_chat", shapes.chat()), ("meeting_minutes", shapes.minutes()))
+        op = next((op for op, candidate in known if schema == candidate), "?")
+        if op == "meeting_minutes" and "REVISION RULES" in str(request.get("system") or ""):
+            return "meeting_minutes_revise"
+        return op
 
     def ops(self) -> list[str]:
         return [self.op_of(r) for r in self.requests]
