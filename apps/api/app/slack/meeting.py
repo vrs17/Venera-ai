@@ -12,8 +12,9 @@ XABARLAR - chatning o'zida (audio thread ichida yuborilgan bo'lsa - o'sha thread
      (transkript TXT/SRT), «✅ Vazifalar», «📄 Bayonnoma» (rasmiy hujjat), «Eksport»
      (xulosa va hisobot fayli). Eski kartalardagi "qayta o'girish" tugmalari ham ishlaydi (`relang`); «Boshqa
      shablon bilan xulosa» esa o'chirilgan (ega qarori 2026-11-12) - eski kartada bosilsa `render.TEMPLATE_OFF`.
-  2. "📄 Bayonnoma" - til menyusi (lotin/kirill/rus/ingliz), tanlovdan keyin Word va PDF fayl
-     (`services.meetings.minutes`): hujjat 1-3 daqiqada yoziladi, odam "⏳" xabarini ko'radi.
+  2. "📄 Bayonnoma" - til menyusi (lotin/kirill/rus/ingliz), so'ng format savoli - «📄 Word» yoki «📕 PDF» (ega qarori
+     2026-11-13: ikkala faylni chizib yuborish behuda), so'ng FAQAT tanlangan fayl (`services.meetings.minutes`):
+     hujjat 1-3 daqiqada yoziladi, odam format savoli o'rnida "⏳" xabarini ko'radi.
 BAYONNOMA CHATDA (ega so'rovi 2026-11-12): bitta yozuv - bitta suhbat, ko'rsatma ham, o'zgartirish ham shu suhbatda.
   * yozishdan OLDIN - til menyusi xabarining thread'idagi har javob ko'rsatma (`minutes` tegi, `intent` note: chat
     modelisiz, bepul); chatning o'zida yoki boshqa thread'da yozilganini chat modeli o'zi ajratadi. Til tugmasi
@@ -22,7 +23,8 @@ BAYONNOMA CHATDA (ega so'rovi 2026-11-12): bitta yozuv - bitta suhbat, ko'rsatma
     yoki Word / PDF faylining (`_doc_of_files`) thread'idagi yoki chatning o'zidagi keyingi matn shu yozuvga va shu
     til hujjatiga (`minutes_lang`). Chat modeli "o'zgartir" deb tushunsa (yozuv chatida agent bo'g'ini yo'q - amalni
     Claude tanlaydi, `service._model_answer`) - server yangi versiyani yozadi, Barno uni kutib (`_follow_minutes`)
-    yangi Word va PDF hamda nima o'zgarganini yuboradi.
+    yangi faylni (natija belgisidagi formatda: `doc:<til>:<format>`; eski belgida - Word) va nima o'zgarganini
+    yuboradi.
 TRANSKRIPT CHATGA YOZILMAYDI (ega talabi 2026-11-11): uzun matn chatni tushunarsiz qilardi. U
 «📥 Yuklab olish -> Transkript (TXT)» da - .txt fayl kartaning THREAD'iga keladi (asosiy chat toza
 qoladi), Slack'da shu yerdan yuklab olinadi. Istisno - xulosa yozilmagan juda qisqa yozuv: bir-ikki
@@ -328,7 +330,7 @@ def question(client: Any, event: dict[str, Any], *, bot_user: str | None = None,
         return
     chat(client, channel, thread, holder, meeting_id, _text(event), who=who_asks(holder, user, person),
          intent="note" if tag == "minutes" else None, minutes_lang=render.doc_lang(tag),
-         client_id=_client_id(event), sleep=sleep)
+         minutes_fmt=render.doc_format(tag), client_id=_client_id(event), sleep=sleep)
 
 
 def on_text(client: Any, event: dict[str, Any], *, bot_user: str | None = None, sleep: Sleep = time.sleep) -> None:
@@ -371,19 +373,22 @@ def on_text(client: Any, event: dict[str, Any], *, bot_user: str | None = None, 
     else:
         chat(client, channel, None, found.user, found.meeting_id, _text(event),
              who=None if found.own and link.required() else asker(event.get("user")),
-             view=found.view, titled=True, minutes_lang=found.lang, client_id=_client_id(event), sleep=sleep)
+             view=found.view, titled=True, minutes_lang=found.lang, minutes_fmt=found.fmt,
+             client_id=_client_id(event), sleep=sleep)
 
 
 class Recording(NamedTuple):
     """`latest` topgan yozuv (matni tayyor): yozuv EGASI (`user` - odamning o'zi yoki, eski yozuvda, umumiy
-    hisob), yig'ilish va uning ko'rinishi (`service.detail`). `own` - yozuv so'ragan odamning o'ziniki. `lang` -
-    topilgan xabar bayonnoma natijasi bo'lsa (`doc:<til>` belgisi) - o'sha hujjat tili, aks holda `None`."""
+    hisob), yig'ilish va uning ko'rinishi (`service.detail`). `own` - yozuv so'ragan odamning o'ziniki. `lang` va
+    `fmt` - topilgan xabar bayonnoma natijasi bo'lsa (`doc:<til>[:<format>]` belgisi) - o'sha hujjat tili va fayl
+    formati, aks holda `None`."""
 
     user: AuthUser
     meeting_id: str
     view: dict[str, Any]
     own: bool = True
     lang: str | None = None
+    fmt: str | None = None
 
 
 def latest(client: Any, channel: str, person: str | None, *,
@@ -421,7 +426,7 @@ def latest(client: Any, channel: str, person: str | None, *,
             target = render.marked_tag(message, tags=render.LATEST_TAGS)
             found = lookup.verdict(target[0], lookup.view(target[0])) if target else None
             if isinstance(found, Recording):
-                return found._replace(lang=render.doc_lang(target[1]))
+                return found._replace(lang=render.doc_lang(target[1]), fmt=render.doc_format(target[1]))
             if found is not None:
                 return found
         elif person and message.get("user") == person:
@@ -537,13 +542,15 @@ class _Lookup:
 
 def chat(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str, text: str, *,
          who: str | None, view: dict[str, Any] | None = None, titled: bool = False, intent: str | None = None,
-         minutes_lang: str | None = None, client_id: str | None = None, sleep: Sleep = time.sleep) -> None:
+         minutes_lang: str | None = None, minutes_fmt: str | None = None, client_id: str | None = None,
+         sleep: Sleep = time.sleep) -> None:
     """Yozuv chatiga savol (`service.chat_send`, kanal `slack`, so'rovchi `who` - `asker`): "⏳" xabari, so'ng uning
     o'rnida javob (manbalar bilan; `titled` - birinchi qatorda qaysi yozuv) va «🔄 Yangi suhbat»
     (`render.chat_actions`). Xatoda (chegara, model, yozuv topilmadi) - faqat sabab, tugmasiz.
 
     BAYONNOMA: `intent` - aniq kirish nuqtasi (menyu thread'i - `note`), `minutes_lang` - odam qaysi til hujjatiga
-    javob yozyapti (natija belgisi), `client_id` - Slack xabari kaliti (takror hodisa - bitta navbat, bitta ish).
+    javob yozyapti (natija belgisi), `minutes_fmt` - o'sha hujjat qaysi formatda yuborilgan (yangi versiya fayli ham
+    shu formatda), `client_id` - Slack xabari kaliti (takror hodisa - bitta navbat, bitta ish).
     Ko'rsatma navbatida javob ostida "eslab qolindi", ish boshlanmagan bo'lsa - sababi (`render.minutes_turn_note`);
     navbat hujjat ishini boshlagan bo'lsa (`create` / `revise`) - u kutiladi va natijasi yuboriladi
     (`_follow_minutes`, `sleep` bilan)."""
@@ -566,7 +573,7 @@ def chat(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_
         body = "Javob berib bo'lmadi: ichki xato."
     replace(client, channel, ts, thread, body, blocks)
     if ref and ref.get("action") in ("create", "revise") and ref.get("id") and _first_follow(found["id"]):
-        _follow_minutes(client, channel, thread, user, meeting_id, ref, who=who, sleep=sleep)
+        _follow_minutes(client, channel, thread, user, meeting_id, ref, who=who, fmt=minutes_fmt, sleep=sleep)
 
 
 def _first_follow(turn_id: str) -> bool:
@@ -634,7 +641,8 @@ def _doc_of_files(client: Any, channel: str, parent: dict[str, Any], user: AuthU
     `doc:<til>` belgisi bilan) shu fayllardan OLDIN turadi - shuning uchun chat tarixida fayl xabaridan oldingi
     (`DOC_LOOKBACK` ta, `DOC_FILE_WINDOW` gacha) O'Z natija xabarimiz olinadi: tili fayl nomidagi hujjat so'zi bilan
     bir xil (`render.minutes_file_lang`). Bir nechtasi bo'lsa (ikki yozuv bayonnomasi ketma-ket) - yozuv nomi fayl
-    nomida borligi (`_titled`), bo'lmasa - eng yaqini."""
+    nomida borligi (`_titled`), bo'lmasa - eng yaqini. Format - natija belgisidan; eski (formatsiz) belgida - javob
+    yozilgan fayl formati (tahrir fayli ham shu formatda)."""
     langs = {lang for lang in (render.minutes_file_lang(f) for f in parent.get("files") or []) if lang}
     if not langs:
         return None
@@ -658,9 +666,17 @@ def _doc_of_files(client: Any, channel: str, parent: dict[str, Any], user: AuthU
         target = render.marked_tag(message)
         if target and render.doc_lang(target[1]) in langs and target not in candidates:
             candidates.append(target)
+    if not candidates:
+        return None
+    found = candidates[0]
     if len(candidates) > 1:
-        return next((c for c in candidates if _titled(user, c[0], names)), candidates[0])
-    return candidates[0] if candidates else None
+        found = next((c for c in candidates if _titled(user, c[0], names)), found)
+    if render.doc_format(found[1]) is None:
+        # Eski (formatsiz) natija belgisi: tahrir fayli - odam javob yozgan fayl formatida.
+        fmts = {fmt for fmt in (render.minutes_file_format(f) for f in parent.get("files") or []) if fmt}
+        if len(fmts) == 1:
+            found = (found[0], render.doc_tag(str(render.doc_lang(found[1])), fmts.pop()))
+    return found
 
 
 def _titled(user: AuthUser, meeting_id: str, names: list[str]) -> bool:
@@ -721,8 +737,11 @@ def on_action(client: Any, body: dict[str, Any], *, sleep: Sleep = time.sleep) -
         elif kind == "barno_minutes":
             minutes_menu(client, channel, _minutes_spot(message), user, meeting_id)
         elif kind.startswith("barno_minutes_lang"):
+            minutes_formats(client, channel, _minutes_spot(message), meeting_id, arg)
+        elif kind.startswith("barno_minutes_fmt_"):
             minutes_doc(client, channel, _minutes_spot(message), user, meeting_id, arg,
-                        who=who_asks(user, person, clicker), sleep=sleep)
+                        fmt=kind[len("barno_minutes_fmt_"):], who=who_asks(user, person, clicker),
+                        holder=message.get("ts"), sleep=sleep)
         elif kind == "barno_template":
             # Eski kartadagi menyu: funksiya o'chirilgan (ega qarori 2026-11-12) - xulosa yozilmaydi.
             post(client, channel, thread, render.TEMPLATE_OFF)
@@ -857,23 +876,39 @@ def minutes_menu(client: Any, channel: str, thread: str | None, user: AuthUser, 
          render.minutes_menu(meeting_id, minutes.default_lang(view.get("language"))))
 
 
-def minutes_doc(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str,
-                lang: str, *, who: str | None, sleep: Sleep = time.sleep) -> None:
-    """Tanlangan tilda bayonnoma (til tugmasi): "⏳" xabari, `minutes.generate` (so'rovchi `who` - bosgan odamning
-    ko'rsatmalari qo'llanadi; yangi ko'rsatma yo'q - tayyori qaytadi, bepul; tayyoridan keyingi ko'rsatmalar - uning
-    tahriri; ish shu ipda 1-3 daqiqa yoki boshqa yo'lning yozilayotgan ishi kutiladi - `sleep`), so'ng Word va PDF
-    fayllar va "⏳" o'rniga natija (`_deliver_minutes`). Kutish tugab ham hujjat hali yozilayotgan bo'lsa -
-    `render.MINUTES_STILL_RUNNING`."""
+def minutes_formats(client: Any, channel: str, thread: str | None, meeting_id: str, lang: str) -> None:
+    """Til tanlandi (til menyusi tugmasi) -> format savoli (`render.minutes_formats`: «📄 Word» / «📕 PDF»). Hujjat
+    hali yozilmaydi: format tanlangach (`minutes_doc`) faqat o'sha fayl chiziladi va yuboriladi."""
     code = minutes.normalize(lang)
     if code is None:
         return
+    post(client, channel, thread, render.MINUTES_FORMAT_PROMPT.format(title=minutes.LANG_TITLES[code]),
+         render.minutes_formats(meeting_id, code))
+
+
+def minutes_doc(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str,
+                lang: str, *, fmt: str = "docx", who: str | None, holder: str | None = None,
+                sleep: Sleep = time.sleep) -> None:
+    """Tanlangan til va formatda bayonnoma (format tugmasi): "⏳" xabari (`holder` - format savoli xabari, o'sha joyda;
+    yo'q bo'lsa - yangi xabar), `minutes.generate` (so'rovchi `who` - bosgan odamning ko'rsatmalari qo'llanadi; yangi
+    ko'rsatma yo'q - tayyori qaytadi, bepul; tayyoridan keyingi ko'rsatmalar - uning tahriri; ish shu ipda 1-3 daqiqa
+    yoki boshqa yo'lning yozilayotgan ishi kutiladi - `sleep`), so'ng FAQAT `fmt` fayli va "⏳" o'rniga natija
+    (`_deliver_minutes`). Kutish tugab ham hujjat hali yozilayotgan bo'lsa - `render.MINUTES_STILL_RUNNING`."""
+    code = minutes.normalize(lang)
+    if code is None or fmt not in render.MINUTES_FORMATS:
+        return
     title = minutes.LANG_TITLES[code]
-    ts = post(client, channel, thread, render.MINUTES_WORKING.format(title=title, verb="tayyorlanmoqda"))
+    working = render.MINUTES_WORKING.format(title=title, verb="tayyorlanmoqda")
+    if holder:
+        replace(client, channel, holder, thread, working)
+        ts: str | None = holder
+    else:
+        ts = post(client, channel, thread, working)
     try:
         view = minutes.generate(user, meeting_id, code, asker=who, sleep=sleep)
     except MeetingProblem as exc:
         _minutes_notice(client, channel, ts, thread, render.escape(f"Bayonnoma yozilmadi: {exc.detail}"),
-                        meeting_id, code)
+                        meeting_id, code, fmt)
         return
     except transcribe.Problem as exc:
         # Kutish paytida server to'xtayapti (`__init__._sleep`) - sabab "⏳" o'rnida.
@@ -881,56 +916,56 @@ def minutes_doc(client: Any, channel: str, thread: str | None, user: AuthUser, m
         return
     except Exception:  # noqa: BLE001 - "⏳" abadiy qolmasin
         log.exception("Slack bayonnomasi (%s): kutilmagan xato", meeting_id)
-        _minutes_notice(client, channel, ts, thread, "Bayonnoma yozilmadi: ichki xato.", meeting_id, code)
+        _minutes_notice(client, channel, ts, thread, "Bayonnoma yozilmadi: ichki xato.", meeting_id, code, fmt)
         return
     if view["status"] == "running":
-        _minutes_notice(client, channel, ts, thread, render.MINUTES_STILL_RUNNING, meeting_id, code)
+        _minutes_notice(client, channel, ts, thread, render.MINUTES_STILL_RUNNING, meeting_id, code, fmt)
         return
-    _deliver_minutes(client, channel, thread, user, meeting_id, view, code, ts)
+    _deliver_minutes(client, channel, thread, user, meeting_id, view, code, ts, fmt)
 
 
 def _deliver_minutes(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str,
-                     view: dict[str, Any], code: str, ts: str | None) -> None:
-    """Tayyor hujjat: Word va PDF fayllar shu joyga, so'ng "⏳" xabari (`ts`; yo'q bo'lsa - yangi xabar) o'rnida natija
-    (`render.minutes_result`) va tahrir eslatmasi (`render.minutes_hint`, `doc:<til>` belgisi: shu xabar thread'idagi
-    yoki chatdagi keyingi matn shu hujjat bo'yicha). Til tugmasi (`minutes_doc`) va chatdan boshlangan ish
-    (`_follow_minutes`) uchun umumiy.
+                     view: dict[str, Any], code: str, ts: str | None, fmt: str = "docx") -> None:
+    """Tayyor hujjat: odam tanlagan formatdagi BITTA fayl (`fmt`: Word yoki PDF) shu joyga, so'ng "⏳" xabari (`ts`;
+    yo'q bo'lsa - yangi xabar) o'rnida natija (`render.minutes_result`) va tahrir eslatmasi (`render.minutes_hint`,
+    `doc:<til>:<format>` belgisi: shu xabar yoki fayl thread'idagi va chatdagi keyingi matn shu hujjat bo'yicha, tahrir
+    fayli ham shu formatda). Format tugmasi (`minutes_doc`) va chatdan boshlangan ish (`_follow_minutes`) uchun umumiy.
 
-    NEGA WORD HAM, PDF HAM. Ega qarori: asosiy natija Word (kotib «________» joylarini
-    to'ldiradi), PDF - ko'rish uchun nusxa. Avval Word yuklanadi - ruxsat yo'q bo'lsa odam
-    yo'riqnomani birinchi fayldan keyin oladi, hujjatning o'zi omborda qoladi (qayta bosilsa
-    model chaqirilmaydi - `minutes.generate` tayyorini qaytaradi)."""
-    # Fayllar ALOHIDA: hujjat yozilgan va saqlangan - PDF chizilmasa (shrift, navbat) yoki fayl
-    # yuborilmasa Word va natija baribir yetib boradi, sabab esa natija ostida.
+    NEGA BITTA FAYL (ega qarori 2026-11-13). Ilgari Word ham, PDF ham chizilib yuborilardi - odamga odatda bittasi
+    kerak, PDF chizish esa og'ir (render navbati). Fayl chizilmasa yoki yuborilmasa natija baribir yetib boradi, sabab
+    natija ostida; hujjatning o'zi omborda - format qayta tanlansa model chaqirilmaydi (`minutes.generate` tayyorini
+    qaytaradi)."""
+    fmt = fmt if fmt in render.MINUTES_FORMATS else "docx"
     notes: list[str] = []
-    for fmt in ("docx", "pdf"):
-        try:
-            data, _, disposition = minutes.export_file(user, meeting_id, view["id"], fmt)
-            upload(client, channel, thread, data, filename(disposition) or f"bayonnoma.{fmt}")
-        except transcribe.Problem as exc:
-            # `files:write` yo'q - ikkinchi fayl ham yuborilmaydi; yo'riqnoma natija ostida.
-            notes.append(render.escape(str(exc)))
-            break
-        except MeetingProblem as exc:
-            notes.append(render.escape(f"{fmt.upper()} fayli tayyorlanmadi: {exc.detail}"))
-        except Exception:  # noqa: BLE001
-            log.exception("Slack bayonnomasi (%s): %s fayli", meeting_id, fmt)
-            notes.append(f"{fmt.upper()} fayli tayyorlanmadi: ichki xato.")
-    text = render.minutes_result(view, code)
+    try:
+        data, _, disposition = minutes.export_file(user, meeting_id, view["id"], fmt)
+        upload(client, channel, thread, data, filename(disposition) or f"bayonnoma.{fmt}")
+    except transcribe.Problem as exc:
+        # `files:write` yo'q - yo'riqnoma natija ostida.
+        notes.append(render.escape(str(exc)))
+    except MeetingProblem as exc:
+        notes.append(render.escape(f"{render.FORMAT_NAMES[fmt]} fayli tayyorlanmadi: {exc.detail}"))
+    except Exception:  # noqa: BLE001
+        log.exception("Slack bayonnomasi (%s): %s fayli", meeting_id, fmt)
+        notes.append(f"{render.FORMAT_NAMES[fmt]} fayli tayyorlanmadi: ichki xato.")
+    text = render.minutes_result(view, code, fmt)
     if notes:
         text += "\n" + "\n".join(f"⚠ {note}" for note in notes)
-    replace(client, channel, ts, thread, text, render.sections(text) + [render.minutes_hint(meeting_id, code)])
+    replace(client, channel, ts, thread, text, render.sections(text) + [render.minutes_hint(meeting_id, code, fmt)])
 
 
 def _follow_minutes(client: Any, channel: str, thread: str | None, user: AuthUser, meeting_id: str,
-                    ref: dict[str, Any], *, who: str | None, sleep: Sleep = time.sleep) -> None:
+                    ref: dict[str, Any], *, who: str | None, fmt: str | None = None,
+                    sleep: Sleep = time.sleep) -> None:
     """Chat navbati boshlagan bayonnoma ishi (`ChatTurn.minutes`: `create` yoki `revise`, hujjat id'si bilan) - javob
     ostida, o'sha joyda: "⏳ Bayonnoma (til) tahrirlanmoqda / tayyorlanmoqda" (ish tugagan bo'lsa ham - natija shu
     xabar o'rnida, fayllardan yuqorida turadi, til tugmasidagidek), ish kutiladi (`minutes.wait`, `sleep`), so'ng:
-    tayyor - Word, PDF va natija (`_deliver_minutes`); yiqilgan - sababi (`minutes.failure_detail`; tahrirda
-    "o'zgarish bo'lmadi" ham); kutish tugab ham yozilmoqda - `render.MINUTES_STILL_RUNNING`."""
+    tayyor - odam tanlagan formatdagi fayl (`fmt` - natija belgisidan; noma'lum - Word) va natija
+    (`_deliver_minutes`); yiqilgan - sababi (`minutes.failure_detail`; tahrirda "o'zgarish bo'lmadi" ham); kutish tugab
+    ham yozilmoqda - `render.MINUTES_STILL_RUNNING`."""
     ts = None
     code = str(ref.get("language") or "")
+    fmt = fmt if fmt in render.MINUTES_FORMATS else "docx"
     try:
         found = minutes.status(user, meeting_id, ref["id"], asker=who)
         code = found["language"]
@@ -940,32 +975,32 @@ def _follow_minutes(client: Any, channel: str, thread: str | None, user: AuthUse
         if found["status"] == "running":
             found = minutes.wait(user, meeting_id, ref["id"], asker=who, sleep=sleep)
         if found["status"] == "running":
-            _minutes_notice(client, channel, ts, thread, render.MINUTES_STILL_RUNNING, meeting_id, code)
+            _minutes_notice(client, channel, ts, thread, render.MINUTES_STILL_RUNNING, meeting_id, code, fmt)
         elif found["status"] == "failed":
             head = "Bayonnoma tahrirlanmadi" if revising else "Bayonnoma yozilmadi"
             _minutes_notice(client, channel, ts, thread, render.escape(f"{head}: {minutes.failure_detail(found)}"),
-                            meeting_id, code)
+                            meeting_id, code, fmt)
         else:
-            _deliver_minutes(client, channel, thread, user, meeting_id, found, code, ts)
+            _deliver_minutes(client, channel, thread, user, meeting_id, found, code, ts, fmt)
     except transcribe.Problem as exc:
         # Kutish paytida server to'xtayapti (`__init__._sleep`).
         replace(client, channel, ts, thread, render.escape(str(exc)))
     except MeetingProblem as exc:
         _minutes_notice(client, channel, ts, thread, render.escape(f"Bayonnoma yuborilmadi: {exc.detail}"),
-                        meeting_id, code)
+                        meeting_id, code, fmt)
     except Exception:  # noqa: BLE001 - "⏳" abadiy qolmasin
         log.exception("Slack bayonnomasi (%s): chatdan boshlangan ish kuzatilmadi", meeting_id)
-        _minutes_notice(client, channel, ts, thread, "Bayonnoma yuborilmadi: ichki xato.", meeting_id, code)
+        _minutes_notice(client, channel, ts, thread, "Bayonnoma yuborilmadi: ichki xato.", meeting_id, code, fmt)
 
 
 def _minutes_notice(client: Any, channel: str, ts: str | None, thread: str | None, text: str, meeting_id: str,
-                    code: str) -> None:
-    """Bayonnoma xato / "hali tayyorlanmoqda" xabari "⏳" o'rnida - yig'ilish belgisi (`doc:<til>`) bilan: shu xabar
-    thread'idagi javob ham, chatdagi keyingi matn ham ("qayta urin", "3-bandni ...") shu yozuv va shu hujjatga boradi.
-    Belgisiz xabarning thread'i "jim" edi (`thread_target`)."""
+                    code: str, fmt: str | None = None) -> None:
+    """Bayonnoma xato / "hali tayyorlanmoqda" xabari "⏳" o'rnida - yig'ilish belgisi (`doc:<til>[:<format>]`) bilan:
+    shu xabar thread'idagi javob ham, chatdagi keyingi matn ham ("qayta urin", "3-bandni ...") shu yozuv va shu
+    hujjatga boradi, fayli o'sha formatda. Belgisiz xabarning thread'i "jim" edi (`thread_target`)."""
     blocks = render.sections(text)
     if blocks and minutes.normalize(code):
-        blocks[0] = {**blocks[0], "block_id": render.mark(meeting_id, f"{render.DOC_TAG}{code}")}
+        blocks[0] = {**blocks[0], "block_id": render.mark(meeting_id, render.doc_tag(code, fmt))}
     replace(client, channel, ts, thread, text, blocks or None)
 
 

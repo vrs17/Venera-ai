@@ -288,6 +288,9 @@ def test_ulangan_odam_bayonnoma_korsatmasi_ilovadagi_suhbat_bilan_bitta(linking,
     meeting.on_action(slack, {**body, "actions": [{"action_id": "barno_minutes_lang_uz-cyrl",
                                                    "value": f"{mid}|uz-cyrl"}],
                               "message": {"ts": menu["ts"]}}, sleep=drive(rt))
+    # Tildan keyin format (2026-11-13) - format savoli xabaridagi tugma.
+    meeting.on_action(slack, {**body, "actions": [{"action_id": "barno_minutes_fmt_docx", "value": f"{mid}|uz-cyrl"}],
+                              "message": {"ts": slack.posted[-1]["ts"]}}, sleep=drive(rt))
     [call] = [c for c in rt.llm.calls if c["op"] == "meeting_minutes"]
     assert "1. CHAIR=Alisher Karimov" in call["user"]
     assert "Ko'rsatmalaringiz hisobga olindi (1 ta)." in slack.updated[-1]["text"]

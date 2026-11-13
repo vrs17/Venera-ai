@@ -863,27 +863,46 @@ def test_bayonnoma_tanlangan_tilda_word_va_pdf(delivered, _isolated_meetings, mo
     monkeypatch.setattr(minutes, "generate", generate)
     monkeypatch.setattr(minutes, "export_file", export_file)
     before = len(client.posted)
-    _click(client, "barno_minutes_lang", f"{mid}|uz-cyrl", _isolated_meetings)
+    _press(client, _isolated_meetings, {"action_id": "barno_minutes_lang_uz-cyrl", "value": f"{mid}|uz-cyrl"}, {})
 
-    holder = client.posted[before]
-    assert holder["text"] == f"⏳ Bayonnoma ({minutes.LANG_TITLES['uz-cyrl']}) tayyorlanmoqda… 1-3 daqiqa."
+    # Til tanlandi - avval format savoli (ega qarori 2026-11-13): hujjat hali yozilmaydi, fayl yo'q.
+    question = client.posted[before]
+    assert question["text"] == render.MINUTES_FORMAT_PROMPT.format(title=minutes.LANG_TITLES["uz-cyrl"])
+    assert [(b["action_id"], b["value"]) for b in elements(question)] == [
+        ("barno_minutes_fmt_docx", f"{mid}|uz-cyrl"), ("barno_minutes_fmt_pdf", f"{mid}|uz-cyrl")]
+    assert generated == [] and exported == [] and client.uploaded == []
+    assert render.marked_tag(question) == (mid, "minutes")
+    _press(client, _isolated_meetings, {"action_id": "barno_minutes_fmt_docx", "value": f"{mid}|uz-cyrl"},
+           {"ts": question["ts"]})
+
+    # "⏳" - format savoli o'rnida (yangi xabar yo'q), so'ng natija ham shu yerda.
+    working, update = client.updated
+    assert working["ts"] == update["ts"] == question["ts"] and len(client.posted) == before + 1
+    assert working["text"] == f"⏳ Bayonnoma ({minutes.LANG_TITLES['uz-cyrl']}) tayyorlanmoqda… 1-3 daqiqa."
     assert generated == [(mid, "uz-cyrl")]
-    assert exported == [(mid, "ab" * 16, "docx"), (mid, "ab" * 16, "pdf")]
-    docx, pdf = client.uploaded
+    # FAQAT tanlangan format chiziladi va yuboriladi.
+    assert exported == [(mid, "ab" * 16, "docx")]
+    [docx] = client.uploaded
     assert docx["file"] == b"docx" and docx["filename"].endswith(".docx")
-    assert pdf["file"] == b"pdf" and pdf["filename"].endswith(".pdf")
     # Nom `Content-Disposition` dagi haqiqiy (`filename*=`) nom - kirill sarlavha bilan.
     assert docx["filename"].startswith("Баённома - Haftalik") and docx["title"] == docx["filename"]
-    assert all(u["channel"] == "D1" and "thread_ts" not in u for u in client.uploaded)
-    [update] = client.updated
-    assert update["ts"] == holder["ts"]
+    assert docx["channel"] == "D1" and "thread_ts" not in docx
+    assert render.marked_tag(update) == (mid, "doc:uz-cyrl:docx")
     text = update["text"]
     assert text.startswith(f"✅ *Bayonnoma tayyor* ({minutes.LANG_TITLES['uz-cyrl']}): 2 bo'lim, 5 band.")
     assert "«________»" in text
     assert "*Aniqlashtirish kerak:*\n• Muddat &lt;aniq&gt; emas\n• Mas'ul aytilmagan" in text
     assert "Transkriptda bo'lmagan ismlar «________» bilan almashtirildi: Karimov" in text
     assert "kirill/lotin" in text
-    assert len(client.posted) == before + 1
+    assert "Loyiha - Word faylidagi «________» joylarini to'ldiring" in text
+    # PDF tanlansa - faqat PDF; natijada bo'sh joylarni to'ldirish uchun Word tanlash kerakligi aytiladi.
+    _choose(client, _isolated_meetings, mid, "uz-cyrl", fmt="pdf")
+    pdf, result = client.uploaded[-1], client.updated[-1]
+    assert exported[1:] == [(mid, "ab" * 16, "pdf")] and len(client.uploaded) == 2
+    assert pdf["file"] == b"pdf" and pdf["filename"].endswith(".pdf")
+    assert "joylari bo'sh (bank nomi, rais, qatnashuvchilar, №, sana); ularni to'ldirish uchun Word formatini " \
+           "tanlang." in result["text"]
+    assert render.marked_tag(result) == (mid, "doc:uz-cyrl:pdf")
 
 
 def test_bayonnoma_thread_ichida(delivered, _isolated_meetings, monkeypatch):
@@ -894,9 +913,14 @@ def test_bayonnoma_thread_ichida(delivered, _isolated_meetings, monkeypatch):
     body = {"actions": [{"action_id": "barno_minutes_lang", "value": f"{mid}|en"}],
             "channel": {"id": "D1"}, "message": {"thread_ts": summary["ts"]}}
     meeting.on_action(client, body, sleep=drive(_isolated_meetings))
+    question = client.posted[-1]
+    assert question["thread_ts"] == summary["ts"]                 # format savoli ham thread'da
+    meeting.on_action(client, {"actions": [{"action_id": "barno_minutes_fmt_pdf", "value": f"{mid}|en"}],
+                               "channel": {"id": "D1"}, "message": {"ts": question["ts"], "thread_ts": summary["ts"]}},
+                      sleep=drive(_isolated_meetings))
 
-    assert client.posted[-1]["thread_ts"] == summary["ts"]
-    assert all(u["thread_ts"] == summary["ts"] for u in client.uploaded)
+    [pdf] = client.uploaded
+    assert pdf["thread_ts"] == summary["ts"] and pdf["filename"].endswith(".pdf")
     assert "Aniqlashtirish" not in client.updated[-1]["text"]
     assert client.updated[-1]["text"].startswith("✅ *Bayonnoma tayyor* (English)")
 
@@ -918,14 +942,15 @@ def test_bayonnoma_yozilmadi(delivered, _isolated_meetings, monkeypatch):
                                      "Bayonnoma uchun model sozlanmagan (CLAUDE_API_KEY <...>)")
 
     monkeypatch.setattr(minutes, "generate", generate)
-    _click(client, "barno_minutes_lang", f"{mid}|ru", _isolated_meetings)
+    question = _choose(client, _isolated_meetings, mid, "ru")
 
-    assert client.posted[-1]["text"].startswith("⏳ Bayonnoma (Русский)")
-    [update] = client.updated
+    working, update = client.updated
+    assert working["ts"] == update["ts"] == question["ts"] and working["text"].startswith("⏳ Bayonnoma (Русский)")
     assert update["text"] == "Bayonnoma yozilmadi: Bayonnoma uchun model sozlanmagan (CLAUDE_API_KEY &lt;...&gt;)"
     assert client.uploaded == []
-    # Xato xabarida yig'ilish belgisi (`doc:ru`): uning thread'idagi javob shu yozuv chatiga boradi ("jim" emas).
-    assert render.marked_tag(update) == (mid, "doc:ru")
+    # Xato xabarida yig'ilish belgisi (`doc:ru:docx`): uning thread'idagi javob shu yozuv chatiga boradi ("jim" emas),
+    # fayli tanlangan formatda.
+    assert render.marked_tag(update) == (mid, "doc:ru:docx")
 
 
 def test_bayonnoma_fayl_ruxsati_yoq(delivered, _isolated_meetings, monkeypatch):
@@ -936,11 +961,11 @@ def test_bayonnoma_fayl_ruxsati_yoq(delivered, _isolated_meetings, monkeypatch):
     monkeypatch.setattr(minutes, "generate", lambda *a, **k: _fake_view())
     monkeypatch.setattr(minutes, "export_file", export_file)
     client.upload_error = SlackApiError("missing_scope", {"ok": False, "error": "missing_scope"})
-    _click(client, "barno_minutes_lang", f"{mid}|uz-latn", _isolated_meetings)
+    question = _choose(client, _isolated_meetings, mid, "uz-latn")
 
-    # Yo'riqnoma "⏳" o'rniga (odam kutib qolmasin); ikkinchi fayl urinilmaydi.
-    [update] = client.updated
-    assert "files:write" in update["text"] and update["ts"] == client.posted[-1]["ts"]
+    # Yo'riqnoma "⏳" o'rniga (odam kutib qolmasin).
+    update = client.updated[-1]
+    assert "files:write" in update["text"] and update["ts"] == question["ts"]
     assert [fmt for *_, fmt in exported] == ["docx"] and client.uploaded == []
 
 
@@ -948,7 +973,7 @@ def test_bayonnoma_sozlanmagan_model_haqiqiy_quvurda(delivered, _isolated_meetin
     """Soxtasiz: testda Claude kaliti bo'sh (`_claude_key_off`) - xizmat 503 beradi, Slack esa
     sababni "⏳" o'rniga yozadi."""
     client, mid, _ = delivered
-    _click(client, "barno_minutes_lang", f"{mid}|uz-cyrl", _isolated_meetings)
+    _choose(client, _isolated_meetings, mid, "uz-cyrl")
 
     assert client.updated[-1]["text"].startswith("Bayonnoma yozilmadi: ")
     assert "CLAUDE_API_KEY" in client.updated[-1]["text"] and client.uploaded == []
@@ -967,17 +992,17 @@ def test_bayonnoma_haqiqiy_quvur_fakellm(delivered, _isolated_meetings, monkeypa
 
     client, mid, _ = delivered
     monkeypatch.setattr(settings, "meetings_minutes_chain", "ollama", raising=False)
-    _click(client, "barno_minutes_lang", f"{mid}|uz-cyrl", _isolated_meetings)
+    _choose(client, _isolated_meetings, mid, "uz-cyrl")
 
     assert [c["op"] for c in _isolated_meetings.llm.calls if c["op"] == "meeting_minutes"] == ["meeting_minutes"]
-    docx, pdf = client.uploaded
+    [docx] = client.uploaded
     assert docx["filename"].endswith(".docx") and docx["file"][:2] == b"PK"
-    assert pdf["filename"].endswith(".pdf") and pdf["file"][:5] == b"%PDF-"
     assert client.updated[-1]["text"].startswith("✅ *Bayonnoma tayyor* (Ўзбек (кирилл))")
-    # Ikkinchi bosish - tayyor hujjat qaytadi, model qayta chaqirilmaydi.
-    _click(client, "barno_minutes_lang", f"{mid}|uz-cyrl", _isolated_meetings)
+    # Ikkinchi marta PDF - tayyor hujjat qaytadi (model qayta chaqirilmaydi), faqat PDF chiziladi.
+    _choose(client, _isolated_meetings, mid, "uz-cyrl", fmt="pdf")
     assert len([c for c in _isolated_meetings.llm.calls if c["op"] == "meeting_minutes"]) == 1
-    assert len(client.uploaded) == 4
+    pdf = client.uploaded[-1]
+    assert len(client.uploaded) == 2 and pdf["filename"].endswith(".pdf") and pdf["file"][:5] == b"%PDF-"
 
 
 # --- 📄 Bayonnoma chatda: ko'rsatma (yozishdan oldin) va o'zgartirish (yozilgandan keyin) ---------------------
@@ -998,9 +1023,20 @@ def _minutes_ops(rt) -> list[str]:
     return [c["op"] for c in rt.llm.calls if c["op"].startswith("meeting_minutes")]
 
 
-def _language(client, rt, mid: str, lang: str, message: dict) -> dict:
-    """Odam (U1) bayonnoma til menyusidagi tugmani bosdi (`message` - tugmali xabar) -> "⏳" o'rnidagi natija."""
-    _press(client, rt, {"action_id": f"barno_minutes_lang_{lang}", "value": f"{mid}|{lang}"}, message)
+def _choose(client, rt, mid: str, lang: str, message: dict | None = None, fmt: str = "docx") -> dict:
+    """Odam (U1) bayonnoma tilini (`message` - til menyusi xabari), so'ng format savolida formatni tanladi (ega qarori
+    2026-11-13). Qaytaradi: format savoli xabari - uning o'rnida "⏳", so'ng natija."""
+    _press(client, rt, {"action_id": f"barno_minutes_lang_{lang}", "value": f"{mid}|{lang}"}, message or {})
+    question = client.posted[-1]
+    where = {"ts": question["ts"], **({"thread_ts": question["thread_ts"]} if question.get("thread_ts") else {})}
+    _press(client, rt, {"action_id": f"barno_minutes_fmt_{fmt}", "value": f"{mid}|{lang}"}, where)
+    return question
+
+
+def _language(client, rt, mid: str, lang: str, message: dict, fmt: str = "docx") -> dict:
+    """Odam (U1) bayonnoma til menyusidagi tugmani (`message` - tugmali xabar), so'ng formatni bosdi -> format savoli
+    o'rnidagi natija."""
+    _choose(client, rt, mid, lang, message, fmt)
     return client.updated[-1]
 
 
@@ -1021,7 +1057,8 @@ def test_bayonnoma_chatda_eslatmalar_va_belgilar():
     """Odam bayonnomani chatda boshqarishini qayerdan biladi: kartadagi eslatma, «🎙 Plaud» yo'riqnomasi, menyu va
     natija ostidagi eslatma. Belgilar: natija (`doc:<til>`) chatdagi keyingi matnni oladi (`LATEST_TAGS`), menyu
     (`minutes`) - yo'q."""
-    assert render.LATEST_TAGS == ("", "chat", "doc:uz-latn", "doc:uz-cyrl", "doc:ru", "doc:en")
+    assert render.LATEST_TAGS[:6] == ("", "chat", "doc:uz-latn", "doc:uz-cyrl", "doc:ru", "doc:en")
+    assert {"doc:uz-latn:docx", "doc:en:pdf"} <= set(render.LATEST_TAGS) and len(render.LATEST_TAGS) == 14
     assert "📄 Bayonnoma uchun ko'rsatma va tayyor bayonnomadagi o'zgartirishlarni" in render.CHAT_HINT
     assert home.PROMPT.index("yangi versiyasini yuboradi") < home.PROMPT.index("Oldingi yozuv haqida")
     assert "bayonnoma ko'rsatmalarini" in render.CHAT_RESET_DONE and "saqlanib qoladi" in render.CHAT_RESET_DONE
@@ -1035,6 +1072,19 @@ def test_bayonnoma_chatda_eslatmalar_va_belgilar():
     assert render.marked_tag({"blocks": render.minutes_menu(mid, "uz-cyrl")}, tags=render.LATEST_TAGS) is None
     assert (render.doc_lang("doc:ru"), render.doc_lang("doc:de"), render.doc_lang("chat"), render.doc_lang(None)) == (
         "ru", None, None, None)
+    # Format (2026-11-13): natija belgisida odam tanlagan format; eski belgida - yo'q.
+    hint_pdf = render.minutes_hint(mid, "uz-latn", "pdf")
+    assert render.marked_tag({"blocks": [hint_pdf]}, tags=render.LATEST_TAGS) == (mid, "doc:uz-latn:pdf")
+    assert (render.doc_lang("doc:uz-latn:pdf"), render.doc_format("doc:uz-latn:pdf")) == ("uz-latn", "pdf")
+    assert (render.doc_format("doc:ru"), render.doc_format("doc:ru:txt"), render.doc_format("chat")) == (
+        None, None, None)
+    assert render.doc_tag("ru", "docx") == "doc:ru:docx"
+    assert render.doc_tag("ru") == render.doc_tag("ru", "x") == "doc:ru"
+    word = {"name": "Bayonnoma - Haftalik 2026-11-11.docx"}
+    assert (render.minutes_file_format(word), render.minutes_file_format({"name": "Протокол - X 2026-11-11.pdf"}),
+            render.minutes_file_format({"name": "Hisobot - X.docx"})) == ("docx", "pdf", None)
+    assert render.marked_tag({"blocks": render.minutes_formats(mid, "ru")}) == (mid, "minutes")
+    assert render.marked_tag({"blocks": render.minutes_formats(mid, "ru")}, tags=render.LATEST_TAGS) is None
 
     # Chat javobi ostidagi qator: ko'rsatma - eslab qolindi (jami nechta); ish boshlanmagan - sababi; boshlangan ish
     # (yiqilgan bo'lsa ham) - bo'sh: natija alohida xabarda.
@@ -1095,13 +1145,14 @@ def test_natija_doc_belgisi(delivered, _isolated_meetings, monkeypatch):
     monkeypatch.setattr(minutes, "generate", lambda *a, **k: _fake_view())
     monkeypatch.setattr(minutes, "export_file", export_file)
     before = len(client.posted)
-    _click(client, "barno_minutes_lang", f"{mid}|uz-cyrl", _isolated_meetings)
+    _choose(client, _isolated_meetings, mid, "uz-cyrl")
 
-    [update] = client.updated
+    update = client.updated[-1]
     assert update["text"].startswith("✅ *Bayonnoma tayyor* (Ўзбек (кирилл)): 2 bo'lim, 5 band. Loyiha - ")
     assert update["blocks"][:-1] == render.sections(update["text"])
-    assert update["blocks"][-1] == render.minutes_hint(mid, "uz-cyrl")
-    assert render.marked_tag(update) == (mid, "doc:uz-cyrl") == render.marked_tag(update, tags=render.LATEST_TAGS)
+    assert update["blocks"][-1] == render.minutes_hint(mid, "uz-cyrl", "docx")
+    assert render.marked_tag(update) == (mid, "doc:uz-cyrl:docx") == render.marked_tag(update,
+                                                                                    tags=render.LATEST_TAGS)
     assert render.MINUTES_EDIT_HINT in shown(update) and len(client.posted) == before + 1
 
 
@@ -1126,7 +1177,7 @@ def test_natijadan_keyin_chatdagi_matn_shu_yozuvga(users_file, monkeypatch, _iso
     assert (sent[-1]["meeting"], sent[-1]["minutes_lang"]) == (second, None)          # menyu - nomzod emas
 
     result = _language(client, rt, first, "ru", {"ts": menu["ts"]})
-    assert "thread_ts" not in client.posted[-1] and render.marked_tag(result) == (first, "doc:ru")
+    assert "thread_ts" not in client.posted[-1] and render.marked_tag(result) == (first, "doc:ru:docx")
     _top(client, "3-bandda muddat 1-dekabr bo'lsin")
     answer = client.updated[-1]
     assert answer["text"].startswith("📼 «Slack: ovoz.aac» bo'yicha:\n") and render.marked(answer) == first
@@ -1147,7 +1198,7 @@ def test_natija_thread_tahrir_oxirigacha(delivered, claude, minutes_chain):
     cyrl = _language(client, rt, mid, "uz-cyrl", {"ts": summary["ts"]})
     assert cyrl["text"].startswith("✅ *Bayonnoma tayyor* (Ўзбек (кирилл)): 2 bo'lim, 3 band.")
     assert _language(client, rt, mid, "ru", {"ts": summary["ts"]})["text"].startswith("✅ *Bayonnoma tayyor* (Русский)")
-    assert len(client.uploaded) == 4 and _minutes_ops(rt) == ["meeting_minutes"] * 2
+    assert len(client.uploaded) == 2 and _minutes_ops(rt) == ["meeting_minutes"] * 2
     thread = client.thread_under(cyrl)
 
     posted, updated = len(client.posted), len(client.updated)
@@ -1161,13 +1212,13 @@ def test_natija_thread_tahrir_oxirigacha(delivered, claude, minutes_chain):
     answer, done = client.updated[updated:]
     assert answer["ts"] == holder["ts"] and answer["text"].startswith(CHAT_ACTION_ANSWER)
     assert answer["blocks"][-1] == render.chat_actions(mid)
-    docx, pdf = client.uploaded[4:]
-    assert docx["thread_ts"] == pdf["thread_ts"] == thread
-    assert "(2-таҳрир)" in docx["filename"] and docx["filename"].endswith(".docx") and pdf["filename"].endswith(".pdf")
+    [docx] = client.uploaded[2:]                                # tanlangan format (Word) - faqat u
+    assert docx["thread_ts"] == thread
+    assert "(2-таҳрир)" in docx["filename"] and docx["filename"].endswith(".docx")
     assert done["ts"] == waiting["ts"]
     assert done["text"].startswith("✅ *Bayonnoma tahrirlandi* (Ўзбек (кирилл), 2-versiya): 2 bo'lim, 3 band.")
     assert "\n\nSo'rov: «TITLE=Yangi sarlavha»\n\n*O'zgarishlar:* sarlavha o'zgardi." in done["text"]
-    assert done["blocks"][-1] == render.minutes_hint(mid, "uz-cyrl")
+    assert done["blocks"][-1] == render.minutes_hint(mid, "uz-cyrl", "docx")
     assert _minutes_ops(rt) == ["meeting_minutes"] * 2 + ["meeting_minutes_revise"]
     system = "\n".join(block["text"] for block in claude.chats()[-1]["system"])
     assert "the current document: Uzbek (Cyrillic) (uz-cyrl), version 1" in system
@@ -1185,7 +1236,7 @@ def test_natija_thread_tahrir_oxirigacha(delivered, claude, minutes_chain):
     failed = client.updated[-1]
     assert failed["ts"] == waiting["ts"] and len(client.uploaded) == uploaded
     # Xato xabarida ham yig'ilish belgisi (`doc:<til>`): uning thread'idagi javob (aniqroq so'rov) shu hujjatga boradi.
-    assert render.marked_tag(failed) == (mid, "doc:uz-cyrl")
+    assert render.marked_tag(failed) == (mid, "doc:uz-cyrl:docx")
     assert failed["text"] == ("Bayonnoma tahrirlanmadi: Bayonnomada o'zgarish bo'lmadi - nimani o'zgartirish "
                               "kerakligini aniqroq yozing (masalan: «3-bandda muddat - 1-dekabr»)")
 
@@ -1200,7 +1251,10 @@ def test_fayl_threadidagi_javob_shu_hujjatga(delivered, claude, minutes_chain, m
     rt = minutes_chain
     sent = _spy_chat(monkeypatch)
     result = _language(client, rt, mid, "uz-cyrl", {"ts": summary["ts"]})
-    assert render.marked_tag(result) == (mid, "doc:uz-cyrl")
+    assert render.marked_tag(result) == (mid, "doc:uz-cyrl:docx")
+    # O'sha hujjat PDF'da ham olindi (model qayta chaqirilmaydi): har formatning o'z natijasi va fayli.
+    assert render.marked_tag(_language(client, rt, mid, "uz-cyrl", {"ts": summary["ts"]}, "pdf")) == (
+        mid, "doc:uz-cyrl:pdf")
     docx_msg, pdf_msg = [m for m in client.timeline.values() if m.get("files")]
     assert [render.minutes_file_lang(m["files"][0]) for m in (docx_msg, pdf_msg)] == ["uz-cyrl", "uz-cyrl"]
 
@@ -1214,14 +1268,17 @@ def test_fayl_threadidagi_javob_shu_hujjatga(delivered, claude, minutes_chain, m
     assert (sent[-1]["meeting"], sent[-1]["minutes_lang"], sent[-1]["intent"]) == (mid, "uz-cyrl", None)
     done = client.updated[-1]
     assert done["text"].startswith("✅ *Bayonnoma tahrirlandi* (Ўзбек (кирилл), 2-versiya)")
-    assert render.marked_tag(done) == (mid, "doc:uz-cyrl")
-    docx, pdf = client.uploaded[2:]
-    assert docx["thread_ts"] == pdf["thread_ts"] == thread and "(2-таҳрир)" in docx["filename"]
-    # Thread ichida yuklangan yangi fayllar chatga chiqmaydi; PDF faylining thread'i ham shu hujjatga.
+    assert render.marked_tag(done) == (mid, "doc:uz-cyrl:docx")
+    [docx] = client.uploaded[2:]                                   # Word fayliga javob - yangi versiya ham Word
+    assert docx["thread_ts"] == thread and "(2-таҳрир)" in docx["filename"] and docx["filename"].endswith(".docx")
+    # Thread ichida yuklangan yangi fayl chatga chiqmaydi; PDF faylining thread'i ham shu hujjatga - tahriri PDF'da.
     assert len([m for m in client.timeline.values() if m.get("files")]) == 2
-    claude.script = [chat_reply()]
-    _reply(client, client.thread_under(pdf_msg), "Bayonnomada nechta band bor?")
+    claude.script = [chat_reply("revise", instruction="Sarlavhani «Uchinchi» qilish")]
+    _reply(client, client.thread_under(pdf_msg), "TITLE=Uchinchi")
     assert (sent[-1]["meeting"], sent[-1]["minutes_lang"]) == (mid, "uz-cyrl")
+    [pdf] = client.uploaded[3:]
+    assert "(3-таҳрир)" in pdf["filename"] and pdf["filename"].endswith(".pdf")
+    assert render.marked_tag(client.updated[-1]) == (mid, "doc:uz-cyrl:pdf")
 
     # Bayonnoma bo'lmagan fayl (transkript) va begona botning bayonnoma fayli - jim: javob ham, chat ham yo'q.
     calls, posted = len(sent), len(client.posted)
@@ -1254,14 +1311,22 @@ def test_fayl_threadi_ikki_natija_orasida_nomi_bilan(monkeypatch):
     monkeypatch.setattr(meeting, "_titled", lambda user, mid, names: meeting._letters(titles[mid]) in
                         meeting._letters(names[0]))
     user = object()
-    assert meeting._doc_of_files(client, "D1", parent, user, bot_user=BOT_USER) == (first, "doc:uz-latn")
+    # Eski (formatsiz) natija belgisi - format javob yozilgan fayldan (Word).
+    assert meeting._doc_of_files(client, "D1", parent, user, bot_user=BOT_USER) == (first, "doc:uz-latn:docx")
     titles[first] = "Qayta nomlangan"
-    assert meeting._doc_of_files(client, "D1", parent, user, bot_user=BOT_USER) == (second, "doc:uz-latn")
+    assert meeting._doc_of_files(client, "D1", parent, user, bot_user=BOT_USER) == (second, "doc:uz-latn:docx")
     assert client.history_reads[-1] == {"channel": "D1", "limit": meeting.DOC_LOOKBACK, "latest": "1030.1",
                                         "inclusive": False}
     late = {**parent, "ts": str(1010.1 + meeting.DOC_FILE_WINDOW + 1)}
     client.timeline[("D1", late["ts"])] = late
     assert meeting._doc_of_files(client, "D1", late, user, bot_user=BOT_USER) is None
+    # Formatli natija belgisi o'zgarishsiz qaytadi.
+    client.timeline[("D1", "1031.1")] = as_parent({"channel": "D1", "ts": "1031.1", "text": "✅",
+                                                   "blocks": [render.minutes_hint(second, "uz-latn", "pdf")]})
+    pdf_file = as_parent({"channel": "D1", "ts": "1032.1", "text": "",
+                          "files": [{"id": "FD2", "name": "Bayonnoma - Kredit qo'mitasi 2026-11-11.pdf"}]})
+    client.timeline[("D1", "1032.1")] = pdf_file
+    assert meeting._doc_of_files(client, "D1", pdf_file, user, bot_user=BOT_USER) == (second, "doc:uz-latn:pdf")
     client.history_error = RuntimeError("tarmoq")
     assert meeting._doc_of_files(client, "D1", parent, user, bot_user=BOT_USER) is None
 
@@ -1314,9 +1379,15 @@ def test_minutes_doc_asker(delivered, _isolated_meetings, monkeypatch):
     sleep = drive(_isolated_meetings)
     meeting.on_action(client, {"actions": [{"action_id": "barno_minutes_lang_ru", "value": f"{mid}|ru"}],
                                "channel": {"id": "D1"}, "user": {"id": "U1"}, "message": {}}, sleep=sleep)
+    assert seen == []                                              # til - faqat format savoli
+    question = client.posted[-1]
+    meeting.on_action(client, {"actions": [{"action_id": "barno_minutes_fmt_pdf", "value": f"{mid}|ru"}],
+                               "channel": {"id": "D1"}, "user": {"id": "U1"}, "message": {"ts": question["ts"]}},
+                      sleep=sleep)
     assert seen == [{"asker": "slack:U1", "sleep": sleep}]
-    [update] = client.updated
+    update = client.updated[-1]
     assert update["text"] == render.MINUTES_STILL_RUNNING and client.uploaded == []
+    assert update["ts"] == question["ts"] and render.marked_tag(update) == (mid, "doc:ru:pdf")
 
 
 def test_client_msg_id_takror(delivered, claude, minutes_chain):
@@ -1333,8 +1404,9 @@ def test_client_msg_id_takror(delivered, claude, minutes_chain):
     assert (turn["kind"], turn["client_id"]) == ("create", "slack-9f1c2d3e-4b5a-6789-abcd-ef0123456789")
     assert len(rt.store.minutes_rows(mid)) == 1 and _minutes_ops(rt) == ["meeting_minutes"]
     assert len(claude.chats()) == 1
-    # Fayllar ham bir marta (Word + PDF): takror hodisa natijani qayta kuzatmaydi (`_first_follow`).
-    assert len(client.uploaded) == 2
+    # Fayl ham bir marta (chatdan boshlangan hujjat - Word): takror hodisa natijani qayta kuzatmaydi
+    # (`_first_follow`).
+    assert len(client.uploaded) == 1
     assert meeting._client_id({"client_msg_id": "<a b>/" + "x" * 80}) == "slack-ab" + "x" * 56
     assert meeting._client_id({"ts": "1.2"}) is None and meeting._client_id({"client_msg_id": "@@"}) is None
 
@@ -1376,7 +1448,7 @@ def test_chatdan_boshlangan_ish_kutiladi(delivered, claude, minutes_chain, monke
                                                        thread)
     done = client.updated[-1]
     assert done["ts"] == waiting["ts"] and done["text"].startswith("✅ *Bayonnoma tayyor* (Ўзбек (кирилл))")
-    assert len(client.uploaded) == 2 and queue == []
+    assert len(client.uploaded) == 1 and queue == []
 
     real_wait = minutes.wait
     monkeypatch.setattr(minutes, "wait", lambda *a, **k: real_wait(*a, **{**k, "timeout": 6.0}))
@@ -1385,4 +1457,4 @@ def test_chatdan_boshlangan_ish_kutiladi(delivered, claude, minutes_chain, monke
                        sleep=lambda _sec: None)
     assert client.posted[-1]["text"] == "⏳ Bayonnoma (Ўзбек (кирилл)) tahrirlanmoqda… 1-3 daqiqa."
     assert client.updated[-1]["text"] == render.MINUTES_STILL_RUNNING
-    assert len(client.uploaded) == 2 and len(queue) == 1
+    assert len(client.uploaded) == 1 and len(queue) == 1

@@ -414,9 +414,23 @@ def test_bayonnoma_til_menyusi(world, monkeypatch):
     # Noma'lum til - tugma eskirgan, model chaqirilmaydi.
     bot.handle_update(callback(f"p:d:{mid}:de", message_id=summary_id))
     assert tg.calls[-1][0] == "answer_callback" and tg.calls[-1][1]["text"] == "Tugma eskirgan"
+    # Til tanlandi - format menyusi (ega qarori 2026-11-13), model chaqirilmaydi; savol - qisqa bildirishnoma.
+    bot.handle_update(callback(f"p:d:{mid}:ru", message_id=summary_id))
+    formats = _last_markup(tg)
+    assert formats == plaud_mod.minutes_format_menu(mid, "ru")
+    assert [(b["text"], b["callback_data"]) for row in formats["inline_keyboard"] for b in row] == [
+        ("📄 Word", f"p:d:{mid}:ru:docx"), ("📕 PDF", f"p:d:{mid}:ru:pdf"), ("⬅ Orqaga", f"p:d:{mid}")]
+    toast = [kw for n, kw in tg.calls if n == "answer_callback"][-1]
+    assert toast["text"] == plaud_mod.MINUTES_FORMAT_PROMPT.format(title=minutes.LANG_TITLES["ru"])
+    assert max(len(f"p:d:{mid}:{lang}:docx".encode()) for lang in minutes.LANGS) <= render.CALLBACK_MAX
+    # Noma'lum format - tugma eskirgan.
+    bot.handle_update(callback(f"p:d:{mid}:ru:txt", message_id=summary_id))
+    assert tg.calls[-1][1]["text"] == "Tugma eskirgan"
 
 
-def test_bayonnoma_word_va_pdf_yuboriladi(world, monkeypatch):
+def test_bayonnoma_tanlangan_formatda_bitta_fayl(world, monkeypatch):
+    """Til, so'ng format (ega qarori 2026-11-13): FAQAT tanlangan fayl chiziladi va yuboriladi - Word (izohi bilan)
+    yoki PDF (o'z izohi bilan); «✏️ O'zgartirish» tugmasida format ham (tahrir fayli o'sha formatda)."""
     bot, tg, rt, plaud = world
     mid, summary_id = _delivered(bot, tg)
     generated = []
@@ -429,7 +443,7 @@ def test_bayonnoma_word_va_pdf_yuboriladi(world, monkeypatch):
     monkeypatch.setattr(minutes, "generate", generate)
     monkeypatch.setattr(minutes, "export_file", export_file)
     before = len(tg.calls)
-    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=summary_id))
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl:docx", message_id=summary_id))
 
     answer = tg.calls[before][1]
     assert tg.calls[before][0] == "answer_callback" and answer["text"] == "Bayonnoma tayyorlanmoqda…"
@@ -437,24 +451,23 @@ def test_bayonnoma_word_va_pdf_yuboriladi(world, monkeypatch):
     holder = next(kw for kw in tg.sent() if kw["text"].startswith("⏳ Bayonnoma"))
     assert holder["text"] == f"⏳ Bayonnoma ({minutes.LANG_TITLES['uz-cyrl']}) tayyorlanmoqda… 1-3 daqiqa."
     assert generated == [(1, mid, "uz-cyrl")]                                  # odamning O'Z hisobidan
-    assert exported == [(mid, "ab" * 16, "docx"), (mid, "ab" * 16, "pdf")]
-    docx, pdf = tg.sent("send_document")
+    assert exported == [(mid, "ab" * 16, "docx")]                              # FAQAT tanlangan format
+    [docx] = tg.sent("send_document")
     assert docx["filename"].endswith(".docx") and docx["filename"].startswith("Баённома - Haftalik")
-    assert pdf["filename"].endswith(".pdf") and pdf["size"] == len(b"pdf")
-    assert docx["content_type"] == minutes.FORMATS["docx"][0] and pdf["content_type"] == minutes.FORMATS["pdf"][0]
+    assert docx["content_type"] == minutes.FORMATS["docx"][0]
     assert docx["caption"] == plaud_mod.MINUTES_CAPTION and "«________»" in docx["caption"]
     assert "«✏️ O'zgartirish»ni bosing yoki shu faylga javob (Reply)" in docx["caption"]
-    assert pdf["caption"] is None
-    # Ikkala fayl ostida ham «✏️ O'zgartirish» (shu til) va «💬 Savol berish»; xotirada - bayonnoma xabari, tili bilan.
-    done = plaud_mod.minutes_done_menu(mid, "uz-cyrl")
-    assert docx["reply_markup"] == done and pdf["reply_markup"] == done
-    assert all(plaud._intents[(TG_ID, kw["message_id"])] == ("doc", "uz-cyrl") for kw in (docx, pdf))
-    # Yuborilgan fayllarning o'zi arxivda (ega talabi, 2026-11-05): kimga, qaysi yig'ilish va til.
+    # Fayl ostida «✏️ O'zgartirish» (shu til va format) va «💬 Savol berish»; xotirada - bayonnoma xabari, tili bilan.
+    done = plaud_mod.minutes_done_menu(mid, "uz-cyrl", "docx")
+    assert docx["reply_markup"] == done and done["inline_keyboard"][0][0]["callback_data"] == f"p:w:{mid}:uz-cyrl:docx"
+    assert plaud._intents[(TG_ID, docx["message_id"])] == ("doc", "uz-cyrl")
+    assert plaud._formats[(TG_ID, mid, "uz-cyrl")] == "docx"
+    # Yuborilgan faylning o'zi arxivda (ega talabi, 2026-11-05): kimga, qaysi yig'ilish va til.
     sent = archive.get().rows(channel="telegram")
     assert [(r["direction"], r["kind"], r["file_name"], r["actor_id"]) for r in sent] == [
-        ("out", "document", docx["filename"], 1), ("out", "document", pdf["filename"], 1)]
+        ("out", "document", docx["filename"], 1)]
     assert json.loads(sent[0]["meta"]) == {"meeting": mid, "minutes": "ab" * 16, "lang": "uz-cyrl"}
-    assert (archive.get().root / sent[1]["file_path"]).read_bytes() == b"pdf"
+    assert (archive.get().root / sent[0]["file_path"]).read_bytes() == b"docx"
     edited = [kw for n, kw in tg.calls if n == "edit_message_text"][-1]
     assert edited["message_id"] == holder["message_id"]
     assert edited["reply_markup"] == done and plaud._intents[(TG_ID, holder["message_id"])] == ("doc", "uz-cyrl")
@@ -469,6 +482,15 @@ def test_bayonnoma_word_va_pdf_yuboriladi(world, monkeypatch):
     # Izohsiz, ogohlantirishsiz - faqat bitta qator.
     assert plaud_mod.minutes_html(_minutes_view(notes=[]), "en") == \
         f"✅ <b>Bayonnoma tayyor</b> ({minutes.LANG_TITLES['en']}): 2 bo'lim, 5 band."
+    # PDF tanlansa - faqat PDF, o'z izohi va formatli «✏️ O'zgartirish» bilan.
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl:pdf", message_id=summary_id))
+    assert exported[1:] == [(mid, "ab" * 16, "pdf")]
+    pdf = tg.sent("send_document")[-1]
+    assert len(tg.sent("send_document")) == 2 and pdf["filename"].endswith(".pdf") and pdf["size"] == len(b"pdf")
+    assert pdf["content_type"] == minutes.FORMATS["pdf"][0] and pdf["caption"] == plaud_mod.MINUTES_PDF_CAPTION
+    assert "Word formatini tanlang" in pdf["caption"]
+    assert pdf["reply_markup"] == plaud_mod.minutes_done_menu(mid, "uz-cyrl", "pdf")
+    assert plaud._formats[(TG_ID, mid, "uz-cyrl")] == "pdf"
 
 
 def test_bayonnoma_yozilmadi_va_fayl_yuborilmadi(world, monkeypatch):
@@ -476,14 +498,14 @@ def test_bayonnoma_yozilmadi_va_fayl_yuborilmadi(world, monkeypatch):
     mid, summary_id = _delivered(bot, tg)
     monkeypatch.setattr(minutes, "generate", lambda *a, **k: (_ for _ in ()).throw(
         MeetingProblem(503, "llm_not_configured", "Bayonnoma uchun model sozlanmagan")))
-    bot.handle_update(callback(f"p:d:{mid}:ru", message_id=summary_id))
+    bot.handle_update(callback(f"p:d:{mid}:ru:docx", message_id=summary_id))
     edited = [kw for n, kw in tg.calls if n == "edit_message_text"][-1]
     assert edited["text"] == "Bayonnoma yozilmadi: Bayonnoma uchun model sozlanmagan"
     assert tg.sent("send_document") == []
     # Xato xabarida «💬 Savol berish» - yig'ilish belgisi: qayta ishga tushgandan keyin ham javob shu yozuv chatiga.
     assert edited["reply_markup"] == plaud_mod.ask_menu(mid)
     assert plaud_mod._MARK.match(edited["reply_markup"]["inline_keyboard"][0][0]["callback_data"]).group(1) == mid
-    # Hujjat yozildi, lekin Telegram faylni olmadi - odamga aytiladi, qolgan fayl va natija yuboriladi.
+    # Hujjat yozildi, lekin Telegram faylni olmadi - odamga aytiladi, natija baribir yuboriladi.
     export_file, _ = _minutes_export()
     monkeypatch.setattr(minutes, "generate", lambda *a, **k: _minutes_view(notes=[]))
     monkeypatch.setattr(minutes, "export_file", export_file)
@@ -495,13 +517,13 @@ def test_bayonnoma_yozilmadi_va_fayl_yuborilmadi(world, monkeypatch):
             raise TelegramError("sendDocument: 413", code=413)
 
     monkeypatch.setattr(tg, "send_document", send_document)
-    bot.handle_update(callback(f"p:d:{mid}:en", message_id=summary_id))
-    assert len(sent) == 2 and sent[0].endswith(".docx") and sent[1].endswith(".pdf")
-    assert any(t.startswith("Faylni yuborib bo'lmadi (docx)") for t in tg.texts())
+    bot.handle_update(callback(f"p:d:{mid}:en:docx", message_id=summary_id))
+    assert len(sent) == 1 and sent[0].endswith(".docx")
+    assert any(t == "Faylni yuborib bo'lmadi (Word) - til va formatni qaytadan tanlang." for t in tg.texts())
     assert [kw for n, kw in tg.calls if n == "edit_message_text"][-1]["text"].startswith("✅ <b>Bayonnoma tayyor</b>")
     # Ichki xato - "⏳" o'rnida tushunarli sabab.
     monkeypatch.setattr(minutes, "generate", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    bot.handle_update(callback(f"p:d:{mid}:en", message_id=summary_id))
+    bot.handle_update(callback(f"p:d:{mid}:en:pdf", message_id=summary_id))
     crashed = [kw for n, kw in tg.calls if n == "edit_message_text"][-1]
     assert crashed["text"] == "Bayonnoma yozilmadi: ichki xato." and crashed["reply_markup"] == plaud_mod.ask_menu(mid)
 
@@ -510,7 +532,7 @@ def test_bayonnoma_begona_odamga_yopiq(world, monkeypatch):
     bot, tg, rt, plaud = world
     mid, summary_id = _delivered(bot, tg)
     monkeypatch.setattr(minutes, "generate", lambda *a, **k: pytest.fail("begona uchun model chaqirilmasligi kerak"))
-    for data in (f"p:d:{mid}", f"p:d:{mid}:uz-cyrl"):
+    for data in (f"p:d:{mid}", f"p:d:{mid}:uz-cyrl", f"p:d:{mid}:uz-cyrl:docx"):
         before = len(tg.calls)
         bot.handle_update(callback(data, message_id=summary_id, tg_id=OTHER_TG))
         assert [n for n, _ in tg.calls[before:]] == ["answer_callback"]
@@ -524,18 +546,19 @@ def test_bayonnoma_haqiqiy_quvur_fakellm_bilan(world, monkeypatch):
     bot, tg, rt, plaud = world
     monkeypatch.setattr(settings, "meetings_minutes_chain", "ollama")
     mid, summary_id = _delivered(bot, tg)
-    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=summary_id))
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl:docx", message_id=summary_id))
     docs = tg.sent("send_document")
-    assert len(docs) == 2 and docs[0]["filename"].endswith(".docx") and docs[1]["filename"].endswith(".pdf")
-    assert all(d["size"] > 0 for d in docs) and docs[0]["filename"].startswith("Баённома")
+    assert len(docs) == 1 and docs[0]["filename"].endswith(".docx")
+    assert docs[0]["size"] > 0 and docs[0]["filename"].startswith("Баённома")
     edited = [kw for n, kw in tg.calls if n == "edit_message_text"][-1]
     assert edited["text"].startswith(f"✅ <b>Bayonnoma tayyor</b> ({minutes.LANG_TITLES['uz-cyrl']}):")
     rows = rt.store.minutes_rows(mid)
     assert len(rows) == 1 and rows[0]["status"] == "ready" and rows[0]["language"] == "uz-cyrl"
-    # Qayta bosish - model chaqirilmaydi (tayyori bor), fayllar qayta yuboriladi.
+    # Qayta tanlash (endi PDF) - model chaqirilmaydi (tayyori bor), faqat PDF chiziladi va yuboriladi.
     calls = len(rt.llm.calls) if hasattr(rt.llm, "calls") else None
-    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=summary_id))
-    assert len(tg.sent("send_document")) == 4 and len(rt.store.minutes_rows(mid)) == 1
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl:pdf", message_id=summary_id))
+    docs = tg.sent("send_document")
+    assert len(docs) == 2 and docs[1]["filename"].endswith(".pdf") and len(rt.store.minutes_rows(mid)) == 1
     if calls is not None:
         assert len(rt.llm.calls) == calls
 
@@ -1137,6 +1160,8 @@ def test_korsatma_tugmasi_prompt_va_javob(world, monkeypatch):
     bot.handle_update(callback(f"p:d:{mid}", message_id=answer["message_id"]))
     assert _last_markup(tg) == plaud_mod.minutes_menu(mid, "uz")
     bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=answer["message_id"]))
+    assert _last_markup(tg) == plaud_mod.minutes_format_menu(mid, "uz-cyrl") and _minutes_calls(rt) == []
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl:docx", message_id=answer["message_id"]))
     [call] = _minutes_calls(rt)
     assert call["op"] == "meeting_minutes" and "OWNER INSTRUCTIONS" in call["user"]
     assert "Rais - Alisher Karimov" in call["user"] and "Moliyaviy atamalarni o'zgartirmang" in call["user"]
@@ -1146,7 +1171,7 @@ def test_korsatma_tugmasi_prompt_va_javob(world, monkeypatch):
     # Yana bir ko'rsatma, so'ng o'sha til - qaytadan yozilmaydi: joriy hujjatning ko'rsatmalar tahriri.
     bot.handle_update(callback(f"p:g:{mid}", message_id=summary_id))
     bot.handle_update(reply("Nazoratni moliya bo'limiga yuklang", replied(tg.sent()[-1]), message_id=31))
-    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=summary_id))
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl:docx", message_id=summary_id))
     assert [c["op"] for c in _minutes_calls(rt)] == ["meeting_minutes", "meeting_minutes_revise"]
     assert last_edit(tg)["text"].startswith(f"✅ <b>Bayonnoma yangilandi</b> ({minutes.LANG_TITLES['uz-cyrl']}, "
                                             "2-versiya): ko'rsatmalaringiz qo'llandi - ")
@@ -1154,15 +1179,15 @@ def test_korsatma_tugmasi_prompt_va_javob(world, monkeypatch):
 
 def test_ozgartirish_tugmasi_prompt_va_tahrir(world, monkeypatch):
     """«✏️ O'zgartirish» (fayl va natija ostida, `p:w:<id>:<til>`): ForceReply so'rovi; javob - matn yoki ovoz -
-    `intent="revise"` va shu til; javobdan keyin "⏳ … tahrirlanmoqda", yangi versiyaning Word va PDF i (o'sha tugmalar
-    bilan) va "⏳" o'rnida natija: versiya, so'rov va o'zgarishlar."""
+    `intent="revise"` va shu til; javobdan keyin "⏳ … tahrirlanmoqda", yangi versiya fayli - tanlangan formatda (o'sha
+    tugmalar bilan) va "⏳" o'rnida natija: versiya, so'rov va o'zgarishlar."""
     bot, tg, rt, plaud = world
     _queued_minutes(monkeypatch, rt, plaud)
     mid, summary_id = _delivered(bot, tg)
-    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=summary_id))   # 1-versiya (til tugmasi - shu ipda)
-    done = plaud_mod.minutes_done_menu(mid, "uz-cyrl")
-    docx, pdf = tg.sent("send_document")
-    assert docx["reply_markup"] == done and pdf["reply_markup"] == done and last_edit(tg)["reply_markup"] == done
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl:docx", message_id=summary_id))   # 1-versiya (shu ipda)
+    done = plaud_mod.minutes_done_menu(mid, "uz-cyrl", "docx")
+    [docx] = tg.sent("send_document")
+    assert docx["reply_markup"] == done and last_edit(tg)["reply_markup"] == done
     seen = _recording(monkeypatch)
     lang = minutes.LANG_TITLES["uz-cyrl"]
     # Word fayli ostidagi ✏️ - so'rov (faqat xotirada: niyat va til).
@@ -1185,16 +1210,16 @@ def test_ozgartirish_tugmasi_prompt_va_tahrir(world, monkeypatch):
     answer = next(kw for kw in tg.sent("edit_message_text") if kw["message_id"] == holder["message_id"])
     assert answer["text"] == "So'rovingiz bo'yicha bayonnomaning yangi versiyasini tayyorlayapman - odatda 1-3 daqiqa."
     assert answer["reply_markup"] == plaud_mod.chat_menu(mid)
-    new_docx, new_pdf = tg.sent("send_document")[docs:]
-    assert new_docx["reply_markup"] == done and new_pdf["reply_markup"] == done
+    [new_docx] = tg.sent("send_document")[docs:]                                 # tanlangan format - Word
+    assert new_docx["reply_markup"] == done
     assert "2-таҳрир" in new_docx["filename"] and new_docx["filename"].endswith(".docx")
-    assert "2-таҳрир" in new_pdf["filename"] and new_docx["caption"] == plaud_mod.MINUTES_CAPTION
+    assert new_docx["caption"] == plaud_mod.MINUTES_CAPTION
     result = last_edit(tg)
     assert result["message_id"] == working["message_id"] and result["reply_markup"] == done
     assert result["text"].startswith(f"✅ <b>Bayonnoma tahrirlandi</b> ({lang}, 2-versiya): 2 bo'lim, ")
     assert ("\n\nSo'rov: «TITLE=Moliya qo'mitasi yig'ilishi»\n\n<b>O'zgarishlar:</b> sarlavha o'zgardi."
             in result["text"])
-    assert all(plaud._intents[(TG_ID, kw["message_id"])] == ("doc", "uz-cyrl") for kw in (new_docx, new_pdf, result))
+    assert all(plaud._intents[(TG_ID, kw["message_id"])] == ("doc", "uz-cyrl") for kw in (new_docx, result))
     assert [c["op"] for c in _minutes_calls(rt)] == ["meeting_minutes", "meeting_minutes_revise"]
     assert bot.backend.questions == []
     # Ovozli javob (natija ostidagi ✏️ dan yangi so'rovga) ham - tahrir, shu tilda.
@@ -1216,17 +1241,17 @@ def test_bayonnoma_tahriri_oxirigacha_qayta_bosish_bepul(world, monkeypatch):
     bot, tg, rt, plaud = world
     _queued_minutes(monkeypatch, rt, plaud)
     mid, summary_id = _delivered(bot, tg)
-    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=summary_id))
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl:docx", message_id=summary_id))
     first = [d["filename"] for d in tg.sent("send_document")]
-    assert len(first) == 2 and not any("таҳрир" in name for name in first)
-    bot.handle_update(callback(f"p:w:{mid}:uz-cyrl", message_id=tg.sent("send_document")[0]["message_id"]))
+    assert len(first) == 1 and not any("таҳрир" in name for name in first)
+    bot.handle_update(callback(f"p:w:{mid}:uz-cyrl:docx", message_id=tg.sent("send_document")[0]["message_id"]))
     bot.handle_update(reply("TITLE=Yangi sarlavha", replied(tg.sent()[-1])))
-    second = [d["filename"] for d in tg.sent("send_document")[2:]]
-    assert len(second) == 2 and all("2-таҳрир" in name for name in second)
+    second = [d["filename"] for d in tg.sent("send_document")[1:]]
+    assert len(second) == 1 and all("2-таҳрир" in name for name in second)
     calls = len(rt.llm.calls)
-    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=summary_id))
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl:docx", message_id=summary_id))
     assert len(rt.llm.calls) == calls and len(rt.store.minutes_rows(mid)) == 2
-    assert [d["filename"] for d in tg.sent("send_document")[4:]] == second
+    assert [d["filename"] for d in tg.sent("send_document")[2:]] == second
     assert last_edit(tg)["text"].startswith(f"✅ <b>Bayonnoma tahrirlandi</b> ({minutes.LANG_TITLES['uz-cyrl']}, "
                                             "2-versiya): ")
 
@@ -1237,7 +1262,8 @@ def test_hujjatga_javob_avto(world, monkeypatch):
     bot, tg, rt, plaud = world
     mid, summary_id = _delivered(bot, tg)
     _stub_minutes(monkeypatch)
-    bot.handle_update(callback(f"p:d:{mid}:uz-latn", message_id=summary_id))
+    bot.handle_update(callback(f"p:d:{mid}:uz-latn:docx", message_id=summary_id))
+    bot.handle_update(callback(f"p:d:{mid}:uz-latn:pdf", message_id=summary_id))
     docx, pdf = tg.sent("send_document")
     result = last_edit(tg)
     seen = _recording(monkeypatch)
@@ -1265,8 +1291,8 @@ def test_avto_niyat_claude_tayyorlash_va_tahrir(world, monkeypatch):
     assert fake.ops() == ["meeting_chat"]
     working = tg.sent()[-1]
     assert working["text"] == f"⏳ Bayonnoma ({lang}) tayyorlanmoqda… 1-3 daqiqa."
-    docx, pdf = tg.sent("send_document")
-    assert docx["reply_markup"] == plaud_mod.minutes_done_menu(mid, "uz-cyrl")
+    [docx] = tg.sent("send_document")                     # chatdan boshlangan hujjat - Word (format tanlanmagan)
+    assert docx["reply_markup"] == plaud_mod.minutes_done_menu(mid, "uz-cyrl", "docx")
     created = last_edit(tg)
     assert created["message_id"] == working["message_id"]
     assert created["text"].startswith(f"✅ <b>Bayonnoma tayyor</b> ({lang}): ")
@@ -1276,9 +1302,35 @@ def test_avto_niyat_claude_tayyorlash_va_tahrir(world, monkeypatch):
     revised = last_edit(tg)
     assert revised["text"].startswith(f"✅ <b>Bayonnoma tahrirlandi</b> ({lang}, 2-versiya): ")
     assert "<b>O'zgarishlar:</b> sarlavha o'zgardi." in revised["text"]
-    assert len(tg.sent("send_document")) == 4
+    assert len(tg.sent("send_document")) == 2
     assert [t["kind"] for t in rt.store.chat_turns(mid)] == ["create", "revise"]
     assert bot.backend.questions == []
+
+
+def test_pdf_tahriri_ham_pdf_qayta_ishga_tushgandan_keyin_ham(world, monkeypatch):
+    """PDF tanlangan hujjatning tahriri ham PDF (ega qarori 2026-11-13: odam tanlagan format). Qayta ishga tushgandan
+    keyin (xotira bo'sh) format fayl tugmasidagi `p:w:<id>:<til>:pdf` dan tiklanadi - ✏️ so'rovi orqali ham, faylga
+    to'g'ridan-to'g'ri javob (amalni chat modeli tanlaydi) orqali ham."""
+    bot, tg, rt, plaud = world
+    _queued_minutes(monkeypatch, rt, plaud)
+    _claude_chat(monkeypatch, rt)
+    mid, summary_id = _delivered(bot, tg)
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl:pdf", message_id=summary_id))
+    [pdf] = tg.sent("send_document")
+    assert pdf["filename"].endswith(".pdf") and pdf["caption"] == plaud_mod.MINUTES_PDF_CAPTION
+    plaud._formats.clear()                                                    # qayta ishga tushdi
+    bot.handle_update(callback(f"p:w:{mid}:uz-cyrl:pdf", message_id=pdf["message_id"]))
+    bot.handle_update(reply("TITLE=Yangi sarlavha", replied(tg.sent()[-1])))
+    [second] = tg.sent("send_document")[1:]
+    assert "2-таҳрир" in second["filename"] and second["filename"].endswith(".pdf")
+    assert second["reply_markup"] == plaud_mod.minutes_done_menu(mid, "uz-cyrl", "pdf")
+    plaud._messages.clear()
+    plaud._intents.clear()
+    plaud._formats.clear()
+    bot.handle_update(reply("ACTION=revise TITLE=Uchinchi", replied_document(second), message_id=31))
+    [third] = tg.sent("send_document")[2:]
+    assert "3-таҳрир" in third["filename"] and third["filename"].endswith(".pdf")
+    assert [r["revision"] for r in rt.store.minutes_rows(mid)] == [0, 1, 2] and bot.backend.questions == []
 
 
 def test_tahrir_ozgarmasa_yoki_ish_boshlanmasa(world, monkeypatch):
@@ -1288,14 +1340,14 @@ def test_tahrir_ozgarmasa_yoki_ish_boshlanmasa(world, monkeypatch):
     _queued_minutes(monkeypatch, rt, plaud)
     monkeypatch.setattr(settings, "meetings_minutes_edits_per_hour", 1)
     mid, summary_id = _delivered(bot, tg)
-    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=summary_id))
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl:docx", message_id=summary_id))
     docs = len(tg.sent("send_document"))
     bot.handle_update(callback(f"p:w:{mid}:uz-cyrl", message_id=summary_id))
     bot.handle_update(reply("NOOP", replied(tg.sent()[-1])))
     failed = last_edit(tg)
     assert failed["text"] == ("Bayonnoma tahrirlanmadi: Bayonnomada o'zgarish bo'lmadi - nimani o'zgartirish "
                               "kerakligini aniqroq yozing (masalan: «3-bandda muddat - 1-dekabr»)")
-    assert failed["reply_markup"] == plaud_mod.minutes_done_menu(mid, "uz-cyrl")
+    assert failed["reply_markup"] == plaud_mod.minutes_done_menu(mid, "uz-cyrl", "docx")
     assert len(tg.sent("send_document")) == docs
     bot.handle_update(callback(f"p:w:{mid}:uz-cyrl", message_id=failed["message_id"]))
     sent = len(tg.sent())
@@ -1316,7 +1368,7 @@ def test_bayonnoma_hali_tayyorlanmoqda(world, monkeypatch):
     monkeypatch.setattr(minutes, "generate", lambda *a, **k: _minutes_view(status="running"))
     monkeypatch.setattr(minutes, "export_file",
                         lambda *a, **k: pytest.fail("tayyor bo'lmagan hujjat eksport qilinmaydi"))
-    bot.handle_update(callback(f"p:d:{mid}:ru", message_id=summary_id))
+    bot.handle_update(callback(f"p:d:{mid}:ru:pdf", message_id=summary_id))
     assert last_edit(tg)["text"] == plaud_mod.MINUTES_STILL_RUNNING and tg.sent("send_document") == []
     turn = {"id": "q1", "question": "Tayyorla", "answer": "Tushunarli.", "citations": [], "followUps": [],
             "createdAt": "2026-11-12T10:00:00Z", "channel": "telegram", "model": "claude-sonnet-5-5", "kind": "create",
@@ -1341,7 +1393,7 @@ def test_qayta_ishga_tushgandan_keyin_bayonnoma_sorovlari_va_fayli(world, monkey
     bot, tg, rt, plaud = world
     mid, summary_id = _delivered(bot, tg)
     _stub_minutes(monkeypatch)
-    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl", message_id=summary_id))
+    bot.handle_update(callback(f"p:d:{mid}:uz-cyrl:docx", message_id=summary_id))
     docx = tg.sent("send_document")[0]
     bot.handle_update(callback(f"p:g:{mid}", message_id=summary_id))
     guide = tg.sent()[-1]
@@ -1349,6 +1401,7 @@ def test_qayta_ishga_tushgandan_keyin_bayonnoma_sorovlari_va_fayli(world, monkey
     edit = tg.sent()[-1]
     plaud._messages.clear()
     plaud._intents.clear()
+    plaud._formats.clear()
     llm_calls = len(rt.llm.calls)
     bot.handle_update(reply("Rais - Karimov", replied(guide)))
     assert tg.sent()[-1]["text"] == plaud_mod.STALE_GUIDE and tg.sent()[-1]["reply_to"] == 30
@@ -1364,6 +1417,8 @@ def test_qayta_ishga_tushgandan_keyin_bayonnoma_sorovlari_va_fayli(world, monkey
     bot.handle_update(reply("Kim mas'ul?", replied_document(docx), message_id=32))
     assert tg.sent()[-1]["text"] == "⏳ Javob tayyorlanmoqda…"
     assert seen == [{"channel": "telegram", "intent": None, "minutes_lang": "uz-cyrl"}] and bot.backend.questions == []
+    # Fayl tugmasidagi format (`p:w:<id>:<til>:docx`) ham tiklandi - tahrir fayli o'sha formatda.
+    assert plaud._formats[(TG_ID, mid, "uz-cyrl")] == "docx"
 
 
 def test_begona_p_g_p_w(world):
@@ -1390,11 +1445,12 @@ def test_bayonnoma_chati_sof_funksiyalar():
     guide = plaud_mod.guide_prompt("Reja <2026>")
     assert guide == ("✍️ <b>Reja &lt;2026&gt;</b> bayonnomasi uchun ko'rsatma yozing.\n"
                      "Nimaga e'tibor berish, rais va qatnashchilar, tuzilma, atamalar - matn yoki ovozli xabar bilan "
-                     "javob (Reply) qilib yozing. Keyin «📄 Bayonnoma» tugmasidan hujjat tilini tanlang.")
+                     "javob (Reply) qilib yozing. Keyin «📄 Bayonnoma» tugmasidan hujjat tili va formatini tanlang.")
     edit = plaud_mod.edit_prompt(None, "ru")
     assert edit == (f"✏️ <b>Yozuv</b> bayonnomasida ({minutes.LANG_TITLES['ru']}) nimani o'zgartirish kerak?\n"
                     "Yozing yoki ovozli xabar yuboring, masalan: «3-bandda muddat 1-dekabr bo'lsin», «raisni Alisher "
-                    "Karimov deb yozing». Barno faqat so'ralgan joyni o'zgartiradi va yangi Word va PDF yuboradi.")
+                    "Karimov deb yozing». Barno faqat so'ralgan joyni o'zgartiradi va yangi faylni shu formatda "
+                    "yuboradi.")
 
     def from_bot(text):
         return {"from": {"is_bot": True}, "text": render.plain(text)}
@@ -1417,13 +1473,16 @@ def test_bayonnoma_chati_sof_funksiyalar():
     assert max(len(f"p:w:{mid}:{lang}".encode()) for lang in minutes.LANGS) <= render.CALLBACK_MAX
     for data in (f"p:g:{mid}", f"p:w:{mid}:uz-latn"):
         assert plaud_mod._MARK.match(data).group(1) == mid
-    assert plaud_mod._marks({"reply_markup": plaud_mod.minutes_done_menu(mid, "en")}) == (mid, "en")
-    assert plaud_mod._marks({"reply_markup": plaud_mod.chat_menu(mid)}) == (mid, None)
+    assert plaud_mod._marks({"reply_markup": plaud_mod.minutes_done_menu(mid, "en")}) == (mid, "en", None)
+    assert plaud_mod._marks({"reply_markup": plaud_mod.minutes_done_menu(mid, "en", "pdf")}) == (mid, "en", "pdf")
+    assert plaud_mod.minutes_done_menu(mid, "en", "txt") == plaud_mod.minutes_done_menu(mid, "en")
+    assert max(len(f"p:w:{mid}:{lang}:docx".encode()) for lang in minutes.LANGS) <= render.CALLBACK_MAX
+    assert plaud_mod._marks({"reply_markup": plaud_mod.chat_menu(mid)}) == (mid, None, None)
     other = "cd" * 16
     foreign = {"inline_keyboard": [[{"callback_data": f"p:q:{mid}"}], [{"callback_data": f"p:w:{other}:en"}]]}
-    assert plaud_mod._marks({"reply_markup": foreign}) == (mid, None)
+    assert plaud_mod._marks({"reply_markup": foreign}) == (mid, None, None)
     unknown = {"inline_keyboard": [[{"callback_data": f"p:w:{mid}:de"}]]}
-    assert plaud_mod._marks({"reply_markup": unknown}) == (mid, None)
+    assert plaud_mod._marks({"reply_markup": unknown}) == (mid, None, None)
     assert plaud_mod._marks({"text": "x"}) is None
     # Natija: so'rov bo'yicha tahrir, ko'rsatmalar tahriri (o'zgarishsiz ham), asl hujjat (ko'rsatmalar soni bilan).
     empty = {"changed": [], "added": [], "removed": []}

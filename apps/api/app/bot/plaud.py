@@ -18,8 +18,9 @@ Slack'dagi Barno AI (`app/slack/meeting.py`) bilan AYNI imkoniyatlar, Telegram k
     qayta o'girish (tasdiq bilan - GAPI qayta sarflanadi). «🗂 Boshqa shablon» olib tashlangan (ega
     qarori 2026-11-12: hozirgi bosqichda kerak emas - xulosa avtomatik shablon bilan);
   * "📄 Bayonnoma" (ega qarori, 2026-11-04) - rasmiy hujjat loyihasi: til menyusi (lotin /
-    kirill / rus / ingliz, tavsiya - yig'ilish tilidan), tanlovdan keyin Word (asosiy) va PDF
-    (nusxa) fayl shu chatga (`services.meetings.minutes`); «________» joylari qo'lda to'ldiriladi;
+    kirill / rus / ingliz, tavsiya - yig'ilish tilidan), so'ng format menyusi - Word (asosiy) yoki PDF
+    (2026-11-13), so'ng FAQAT o'sha fayl shu chatga (`services.meetings.minutes`); «________» joylari
+    Word'da qo'lda to'ldiriladi;
   * yig'ilish CHATI (ega talabi, 2026-11-11) - har yozuvning O'Z suhbati: «💬 Savol berish»
     tugmasi (ForceReply so'rovi - Telegram javob maydonini o'zi ochadi) yoki xulosa (transkript,
     javob, o'z audio) xabariga JAVOB (Reply): Telegram'da thread yo'q, javob shu vazifani
@@ -40,11 +41,13 @@ Slack'dagi Barno AI (`app/slack/meeting.py`) bilan AYNI imkoniyatlar, Telegram k
   * BAYONNOMA CHATDA (ega so'rovi, 2026-11-12) - o'sha suhbatning o'zida, boshqa yozuvlarniki bilan
     aralashmaydi. Til menyusidagi «✍️ Ko'rsatma berish» (ForceReply so'rovi) - hujjat yozilishidan OLDIN
     ko'rsatma (nimaga e'tibor berish, rais va qatnashchilar, tuzilma, atamalar): javob - matn yoki ovoz -
-    `intent="note"` bilan (chat modelisiz, bepul) eslab qolinadi va hujjat yozilganda hisobga olinadi. Tayyor
-    hujjat (Word, PDF va natija xabari) ostida «✏️ O'zgartirish» (`p:w:<id>:<til>`): javob `intent="revise"` bilan
-    - Barno faqat so'ralgan joyni o'zgartirib, hujjatning YANGI versiyasini (Word + PDF) yuboradi, qolgani
-    saqlanadi. Hujjat yoki natija xabariga to'g'ridan-to'g'ri javob (Reply) ham shu suhbatga: niyatni (savol,
-    ko'rsatma, tayyorlash, o'zgartirish) chat modeli aniqlaydi, hujjat tili - tugmadan (`minutes_lang`). Ish
+    `intent="note"` bilan (chat modelisiz, bepul) eslab qolinadi va hujjat yozilganda hisobga olinadi. Til
+    tanlangach - format: «📄 Word» yoki «📕 PDF» (ega qarori 2026-11-13: ikkala faylni chizib yuborish behuda) - FAQAT
+    o'sha fayl yuboriladi. Tayyor hujjat (fayl va natija xabari) ostida «✏️ O'zgartirish» (`p:w:<id>:<til>:<format>`):
+    javob `intent="revise"` bilan - Barno faqat so'ralgan joyni o'zgartirib, hujjatning YANGI versiyasini o'sha
+    formatda yuboradi (`_formats`; qayta ishga tushgandan keyin - tugmadagi formatdan), qolgani saqlanadi. Hujjat
+    yoki natija xabariga to'g'ridan-to'g'ri javob (Reply) ham shu suhbatga: niyatni (savol, ko'rsatma, tayyorlash,
+    o'zgartirish) chat modeli aniqlaydi, hujjat tili - tugmadan (`minutes_lang`). Ish
     boshlansa - javobdan keyin "⏳", so'ng fayllar va natija (`_follow_minutes`). Tilni qayta bosish - yangi
     ko'rsatma bo'lsa joriy hujjatning tahriri, bo'lmasa tayyori bepul qayta yuboriladi (`minutes.generate`).
     Xotirada xabarning NIYATI ham (`_intents`: so'rov - "note" / "revise", hujjat va natija - "doc" va tili);
@@ -67,9 +70,11 @@ TUGMALAR (`callback_data`, 64 baytgacha; yig'ilish id'si 32 belgi):
     p:s:<id>[:<shablon>] (o'chirilgan) eski xabardagi «🗂 Boshqa shablon»: izoh va asosiy tugmalar
     p:e:<id>[:<tur>]    eksport: menyu / fayl (txt, srt, md, docx, pdf)
     p:l:<id>[:<til>[:y]] boshqa til: menyu / tasdiq / qayta o'girish
-    p:d:<id>[:<til>]    bayonnoma: hujjat tili menyusi / tanlangan tilda Word + PDF (`minutes.LANGS`)
+    p:d:<id>[:<til>[:<format>]] bayonnoma: hujjat tili menyusi / format menyusi (Word, PDF) / tanlangan til va
+                        formatdagi BITTA fayl (`minutes.LANGS`, `MINUTES_FORMATS`)
     p:g:<id>            bayonnoma uchun ko'rsatma: ForceReply so'rovi (javob - `intent="note"`)
-    p:w:<id>:<til>      tayyor bayonnomani o'zgartirish: ForceReply so'rovi (javob - `intent="revise"`, shu til)
+    p:w:<id>:<til>[:<format>] tayyor bayonnomani o'zgartirish: ForceReply so'rovi (javob - `intent="revise"`, shu til;
+                        yangi versiya fayli - shu formatda)
     p:b:<id>            asosiy tugmalarga qaytish
     p:r:f:<fayl>        "Qayta urinish" - audio butun yo'ldan (fayl xotirada bo'lsa)
     p:r:m:<id>          "Qayta urinish" - xulosa
@@ -128,19 +133,28 @@ EXPORTS = (("txt", "📝 Transkript (TXT)"), ("srt", "🎬 Transkript (SRT)"), (
 #: shu fayl ostidagi tugma yoki faylga javob (Reply).
 MINUTES_CAPTION = (f"📄 Bayonnoma - loyiha: Word faylidagi «{minutes.BLANK}» joylarini to'ldiring. O'zgartirish kerak "
                    "bo'lsa - «✏️ O'zgartirish»ni bosing yoki shu faylga javob (Reply) qilib yozing.")
+#: Bayonnoma PDF faylining izohi: bo'sh joylarni to'ldirish uchun Word kerak.
+MINUTES_PDF_CAPTION = (f"📕 Bayonnoma - loyiha (PDF): «{minutes.BLANK}» joylarini to'ldirish uchun Word formatini "
+                       "tanlang. O'zgartirish kerak bo'lsa - «✏️ O'zgartirish»ni bosing yoki shu faylga javob (Reply) "
+                       "qilib yozing.")
+#: Bayonnoma fayli formatlari (til tanlangandan keyin odam BITTASINI tanlaydi) va format menyusi matni.
+MINUTES_FORMATS = ("docx", "pdf")
+MINUTES_FORMAT_PROMPT = ("📄 Bayonnoma ({title}) - qaysi formatda kerak? Word - tahrirlash va «________» joylarini "
+                         "to'ldirish uchun, PDF - ko'rish va ulashish uchun.")
 #: Bayonnoma ishi yozilayotgani ("⏳"): `verb` - "tayyorlanmoqda" (yangi hujjat) yoki "tahrirlanmoqda" (o'zgartirish).
 MINUTES_WORKING = "⏳ Bayonnoma ({title}) {verb}… 1-3 daqiqa."
 #: Kutish chegarasidan (`minutes.WAIT_SEC`) keyin ham yozilmoqda - natija keyin til tugmasidan bepul olinadi.
-MINUTES_STILL_RUNNING = ("⏳ Bayonnoma hali tayyorlanmoqda - tayyor bo'lgach «📄 Bayonnoma» tugmasidan tilni tanlang, "
-                         "fayllar qayta yuboriladi.")
+MINUTES_STILL_RUNNING = ("⏳ Bayonnoma hali tayyorlanmoqda - tayyor bo'lgach «📄 Bayonnoma» tugmasidan til va formatni "
+                         "tanlang, fayl qayta yuboriladi.")
 #: Ko'rsatma navbati javobi ostida (`n` - so'rovchining faol ko'rsatmalari).
 NOTE_SAVED = "📝 Ko'rsatma eslab qolindi (jami {n} ta) - bayonnoma tayyorlashda hisobga olinadi."
 #: "Qayta urinish" foyda bermaydigan xatolar: so'rovning o'zi noto'g'ri, fayl katta/uzun/yaroqsiz.
 _FINAL = {400, 403, 404, 413, 415, 422}
 _ID = re.compile(r"[0-9a-f]{32}")
 _MARK = re.compile(r"^p:[a-z]:(?:[fm]:)?([0-9a-f]{32})")
-#: Hujjat va natija xabaridagi «✏️ O'zgartirish» tugmasi: yig'ilish va hujjat tili (qayta ishga tushgandan keyin ham).
-_EDIT_DATA = re.compile(r"^p:w:([0-9a-f]{32}):([a-z-]{2,7})$")
+#: Hujjat va natija xabaridagi «✏️ O'zgartirish» tugmasi: yig'ilish, hujjat tili va (2026-11-13 dan) fayl formati -
+#: qayta ishga tushgandan keyin ham.
+_EDIT_DATA = re.compile(r"^p:w:([0-9a-f]{32}):([a-z-]{2,7})(?::(docx|pdf))?$")
 #: Hujjat sifatida kelgan audio - kengaytmasidan (Telegram mime bermasligi mumkin).
 _AUDIO_EXT = (".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".opus")
 _TASHKENT = timezone(timedelta(hours=5))
@@ -162,7 +176,7 @@ PROMPT = (
 BTN_ASK = "💬 Savol berish"
 #: Til menyusida: bayonnoma yozilishidan oldin ko'rsatma (`p:g`).
 BTN_GUIDE = "✍️ Ko'rsatma berish"
-#: Tayyor hujjat (Word, PDF, natija) ostida: o'zgartirish so'rovi (`p:w`).
+#: Tayyor hujjat (fayl, natija) ostida: o'zgartirish so'rovi (`p:w`).
 BTN_EDIT = "✏️ O'zgartirish"
 _HINT = ("💬 Savol bo'lsa - «💬 Savol berish» tugmasini bosing yoki shu xabarga javob (Reply) qilib yozing. "
          "Barno suhbatni eslab qoladi. Bayonnoma uchun ko'rsatmani ham shunday yozsa bo'ladi.")
@@ -202,6 +216,10 @@ class Plaud:
         #: (chat, xabar) -> (niyat, hujjat tili): "note" / "revise" - ✍️ / ✏️ so'rovi, "doc" - bayonnoma fayli yoki
         #: natijasi (tili bilan). Faqat niyatli xabarlar; qolgani - oddiy savol (`_target_of_reply`).
         self._intents: OrderedDict[tuple[int, int], tuple[str, str | None]] = OrderedDict()
+        #: (chat, yig'ilish, hujjat tili) -> odam tanlagan fayl formati: chatdan boshlangan tahrir fayli ham shu
+        #: formatda (`_follow_minutes`). Format tugmasi, yuborilgan fayl va «✏️ O'zgartirish» tugmasidagi format
+        #: (`_marks`, `p:w`) yangilaydi; yo'q bo'lsa - Word.
+        self._formats: OrderedDict[tuple[int, str, str], str] = OrderedDict()
         self._pool = None if inline else ThreadPoolExecutor(max_workers=max(1, workers),
                                                              thread_name_prefix="tg-plaud")
 
@@ -347,10 +365,15 @@ class Plaud:
             elif op == "d" and not arg:
                 self._answer(cq_id)
                 self._menu(chat_id, message_id, minutes_menu(meeting_id, language))
-            elif op == "d" and arg in minutes.LANGS:
+            elif op == "d" and arg in minutes.LANGS and len(parts) == 4:
+                # Til tanlandi - format menyusi (hujjat hali yozilmaydi); savol - qisqa bildirishnoma.
+                self._answer(cq_id, MINUTES_FORMAT_PROMPT.format(title=minutes.LANG_TITLES[arg]))
+                self._menu(chat_id, message_id, minutes_format_menu(meeting_id, arg))
+            elif op == "d" and arg in minutes.LANGS and len(parts) == 5 and parts[4] in MINUTES_FORMATS:
+                fmt = parts[4]
                 self._answer(cq_id, "Bayonnoma tayyorlanmoqda…")
                 self._menu(chat_id, message_id, controls(meeting_id, language))
-                self._submit(user, lambda: self._minutes(chat_id, user, meeting_id, arg))
+                self._submit(user, lambda: self._minutes(chat_id, user, meeting_id, arg, fmt))
             elif op == "b":
                 self._answer(cq_id)
                 self._menu(chat_id, message_id, controls(meeting_id, language))
@@ -358,7 +381,10 @@ class Plaud:
                 # Til menyusi o'z joyida qoladi: ko'rsatmadan keyin tilni o'sha yerdan tanlash mumkin.
                 self._answer(cq_id)
                 self._prompt(chat_id, meeting_id, guide_prompt(view.get("title")), GUIDE_REPLY, intent="note")
-            elif op == "w" and arg in minutes.LANGS and len(parts) == 4:
+            elif op == "w" and arg in minutes.LANGS and (len(parts) == 4 or (len(parts) == 5
+                                                                            and parts[4] in MINUTES_FORMATS)):
+                if len(parts) == 5:
+                    self._set_format(chat_id, meeting_id, arg, parts[4])
                 self._answer(cq_id)
                 self._prompt(chat_id, meeting_id, edit_prompt(view.get("title"), arg), EDIT_REPLY, intent="revise",
                              lang=arg)
@@ -503,6 +529,8 @@ class Plaud:
         marked = _marks(reply)
         if marked is not None:
             meeting_id = self._owned(user, marked[0])
+            if meeting_id and marked[1] and marked[2]:
+                self._set_format(chat_id, meeting_id, marked[1], marked[2])
             return (meeting_id, "doc" if marked[1] else None, marked[1]) if meeting_id else None
         media = self.media(reply)
         if media is not None:
@@ -654,13 +682,14 @@ class Plaud:
         self._replace(chat_id, holder, f"✅ Audio {name} tilida qayta o'girildi.")
         self._deliver(chat_id, user, meeting_id, text)
 
-    def _minutes(self, chat_id: int, user: AuthUser, meeting_id: str, lang: str) -> None:
-        """Tanlangan tilda bayonnoma (til tugmasi): "⏳" xabari, `minutes.generate` (shu ipda; hisob egasining
-        ko'rsatmalari bilan), so'ng fayllar va natija (`_send_minutes`). Tayyor hujjat bo'lsa va yangi ko'rsatma yo'q
-        bo'lsa model qayta chaqirilmaydi - fayllar shunchaki qayta yuboriladi; yangi ko'rsatmalar bo'lsa - joriy
-        hujjatning tahriri (avvalgi o'zgartirishlar saqlanadi). Boshqa yo'lning ishiga qo'shilib, kutish chegarasidan
-        keyin ham yozilayotgan bo'lsa - "hali tayyorlanmoqda"."""
+    def _minutes(self, chat_id: int, user: AuthUser, meeting_id: str, lang: str, fmt: str = "docx") -> None:
+        """Tanlangan til va formatda bayonnoma (format tugmasi): "⏳" xabari, `minutes.generate` (shu ipda; hisob
+        egasining ko'rsatmalari bilan), so'ng FAQAT `fmt` fayli va natija (`_send_minutes`). Tayyor hujjat bo'lsa va
+        yangi ko'rsatma yo'q bo'lsa model qayta chaqirilmaydi - fayl shunchaki qayta yuboriladi; yangi ko'rsatmalar
+        bo'lsa - joriy hujjatning tahriri (avvalgi o'zgartirishlar saqlanadi). Boshqa yo'lning ishiga qo'shilib,
+        kutish chegarasidan keyin ham yozilayotgan bo'lsa - "hali tayyorlanmoqda"."""
         title = minutes.LANG_TITLES.get(lang, lang)
+        self._set_format(chat_id, meeting_id, lang, fmt)
         holder = self._send(chat_id, esc(MINUTES_WORKING.format(title=title, verb="tayyorlanmoqda")))
         # "⏳" - natija xabari bo'ladi: kutish paytida unga yozilgani ham shu hujjat tilida chatga.
         self._remember(chat_id, holder, meeting_id, intent="doc", lang=lang)
@@ -679,14 +708,16 @@ class Plaud:
         if view.get("status") == "running":
             self._replace(chat_id, holder, esc(MINUTES_STILL_RUNNING), markup=ask_menu(meeting_id))
             return
-        self._send_minutes(chat_id, user, meeting_id, view, lang, holder)
+        self._send_minutes(chat_id, user, meeting_id, view, lang, holder, fmt)
 
     def _follow_minutes(self, chat_id: int, user: AuthUser, meeting_id: str, ref: dict[str, Any]) -> None:
         """Chat navbati boshlagan bayonnoma ishi (`ref` - navbatning `minutes`i, `id` bor): yozilayotgan bo'lsa - "⏳"
         ("tahrirlanmoqda" / "tayyorlanmoqda") va kutish (`minutes.wait`, shu ipda), so'ng fayllar va natija
-        (`_send_minutes`). Yiqilsa - sababi (`minutes.failure_detail`; o'zgartirishda «✏️ O'zgartirish» bilan - qayta
-        so'rash uchun); kutish chegarasidan keyin ham yozilayotgan bo'lsa - "hali tayyorlanmoqda"."""
+        (`_send_minutes`; fayl - odam shu hujjat uchun tanlagan formatda, `_formats`, yo'q bo'lsa Word). Yiqilsa -
+        sababi (`minutes.failure_detail`; o'zgartirishda «✏️ O'zgartirish» bilan - qayta so'rash uchun); kutish
+        chegarasidan keyin ham yozilayotgan bo'lsa - "hali tayyorlanmoqda"."""
         lang = str(ref.get("language") or "")
+        fmt = self._format_of(chat_id, meeting_id, lang)
         revise = ref.get("action") == "revise"
         holder = None
         try:
@@ -698,7 +729,9 @@ class Plaud:
                 self._remember(chat_id, holder, meeting_id, intent="doc", lang=lang)
                 found = minutes.wait(user, meeting_id, str(ref["id"]), sleep=self._sleep)
             if found["status"] == "ready":
-                self._send_minutes(chat_id, user, meeting_id, found, str(found.get("language") or lang), holder)
+                done_lang = str(found.get("language") or lang)
+                self._send_minutes(chat_id, user, meeting_id, found, done_lang, holder,
+                                   self._format_of(chat_id, meeting_id, done_lang) if done_lang != lang else fmt)
                 return
             markup = None
             if found["status"] == "running":
@@ -706,7 +739,7 @@ class Plaud:
             else:
                 head = "Bayonnoma tahrirlanmadi" if revise else "Bayonnoma yozilmadi"
                 text = esc(f"{head}: {minutes.failure_detail(found)}")
-                markup = minutes_done_menu(meeting_id, lang) if revise and lang in minutes.LANGS else None
+                markup = minutes_done_menu(meeting_id, lang, fmt) if revise and lang in minutes.LANGS else None
         except MeetingProblem as exc:
             text, markup = esc(f"Bayonnoma yuborilmadi: {exc.detail}"), None
         except Exception:  # noqa: BLE001 - odam "⏳" bilan qolmasin
@@ -717,36 +750,41 @@ class Plaud:
             self._remember(chat_id, message_id, meeting_id, intent="doc", lang=lang)
 
     def _send_minutes(self, chat_id: int, user: AuthUser, meeting_id: str, view: dict[str, Any], lang: str,
-                      holder: int | None) -> None:
-        """Tayyor bayonnoma shu chatga: Word (asosiy, izoh bilan) va PDF (nusxa), oxirida "⏳" o'rniga natija
-        (`minutes_html`; `holder` yo'q - yangi xabar). Fayllar ham, natija ham ostida «✏️ O'zgartirish» va «💬 Savol
-        berish» (`minutes_done_menu`) va xotirada ("doc", til): ularga javob (Reply) - shu hujjat tilida chat, qayta
-        ishga tushgandan keyin ham (`p:w` tugmasidan)."""
-        done = minutes_done_menu(meeting_id, lang)
-        # Fayllar ALOHIDA: hujjat yozilgan va saqlangan - PDF chizilmasa yoki fayl yuborilmasa Word
-        # va natija baribir yetib boradi, sabab natija ostida; tilni qayta bosish modelni chaqirmaydi.
+                      holder: int | None, fmt: str = "docx") -> None:
+        """Tayyor bayonnoma shu chatga: odam tanlagan formatdagi BITTA fayl (`fmt`: Word yoki PDF, izohi bilan;
+        ega qarori 2026-11-13 - ikkalasini chizish behuda), oxirida "⏳" o'rniga natija (`minutes_html`; `holder` yo'q
+        - yangi xabar). Fayl ham, natija ham ostida «✏️ O'zgartirish» (formati bilan) va «💬 Savol berish»
+        (`minutes_done_menu`) va xotirada ("doc", til): ularga javob (Reply) - shu hujjat tilida chat, tahrir fayli shu
+        formatda, qayta ishga tushgandan keyin ham (`p:w` tugmasidan)."""
+        fmt = fmt if fmt in MINUTES_FORMATS else "docx"
+        self._set_format(chat_id, meeting_id, lang, fmt)
+        done = minutes_done_menu(meeting_id, lang, fmt)
+        # Fayl chizilmasa yoki yuborilmasa natija baribir yetib boradi, sabab natija ostida; hujjat omborda - formatni
+        # qayta tanlash modelni chaqirmaydi.
         notes: list[str] = []
-        for fmt in ("docx", "pdf"):
-            try:
-                data, media, disposition = minutes.export_file(user, meeting_id, view["id"], fmt)
-            except (MeetingProblem, intake.Problem) as exc:
-                notes.append(esc(f"{fmt.upper()} fayli tayyorlanmadi: {getattr(exc, 'detail', exc)}"))
-                continue
-            except Exception:  # noqa: BLE001
-                log.exception("Telegram Plaud bayonnomasi (%s): %s fayli", meeting_id, fmt)
-                notes.append(f"{fmt.upper()} fayli tayyorlanmadi: ichki xato.")
-                continue
+        label = "Word" if fmt == "docx" else "PDF"
+        try:
+            data, media, disposition = minutes.export_file(user, meeting_id, view["id"], fmt)
+        except (MeetingProblem, intake.Problem) as exc:
+            notes.append(esc(f"{label} fayli tayyorlanmadi: {getattr(exc, 'detail', exc)}"))
+            data = None
+        except Exception:  # noqa: BLE001
+            log.exception("Telegram Plaud bayonnomasi (%s): %s fayli", meeting_id, fmt)
+            notes.append(f"{label} fayli tayyorlanmadi: ichki xato.")
+            data = None
+        if data is not None:
             name = intake.filename(disposition) or f"bayonnoma.{fmt}"
             try:
                 sent = self.api.send_document(chat_id, name, data, media or "application/octet-stream",
-                                              caption=MINUTES_CAPTION if fmt == "docx" else None, reply_markup=done)
+                                              caption=MINUTES_CAPTION if fmt == "docx" else MINUTES_PDF_CAPTION,
+                                              reply_markup=done)
             except TelegramError as exc:
                 log.warning("Telegram Plaud: bayonnoma %s yuborilmadi: %s", fmt, exc)
-                self._send(chat_id, f"Faylni yuborib bo'lmadi ({fmt}) - shu tilni qaytadan tanlang.")
-                continue
-            self._remember(chat_id, _message_id(sent), meeting_id, intent="doc", lang=lang)
-            archive.record("telegram", "out", "document", chat=chat_id, actor=user.actorId, data=data, name=name,
-                           mime=media or "", meta={"meeting": meeting_id, "minutes": view["id"], "lang": lang})
+                self._send(chat_id, f"Faylni yuborib bo'lmadi ({label}) - til va formatni qaytadan tanlang.")
+            else:
+                self._remember(chat_id, _message_id(sent), meeting_id, intent="doc", lang=lang)
+                archive.record("telegram", "out", "document", chat=chat_id, actor=user.actorId, data=data, name=name,
+                               mime=media or "", meta={"meeting": meeting_id, "minutes": view["id"], "lang": lang})
         text = minutes_html(view, lang)
         if notes:
             text += "\n" + "\n".join(f"⚠ {note}" for note in notes)
@@ -793,6 +831,21 @@ class Plaud:
             for memory in (self._messages, self._intents):
                 while len(memory) > _REMEMBER:
                     memory.popitem(last=False)
+
+    def _set_format(self, chat_id: int, meeting_id: str, lang: str, fmt: str) -> None:
+        """Odam shu chatda shu yozuvning shu til hujjati uchun tanlagan fayl formati (`_formats`, FIFO)."""
+        if fmt not in MINUTES_FORMATS:
+            return
+        with self._lock:
+            self._formats[(chat_id, meeting_id, lang)] = fmt
+            self._formats.move_to_end((chat_id, meeting_id, lang))
+            while len(self._formats) > _REMEMBER:
+                self._formats.popitem(last=False)
+
+    def _format_of(self, chat_id: int, meeting_id: str, lang: str) -> str:
+        """Tahrir fayli formati: odam tanlagani (`_set_format`), yo'q bo'lsa - Word (asosiy hujjat)."""
+        with self._lock:
+            return self._formats.get((chat_id, meeting_id, lang), "docx")
 
     def _send(self, chat_id: int, text: str, *, markup: dict[str, Any] | None = None,
               reply_to: Any = None) -> int | None:
@@ -877,9 +930,9 @@ def _message_id(sent: Any) -> int | None:
     return found if isinstance(found, int) else None
 
 
-def _marks(message: dict[str, Any]) -> tuple[str, str | None] | None:
+def _marks(message: dict[str, Any]) -> tuple[str, str | None, str | None] | None:
     """Xabar tugmalaridagi yig'ilish belgisi (`_MARK` - birinchi mos tugma) va - shu yig'ilishning «✏️ O'zgartirish»
-    tugmasi (`p:w:<id>:<til>`) bo'lsa - bayonnoma tili; belgisiz xabar - `None`."""
+    tugmasi (`p:w:<id>:<til>[:<format>]`) bo'lsa - bayonnoma tili va fayl formati; belgisiz xabar - `None`."""
     meeting_id, edit = None, None
     for row in (message.get("reply_markup") or {}).get("inline_keyboard") or []:
         for button in row:
@@ -892,7 +945,9 @@ def _marks(message: dict[str, Any]) -> tuple[str, str | None] | None:
                 edit = found.groups()
     if meeting_id is None:
         return None
-    return meeting_id, (edit[1] if edit and edit[0] == meeting_id else None)
+    if edit and edit[0] == meeting_id:
+        return meeting_id, edit[1], edit[2]
+    return meeting_id, None, None
 
 
 def controls(meeting_id: str, language: str, *, retry: str | None = None) -> dict[str, Any]:
@@ -950,10 +1005,20 @@ def minutes_menu(meeting_id: str, language: str) -> dict[str, Any]:
                                        [_btn("⬅ Orqaga", f"p:b:{meeting_id}")]]}
 
 
-def minutes_done_menu(meeting_id: str, lang: str) -> dict[str, Any]:
-    """Tayyor bayonnoma (Word, PDF, natija xabari) ostida: shu til hujjatini o'zgartirish (`p:w` - ForceReply so'rovi)
-    va yozuv bo'yicha savol. `p:w:<id>:<til>` - qayta ishga tushgandan keyin ham javob (Reply) uchun belgi va til."""
-    return {"inline_keyboard": [[_btn(BTN_EDIT, f"p:w:{meeting_id}:{lang}")],
+def minutes_format_menu(meeting_id: str, lang: str) -> dict[str, Any]:
+    """Til tanlangandan keyin format (ega qarori 2026-11-13): «📄 Word» (asosiy - kotib «________» joylarini shu faylda
+    to'ldiradi), «📕 PDF» va orqaga - til menyusiga (`p:d:<id>`)."""
+    return {"inline_keyboard": [[_btn("📄 Word", f"p:d:{meeting_id}:{lang}:docx")],
+                                [_btn("📕 PDF", f"p:d:{meeting_id}:{lang}:pdf")],
+                                [_btn("⬅ Orqaga", f"p:d:{meeting_id}")]]}
+
+
+def minutes_done_menu(meeting_id: str, lang: str, fmt: str | None = None) -> dict[str, Any]:
+    """Tayyor bayonnoma (fayl, natija xabari) ostida: shu til hujjatini o'zgartirish (`p:w` - ForceReply so'rovi)
+    va yozuv bo'yicha savol. `p:w:<id>:<til>[:<format>]` - qayta ishga tushgandan keyin ham javob (Reply) uchun belgi,
+    til va tahrir fayli formati."""
+    edit = f"p:w:{meeting_id}:{lang}" + (f":{fmt}" if fmt in MINUTES_FORMATS else "")
+    return {"inline_keyboard": [[_btn(BTN_EDIT, edit)],
                                 [_btn(BTN_ASK, f"p:q:{meeting_id}")]]}
 
 
@@ -993,7 +1058,7 @@ def guide_prompt(title: Any) -> str:
     name = export.one_line(title, 80) or "Yozuv"
     return (f"✍️ <b>{esc(name)}</b> {_GUIDE_MARK}.\n"
             "Nimaga e'tibor berish, rais va qatnashchilar, tuzilma, atamalar - matn yoki ovozli xabar bilan javob "
-            "(Reply) qilib yozing. Keyin «📄 Bayonnoma» tugmasidan hujjat tilini tanlang.")
+            "(Reply) qilib yozing. Keyin «📄 Bayonnoma» tugmasidan hujjat tili va formatini tanlang.")
 
 
 def edit_prompt(title: Any, lang: str) -> str:
@@ -1001,7 +1066,7 @@ def edit_prompt(title: Any, lang: str) -> str:
     name = export.one_line(title, 80) or "Yozuv"
     return (f"✏️ <b>{esc(name)}</b> bayonnomasida ({esc(minutes.LANG_TITLES.get(lang, lang))}) {_EDIT_MARK}?\n"
             "Yozing yoki ovozli xabar yuboring, masalan: «3-bandda muddat 1-dekabr bo'lsin», «raisni Alisher Karimov "
-            "deb yozing». Barno faqat so'ralgan joyni o'zgartiradi va yangi Word va PDF yuboradi.")
+            "deb yozing». Barno faqat so'ralgan joyni o'zgartiradi va yangi faylni shu formatda yuboradi.")
 
 
 #: So'rov turi -> (matn boshidagi emoji, belgi). Emoji o'zgarish tanlagichisiz (U+FE0F) solishtiriladi.

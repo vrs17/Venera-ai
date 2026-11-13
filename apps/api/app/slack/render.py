@@ -21,13 +21,20 @@ SECTION_CHARS = 2900
 MESSAGE_BLOCKS = 45
 #: Yig'ilish belgisi (`block_id`): thread'dagi savol va tugmalar yig'ilishni shundan topadi.
 MARK = "barno:"
-#: Bayonnoma natijasi belgisining tegi (`minutes_hint`): `doc:<til>` - qaysi til hujjati.
+#: Bayonnoma natijasi belgisining tegi (`minutes_hint`, `doc_tag`): `doc:<til>[:<format>]` - qaysi til hujjati va
+#: odam qaysi formatni tanlagan (2026-11-13 dan; eski xabarlarda formatsiz).
 DOC_TAG = "doc:"
+#: Bayonnoma fayli formatlari (ega qarori 2026-11-13: til tanlangandan keyin odam BITTASINI tanlaydi - ikkala faylni
+#: chizib yuborish behuda) va tugmadagi nomlari.
+MINUTES_FORMATS = ("docx", "pdf")
+FORMAT_NAMES = {"docx": "Word", "pdf": "PDF"}
 #: Chatdagi (thread'dan tashqaridagi) savol yozuvni faqat shu belgilardan oladi (`meeting.latest`): xulosa kartasi
-#: (tegsiz), chat javobi (`chat`) va bayonnoma natijasi (`doc:<til>`, 2026-11-12 - keyingi matn o'sha yozuvga va o'sha
-#: til hujjatiga: "3-bandni o'zgartir" shu hujjatning tahriri bo'ladi). Bayonnoma til menyusi (`minutes`) - yo'q: eski
-#: kartada bosilgan tugma keyingi savollarni eski yozuvga burib yubormasin.
-LATEST_TAGS = ("", "chat", *(f"{DOC_TAG}{lang}" for lang in minutes_text.LANGS))
+#: (tegsiz), chat javobi (`chat`) va bayonnoma natijasi (`doc:<til>[:<format>]`, 2026-11-12 - keyingi matn o'sha
+#: yozuvga va o'sha til hujjatiga: "3-bandni o'zgartir" shu hujjatning tahriri bo'ladi, fayli o'sha formatda).
+#: Bayonnoma til va format menyusi (`minutes`) - yo'q: eski kartada bosilgan tugma keyingi savollarni eski yozuvga
+#: burib yubormasin.
+LATEST_TAGS = ("", "chat", *(f"{DOC_TAG}{lang}" for lang in minutes_text.LANGS),
+               *(f"{DOC_TAG}{lang}:{fmt}" for lang in minutes_text.LANGS for fmt in MINUTES_FORMATS))
 #: Audio xatosi belgisi (`block_id`, `fail_mark`): "Matnga o'girib bo'lmadi" xabari qaysi fayl haqida - chatdagi savol
 #: (`meeting.latest`) o'sha audioni "tayyorlanmoqda" deb kutmaydi. `MARK` bilan boshlanmaydi - `marked` uni olmaydi.
 FAIL_MARK = "barno-fail:"
@@ -180,11 +187,37 @@ def minutes_file_lang(file: dict[str, Any] | None) -> str | None:
     return None
 
 
+def doc_tag(lang: str, fmt: str | None = None) -> str:
+    """Bayonnoma natijasi belgisining tegi: `doc:<til>` yoki - format tanlangan bo'lsa - `doc:<til>:<format>`."""
+    return f"{DOC_TAG}{lang}:{fmt}" if fmt in MINUTES_FORMATS else f"{DOC_TAG}{lang}"
+
+
 def doc_lang(tag: str | None) -> str | None:
-    """Bayonnoma natijasi belgisining (`minutes_hint`, teg `doc:<til>`) hujjat tili; boshqa teg - `None`."""
+    """Bayonnoma natijasi belgisining (`minutes_hint`, teg `doc:<til>[:<format>]`) hujjat tili; boshqa teg - `None`."""
     if not tag or not tag.startswith(DOC_TAG):
         return None
-    return minutes_text.normalize(tag[len(DOC_TAG):])
+    return minutes_text.normalize(tag[len(DOC_TAG):].partition(":")[0])
+
+
+def doc_format(tag: str | None) -> str | None:
+    """Bayonnoma natijasi belgisidagi odam tanlagan format (`docx` | `pdf`); eski (formatsiz) yoki boshqa teg -
+    `None`."""
+    if doc_lang(tag) is None:
+        return None
+    fmt = str(tag)[len(DOC_TAG):].partition(":")[2]
+    return fmt if fmt in MINUTES_FORMATS else None
+
+
+def minutes_file_format(file: dict[str, Any] | None) -> str | None:
+    """Barno'ning bayonnoma fayli (`minutes_file_lang`) formati - kengaytmasidan; boshqa fayl - `None`."""
+    if minutes_file_lang(file) is None:
+        return None
+    for key in ("name", "title"):
+        name = str((file or {}).get(key) or "").lower()
+        for fmt in MINUTES_FORMATS:
+            if name.endswith(f".{fmt}"):
+                return fmt
+    return None
 
 
 def fail_mark(file_id: str) -> str:
@@ -283,19 +316,22 @@ def retry_button(value: str) -> dict[str, Any]:
 #: ko'rsatma (`meeting.question`, `minutes` tegi: chat modelisiz), til tugmasi ularni qo'llaydi.
 MINUTES_PROMPT = ("📄 *Bayonnoma* - hujjat tilini tanlang. Avval ko'rsatma bermoqchi bo'lsangiz (rais, qatnashchilar, "
                   "yig'ilish sanasi, nimaga e'tibor berish) - shu xabarga thread'da yozing, so'ng tilni tanlang.")
-#: Bayonnoma natijasi ostidagi eslatma (`minutes_hint`): o'zgartirish shu xabar yoki Word / PDF fayli thread'ida
-#: (`meeting.thread_target`) yoki chatning o'zida.
-MINUTES_EDIT_HINT = ("✏️ O'zgartirish kerak bo'lsa - shu xabarga yoki Word / PDF fayliga thread'da, yoki shu chatga "
-                     "yozing, masalan: «3-bandda muddat 1-dekabr bo'lsin», «raisni Alisher Karimov deb yozing», "
-                     "«sana 11-noyabr bo'lsin». Barno yangi Word va PDF yuboradi.")
+#: Til tanlangandan keyin format savoli (`minutes_formats`): `title` - hujjat tili.
+MINUTES_FORMAT_PROMPT = ("📄 *Bayonnoma* ({title}) - qaysi formatda kerak? *Word* - tahrirlash va «________» joylarini "
+                         "to'ldirish uchun, *PDF* - ko'rish va ulashish uchun.")
+#: Bayonnoma natijasi ostidagi eslatma (`minutes_hint`): o'zgartirish shu xabar yoki fayl thread'ida
+#: (`meeting.thread_target`) yoki chatning o'zida; yangi versiya fayli - odam tanlagan formatda.
+MINUTES_EDIT_HINT = ("✏️ O'zgartirish kerak bo'lsa - shu xabarga yoki faylga thread'da, yoki shu chatga yozing, "
+                     "masalan: «3-bandda muddat 1-dekabr bo'lsin», «raisni Alisher Karimov deb yozing», "
+                     "«sana 11-noyabr bo'lsin». Barno yangi faylni shu formatda yuboradi.")
 #: Ko'rsatma eslab qolindi (`minutes_turn_note`) - chat javobi ostida.
 MINUTES_NOTE_SAVED = ("📝 Bayonnoma uchun ko'rsatma eslab qolindi (jami {n} ta). Tayyorlash uchun «📄 Bayonnoma» "
                       "tugmasini bosing va tilni tanlang.")
 #: Hujjat yozilayotganda "⏳" xabari: `verb` - `tahrirlanmoqda` (tahrir) yoki `tayyorlanmoqda`.
 MINUTES_WORKING = "⏳ Bayonnoma ({title}) {verb}… 1-3 daqiqa."
 #: Botlar kutishi (`minutes.wait`) tugadi, hujjat esa hali yozilmoqda: tayyori til tugmasidan bepul qayta yuboriladi.
-MINUTES_STILL_RUNNING = ("⏳ Bayonnoma hali tayyorlanmoqda - tayyor bo'lgach «📄 Bayonnoma» tugmasidan tilni tanlang, "
-                         "fayllar qayta yuboriladi.")
+MINUTES_STILL_RUNNING = ("⏳ Bayonnoma hali tayyorlanmoqda - tayyor bo'lgach «📄 Bayonnoma» tugmasidan til va formatni "
+                         "tanlang, fayl qayta yuboriladi.")
 #: Chat navbatidan bayonnoma ishi boshlanmadi (`ChatTurn.minutes.error`, hujjat id'siz) - chat javobi ostida.
 MINUTES_NOT_STARTED = "⚠ Bayonnoma ishi boshlanmadi: {detail}"
 #: Word faylidagi bo'sh joylar (`minutes_result`): sarlavha qiymatini ega aytgan bo'lsa (`header`) - u bo'sh emas.
@@ -320,11 +356,25 @@ def minutes_menu(meeting_id: str, default: str) -> list[dict[str, Any]]:
             {"type": "actions", "block_id": mark(meeting_id, "minutes"), "elements": buttons}]
 
 
-def minutes_hint(meeting_id: str, lang: str) -> dict[str, Any]:
-    """Bayonnoma natijasi ostidagi tahrir eslatmasi (`MINUTES_EDIT_HINT`). `block_id` - yig'ilish belgisi `doc:<til>`
-    tegi bilan (`mark`): shu xabar thread'idagi javob o'sha til hujjati bo'yicha (`meeting.question`), chatning
-    o'zidagi keyingi matn ham shu yozuvga va shu hujjatga (`LATEST_TAGS`, `meeting.latest`)."""
-    return context(MINUTES_EDIT_HINT, block_id=mark(meeting_id, f"{DOC_TAG}{lang}"))
+def minutes_hint(meeting_id: str, lang: str, fmt: str | None = None) -> dict[str, Any]:
+    """Bayonnoma natijasi ostidagi tahrir eslatmasi (`MINUTES_EDIT_HINT`). `block_id` - yig'ilish belgisi
+    `doc:<til>[:<format>]` tegi bilan (`doc_tag`): shu xabar thread'idagi javob o'sha til hujjati bo'yicha va tahrir
+    fayli o'sha formatda (`meeting.question`), chatning o'zidagi keyingi matn ham shu yozuvga va shu hujjatga
+    (`LATEST_TAGS`, `meeting.latest`)."""
+    return context(MINUTES_EDIT_HINT, block_id=mark(meeting_id, doc_tag(lang, fmt)))
+
+
+def minutes_formats(meeting_id: str, lang: str) -> list[dict[str, Any]]:
+    """Til tanlangandan keyin format tanlovi (ega qarori 2026-11-13): «📄 Word» (asosiy - kotib «________» joylarini
+    shu faylda to'ldiradi) va «📕 PDF». Qiymat `yig'ilish|til`, `action_id` - `barno_minutes_fmt_<format>`; `block_id`
+    - `minutes` tegi (til menyusi kabi: thread'idagi javob - yozishdan oldingi ko'rsatma, chatdagi savol uni oxirgi
+    yozuv deb olmaydi)."""
+    title = minutes_text.LANG_TITLES.get(lang, lang)
+    buttons = [button("📄 Word", "barno_minutes_fmt_docx", f"{meeting_id}|{lang}"),
+               button("📕 PDF", "barno_minutes_fmt_pdf", f"{meeting_id}|{lang}")]
+    buttons[0]["style"] = "primary"
+    return [{"type": "section", "text": {"type": "mrkdwn", "text": MINUTES_FORMAT_PROMPT.format(title=title)}},
+            {"type": "actions", "block_id": mark(meeting_id, "minutes"), "elements": buttons}]
 
 
 def minutes_turn_note(ref: dict[str, Any] | None) -> str:
@@ -341,16 +391,17 @@ def minutes_turn_note(ref: dict[str, Any] | None) -> str:
     return ""
 
 
-def minutes_result(view: dict[str, Any], lang: str) -> str:
+def minutes_result(view: dict[str, Any], lang: str, fmt: str = "docx") -> str:
     """Tayyor bayonnoma haqida xabar: sarlavha (asl hujjat - "tayyor"; tahrir - "tahrirlandi" yoki ko'rsatmalar
     qo'llangan bo'lsa "yangilandi", versiyasi bilan), bo'lim/band soni, loyiha eslatmasi (Word'dagi bo'sh joylar - ega
     aytgan sarlavha qiymatlari bo'sh emas), o'zgartirish so'rovi va o'zgarishlar (`minutes.diff.summary_uz`),
     modelning izohlari (aniqlashtirish kerak) va sifat ogohlantirishlari - `ungrounded_name:<ism>` (transkriptda
     bo'lmagan ism `BLANK` bo'ldi), `script_mismatch` (yozuv tanlangan tilga mos emas), `header_dropped:<kalit>`,
     `superseded_revisions:<n>`, `guidance_truncated:<n>`. Ko'rinishning yangi kalitlari `.get()` bilan: ularsiz
-    (eski ko'rinish) matn avvalgidek, baytma-bayt."""
+    (eski ko'rinish) matn avvalgidek, baytma-bayt. `fmt` - yuborilgan fayl: PDF'da bo'sh joylarni to'ldirish uchun
+    Word tanlash kerakligi aytiladi."""
     request = export.one_line(view.get("request") or "", 200)
-    parts = [_minutes_head(view, lang, requested=bool(request))]
+    parts = [_minutes_head(view, lang, requested=bool(request), fmt=fmt)]
     if request:
         parts.append(f"So'rov: «{escape(request)}»")
     if view.get("kind") == "revise":
@@ -384,7 +435,7 @@ def minutes_result(view: dict[str, Any], lang: str) -> str:
     return "\n\n".join(parts)
 
 
-def _minutes_head(view: dict[str, Any], lang: str, *, requested: bool) -> str:
+def _minutes_head(view: dict[str, Any], lang: str, *, requested: bool, fmt: str = "docx") -> str:
     """`minutes_result` ning birinchi xatboshi: sarlavha (`requested` - tahrir o'zgartirish so'rovi bo'yicha),
     bo'lim/band soni, Word'dagi bo'sh joylar va (asl hujjatda) hisobga olingan ko'rsatmalar soni."""
     title = minutes_text.LANG_TITLES.get(lang, lang)
@@ -399,7 +450,11 @@ def _minutes_head(view: dict[str, Any], lang: str, *, requested: bool) -> str:
         head = f"✅ *Bayonnoma tayyor* ({title}): {counts}"
     header = view.get("header") or {}
     blanks = [name for key, name in _BLANK_SLOTS if not header.get(key)] + ["№", "sana"]
-    head += f" Loyiha - Word faylidagi «{minutes_text.BLANK}» joylarini to'ldiring ({', '.join(blanks)})."
+    if fmt == "pdf":
+        head += (f" Loyiha - «{minutes_text.BLANK}» joylari bo'sh ({', '.join(blanks)}); ularni to'ldirish uchun Word "
+                 "formatini tanlang.")
+    else:
+        head += f" Loyiha - Word faylidagi «{minutes_text.BLANK}» joylarini to'ldiring ({', '.join(blanks)})."
     applied = int(view.get("notesApplied") or 0)
     if not revised and applied > 0:
         head += f" Ko'rsatmalaringiz hisobga olindi ({applied} ta)."
