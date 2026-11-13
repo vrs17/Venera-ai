@@ -1190,6 +1190,82 @@ def test_natija_thread_tahrir_oxirigacha(delivered, claude, minutes_chain):
                               "kerakligini aniqroq yozing (masalan: «3-bandda muddat - 1-dekabr»)")
 
 
+def test_fayl_threadidagi_javob_shu_hujjatga(delivered, claude, minutes_chain, monkeypatch):
+    """Odam ko'pincha natija xabariga emas, Word / PDF FAYLIGA thread'da javob yozadi (2026-11-13 jonli: Word fayli
+    ostidagi «sana 11 noyabr bo'lishi kerak» jim qolgan edi). Fayl xabari belgisiz - egasi undan OLDINGI natija xabari
+    (`doc:<til>`): javob o'sha yozuv va o'sha til hujjatiga (`minutes_lang`), tahrir natijasi shu thread'da; PDF
+    faylining thread'i ham. Bayonnoma nomi bo'lmagan fayl va begona botning fayli - jim."""
+    client, mid, summary = delivered
+    client.file_messages = True
+    rt = minutes_chain
+    sent = _spy_chat(monkeypatch)
+    result = _language(client, rt, mid, "uz-cyrl", {"ts": summary["ts"]})
+    assert render.marked_tag(result) == (mid, "doc:uz-cyrl")
+    docx_msg, pdf_msg = [m for m in client.timeline.values() if m.get("files")]
+    assert [render.minutes_file_lang(m["files"][0]) for m in (docx_msg, pdf_msg)] == ["uz-cyrl", "uz-cyrl"]
+
+    thread = client.thread_under(docx_msg)
+    posted = len(client.posted)
+    claude.script = [chat_reply("revise", instruction="Sarlavhani «Yangi sarlavha» qilish")]
+    _reply(client, thread, "TITLE=Yangi sarlavha")
+    holder, waiting = client.posted[posted:]
+    assert (holder["thread_ts"], waiting["thread_ts"]) == (thread, thread)
+    assert waiting["text"] == "⏳ Bayonnoma (Ўзбек (кирилл)) tahrirlanmoqda… 1-3 daqiqa."
+    assert (sent[-1]["meeting"], sent[-1]["minutes_lang"], sent[-1]["intent"]) == (mid, "uz-cyrl", None)
+    done = client.updated[-1]
+    assert done["text"].startswith("✅ *Bayonnoma tahrirlandi* (Ўзбек (кирилл), 2-versiya)")
+    assert render.marked_tag(done) == (mid, "doc:uz-cyrl")
+    docx, pdf = client.uploaded[2:]
+    assert docx["thread_ts"] == pdf["thread_ts"] == thread and "(2-таҳрир)" in docx["filename"]
+    # Thread ichida yuklangan yangi fayllar chatga chiqmaydi; PDF faylining thread'i ham shu hujjatga.
+    assert len([m for m in client.timeline.values() if m.get("files")]) == 2
+    claude.script = [chat_reply()]
+    _reply(client, client.thread_under(pdf_msg), "Bayonnomada nechta band bor?")
+    assert (sent[-1]["meeting"], sent[-1]["minutes_lang"]) == (mid, "uz-cyrl")
+
+    # Bayonnoma bo'lmagan fayl (transkript) va begona botning bayonnoma fayli - jim: javob ham, chat ham yo'q.
+    calls, posted = len(sent), len(client.posted)
+    other = {**docx_msg, "ts": "300.1", "files": [{"id": "FX", "name": "Slack ovoz.aac 2026-11-13.txt"}]}
+    stranger = {**docx_msg, "ts": "300.2", "user": "UOTHER", "bot_id": "B9"}
+    client.parents.update({"300.1": other, "300.2": stranger})
+    _reply(client, "300.1", "Sana 11 noyabr bo'lsin")
+    _reply(client, "300.2", "Sana 11 noyabr bo'lsin")
+    assert (len(sent), len(client.posted)) == (calls, posted)
+
+
+def test_fayl_threadi_ikki_natija_orasida_nomi_bilan(monkeypatch):
+    """Fayldan oldin ikki yozuvning natijasi (ketma-ket ikki bayonnoma): fayl nomida qaysi yozuv nomi bo'lsa - o'sha;
+    nomi topilmasa (yozuv qayta nomlangan) - eng yaqini. Boshqa til natijasi va `DOC_FILE_WINDOW` dan eskisi - nomzod
+    emas; chat tarixini o'qib bo'lmasa - `None`."""
+    first, second = "a" * 32, "b" * 32
+    client = FakeSlack()
+
+    def result(meeting_id: str, lang: str, ts: str) -> None:
+        client.timeline[("D1", ts)] = as_parent({"channel": "D1", "ts": ts, "text": "✅",
+                                                 "blocks": [render.minutes_hint(meeting_id, lang)]})
+
+    result(first, "uz-latn", "1000.1")
+    result(second, "uz-latn", "1010.1")
+    result(second, "ru", "1020.1")
+    parent = as_parent({"channel": "D1", "ts": "1030.1", "text": "",
+                        "files": [{"id": "FD1", "name": "Bayonnoma - Haftalik reja 2026-11-11.docx"}]})
+    client.timeline[("D1", "1030.1")] = parent
+    titles = {first: "Haftalik: reja", second: "Kredit qo'mitasi"}
+    monkeypatch.setattr(meeting, "_titled", lambda user, mid, names: meeting._letters(titles[mid]) in
+                        meeting._letters(names[0]))
+    user = object()
+    assert meeting._doc_of_files(client, "D1", parent, user, bot_user=BOT_USER) == (first, "doc:uz-latn")
+    titles[first] = "Qayta nomlangan"
+    assert meeting._doc_of_files(client, "D1", parent, user, bot_user=BOT_USER) == (second, "doc:uz-latn")
+    assert client.history_reads[-1] == {"channel": "D1", "limit": meeting.DOC_LOOKBACK, "latest": "1030.1",
+                                        "inclusive": False}
+    late = {**parent, "ts": str(1010.1 + meeting.DOC_FILE_WINDOW + 1)}
+    client.timeline[("D1", late["ts"])] = late
+    assert meeting._doc_of_files(client, "D1", late, user, bot_user=BOT_USER) is None
+    client.history_error = RuntimeError("tarmoq")
+    assert meeting._doc_of_files(client, "D1", parent, user, bot_user=BOT_USER) is None
+
+
 def test_menyu_threadi_korsatma(delivered, claude, minutes_chain):
     """Yozishdan OLDIN: til menyusining thread'idagi javob - bayonnoma uchun ko'rsatma (aniq kirish: chat modelisiz va
     bepul), javob ostida "eslab qolindi (jami n ta)". Keyin menyuda til tanlansa (menyu endi thread boshi - natija

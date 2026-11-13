@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 
+from datetime import date
 from typing import Any
 
 from .. import dates
@@ -138,16 +139,21 @@ def label(key: str, lang: str) -> str:
 
 
 def format_date(epoch: float, lang: str) -> str:
-    """Hujjat sanasi: `2026 йил 4 ноябрь` / `2026 yil 4 noyabr` / `4 ноября 2026 года` / `4 November 2026`."""
-    moment = dates.tashkent(epoch)
-    month = MONTHS.get(lang, MONTHS["uz-cyrl"])[moment.month - 1]
+    """Hujjat sanasi (Toshkent vaqtida): `2026 йил 4 ноябрь` / `2026 yil 4 noyabr` / `4 ноября 2026 года` /
+    `4 November 2026`."""
+    return format_day(dates.tashkent(epoch).date(), lang)
+
+
+def format_day(day: date, lang: str) -> str:
+    """Kun -> hujjat sanasi (`format_date` bilan bir xil shakl); ega aytgan sana (`header.date`) uchun ham."""
+    month = MONTHS.get(lang, MONTHS["uz-cyrl"])[day.month - 1]
     if lang == "ru":
-        return f"{moment.day} {month} {moment.year} года"
+        return f"{day.day} {month} {day.year} года"
     if lang == "en":
-        return f"{moment.day} {month} {moment.year}"
+        return f"{day.day} {month} {day.year}"
     if lang == "uz-latn":
-        return f"{moment.year} yil {moment.day} {month}"
-    return f"{moment.year} йил {moment.day} {month}"
+        return f"{day.year} yil {day.day} {month}"
+    return f"{day.year} йил {day.day} {month}"
 
 
 #: Kun tartibi sarlavhasi oxiridagi/boshidagi ko'makchi so'zlar - bo'lim qolipiga ("... бўйича:",

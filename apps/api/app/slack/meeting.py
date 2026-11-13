@@ -19,9 +19,10 @@ BAYONNOMA CHATDA (ega so'rovi 2026-11-12): bitta yozuv - bitta suhbat, ko'rsatma
     modelisiz, bepul); chatning o'zida yoki boshqa thread'da yozilganini chat modeli o'zi ajratadi. Til tugmasi
     ko'rsatmalarni qo'llaydi (`minutes.generate`), tayyor hujjatdan keyingi yangi ko'rsatmalar - uning tahriri;
   * yozilgandan KEYIN - natija xabari tahrir eslatmasi va `doc:<til>` belgisi bilan (`render.minutes_hint`): uning
-    thread'idagi yoki chatning o'zidagi keyingi matn shu yozuvga va shu til hujjatiga (`minutes_lang`). Chat modeli
-    "o'zgartir" deb tushunsa - server yangi versiyani yozadi, Barno uni kutib (`_follow_minutes`) yangi Word va PDF
-    hamda nima o'zgarganini yuboradi.
+    yoki Word / PDF faylining (`_doc_of_files`) thread'idagi yoki chatning o'zidagi keyingi matn shu yozuvga va shu
+    til hujjatiga (`minutes_lang`). Chat modeli "o'zgartir" deb tushunsa (yozuv chatida agent bo'g'ini yo'q - amalni
+    Claude tanlaydi, `service._model_answer`) - server yangi versiyani yozadi, Barno uni kutib (`_follow_minutes`)
+    yangi Word va PDF hamda nima o'zgarganini yuboradi.
 TRANSKRIPT CHATGA YOZILMAYDI (ega talabi 2026-11-11): uzun matn chatni tushunarsiz qilardi. U
 «📥 Yuklab olish -> Transkript (TXT)» da - .txt fayl kartaning THREAD'iga keladi (asosiy chat toza
 qoladi), Slack'da shu yerdan yuklab olinadi. Istisno - xulosa yozilmagan juda qisqa yozuv: bir-ikki
@@ -94,6 +95,11 @@ CHOOSE = "choose"
 AUDIO_PENDING_SEC = 15 * 60
 #: Xulosa yozilmagan (juda qisqa) yozuvning matni shundan qisqa bo'lsa - kartaning o'zida ko'rsatiladi.
 SHORT_TRANSCRIPT_CHARS = 300
+#: Bayonnoma FAYLI (Word / PDF) xabarining thread'i (`_doc_of_files`): uning natija xabari fayldan oldingi shuncha xabar
+#: ichida va shuncha soniya oldingacha qidiriladi. Natija ("⏳" xabari) hujjat yozilishidan OLDIN chiqadi, fayllar -
+#: tayyor bo'lgach (botlar `minutes.WAIT_SEC` gacha kutadi) - zaxira bilan.
+DOC_LOOKBACK = 20
+DOC_FILE_WINDOW = 30 * 60
 #: Eksport turlari (`render.EXPORTS`) -> xizmat formati.
 _TRANSCRIPTS = {"transcript_txt": "txt", "transcript_srt": "srt"}
 _REPORTS = {"report_docx": "docx", "report_pdf": "pdf"}
@@ -591,8 +597,9 @@ def _client_id(event: dict[str, Any]) -> str | None:
 def thread_target(client: Any, channel: str, thread: str, user: AuthUser, *,
                   bot_user: str | None = None) -> tuple[str, str | None] | None:
     """Thread boshidagi xabar -> (yig'ilish, teg). Barno'ning xabari - belgisi (`render.marked_tag`): xulosa kartasi
-    (""), chat javobi (`chat`), bayonnoma til menyusi (`minutes`), bayonnoma natijasi (`doc:<til>`). Odamning audio
-    xabari - fayl kaliti, teg `None`. Yozuvga bog'liq bo'lmagan thread - `None`."""
+    (""), chat javobi (`chat`), bayonnoma til menyusi (`minutes`), bayonnoma natijasi (`doc:<til>`); belgisiz
+    bayonnoma FAYLI (Word / PDF) - o'z natija xabarining belgisi (`_doc_of_files`). Odamning audio xabari - fayl
+    kaliti, teg `None`. Yozuvga bog'liq bo'lmagan thread - `None`."""
     try:
         found = client.conversations_replies(channel=channel, ts=thread, limit=1, inclusive=True)
     except Exception as exc:  # noqa: BLE001 - SlackApiError, tarmoq
@@ -602,9 +609,11 @@ def thread_target(client: Any, channel: str, thread: str, user: AuthUser, *,
     parent = messages[0] if messages else None
     if not parent:
         return None
-    if parent.get("bot_id"):
+    if parent.get("bot_id") or (bot_user and parent.get("user") == bot_user):
         # Belgiga faqat O'ZIMIZ yozgan xabarda ishonamiz.
-        return render.marked_tag(parent) if not bot_user or parent.get("user") == bot_user else None
+        if bot_user and parent.get("user") != bot_user:
+            return None
+        return render.marked_tag(parent) or _doc_of_files(client, channel, parent, user, bot_user=bot_user)
     legacy = transcribe.legacy_account() if link.required() else None
     holders = [user] + ([legacy] if legacy is not None and legacy.actorId != user.actorId else [])
     for file in parent.get("files") or []:
@@ -614,6 +623,58 @@ def thread_target(client: Any, channel: str, thread: str, user: AuthUser, *,
                 if meeting_id:
                     return meeting_id, None
     return None
+
+
+def _doc_of_files(client: Any, channel: str, parent: dict[str, Any], user: AuthUser, *,
+                  bot_user: str | None = None) -> tuple[str, str] | None:
+    """Barno yuborgan bayonnoma FAYLI (Word / PDF) xabarining thread'i -> (yig'ilish, `doc:<til>`) yoki `None`.
+
+    NEGA. Fayl xabariga belgi (blok) qo'yib bo'lmaydi, odam esa ko'pincha aynan faylga javob yozadi (2026-11-13 jonli:
+    Word fayli ostidagi «sana 11 noyabr bo'lishi kerak» jim qolgan edi). Natija xabari (`_deliver_minutes`: "⏳" o'rnida,
+    `doc:<til>` belgisi bilan) shu fayllardan OLDIN turadi - shuning uchun chat tarixida fayl xabaridan oldingi
+    (`DOC_LOOKBACK` ta, `DOC_FILE_WINDOW` gacha) O'Z natija xabarimiz olinadi: tili fayl nomidagi hujjat so'zi bilan
+    bir xil (`render.minutes_file_lang`). Bir nechtasi bo'lsa (ikki yozuv bayonnomasi ketma-ket) - yozuv nomi fayl
+    nomida borligi (`_titled`), bo'lmasa - eng yaqini."""
+    langs = {lang for lang in (render.minutes_file_lang(f) for f in parent.get("files") or []) if lang}
+    if not langs:
+        return None
+    try:
+        found = client.conversations_history(channel=channel, latest=parent.get("ts"), limit=DOC_LOOKBACK,
+                                             inclusive=False)
+    except Exception as exc:  # noqa: BLE001 - SlackApiError, tarmoq
+        log.warning("Slack chat tarixi o'qilmadi (%s): %s", channel, exc)
+        return None
+    if not found.get("ok", True):
+        log.warning("Slack chat tarixi o'qilmadi (%s): %s", channel, found.get("error"))
+        return None
+    sent = _sent_at(parent)
+    names = [str(f.get(key) or "") for f in parent.get("files") or [] for key in ("name", "title")]
+    candidates: list[tuple[str, str]] = []
+    for message in found.get("messages") or []:                 # yangisi birinchi
+        if sent - _sent_at(message) > DOC_FILE_WINDOW:
+            break
+        if not message.get("bot_id") or (bot_user and message.get("user") != bot_user):
+            continue
+        target = render.marked_tag(message)
+        if target and render.doc_lang(target[1]) in langs and target not in candidates:
+            candidates.append(target)
+    if len(candidates) > 1:
+        return next((c for c in candidates if _titled(user, c[0], names)), candidates[0])
+    return candidates[0] if candidates else None
+
+
+def _titled(user: AuthUser, meeting_id: str, names: list[str]) -> bool:
+    """Yozuv nomi fayl nomida bormi (harf va raqamlar bo'yicha: fayl nomida ":" kabi belgilar olib tashlangan)."""
+    try:
+        title = service.detail(transcribe.owner(user, meeting_id), meeting_id).get("title")
+    except MeetingProblem:
+        return False
+    key = _letters(title)
+    return bool(key) and any(key in _letters(name) for name in names)
+
+
+def _letters(value: Any) -> str:
+    return re.sub(r"[\W_]+", "", str(value or "").casefold())
 
 
 def meeting_of_thread(client: Any, channel: str, thread: str, user: AuthUser, *,

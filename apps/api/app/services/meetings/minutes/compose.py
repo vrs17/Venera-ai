@@ -21,7 +21,7 @@ BLOK TURLARI (`kind`):
     approval  {lines: [str]}                        tasdiq bloki, o'ng tomonda: label approve, BLANK (bank),
                                                     BLANK (lavozim), BLANK (F.Familiya), approve_date, number
     title     {lines: [str]}                        markazda, qalin: BLANK (bank nomi), meeting_line, doc
-    two_col   {left: str, right: str}               sana (chapda, `text.format_date`) va shahar (o'ngda, label city)
+    two_col   {left: str, right: str}               sana (chapda, `meeting_day`) va shahar (o'ngda, label city)
     label     {label: str, value: str}              "Раислик қилувчи:" + BLANK; "Қатнашдилар:" + BLANK
     heading   {text: str}                           markazda, qalin: "КУН ТАРТИБИ:", "ҚАРОР ҚИЛАДИ:"
     agenda    {number: "1.", text: str}             kun tartibi bandi - markazda, qalin
@@ -35,8 +35,10 @@ BLOK TURLARI (`kind`):
 
 SARLAVHA QISMI (`content["header"]`, faqat ega aytgani - `validate`): tashkilot - tasdiq bloki va sarlavhaning
 birinchi qatori, `chairedBy` - meeting_line dagi BLANK o'rniga, shahar - city qatoridagi BLANK o'rniga, rais va
-qatnashchilar - yorliq qiymati. Aytilmagani (yoki minutes-2 hujjatida `header` umuman yo'q) - `BLANK`, bloklar
-avvalgidek baytma-bayt. `revision` (0 - asl) >= 1 bo'lsa loyiha qatorida "2-таҳрир." kabi versiya belgisi.
+qatnashchilar - yorliq qiymati, `date` (2026-11-13: yozuv yuklangan kun yig'ilish kuni bo'lmasligi mumkin) - chapdagi
+sana va fayl nomidagi sana (`meeting_day`). Aytilmagani (yoki minutes-2 hujjatida `header` umuman yo'q) - `BLANK`
+(sana - yozuv sanasi), bloklar avvalgidek baytma-bayt. `revision` (0 - asl) >= 1 bo'lsa loyiha qatorida
+"2-таҳрир." kabi versiya belgisi.
 
 QOIDALAR: bandlar BARCHA bo'limlar bo'ylab 1..N uzluksiz (`numbering`); har bo'lim `section` = label section
 (`roman`, kun tartibi sarlavhasi); `[S#]` tokenlari (bayon, matn, kichik band, "Бунда", preamble)
@@ -64,9 +66,10 @@ from __future__ import annotations
 import re
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Iterable
 
-from .. import export
+from .. import dates, export
 from . import text
 from .text import BLANK
 
@@ -308,6 +311,17 @@ def render_notes(content: dict[str, Any], *, speakers: dict[str, dict[str, Any]]
     return [n for n in (names.note(x, code) for x in (content.get("notes") or [])) if n]
 
 
+def meeting_day(content: dict[str, Any] | None, recorded_at: float) -> float:
+    """Hujjatdagi yig'ilish sanasi (epoch, Toshkent kuni o'rtasi): ega aytgan sana (`header.date`, `validate` tekshirgan
+    YYYY-MM-DD) yoki yozuv sanasi (`recorded_at`; 0 - noma'lum). `compose` dagi sana qatori va eksport fayli nomi
+    (`minutes.export_file`) uchun BIR XIL."""
+    header = (content or {}).get("header") if isinstance((content or {}).get("header"), dict) else {}
+    day = dates.parse_iso(header.get("date")) if isinstance(header.get("date"), str) else None
+    if day is None:
+        return float(recorded_at or 0)
+    return datetime(day.year, day.month, day.day, 12, tzinfo=dates.TASHKENT).timestamp()
+
+
 def _fill(template: str, value: str) -> str:
     """Yorliqdagi birinchi `BLANK` o'rniga ega aytgan qiymat; qiymat bo'lmasa yorliq o'zgarmaydi."""
     return template.replace(BLANK, value, 1) if value else template
@@ -328,6 +342,7 @@ def compose(content: dict[str, Any], *, lang: str, title: str, speakers: dict[st
         value = header.get(key)
         return names.render(value) if isinstance(value, str) else ""
 
+    day = meeting_day(content, recorded_at)
     people = header.get("attendees") if isinstance(header.get("attendees"), list) else []
     attendees = ", ".join(x for x in (names.render(a) for a in people if isinstance(a, str)) if x)
     organization = fact("organization") or BLANK
@@ -343,7 +358,7 @@ def compose(content: dict[str, Any], *, lang: str, title: str, speakers: dict[st
         {"kind": "title", "doc": label("doc"),
          "lines": ([organization, label("doc"), meeting_line] if code in ("ru", "en")
                    else [organization, meeting_line, label("doc")])},
-        {"kind": "two_col", "left": text.format_date(recorded_at, code) if recorded_at else BLANK,
+        {"kind": "two_col", "left": text.format_date(day, code) if day else BLANK,
          "right": _fill(label("city"), fact("city"))},
         {"kind": "label", "label": label("chair"), "value": fact("chair") or BLANK},
         {"kind": "label", "label": label("attendees"), "value": attendees or BLANK},

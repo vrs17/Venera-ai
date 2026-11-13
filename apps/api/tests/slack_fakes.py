@@ -23,12 +23,13 @@ class FakeSlack:
     """`WebClient` ning ishlatiladigan metodlari: yuborilgan, yangilangan, o'chirilgan va yuklangan narsalar yoziladi.
 
     Chat tarixi (`conversations_history`) - Slack'dagidek chatning o'zidan (`timeline`): Barno'ning thread'dan
-    tashqaridagi xabarlari (oxirgi tahriri bilan, o'chirilgani yo'q) va odam yozganlari (`say`). `history` da
+    tashqaridagi xabarlari (oxirgi tahriri bilan, o'chirilgani yo'q; `file_messages` - yuklangan fayllar ham) va odam
+    yozganlari (`say`). `history` da
     qo'lda berilgan kanal - aynan o'sha ro'yxat. `history_error` - tarix o'qilmaydi: istisno ko'tariladi, lug'at esa
     Slack javobi sifatida qaytadi (`{"ok": False, ...}`)."""
 
     def __init__(self, files: dict[str, dict] | None = None, parents: dict[str, dict] | None = None,
-                 upload_error: Exception | None = None) -> None:
+                 upload_error: Exception | None = None, file_messages: bool = False) -> None:
         self.posted: list[dict] = []
         self.updated: list[dict] = []
         self.deleted: list[dict] = []
@@ -44,6 +45,9 @@ class FakeSlack:
         self.files = files or {}
         self.parents = parents or {}
         self.upload_error = upload_error
+        #: Thread'dan tashqarida yuklangan fayl chatda Barno'ning FAYL XABARI bo'lib turadimi (Slack'dagidek: bloksiz,
+        #: `files` bilan) - unga thread'da javob yozish mumkin (`thread_under`).
+        self.file_messages = file_messages
 
     def chat_postMessage(self, **kwargs):
         kwargs["ts"] = f"100.{len(self.posted) + 1}"
@@ -98,6 +102,12 @@ class FakeSlack:
         if self.upload_error is not None:
             raise self.upload_error
         self.uploaded.append(kwargs)
+        if self.file_messages and not kwargs.get("thread_ts"):
+            ts = f"200.{len(self.uploaded)}"
+            self.timeline[(kwargs["channel"], ts)] = {
+                "type": "message", "channel": kwargs["channel"], "user": BOT_USER, "bot_id": "B1", "text": "",
+                "ts": ts, "files": [{"id": f"FD{len(self.uploaded)}", "name": kwargs.get("filename"),
+                                     "title": kwargs.get("title")}]}
         return {"ok": True}
 
     def views_publish(self, **kwargs):
@@ -117,8 +127,13 @@ class FakeSlack:
             return self.history_error
         if channel in self.history:
             return {"ok": True, "messages": list(self.history[channel])[:limit]}
-        return {"ok": True,
-                "messages": [m for (ch, _), m in reversed(self.timeline.items()) if ch == channel][:limit]}
+        items = [m for (ch, _), m in self.timeline.items() if ch == channel]
+        if kwargs.get("latest") is not None:
+            # `latest` - shu xabardan OLDINGILAR (`inclusive` - o'zi ham), Slack kabi.
+            cut = next((i for i, m in enumerate(items) if m.get("ts") == kwargs["latest"]), None)
+            if cut is not None:
+                items = items[:cut + 1 if kwargs.get("inclusive") else cut]
+        return {"ok": True, "messages": list(reversed(items))[:limit]}
 
     def conversations_replies(self, channel, ts, **kwargs):
         return {"messages": [self.parents[ts]] if ts in self.parents else []}

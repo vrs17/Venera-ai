@@ -202,8 +202,8 @@ def answer_chain(providers: list[Any], *, deadline: float = 0.0, clock: Callable
 
     `deadline` - hamma model uchun UMUMIY muddat (s; 0 - yo'q): oxirgisidan boshqasiga
     qolgan vaqtning 2/3 qismi, oxirgisiga - qolgani. Oshsa - keyingi model / 503.
-    `agent_ok=False` (telefon qo'ng'irog'i) - yangi agent bo'g'ini va shadow YO'Q: bugungi
-    zanjir o'zgarmaydi (`brain.meeting_agent_ok`).
+    `agent_ok=False` (telefon qo'ng'irog'i, `brain.meeting_agent_ok`; yozuv chati - bayonnoma amali faqat
+    Claude'da, `service._model_answer`) - yangi agent bo'g'ini va shadow YO'Q: bugungi zanjir o'zgarmaydi.
     Claude (`converse` bor) - ko'p navbatli chat (`chat.converse`), qolganlari - `answer` (tarix matn bloki).
     `minutes` - bayonnoma bloklari (`{"doc", "state"}`) FAQAT Claude'ga (`converse`): `answer` va shadow avvalgi
     argumentlarni oladi. -> (javob, ishlagan provayder)."""

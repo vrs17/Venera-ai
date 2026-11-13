@@ -562,6 +562,24 @@ def test_sarlavha_toldiriladi():
     assert en.blocks[5]["value"] == BLANK                                 # nomsiz spiker - bo'sh joy
 
 
+def test_sarlavha_sanasi_yozuv_sanasi_orniga():
+    """Ega aytgan yig'ilish sanasi (`header.date`) - chapdagi sana qatorida yozuv sanasi o'rniga, har tilning o'z
+    shaklida; fayl nomidagi sana ham shu (`compose.meeting_day`). Yaroqsiz qiymat - yozuv sanasi."""
+    from app.services.meetings import dates as dates_mod
+
+    assert build(header={"date": "2026-11-11"}).blocks[3]["left"] == "2026 йил 11 ноябрь"
+    assert build("uz-latn", header={"date": "2026-11-11"}).blocks[3]["left"] == "2026 yil 11 noyabr"
+    assert build("ru", header={"date": "2026-11-11"}).blocks[3]["left"] == "11 ноября 2026 года"
+    assert build("en", header={"date": "2026-11-11"}).blocks[3]["left"] == "11 November 2026"
+    assert build(header={"date": "11 noyabr"}).blocks[3]["left"] == "2025 йил 4 ноябрь"           # yozuv sanasi
+    day = compose.meeting_day({"header": {"date": "2026-11-11"}}, RECORDED_AT)
+    assert dates_mod.tashkent(day).date().isoformat() == "2026-11-11"
+    assert compose.meeting_day({"header": {"date": None}}, RECORDED_AT) == RECORDED_AT
+    assert compose.meeting_day({}, 0) == 0
+    _, real_name = export.file_names(compose.file_title("Haftalik", lang="uz-latn", revision=1), day, "docx")
+    assert real_name == "Bayonnoma - Haftalik (2-tahrir) 2026-11-11.docx"
+
+
 def test_raqamlash_compose_bilan_bir_xil():
     """`numbering` - Word dagi raqamlar: matnsiz band raqam olmaydi, nazorat bandi (mazmunda `control` bo'lmasa)
     oxirida; har yozuv mazmundagi bandni ko'rsatadi. `outline` - tahrir promptidagi o'sha raqamlar."""

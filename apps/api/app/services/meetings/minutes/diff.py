@@ -33,7 +33,7 @@ from . import compose, validate
 
 #: Sarlavha qismi kalitlari - odamga ko'rinadigan nomlar (`summary_uz`, Slack/Telegram xabari).
 HEADER_NAMES_UZ = {"organization": "tashkilot nomi", "chairedBy": "kim huzurida", "city": "shahar",
-                   "chair": "rais", "attendees": "qatnashchilar"}
+                   "chair": "rais", "attendees": "qatnashchilar", "date": "sana"}
 #: Bandlar va kun tartibidan tashqari solishtiriladigan kalitlar (shu tartibda) va ularning nomlari.
 OTHER_KEYS = ("title", "preamble", "controller", "notes")
 OTHER_NAMES_UZ = {"title": "sarlavha", "preamble": "kirish gapi", "controller": "nazorat bandi", "notes": "izohlar"}

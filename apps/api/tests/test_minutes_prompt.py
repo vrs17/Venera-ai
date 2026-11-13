@@ -74,7 +74,7 @@ def schema_keys(node) -> list[str]:
 
 
 def test_versiya_va_tizim_prompti_tillar_boyicha():
-    assert prompt.MINUTES_VERSION == "minutes-3"
+    assert prompt.MINUTES_VERSION == "minutes-4"
     # minutes-2 (birinchi jonli sinov) qoidalari minutes-3 da ham: izohlarda token, qator raqami emas vaqt; nisbiy
     # kun - sana.
     assert '"followUp", "controller", "responsible", "notes") refer to speakers ONLY as [S1]' in prompt.RULES
@@ -437,9 +437,11 @@ def _nonce_free(value: str) -> str:
     return re.sub(r"(TRANSCRIPT|OWNER|MINUTES)-[0-9a-f]{12}", r"\1-N", value)
 
 
-def test_versiya_minutes3_va_eski_versiyalar():
-    assert prompt.MINUTES_VERSION == "minutes-3"
-    assert prompt.READY_VERSIONS == ("minutes-2", "minutes-3") and prompt.MINUTES_VERSION in prompt.READY_VERSIONS
+def test_versiya_minutes4_va_eski_versiyalar():
+    assert prompt.MINUTES_VERSION == "minutes-4"
+    assert prompt.READY_VERSIONS == ("minutes-2", "minutes-3", "minutes-4")
+    assert prompt.MINUTES_VERSION in prompt.READY_VERSIONS
+    assert '"date": the date the meeting was held, YYYY-MM-DD, only if the owner states it' in prompt.RULES
     assert "\n10. OWNER INSTRUCTIONS. " in prompt.RULES and "\n11. HEADER. " in prompt.RULES
     assert 'the chair and the attendees (unless "header" gives them)' in prompt.RULES
     assert 'plus the "header" facts that the meeting owner stated' in prompt.ROLE
@@ -638,6 +640,40 @@ def test_sarlavha_faqat_egadan():
     assert cleaned["header"]["attendees"] == [f"Xodim{n}" for n in range(40)] and "header_capped" in warnings
     # Sarlavha qiymati boshqa matnlardan tozalanmaydi va noasosli ism ro'yxatiga kirmaydi.
     assert validate.owner_terms(cleaned)[:2] == ["Xodim0", "Xodim1"]
+
+
+def test_sarlavha_sanasi_faqat_egadan():
+    """Yig'ilish sanasi (`header.date`; 2026-11-13 jonli topilma: audio 13-noyabrda yuklangan, yig'ilish 11-noyabrda
+    bo'lgan - Word'da "13 noyabr" turardi): ega matnida o'sha kun aniq aytilgan bo'lsa qoladi, yili aytilmagan bo'lsa
+    yozuv sanasiga eng yaqin yil (model yili emas). Ega aytmagan (transkriptdagi muddat ham), sana emas yoki
+    nisbiy so'z ("kecha") - tashlanadi, `header_dropped:date`: hujjatda yozuv sanasi qoladi."""
+    from datetime import date
+
+    segs = _segs("Hisobot 20-noyabrgacha tayyor bo'lsin.", "Xo'p.")
+    day = date(2026, 11, 13)
+
+    def run(value, owner, meeting_day=day):
+        cleaned, warnings = validate.validate(_header_content({**validate.EMPTY_HEADER, "date": value}),
+                                              lang="uz-cyrl", segments=segs, speakers=SPEAKERS, owner=owner,
+                                              meeting_day=meeting_day)
+        return cleaned["header"]["date"], warnings
+
+    assert run("2026-11-11", ["bayonoma sanasi bugun emas 11 noyabr bo'lishi kerak"]) == ("2026-11-11", [])
+    assert run("2026-11-11", ["Сана 11 ноябрь бўлсин"])[0] == "2026-11-11"
+    assert run("2026-11-11", ["дата протокола - 11.11.2026"])[0] == "2026-11-11"
+    assert run("2025-11-11", ["sana 11-noyabr"])[0] == "2026-11-11"                 # yil - yozuv sanasidan
+    assert run("2025-11-11", ["Date: November 11, 2025"])[0] == "2025-11-11"        # ega aytgan yil
+    assert run("2026-12-28", ["28 dekabr"], date(2027, 1, 3))[0] == "2026-12-28"    # yil chegarasi
+    assert run(None, ["sana 11-noyabr"]) == (None, [])
+    for value, owner in (("2026-11-20", ["rais - A.Karimov"]),             # transkriptdagi muddat - egadan emas
+                         ("2026-11-12", ["sana 11-noyabr"]),               # boshqa kun
+                         ("2026-11-12", ["sana kecha bo'lsin"]),           # nisbiy so'z - qaysi kunga nisbatan?
+                         ("11 noyabr", ["sana 11-noyabr"]),                # YYYY-MM-DD emas
+                         ("2026-11-11", [])):                              # ega matni yo'q
+        found, warnings = run(value, owner)
+        assert found is None and ("header_dropped:date" in warnings or "header_without_owner" in warnings), value
+    # Ega aytgan sana keyingi tahrirda ham asosli (tahrir asosidagi atamalar).
+    assert "2026-11-11" in validate.owner_terms({"header": {**validate.EMPTY_HEADER, "date": "2026-11-11"}})
 
 
 def test_ega_atamalari_tayyor_hujjatdan():

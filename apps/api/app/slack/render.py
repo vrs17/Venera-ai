@@ -165,6 +165,21 @@ def marked(message: dict[str, Any] | None, *, tags: tuple[str, ...] | None = Non
     return found[0] if found else None
 
 
+def minutes_file_lang(file: dict[str, Any] | None) -> str | None:
+    """Slack fayli Barno'ning bayonnoma fayli nomidami - "Bayonnoma - <yozuv nomi> ....docx|pdf"
+    (`minutes.compose.file_title`, til bo'yicha hujjat so'zi: Баённома / Bayonnoma / Протокол / Minutes) -> hujjat
+    tili; aks holda `None`. Fayl xabariga belgi qo'yib bo'lmaydi - uning thread'i natija xabaridan topiladi
+    (`meeting.thread_target`)."""
+    for key in ("name", "title"):
+        name = str((file or {}).get(key) or "")
+        if not name.lower().endswith((".docx", ".pdf")):
+            continue
+        for lang in minutes_text.LANGS:
+            if name.startswith(f"{minutes_text.label('doc_word', lang)} - "):
+                return lang
+    return None
+
+
 def doc_lang(tag: str | None) -> str | None:
     """Bayonnoma natijasi belgisining (`minutes_hint`, teg `doc:<til>`) hujjat tili; boshqa teg - `None`."""
     if not tag or not tag.startswith(DOC_TAG):
@@ -267,10 +282,12 @@ def retry_button(value: str) -> dict[str, Any]:
 #: Bayonnoma til menyusi xabarining matni (bildirishnoma uchun ham). Menyu thread'idagi har javob - hujjat uchun
 #: ko'rsatma (`meeting.question`, `minutes` tegi: chat modelisiz), til tugmasi ularni qo'llaydi.
 MINUTES_PROMPT = ("📄 *Bayonnoma* - hujjat tilini tanlang. Avval ko'rsatma bermoqchi bo'lsangiz (rais, qatnashchilar, "
-                  "nimaga e'tibor berish) - shu xabarga thread'da yozing, so'ng tilni tanlang.")
-#: Bayonnoma natijasi ostidagi eslatma (`minutes_hint`): o'zgartirish shu xabar thread'ida yoki chatning o'zida.
-MINUTES_EDIT_HINT = ("✏️ O'zgartirish kerak bo'lsa - shu xabarga thread'da yoki shu chatga yozing, masalan: «3-bandda "
-                     "muddat 1-dekabr bo'lsin», «raisni Alisher Karimov deb yozing». Barno yangi Word va PDF yuboradi.")
+                  "yig'ilish sanasi, nimaga e'tibor berish) - shu xabarga thread'da yozing, so'ng tilni tanlang.")
+#: Bayonnoma natijasi ostidagi eslatma (`minutes_hint`): o'zgartirish shu xabar yoki Word / PDF fayli thread'ida
+#: (`meeting.thread_target`) yoki chatning o'zida.
+MINUTES_EDIT_HINT = ("✏️ O'zgartirish kerak bo'lsa - shu xabarga yoki Word / PDF fayliga thread'da, yoki shu chatga "
+                     "yozing, masalan: «3-bandda muddat 1-dekabr bo'lsin», «raisni Alisher Karimov deb yozing», "
+                     "«sana 11-noyabr bo'lsin». Barno yangi Word va PDF yuboradi.")
 #: Ko'rsatma eslab qolindi (`minutes_turn_note`) - chat javobi ostida.
 MINUTES_NOTE_SAVED = ("📝 Bayonnoma uchun ko'rsatma eslab qolindi (jami {n} ta). Tayyorlash uchun «📄 Bayonnoma» "
                       "tugmasini bosing va tilni tanlang.")

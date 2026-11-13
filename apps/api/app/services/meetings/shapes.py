@@ -134,13 +134,14 @@ def minutes() -> dict[str, Any]:
     """Bayonnoma (rasmiy hujjat, `minutes/prompt.py` dagi shakl bilan BIR XIL): kun tartibi bandlari,
     har band bo'yicha bayon, qaror bo'limlari (band = tur, muddat, mas'ullar, matn, kichik bandlar,
     "Bunda" davomi, manba qatorlar), nazoratchi, izohlar, qamrov va sarlavha qismi (`header`: tashkilot,
-    kim huzurida, shahar, rais, qatnashchilar - FAQAT ega aytgani). Sarlavhalar, raqamlash va bo'sh
+    kim huzurida, shahar, rais, qatnashchilar, yig'ilish sanasi - FAQAT ega aytgani). Sarlavhalar, raqamlash va bo'sh
     joylar ("________") - KOD (`minutes/compose.py`), model emas. Tahrir (`meeting_minutes_revise`) ham shu shakl."""
     item = obj({"kind": STR, "deadline": NSTR, "deadlineDate": NSTR, "responsible": arr(STR), "text": STR,
                 "subpoints": arr(STR), "followUp": NSTR, "sourceSegmentIds": IDS, "confidence": NUM})
     agenda = obj({"title": STR, "speakers": arr(STR), "report": STR, "sourceSegmentIds": IDS})
     section = obj({"agendaIndex": INT, "items": arr(item)})
-    header = obj({"organization": NSTR, "chairedBy": NSTR, "city": NSTR, "chair": NSTR, "attendees": arr(STR)})
+    header = obj({"organization": NSTR, "chairedBy": NSTR, "city": NSTR, "chair": NSTR, "attendees": arr(STR),
+                  "date": NSTR})
     return obj({"coverage": _COVERAGE, "title": STR, "agenda": arr(agenda), "preamble": NSTR,
                 "sections": arr(section), "controller": NSTR, "notes": arr(STR), "header": header})
 

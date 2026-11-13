@@ -29,8 +29,11 @@ EGA MATNI (`owner`, 2026-11-12): yig'ilish egasining ko'rsatmalari, o'zgartirish
 tahrir asosidagi ismlar (`owner_terms`). Ega - manba: undagi ismlar va raqamlar transkriptdagidek ASOSLI (`BLANK`
 bo'lmaydi, `unverified_number` yo'q). Modelning talqini (chat javobi, `instruction`) bu ro'yxatga KIRMAYDI.
 
-SARLAVHA QISMI (`header`: tashkilot, "kim huzurida", shahar, rais, qatnashchilar) - FAQAT egadan. Ega matni yo'q -
-hammasi bo'sh. Qiymat qoladi, agar (a) shaxs maydonida (rais, "kim huzurida", qatnashchi) kamida bitta so'z egadan
+SARLAVHA QISMI (`header`: tashkilot, "kim huzurida", shahar, rais, qatnashchilar, yig'ilish sanasi) - FAQAT egadan.
+Ega matni yo'q - hammasi bo'sh. Sana (`date`, YYYY-MM-DD) - ega matnida o'sha kun aniq aytilgan bo'lsa ("11-noyabr",
+"11.11.2026", `dates.mentioned`; yili aytilmagan bo'lsa - yozuv sanasiga eng yaqin yil, model yilidan qat'i nazar);
+aks holda `header_dropped:date` - hujjatda yozuv sanasi qoladi. Matnli qiymat qoladi, agar (a) shaxs maydonida (rais,
+"kim huzurida", qatnashchi) kamida bitta so'z egadan
 (ko'rsatma yoki odam o'zi bergan spiker nomi) va (b) egasi aytmagan, transkriptda ISMGA O'XSHASH so'z yo'q; aks holda
 `header_dropped:<kalit>` - bo'sh joy, kotib to'ldiradi. NEGA (a)+(b), "har so'z egadan" emas: ega "rais - alisher
 karimov" deydi, hujjatda esa "А.Каримов" (kirill, bosh harf) yoki ruscha "А.Каримова" (qaratqich) - bular to'g'ri;
@@ -57,7 +60,7 @@ import re
 from datetime import date
 from typing import Any, Sequence
 
-from .. import export
+from .. import dates, export
 from ..summarize import norm
 from . import text
 from .text import BLANK
@@ -67,8 +70,9 @@ KINDS = ("acknowledge", "task", "warning", "permission", "control", "other")
 #: Saqlanadigan mazmun kalitlari - `shapes.minutes()` tartibida.
 KEYS = ("coverage", "title", "agenda", "preamble", "sections", "controller", "notes", "header")
 #: Sarlavha qismi kalitlari (`shapes.minutes()` dagi `header`) va ega hech narsa aytmagandagi qiymati.
-HEADER_KEYS = ("organization", "chairedBy", "city", "chair", "attendees")
-EMPTY_HEADER: dict[str, Any] = {"organization": None, "chairedBy": None, "city": None, "chair": None, "attendees": []}
+HEADER_KEYS = ("organization", "chairedBy", "city", "chair", "attendees", "date")
+EMPTY_HEADER: dict[str, Any] = {"organization": None, "chairedBy": None, "city": None, "chair": None, "attendees": [],
+                                "date": None}
 #: Bitta qatorli sarlavha qiymatlari (qatnashchilar - ro'yxat).
 _HEADER_TEXT = ("organization", "chairedBy", "city", "chair")
 
@@ -218,8 +222,11 @@ class _Checker:
     (`rename_speaker`) - sarlavha qismi shu bilan tekshiriladi."""
 
     def __init__(self, lang: str, segments: list[dict[str, Any]], speakers: list[dict[str, Any]],
-                 owner: Sequence[str] = ()) -> None:
+                 owner: Sequence[str] = (), meeting_day: date | None = None) -> None:
         self.lang = lang
+        #: Ega matnlari (sana tekshiruvi - `header_date`) va yozuv sanasi (yili aytilmagan sana uchun).
+        self.owner_texts = [str(said) for said in owner if str(said or "").strip()]
+        self.meeting_day = meeting_day
         self.ground = _Ground(segments, speakers, owner)
         self.owner = _Ground([], [sp for sp in speakers if sp.get("name")], owner)
         self.has_owner = any(str(said or "").strip() for said in owner)
@@ -526,7 +533,24 @@ class _Checker:
             out[key] = kept
             self.prose_of(kept)
         out["attendees"] = self.attendees(raw.get("attendees"))
+        out["date"] = self.header_date(raw.get("date"))
         return out
+
+    def header_date(self, value: Any) -> str | None:
+        """Yig'ilish sanasi (YYYY-MM-DD): ega matnida aytilgan kun (`dates.mentioned`) bo'lsa - o'sha (yili aytilmagan
+        bo'lsa yozuv sanasiga eng yaqin yil - model yili emas); sana emas yoki egadan emas - `None`,
+        `header_dropped:date` (hujjatda yozuv sanasi qoladi)."""
+        if value is None or (isinstance(value, str) and (not value.strip() or _BLANK.match(value.strip()))):
+            return None
+        iso = _iso_date(value)
+        day = date.fromisoformat(iso) if iso else None
+        if day is not None:
+            said = [d for text_ in self.owner_texts for d in dates.mentioned(text_, self.meeting_day or day)]
+            same = [d for d in said if (d.month, d.day) == (day.month, day.day)]
+            if same:
+                return (day if day in same else same[0]).isoformat()
+        self.warn("header_dropped:date")
+        return None
 
     def attendees(self, value: Any) -> list[str]:
         """Qatnashchilar: har biri shaxs qiymati sifatida tekshiriladi, takrorsiz, ko'pi bilan `MAX_ATTENDEES`
@@ -668,7 +692,7 @@ def _header_filled(raw: dict[str, Any]) -> bool:
     def filled(value: Any) -> bool:
         return isinstance(value, str) and bool(value.strip()) and not _BLANK.match(value.strip())
     attendees = raw.get("attendees")
-    return any(filled(raw.get(key)) for key in _HEADER_TEXT) or \
+    return any(filled(raw.get(key)) for key in (*_HEADER_TEXT, "date")) or \
         (isinstance(attendees, list) and any(filled(a) for a in attendees)) or filled(attendees)
 
 
@@ -690,6 +714,7 @@ def owner_terms(content: dict[str, Any] | None) -> list[str]:
         add(header.get(key))
     for name in header.get("attendees") if isinstance(header.get("attendees"), list) else []:
         add(name)
+    add(_iso_date(header.get("date")))                 # ega aytgan sana keyingi tahrirda ham asosli (`header_date`)
     for section in data.get("sections") if isinstance(data.get("sections"), list) else []:
         items = section.get("items") if isinstance(section, dict) and isinstance(section.get("items"), list) else []
         for item in items:
@@ -713,11 +738,12 @@ def _unwrap(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate(data: dict[str, Any], *, lang: str, segments: list[dict[str, Any]],
-             speakers: list[dict[str, Any]], owner: Sequence[str] = ()) -> tuple[dict[str, Any], list[str]]:
+             speakers: list[dict[str, Any]], owner: Sequence[str] = (),
+             meeting_day: date | None = None) -> tuple[dict[str, Any], list[str]]:
     """Model javobi -> (`KEYS` tartibidagi tozalangan mazmun, ogohlantirishlar). `Invalid` - obyekt emas,
     `sections` ro'yxat emas, yoki tekshiruvdan keyin bo'lim ham, kun tartibi ham qolmadi. `owner` - yig'ilish
     egasining matnlari (ko'rsatmalar, so'rov, tahrir asosidagi ismlar): ulardagi ism va raqamlar asosli, sarlavha
-    qismi (`header`) faqat shulardan."""
+    qismi (`header`) faqat shulardan. `meeting_day` - yozuv sanasi (Toshkent): ega yilini aytmagan sana uchun."""
     if not isinstance(data, dict):
         raise Invalid("bayonnoma: javob obyekt emas")
     data = _unwrap(data)
@@ -726,7 +752,7 @@ def validate(data: dict[str, Any], *, lang: str, segments: list[dict[str, Any]],
     if sections_raw is not None and not isinstance(sections_raw, list):
         raise Invalid("bayonnoma: sections ro'yxat emas")
     code = text.normalize(lang) or "uz-cyrl"
-    checker = _Checker(code, segments, speakers, owner)
+    checker = _Checker(code, segments, speakers, owner, meeting_day)
     if agenda_raw is not None and not isinstance(agenda_raw, list):
         checker.warn("agenda_invalid")
         agenda_raw = []

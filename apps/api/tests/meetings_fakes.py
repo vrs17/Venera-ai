@@ -358,8 +358,8 @@ def minutes_reply(lines: list[dict[str, Any]], user: str) -> dict[str, Any]:
 def revision_reply(user: str) -> dict[str, Any]:
     """Bayonnoma TAHRIRI (`prompt.build_revision`): CURRENT MINUTES chegarasidagi JSON, so'ralgani qo'llangan.
     Ko'rsatmalar CHANGE REQUEST blokidan (u yo'q bo'lsa - OWNER INSTRUCTIONS dagi `[new]` qatorlardan):
-    `TITLE=<x>` - sarlavha, `DROP=<n>` - matnli n-band olib tashlanadi, `CHAIR=<x>` - rais, `NOOP` - o'zgarishsiz;
-    hech biri yo'q - sarlavhaga " (tahrir)" qo'shiladi."""
+    `TITLE=<x>` - sarlavha, `DROP=<n>` - matnli n-band olib tashlanadi, `CHAIR=<x>` - rais, `DATE=<YYYY-MM-DD>` -
+    yig'ilish sanasi (`header.date`), `NOOP` - o'zgarishsiz; hech biri yo'q - sarlavhaga " (tahrir)" qo'shiladi."""
     doc = json.loads(fenced(user, "CURRENT MINUTES", "MINUTES") or "{}")
     request = fenced(user, "CHANGE REQUEST", "OWNER")
     if request is None:
@@ -368,13 +368,16 @@ def revision_reply(user: str) -> dict[str, Any]:
     if re.search(r"\bNOOP\b", request):
         return doc
     title, drop, chair = directive(request, "TITLE"), directive(request, "DROP"), directive(request, "CHAIR")
+    day = directive(request, "DATE")
     if title:
         doc["title"] = title
     if drop and drop.isdigit():
         _drop_item(doc, int(drop))
     if chair:
         doc["header"] = {**(doc.get("header") or {}), "chair": chair}
-    if not (title or drop or chair):
+    if day:
+        doc["header"] = {**(doc.get("header") or {}), "date": day.split()[0]}
+    if not (title or drop or chair or day):
         doc["title"] = f"{doc.get('title') or ''} (tahrir)"
     return doc
 

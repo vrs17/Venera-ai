@@ -548,6 +548,8 @@ class MinutesHeader(BaseModel):
     city: str | None = None
     chair: str | None = None
     attendees: list[str] = Field(default_factory=list)
+    #: Ega aytgan yig'ilish sanasi (YYYY-MM-DD): Word dagi sana va fayl nomi shu (aytilmagan - yozuv sanasi).
+    date: str | None = None
 
 
 class MinutesChangeSet(BaseModel):
@@ -564,7 +566,7 @@ class MinutesChanges(BaseModel):
 
     items: MinutesChangeSet
     agenda: MinutesChangeSet
-    #: O'zgargan sarlavha qiymatlari: organization | chairedBy | city | chair | attendees.
+    #: O'zgargan sarlavha qiymatlari: organization | chairedBy | city | chair | attendees | date.
     header: list[str] = Field(default_factory=list)
     #: Boshqa qismlar: title | preamble | controller | notes.
     other: list[str] = Field(default_factory=list)

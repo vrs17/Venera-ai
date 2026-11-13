@@ -479,17 +479,56 @@ def _agent_meetings(fake):
     return fake
 
 
-def test_tarix_yorligi_agent_bogini_hisobga_oladi(client, auth, ready, claude, monkeypatch, _isolated_meetings):
-    """`GET /chat` dagi `model` - `chat_send` dagi AYNAN o'sha zanjirdan: `meeting_ask` agentda bo'lsa - `agent`;
-    telefon qo'ng'irog'i agentga bormaydi (`brain.meeting_agent_ok`) - Claude. Yorliq tarmoqqa chiqmaydi."""
+def test_chat_agent_yoqiq_bolsa_ham_claude_va_bayonnoma_amali(client, auth, docs, claude, monkeypatch,
+                                                               _isolated_meetings):
+    """`MEETING_ASK_ENGINE=agent` (prod, ega qarori 2026-10-12) bo'lsa ham yozuv CHATI - Claude (`chat.converse`):
+    agent eski savol-javob promptini oladi, unda bayonnoma amali yo'q. 2026-11-13 jonli topilma: Slack'dagi "sana 11
+    noyabr bo'lsin" oddiy savol bo'lib qoldi, hujjat tahrirlanmadi. `GET /chat` yorlig'i ham shu zanjirdan; agentga
+    hech narsa bormaydi. Eski `/ask` - avvalgidek agentda (`test_brain_seams.test_savol_agent_bogini`)."""
+    rt = _isolated_meetings
     fake = enable_agent(monkeypatch, _agent_meetings(FakeAgent()), meeting_ask="agent")
-    turn = _say(client, auth, ready, "Kim hisobot yuboradi?")
-    assert turn["model"] == "agent" and claude.chats() == []
-    calls = len(fake.calls)
-    assert client.get(_url(ready), headers=auth).json()["model"] == "agent"
-    _isolated_meetings.store.update_meeting(ready, source="call")
-    assert client.get(_url(ready), headers=auth).json()["model"] == "claude-sonnet-5-5"
-    assert len(fake.calls) == calls
+    claude.script = [chat_reply()]
+    plain = _say(client, auth, docs, "Kim hisobot yuboradi?")
+    assert (plain["model"], plain["kind"]) == ("claude-sonnet-5-5", "chat")
+    claude.script = [chat_reply("create")]
+    made = _say(client, auth, docs, "Bayonnoma tayyorlab ber")
+    assert (made["kind"], made["minutes"]["version"]) == ("create", 1)
+    claude.script = [chat_reply("revise", instruction="Sarlavhani «Yangi sarlavha» qilish")]
+    edited = _say(client, auth, docs, "TITLE=Yangi sarlavha")
+    assert (edited["model"], edited["kind"], edited["minutes"]["version"]) == ("claude-sonnet-5-5", "revise", 2)
+    assert jload(rt.store.minutes_by_turn(edited["id"])["content_json"])["title"] == "Yangi sarlavha"
+    # Bayonnoma bloklari Claude'ga borgan (tahrir navbatida hujjat ko'rinadi), agentga - hech narsa.
+    assert "BAYONNOMA" in json.dumps(claude.chats()[-1]["system"], ensure_ascii=False)
+    assert len(claude.chats()) == 3 and fake.bodies("/complete") == []
+    assert client.get(_url(docs), headers=auth).json()["model"] == "claude-sonnet-5-5"
+    rt.store.update_meeting(docs, source="call")                       # telefon qo'ng'irog'i ham - Claude
+    assert client.get(_url(docs), headers=auth).json()["model"] == "claude-sonnet-5-5"
+
+
+def test_chatda_sana_tahriri_word_va_fayl_nomida(client, auth, docs, claude, _isolated_meetings):
+    """Jonli topilma (2026-11-13): audio yig'ilishdan keyin yuklangan - Word'dagi sana yuklangan kun edi, «sana 11
+    noyabr bo'lishi kerak» esa hech narsa o'zgartirmasdi (sana maydoni yo'q edi). Endi tahrir: yangi versiyada
+    sarlavha sanasi (`header.date`) ega aytgan kun, Word'dagi sana qatori va fayl nomi shu, o'zgarishlar - "sana"."""
+    from app.services.meetings.minutes import diff
+
+    rt = _isolated_meetings
+    user = _owner(rt, docs)
+    claude.script = [chat_reply("create")]
+    _say(client, auth, docs, "Bayonnoma tayyorlab ber")
+    claude.script = [chat_reply("revise", instruction="Bayonnoma sanasini 2026-yil 11-noyabr qilish")]
+    edited = _say(client, auth, docs, "bayonoma sanasi 2026 yil 11 noyabr bo'lishi kerak DATE=2026-11-11")
+    assert (edited["kind"], edited["minutes"]["version"], edited["minutes"]["status"]) == ("revise", 2, "ready")
+    row = rt.store.minutes_by_turn(edited["id"])
+    assert jload(row["content_json"])["header"]["date"] == "2026-11-11"
+    changes = jload(row["changes_json"])
+    assert changes["header"] == ["date"] and "sana yangilandi" in diff.summary_uz(changes)
+    data, _, disposition = minutes.export_file(user, docs, row["id"], "docx")
+    assert "2026-11-11.docx" in disposition
+    import io
+    import zipfile
+
+    assert "2026 йил 11 ноябрь" in zipfile.ZipFile(io.BytesIO(data)).read("word/document.xml").decode("utf-8")
+    assert minutes.status(user, docs, row["id"])["header"]["date"] == "2026-11-11"
 
 
 # --- umumiy hisob (Slack): har so'rovchining suhbati o'ziniki ---------------------------------------------

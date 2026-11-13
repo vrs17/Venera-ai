@@ -58,7 +58,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from ....core.config import settings
 from ....schemas.auth import AuthUser
-from .. import export, llm, prompts, service
+from .. import dates, export, llm, prompts, service
 from ..errors import MeetingProblem
 from ..store import jdump, jload, new_id
 from ...analytics.meter import carry
@@ -810,11 +810,14 @@ def _fill(rt: Any, m: dict[str, Any], lang: str, rev: int, providers: list[Any],
     current: dict[str, Any] = {}
     extra: list[str] = []
 
+    recorded_at = float(m.get("recorded_at") or m.get("created_at") or 0)
+    meeting_day = dates.tashkent(recorded_at).date() if recorded_at else None
+
     def attempt(provider: Any, strict: bool) -> dict[str, Any]:
         content = _ask(provider, system, user_text, op=op, effort=effort)
         try:
             cleaned, warnings = validate.validate(content, lang=lang, segments=segments, speakers=speakers,
-                                                  owner=owner)
+                                                  owner=owner, meeting_day=meeting_day)
         except validate.Invalid as exc:
             # Shakl yaroqsiz - shu model yiqildi: zanjirda keyingisi bo'lsa u yozadi (`run_chain`).
             raise LlmFailed(f"bayonnoma: {exc}") from exc
@@ -945,6 +948,7 @@ def export_file(user: AuthUser, meeting_id: str, minutes_id: str, fmt: str, *,
             raise MeetingProblem(503, exc.code, service._RENDER_MESSAGES.get(exc.code), headers=headers) from None
     media, ext = FORMATS[fmt]
     title = compose.file_title(m.get("title") or content.get("title") or "", lang=lang, revision=revision)
-    ascii_name, real_name = export.file_names(title, recorded_at, ext)
+    # Fayl nomidagi sana - hujjatdagi sana bilan bir xil: ega aytgan yig'ilish sanasi yoki yozuv sanasi.
+    ascii_name, real_name = export.file_names(title, compose.meeting_day(content, recorded_at), ext)
     log.info("Yig'ilish %s: bayonnoma eksporti %s, %d bayt", m["id"], fmt, len(data))
     return data, media, export.content_disposition(ascii_name, real_name)

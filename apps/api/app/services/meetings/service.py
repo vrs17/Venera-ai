@@ -1342,20 +1342,15 @@ def chat_history(user: AuthUser, meeting_id: str) -> dict[str, Any]:
     docs = {r["id"]: r for r in store.minutes_rows(m["id"])}
     notes = store.notes(m["id"], asker=None)
     return {"items": [_turn_view(q, by_id, store=store, docs=docs, notes=notes) for q in store.chat_turns(m["id"])],
-            "model": _chat_model(rt, m)}
+            "model": _chat_model(rt)}
 
 
-def _chat_model(rt: Any, m: dict[str, Any]) -> str:
-    """Shu yozuvga javob beradigan zanjirdagi birinchi SOZLANGAN modelning nomi (ilovadagi yorliq) - `chat_send`
-    dagi AYNAN o'sha zanjir: agent bo'g'ini yoqiq bo'lsa (`brain.meeting_ask_providers`, telefon qo'ng'irog'idan
-    boshqasida) - `agent`. Tokensiz va tarmoqsiz: tarix so'rovi CRM sessiyasini yangilamaydi, agent holati
-    keshdan o'qiladi."""
-    from .. import brain as _brain
-
+def _chat_model(rt: Any) -> str:
+    """Yozuv chatiga javob beradigan zanjirdagi birinchi SOZLANGAN modelning nomi (ilovadagi yorliq) - `chat_send`
+    dagi AYNAN o'sha zanjir (`MEETINGS_ASK_CHAIN`): chatda agent bo'g'ini yo'q (`_model_answer`). Tokensiz va
+    tarmoqsiz: tarix so'rovi CRM sessiyasini yangilamaydi."""
     live = live_assistant(rt) if "v3" in llm_mod.ask_chain_names() else None
     providers = llm_mod.ask_providers(rt, user_id="", tokens={}, live_assistant=live)
-    if _brain.meeting_agent_ok(m):
-        providers = _brain.meeting_ask_providers(providers, language=m.get("language") or "uz")
     return next((p.model for p in providers if p.configured), "")
 
 
@@ -1531,8 +1526,15 @@ def _model_answer(rt: Any, user: AuthUser, m: dict[str, Any], message: str, row:
             providers = _ask_providers(rt, user)
             # Umumiy muddat: hamma model birga `MEETINGS_ASK_DEADLINE` ga sig'adi (odam kutib turibdi).
             # Telefon qo'ng'irog'i - yangi agent yo'li (bo'g'in va shadow) yo'q (`brain.meeting_agent_ok`).
+            # Yozuv CHATIDA (`actions`) ham agent bo'g'ini yo'q - `MEETING_ASK_ENGINE=agent` bo'lsa ham javobni bugungi
+            # zanjir (`MEETINGS_ASK_CHAIN`, Claude) beradi. NEGA (2026-11-13, jonli topilma): agent eski savol-javob
+            # promptini oladi (`ask.answer`) - unda bayonnoma hujjati ham, `minutes` amali ham yo'q, shuning uchun
+            # "sanani 11-noyabr qiling", "2-bandga muddat qo'shing" oddiy savol bo'lib qolardi va hujjat
+            # tahrirlanmasdi; ega esa chat uchun Claude'ni tanlagan (2026-11-11). Eski `/ask` (`actions=False`) -
+            # avvalgidek agentda (ega qarori 2026-10-12, "A varianti").
             result, used = ask_mod.answer_chain(
-                providers, deadline=settings.meetings_ask_deadline, agent_ok=_brain.meeting_agent_ok(m),
+                providers, deadline=settings.meetings_ask_deadline,
+                agent_ok=_brain.meeting_agent_ok(m) and not actions,
                 minutes=blocks, question=message, language=row["language"], meta=meta, segments=segments,
                 speakers=[{"id": sp["id"], "name": sp.get("name")} for sp in speakers], summary=summary,
                 history=history)

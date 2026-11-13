@@ -243,7 +243,7 @@ def test_post_kutilayotgan_korsatma_202_revise(client, auth, ready):
     done = _detail(client, auth, mid, body["id"])
     assert done["status"] == "ready" and (done["notesApplied"], done["pendingNotes"]) == (1, 0)
     assert done["header"] == {"organization": None, "chairedBy": None, "city": None, "chair": "Alisher Karimov",
-                              "attendees": []}
+                              "attendees": [], "date": None}
     assert done["changes"] == {"items": {"changed": [], "added": [], "removed": []},
                                "agenda": {"changed": [], "added": [], "removed": []}, "header": ["chair"], "other": []}
     assert [c["op"] for c in rt.llm.calls if c["op"].startswith("meeting_minutes")] == \

@@ -281,6 +281,52 @@ def _explicit(text: str, base: date, *, past_ok: bool) -> date | None:
     return None
 
 
+#: `mentioned`: oy nomli sana yonidagi yil - "2026 yil 11 noyabr" (oldin) yoki "11 ноября 2026 г." (keyin).
+_YEAR_BEFORE = re.compile(r"(?<!\d)((?:19|20)\d{2})\s*[-]?\s*(?:yil\w*|йил\w*|г\.?|года?)?\s*[,.]?\s*$")
+_YEAR_AFTER = re.compile(r"^\s*[,.]?\s*((?:19|20)\d{2})(?!\d)")
+
+
+def mentioned(raw: str | None, base: date) -> list[date]:
+    """Matnda ANIQ aytilgan HAMMA sanalar (`_explicit` naqshlari): ISO ("2026-11-11"), "11.11.2026", "11-noyabr",
+    "11 ноября 2026 г.", "2026 yil 11 noyabr", "November 11", "11.11". Yil aytilmagan sana - `base` ga eng yaqin kun
+    (~6 oy o'tmish yoki kelajak, `_nearest`). Nisbiy so'zlar ("kecha", "bugun") - yo'q: ular qaysi kunga nisbatan
+    ekani noma'lum. Bayonnoma sarlavhasidagi sanani EGA aytganmi - shu bilan tekshiriladi (`minutes.validate`)."""
+    text = " ".join(str(raw or "").lower().translate(_APOS_FOLD).split())
+    found: list[date] = []
+
+    def add(year: int, month: int, day: int) -> None:
+        try:
+            value = date(year, month, day)
+        except ValueError:
+            return
+        if value not in found:
+            found.append(value)
+
+    for hit in re.finditer(r"(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)", text):
+        add(int(hit.group(1)), int(hit.group(2)), int(hit.group(3)))
+    for hit in re.finditer(r"(?<![\d.])(\d{1,2})[./](\d{1,2})[./](\d{2}|\d{4})(?![\d.])", text):
+        year = int(hit.group(3))
+        add(year + 2000 if year < 100 else year, int(hit.group(2)), int(hit.group(1)))
+    for pattern in (_DAY_MONTH, _MONTH_DAY):
+        for hit in pattern.finditer(text):
+            day = int(hit.group("day"))
+            month = next(int(k[1:]) for k, v in hit.groupdict().items() if k.startswith("m") and v)
+            stated = _YEAR_BEFORE.search(text[:hit.start()][-16:]) or _YEAR_AFTER.search(text[hit.end():])
+            if stated:
+                add(int(stated.group(1)), month, day)
+            elif 1 <= day <= 31:
+                near = _nearest(base, month, day, past_ok=True)
+                if near is not None:
+                    add(near.year, near.month, near.day)
+    if not _TIME_CONTEXT.search(text):
+        for hit in re.finditer(r"(?<![\d.:])(\d{1,2})[./](\d{1,2})(?![\d.:])", text):
+            near = _nearest(base, int(hit.group(2)), int(hit.group(1)), past_ok=True) \
+                if 1 <= int(hit.group(2)) <= 12 else None
+            if near is not None:
+                add(near.year, near.month, near.day)
+    return found
+
+
 def _offset(text: str, base: date) -> date | None:
     for pattern in (_UZ_OFFSET, _RU_OFFSET, _EN_OFFSET):
         hit = pattern.search(text)
