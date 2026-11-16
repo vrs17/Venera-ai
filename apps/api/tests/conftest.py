@@ -149,7 +149,7 @@ def _isolated_identities(tmp_path, monkeypatch):
 _CODE_DEFAULTS = ("hold_enabled", "wake_log_enabled", "local_login_enabled",
                   "admin_logins", "hrm_assistant_engine",
                   "hrm_assistant_engine_by_channel", "hrm_assistant_max_stream_seconds",
-                  "meetings_enabled", "meetings_logins", "meetings_llm_chain", "meetings_ask_chain",
+                  "meetings_enabled", "meetings_llm_chain", "meetings_ask_chain",
                   # Saqlash muddatlari: jonli `.env` da hammasi 0 (o'chirilmaydi, 2026-11-05 ega qarori) -
                   # tozalash testlari esa koddagi 30/180/90 kunlik xulqni sinaydi; arxiv chegarasi ham.
                   "meetings_audio_days", "meetings_retention_days", "telegram_group_days",
@@ -399,8 +399,6 @@ def _isolated_meetings(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "devices_db", tmp_path / "devices.db", raising=False)
     monkeypatch.setattr(settings, "meetings_worker", False, raising=False)
     monkeypatch.setattr(config_module, "meetings_enabled_now", lambda: bool(settings.meetings_enabled))
-    monkeypatch.setattr(config_module, "meetings_logins_now", lambda: frozenset(
-        p.strip().lower() for p in (settings.meetings_logins or "").replace(";", ",").split(",") if p.strip()))
     rt = meetings.reset_for_tests(tmp_path / "meetings", gapi=FakeGapiMeeting(), router=FakeRouter(),
                                   llm=FakeLLM(), devices=DeviceStore(tmp_path / "devices.db", days=30))
     meetings_service.reset_limits()

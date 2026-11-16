@@ -6,7 +6,9 @@ Router'da MANTIQ YO'Q: har endpoint `services/meetings/service.py` ga (bayonnoma
 KIRISH ESHIGI (`meetings_access`):
   * `MEETINGS_ENABLED` o'chiq - 404 (bo'lim umuman ko'rinmaydi). `.env` dan
     JONLI o'qiladi - yoqish/o'chirish restartsiz;
-  * odam ADMIN ham, `MEETINGS_LOGINS` da ham bo'lmasa - 403.
+  * bayroq yoqiq bo'lsa - kirgan HAR BIR xodimga ochiq (ega qarori 2026-11-16, Slack va
+    Telegram'dagi kabi). Avvalgi sinov ro'yxati (ADMIN + `MEETINGS_LOGINS`) olib tashlandi;
+    bloklangan hisobni `current_user` o'zi 401 bilan qaytaradi.
 
 STATIK YO'LLAR (`/config`, `/action-items`) `/{id}` DAN OLDIN e'lon qilinadi -
 aks holda FastAPI "config" ni yig'ilish id si deb oladi.
@@ -31,34 +33,16 @@ from ...schemas.auth import AuthUser
 from ...schemas import meetings as schemas
 from ...services.meetings import minutes, service
 from ...services.meetings.errors import MeetingProblem
-from ..deps import current_user, get_identity_store
+from ..deps import current_user
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
 
-def _login_of(user: AuthUser) -> str:
-    """SSO hisobi - logini, `users.yaml` hisobi - emaili (`admin_logins` qoidasi)."""
-    identity = get_identity_store().by_actor_id(user.actorId)
-    return (identity.username if identity is not None else user.email or "").strip().lower()
-
-
-def meetings_allowed(user: AuthUser, login: str | None = None) -> bool:
-    """Sinov guruhidami: ADMIN yoki `MEETINGS_LOGINS` da. Qurilma sessiyasi ham
-    shu qoidadan o'tadi (`devices.py`) - ro'yxatdan chiqarilgan odamning telefoni
-    30 kun to'liq Venera sessiyasini yangilab yurmasin."""
-    if "ADMIN" in (user.roles or []):
-        return True
-    who = (login if login is not None else _login_of(user)).strip().lower()
-    return who in _config.meetings_logins_now()
-
-
 def meetings_access(user: AuthUser = Depends(current_user)) -> AuthUser:
-    """Bo'lim eshigi. Bayroq o'chiq - 404 (yo'q bo'lim bilan bir xil), ruxsat yo'q - 403."""
+    """Bo'lim eshigi. Bayroq o'chiq - 404 (yo'q bo'lim bilan bir xil); yoqiq - kirgan har kim."""
     if not _config.meetings_enabled_now():
         raise MeetingProblem(404, "not_found", "Not Found")
-    if meetings_allowed(user):
-        return user
-    raise MeetingProblem(403, "forbidden", "Bu bo'lim uchun ruxsat yo'q")
+    return user
 
 
 # --- statik yo'llar ------------------------------------------------------------------

@@ -332,11 +332,11 @@ def test_adts_resync_va_mp4_haqiqiy_davomiylik(tmp_path):
     assert abs(audio.mp4_duration(m4a) - info.durationSec) < 0.1                # trek - haqiqiy 60 s
 
 
-# --- qurilma sessiyasi: bayroq va ruxsat ro'yxati ------------------------------------------
+# --- qurilma sessiyasi: bayroq -----------------------------------------------------------
 
 
-def test_qurilma_sessiyasi_bayroq_va_royxat_bilan(client, auth, users_file, monkeypatch, _isolated_meetings):
-    enable(monkeypatch, logins="demo@venera.uz")
+def test_qurilma_sessiyasi_bayroq_bilan(client, auth, users_file, monkeypatch, _isolated_meetings):
+    enable(monkeypatch)
     login = client.post("/api/v1/auth/login", json={"username": "demo@venera.uz", "password": "demo2026"})
     headers = {"Authorization": f"Bearer {login.json()['token']}"}
     device = client.post("/api/v1/auth/devices", headers=headers,
@@ -348,10 +348,6 @@ def test_qurilma_sessiyasi_bayroq_va_royxat_bilan(client, auth, users_file, monk
     assert off.status_code == 401 and off.json()["code"] == "invalid_device_token"
     monkeypatch.setattr(settings, "meetings_enabled", True)
     assert client.post("/api/v1/auth/devices/session", json={"deviceToken": token}).status_code == 200  # tirik
-    monkeypatch.setattr(settings, "meetings_logins", "")
-    assert client.post("/api/v1/auth/devices/session", json={"deviceToken": token}).status_code == 401
-    monkeypatch.setattr(settings, "meetings_logins", "demo@venera.uz")
-    assert client.post("/api/v1/auth/devices/session", json={"deviceToken": token}).status_code == 401  # o'ldi
 
 
 def test_qurilma_ombori_yoq_bolsa_sessiya_fayl_yaratmaydi(client, monkeypatch, _isolated_meetings):

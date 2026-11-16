@@ -382,15 +382,13 @@ def test_eksport_chizilmasa_503(client, auth, ready, monkeypatch):
     assert busy.status_code == 503 and busy.json()["code"] == "export_busy" and busy.headers["retry-after"] == "10"
 
 
-def test_begona_yigilish_404_va_ruxsat(client, auth, user_auth, ready, monkeypatch):
+def test_begona_yigilish_404(client, auth, user_auth, ready):
     mid, rt = ready
     own = _post(client, auth, mid, language="ru").json()
     paths = (("post", f"{BASE}/{mid}/minutes", {"json": {"language": "ru"}}), ("get", f"{BASE}/{mid}/minutes", {}),
              ("get", f"{BASE}/{mid}/minutes/{own['id']}", {}),
              ("get", f"{BASE}/{mid}/minutes/{own['id']}/export", {}))
-    # Sinov guruhida emas - 403 (bo'lim eshigi), guruhda - begona yig'ilish "yo'q" (404).
-    assert client.get(f"{BASE}/{mid}/minutes", headers=user_auth).json()["code"] == "forbidden"
-    enable(monkeypatch, logins="demo@venera.uz")
+    # Bo'lim har xodimga ochiq (2026-11-16), lekin begona yig'ilish "yo'q" (404).
     for method, path, kwargs in paths:
         response = getattr(client, method)(path, headers=user_auth, **kwargs)
         assert response.status_code == 404 and response.json()["code"] == "not_found", path

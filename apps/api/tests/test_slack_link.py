@@ -257,10 +257,7 @@ def test_ulangan_odamning_yozuvi_va_savoli_ozida_ilova_bilan_bitta(linking, _iso
     assert rt.store.chat_turns(mid, asker="slack:U2") == []
     assert [m["role"] for m in claude.chats()[-1]["messages"]] == ["user", "assistant", "user"]
 
-    # Ilovadagi Plaud bo'limi hali faqat sinov ro'yxatiga ochiq (`MEETINGS_LOGINS`): ro'yxatdan tashqaridagi
-    # odam Slack yozuvini faqat Slack'da ko'radi; ro'yxatdagisi - ilovada ham, o'sha suhbat bilan.
-    assert client.get(f"/api/v1/meetings/{mid}/chat", headers=user_auth).status_code == 403
-    monkeypatch.setattr(settings, "meetings_logins", "demo@venera.uz", raising=False)
+    # Ilovadagi Plaud bo'limi ham har xodimga ochiq (2026-11-16): Slack yozuvi ilovada o'sha suhbat bilan.
     items = client.get(f"/api/v1/meetings/{mid}/chat", headers=user_auth)
     assert items.status_code == 200, items.text
     assert [t["question"] for t in items.json()["items"]] == ["Kim hisobot yuboradi?", "Batafsilroq"]

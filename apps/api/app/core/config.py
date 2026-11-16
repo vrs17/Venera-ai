@@ -585,7 +585,7 @@ class Settings(BaseSettings):
     #: Slack'dan kelgan audio QAYSI Venera hisobining yig'ilishi bo'lib saqlanadi
     #: (`actorId`). Hozircha Slack odami o'z hisobiga bog'lanmaydi: hammasi shu
     #: hisobda - uning ro'yxatida ko'rinadi, kunlik limit va soatlik chegara umumiy.
-    #: Hisob ADMIN yoki `MEETINGS_LOGINS` da bo'lishi kerak. Bo'sh - sozlanmagan.
+    #: Hisob bloklanmagan bo'lishi kerak. Bo'sh - sozlanmagan.
     #:
     #: NEGA `str`, `int` EMAS. `SLACK_ACTOR_ID=` bo'sh yoki xato yozilsa `int` maydon
     #: butun `Settings` ni yiqitardi va API restartda umuman ko'tarilmasdi (jonli
@@ -601,7 +601,7 @@ class Settings(BaseSettings):
     #: kirish sahifasini ochadi (BRB-Tech ID yoki login + parol), kirgach odam ulanishni
     #: tasdiqlaydi. Havola uchun `SSO_APP_URL` kerak: u bo'sh bo'lsa bu sozlamaning ta'siri
     #: yo'q va Slack eskicha umumiy hisobda (`slack_actor_id`) ishlaydi. Ulangan har bir
-    #: xodimga Plaud ochiq (ega qarori) - `MEETINGS_LOGINS` ro'yxati Slack'ga qo'llanmaydi.
+    #: xodimga Plaud ochiq (ega qarori).
     slack_link_required: bool = True
     #: Slack ulanishi OXIRGI FAOLLIKDAN shuncha kun yashaydi (Telegram ulanishidagi kabi).
     slack_link_days: int = 30
@@ -668,10 +668,9 @@ class Settings(BaseSettings):
     #: qo'ng'irog'i), va foydalanuvchi buni alohida tasdiqlamaguncha bo'lim
     #: ko'rinmaydi (404). `.env` dan JONLI o'qiladi (`meetings_enabled_now`):
     #: yoqish/o'chirish uchun restart kerak emas.
+    #: Yoqiq bo'lsa kirgan HAR BIR xodimga ochiq (ega qarori 2026-11-16). Avvalgi sinov
+    #: ro'yxati `MEETINGS_LOGINS` olib tashlandi: `.env` da qolsa ham e'tiborsiz (`extra="ignore"`).
     meetings_enabled: bool = False
-    #: Sinov guruhi: ADMIN rolidagilar VA shu loginlar (vergul/bo'shliq bilan,
-    #: registrga qaramaydi; SSO - logini, `users.yaml` - emaili). JONLI.
-    meetings_logins: str = ""
     #: Ombor, audio va yuklanayotgan bo'laklar shu papkada. SHAXSIY
     #: MA'LUMOT: papka 700, fayllar 600, `data/` gitignore'da.
     meetings_dir: Path = BASE_DIR / "data" / "meetings"
@@ -1181,12 +1180,6 @@ def brain_engine_now(feature: str) -> str:
     key = f"{feature}_engine"
     raw = (_env_token(key, "") or "").strip().lower()
     return raw or str(getattr(settings, key, "") or "").strip().lower()
-
-
-def meetings_logins_now() -> frozenset[str]:
-    """Yig'ilishlar bo'limi ochiq loginlar - `.env` dan JONLI, kichik harfda."""
-    raw = _env_token("meetings_logins", "") or settings.meetings_logins
-    return frozenset(part.strip().lower() for part in re.split(r"[,\s;]+", raw or "") if part.strip())
 
 
 def telegram_groups_now() -> frozenset[int]:

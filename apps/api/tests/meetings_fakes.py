@@ -435,11 +435,10 @@ def client_uuid() -> str:
 # --- API yordamchilari ------------------------------------------------------------------
 
 
-def enable(monkeypatch, *, logins: str = "") -> None:
+def enable(monkeypatch) -> None:
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "meetings_enabled", True, raising=False)
-    monkeypatch.setattr(settings, "meetings_logins", logins, raising=False)
 
 
 def create_meeting(client, auth, **body) -> dict:

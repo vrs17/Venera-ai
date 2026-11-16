@@ -11,7 +11,6 @@ from meetings_fakes import create_meeting, enable, put_chunk, recorded, run_all
 
 #: Asl funksiyalar - conftest ularni test davomida sozlama o'quvchisiga almashtiradi.
 _REAL_ENABLED = config_module.meetings_enabled_now
-_REAL_LOGINS = config_module.meetings_logins_now
 
 MEETING_FIELDS = {"id", "clientId", "title", "titleSource", "status", "progress", "pollAfterSec", "language",
                   "detectedLanguage", "languageWarning", "template", "expectedSpeakers", "source", "recordedAt",
@@ -57,14 +56,16 @@ def test_bayroq_ochiq_404(client, auth):
     assert client.get("/api/v1/meetings/config").status_code == 401        # tokensiz - avval kim?
 
 
-def test_ruxsat_royxati_va_admin(client, auth, user_auth, monkeypatch):
+def test_bayroq_yoqiq_har_xodimga_ochiq(client, auth, user_auth, monkeypatch):
+    """2026-11-16 (ega qarori): sinov ro'yxati yo'q - oddiy xodim ham ADMIN kabi kiradi,
+    bloklangan hisob esa `current_user` da to'xtaydi."""
     enable(monkeypatch)
-    denied = client.get("/api/v1/meetings/config", headers=user_auth)
-    assert denied.status_code == 403 and denied.json()["code"] == "forbidden"
-    assert denied.json()["message"] == "Bu bo'lim uchun ruxsat yo'q"
-    assert client.get("/api/v1/meetings/config", headers=auth).status_code == 200      # ADMIN
-    enable(monkeypatch, logins="demo@venera.uz")
-    assert client.get("/api/v1/meetings/config", headers=user_auth).status_code == 200
+    assert client.get("/api/v1/meetings/config", headers=user_auth).status_code == 200    # oddiy xodim
+    assert client.get("/api/v1/meetings", headers=user_auth).status_code == 200
+    assert client.get("/api/v1/meetings/config", headers=auth).status_code == 200         # ADMIN
+    assert client.get("/api/v1/meetings/config").status_code == 401
+    assert client.patch("/api/v1/admin/users/2", headers=auth, json={"disabled": True}).status_code == 200
+    assert client.get("/api/v1/meetings/config", headers=user_auth).status_code == 401
 
 
 def test_bayroq_env_dan_jonli(tmp_path, monkeypatch):
@@ -72,18 +73,15 @@ def test_bayroq_env_dan_jonli(tmp_path, monkeypatch):
     restartsiz ko'rinadi; kalit yo'q bo'lsa sozlama obyekti (default `false`)."""
     env = tmp_path / ".env"
     monkeypatch.setattr(config_module, "_ENV_FILE", env)
-    for key in ("meetings_enabled", "meetings_logins"):
-        monkeypatch.delitem(config_module._token_cache, key, raising=False)
+    monkeypatch.delitem(config_module._token_cache, "meetings_enabled", raising=False)
     monkeypatch.setattr(settings, "meetings_enabled", False)
     env.write_text("OTHER=1\n")
     assert _REAL_ENABLED() is False
-    env.write_text("MEETINGS_ENABLED=true\nMEETINGS_LOGINS=a.b, C.d\n")
+    env.write_text("MEETINGS_ENABLED=true\nMEETINGS_LOGINS=a.b, C.d\n")       # eski kalit - e'tiborsiz
     assert _REAL_ENABLED() is True
-    assert _REAL_LOGINS() == frozenset({"a.b", "c.d"})
     env.write_text("MEETINGS_ENABLED=false\n")
     assert _REAL_ENABLED() is False
-    for key in ("meetings_enabled", "meetings_logins"):
-        config_module._token_cache.pop(key, None)
+    config_module._token_cache.pop("meetings_enabled", None)
 
 
 def test_config(client, auth, monkeypatch):
@@ -105,7 +103,7 @@ def test_config(client, auth, monkeypatch):
 
 
 def test_boshqa_odam_404(client, auth, user_auth, monkeypatch, ready):
-    enable(monkeypatch, logins="demo@venera.uz")
+    enable(monkeypatch)
     mid = ready["id"]
     for method, path in (("get", f"/api/v1/meetings/{mid}"), ("get", f"/api/v1/meetings/{mid}/transcript"),
                          ("get", f"/api/v1/meetings/{mid}/summaries"), ("get", f"/api/v1/meetings/{mid}/audio"),

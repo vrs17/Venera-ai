@@ -595,7 +595,7 @@ def test_crm_ulanmagan_va_xatolar(client, auth, monkeypatch, crm_ready):
 def test_crm_izolyatsiya_bayroq_va_chegara(client, auth, user_auth, monkeypatch, crm_ready):
     row, item, live = crm_ready
     url = f"/api/v1/meetings/{row['id']}/action-items/{item['id']}/crm"
-    enable(monkeypatch, logins="demo@venera.uz")
+    enable(monkeypatch)
     other = client.post(url, headers=user_auth)
     assert other.status_code == 404 and other.json()["code"] == "not_found"
     missing = client.post(f"/api/v1/meetings/{row['id']}/action-items/{'0' * 32}/crm", headers=auth)

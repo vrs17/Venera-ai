@@ -56,8 +56,8 @@ Slack'dagi Barno AI (`app/slack/meeting.py`) bilan AYNI imkoniyatlar, Telegram k
 
 KIMNING NOMIDAN. Telegram odami Venera hisobiga ulangan (`LinkStore`), yozuv O'SHA hisobga
 tushadi: uning yig'ilishlar ro'yxatida (mobil, veb) ko'rinadi, kunlik daqiqalar va soatlik
-chegaralar o'ziniki. `MEETINGS_LOGINS` sinov ro'yxati botda tekshirilmaydi (ega qarori,
-2026-11-04): botga ulangan har bir xodimga ochiq.
+chegaralar o'ziniki. Botga ulangan har bir xodimga ochiq (ega qarori 2026-11-04; ilovada
+ham 2026-11-16 dan).
 
 TELEGRAM CHEGARASI. Bot fayllarni 20 MB gacha yuklab ola oladi (`getFile`): ovozli xabar
 soatiga ~14 MB, ya'ni bir soatlik yozuv sig'adi; kattaroq fayl uchun mobil ilova yoki Slack.

@@ -93,7 +93,7 @@ npm ci
 ## 3. Dev client (dev API bilan, kod o'zgarishi darhol ko'rinadi)
 
 Dev API serverda `:8001` portda ishlaydi. Dev `.env` da `MEETINGS_ENABLED=true`
-bo'lishi va loginingiz `MEETINGS_LOGINS` ro'yxatida bo'lishi kerak (yoki ADMIN).
+bo'lishi kerak (bo'lim kirgan har bir xodimga ochiq).
 
 **Muhim:** `app.config.ts` har Expo buyrug'ida (`prebuild`, `run:android`,
 `start`) qayta o'qiladi va dev client API manzilini Metro bergan manifestdan

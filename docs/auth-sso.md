@@ -310,7 +310,7 @@ BIR MARTA ulaydi (Slack'dagi Claude agentidagi kabi):
    Slack'ini bog'lab olish (havola-hujum) shu bilan yopiladi. Slack'ka "ulandi" xabari keladi.
 4. Shundan keyin audio va savollar odamning O'Z hisobida: yozuv uniki, Slack'dagi savollari
    ilovadagi suhbati bilan bitta (so'rovchi yo'q), chegaralar shaxsiy. Plaud ulangan har bir
-   xodimga ochiq (ega qarori) - `MEETINGS_LOGINS` Slack'da tekshirilmaydi.
+   xodimga ochiq (ega qarori).
 
 ESKI yozuvlar (ulashdan oldin kelganlari) umumiy hisobda qoladi: kartalari, thread savollari va
 chatdagi savol ishlayveradi (avval odamning o'z hisobidan, topilmasa umumiy hisobdan qidiriladi;
@@ -325,8 +325,8 @@ Majburiylik: `SLACK_LINK_REQUIRED=true` (default) VA `SSO_APP_URL` to'ldirilgan 
 Slack eskicha umumiy hisobda ishlaydi (dev'da `SSO_APP_URL` http bo'lsa ham ishlaydi, lekin dev'da
 Slack o'chiq - sinov faqat jonli serverda).
 
-MA'LUM: ilovadagi (veb, mobil) Plaud bo'limi hali faqat ADMIN va `MEETINGS_LOGINS` ga ochiq.
-Ro'yxatda yo'q odam Slack'dagi yozuvlarini faqat Slack'da ko'radi (ilovada 403).
+Ilovadagi (mobil, Mini App) Plaud bo'limi ham 2026-11-16 dan kirgan har bir xodimga ochiq
+(`MEETINGS_LOGINS` sinov ro'yxati olib tashlandi): Slack'dagi yozuvlar ilovada ham ko'rinadi.
 
 ## Mobil ilova: BRB-Tech ID bilan kirish (2026-11-12, ilova 1.3.12)
 

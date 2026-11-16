@@ -506,7 +506,7 @@ def test_follow_up_xulosa_vazifalari_xulosadan(client, auth, ready, _isolated_me
 
 
 def test_izolyatsiya_404(client, auth, user_auth, monkeypatch, ready):
-    enable(monkeypatch, logins="demo@venera.uz")
+    enable(monkeypatch)
     mid = ready["id"]
     for fmt in ("md", "pdf"):
         other = get_export(client, user_auth, mid, fmt)
@@ -518,10 +518,8 @@ def test_izolyatsiya_404(client, auth, user_auth, monkeypatch, ready):
     assert get_export(client, auth, mid, "md").status_code == 200
 
 
-def test_bayroq_ochiq_va_ruxsat(client, auth, user_auth, monkeypatch, ready):
+def test_bayroq_ochiq(client, auth, monkeypatch, ready):
     mid = ready["id"]
-    denied = get_export(client, user_auth, mid, "md")
-    assert denied.status_code == 403 and denied.json()["code"] == "forbidden"
     monkeypatch.setattr(settings, "meetings_enabled", False)
     off = get_export(client, auth, mid, "pdf")
     assert off.status_code == 404 and off.json()["code"] == "not_found"

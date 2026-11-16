@@ -11,11 +11,10 @@ Zahira hisoblarda (`users.yaml`) `/auth/login` ning ikki qoidasi ham
 (`local_login_enabled`, `password_change_required`) - aks holda qurilma tokeni
 ularni aylanib o'tish yo'li bo'lardi.
 
-Ro'yxatga olish sinov davrida bo'lim eshigi (`meetings_access`) ortida:
-bayroq o'chiq bo'lsa yangi token chiqmaydi. ALMASHTIRISH ham: qurilma tokeni
-TO'LIQ Venera JWT beradi, shuning uchun bayroq o'chirilsa yoki odam
-`MEETINGS_LOGINS` dan chiqarilsa telefon sessiyani yangilay olmaydi (401;
-ro'yxatdan chiqarilganning tokeni bekor qilinadi).
+Ro'yxatga olish bo'lim eshigi (`meetings_access`) ortida: bayroq o'chiq bo'lsa
+yangi token chiqmaydi. ALMASHTIRISH ham: qurilma tokeni TO'LIQ Venera JWT beradi,
+shuning uchun bayroq o'chirilsa telefon sessiyani yangilay olmaydi (401). Bo'lim
+kirgan har bir xodimga ochiq (2026-11-16) - alohida ro'yxat tekshirilmaydi.
 """
 
 from __future__ import annotations
@@ -43,7 +42,7 @@ from ...services.reports import RateLimiter
 from ...services.users import UserStore
 from ..deps import get_identity_store, get_user_store
 from .auth import _admit
-from .meetings import meetings_access, meetings_allowed
+from .meetings import meetings_access
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth/devices", tags=["auth"])
@@ -131,10 +130,6 @@ def session(body: DeviceTokenRequest, request: Request,
         # "Hamma joydan chiqarish" - qurilma tokeni ham o'ladi.
         devices.revoke(body.deviceToken)
         raise _refuse("device_signed_out", channel, actor_id=actor_id, login=login)
-    if not meetings_allowed(verdict.user, login):
-        # Sinov guruhidan chiqarilgan - token o'ladi.
-        devices.revoke(body.deviceToken)
-        raise _refuse("meetings_not_allowed", channel, actor_id=actor_id, login=login)
     devices.touch(row["id"])
     token, expires = create_token(subject, version=verdict.token_version)
     record_auth_event(login, True, method="device", channel=channel, actor_id=actor_id)

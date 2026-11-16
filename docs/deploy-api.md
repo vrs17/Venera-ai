@@ -1349,16 +1349,18 @@ transkript Ollama Cloud ga) tasdiqlagandan KEYIN, jonli `.env` da (restart kerak
 
 ```bash
 MEETINGS_ENABLED=true
-MEETINGS_LOGINS=y.mamajonov,a.aliyev     # sinov guruhi (ADMIN lar har doim ochiq)
 ```
+
+Yoqilgach bo'lim kirgan HAR BIR xodimga ochiq (2026-11-16, ega qarori; Slack va Telegram'dagi
+kabi). Avvalgi sinov ro'yxati `MEETINGS_LOGINS` olib tashlandi - `.env` da qolsa ham e'tiborsiz.
 
 Ma'lumot: `apps/api/data/meetings/` (SQLite `meetings.db`, `uploads/`, `audio/<actorId>/`) va
 `apps/api/data/devices.db` - papkalar 700, fayllar 600, `data/` gitignore'da. Tozalash har soatda:
 audio 30 kun (`MEETINGS_AUDIO_DAYS`), butun yig'ilish 180 kun, tugallanmagan yuklash 72 soat,
 `too_long` audio 24 soat, qurilma tokenlari 30 kun ishlatilmasa. Muddat yozilgan vaqtdan, lekin
 serverga kelgandan ko'pi bilan 7 (audio) / 30 (yig'ilish) kun oldindan hisoblanadi; ishlanayotgan
-yozuvga tegilmaydi. Bayroq o'chirilsa yoki odam `MEETINGS_LOGINS` dan chiqarilsa, telefonning
-qurilma tokeni ham sessiya bermaydi (401).
+yozuvga tegilmaydi. Bayroq o'chirilsa yoki hisob bloklansa, telefonning qurilma tokeni ham
+sessiya bermaydi (401/403).
 
 **Model byudjeti** (jonli `ollama` o'lchovidan keyin aniqlanadi; defaultlar ehtiyotkor):
 `MEETINGS_LLM_TIMEOUT=300`, `MEETINGS_SINGLE_PASS_CHARS=30000`, `MEETINGS_MAP_CHARS=20000`,

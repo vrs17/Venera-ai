@@ -930,7 +930,7 @@ def test_uzun_xabar_chegarada_qabul(client, auth, ready, claude):
 
 
 def test_boshqa_odam_404_va_transkriptsiz_409(client, auth, user_auth, monkeypatch, ready, claude):
-    enable(monkeypatch, logins="demo@venera.uz")
+    enable(monkeypatch)
     for method, kwargs in (("get", {}), ("post", {"json": {"message": "salom"}}), ("delete", {})):
         response = getattr(client, method)(_url(ready), headers=user_auth, **kwargs)
         assert response.status_code == 404 and response.json()["code"] == "not_found", method

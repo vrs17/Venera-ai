@@ -77,17 +77,17 @@ def test_sirpanuvchi_muddat(client, auth, monkeypatch, _isolated_meetings):
     assert row["expires_at"] >= int(time.time()) + 30 * 86400 - 5
 
 
-def test_royxat_bayroq_va_ruxsat_ortida(client, auth, user_auth, monkeypatch):
+def test_royxat_bayroq_ortida_har_xodimga_ochiq(client, auth, user_auth, monkeypatch):
     assert client.post("/api/v1/auth/devices", headers=auth,
                        json={"deviceName": "x", "platform": "android"}).status_code == 404
     enable(monkeypatch)
     assert client.post("/api/v1/auth/devices", headers=user_auth,
-                       json={"deviceName": "x", "platform": "android"}).status_code == 403
+                       json={"deviceName": "x", "platform": "android"}).status_code == 201
     assert client.post("/api/v1/auth/devices", json={"deviceName": "x", "platform": "android"}).status_code == 401
 
 
 def test_bloklangan_403_va_hamma_joydan_chiqarish_401(client, auth, users_file, monkeypatch):
-    enable(monkeypatch, logins="demo@venera.uz")
+    enable(monkeypatch)
     user_login = client.post("/api/v1/auth/login", json={"username": "demo@venera.uz", "password": "demo2026"})
     user_headers = {"Authorization": f"Bearer {user_login.json()['token']}"}
     device = _register(client, user_headers)

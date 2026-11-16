@@ -73,7 +73,7 @@ def account(team: str | None = None, slack_user: str | None = None) -> AuthUser:
 
     Shaxsiy hisob majburiy bo'lsa (`link.required()`): Slack odamining O'Z hisobi; ulanmagan -
     `link.NotLinked` (chaqiruvchi ulash xabarini yuboradi), bloklangan - `Problem`. Ulangan har bir
-    xodimga ochiq (ega qarori 2026-11-12) - `MEETINGS_LOGINS` tekshirilmaydi. Aks holda - umumiy
+    xodimga ochiq (ega qarori 2026-11-12). Aks holda - umumiy
     `SLACK_ACTOR_ID` hisobi (`shared_account`)."""
     from . import link
 
@@ -113,9 +113,8 @@ def legacy_account() -> AuthUser | None:
 
 def shared_account() -> AuthUser:
     """`SLACK_ACTOR_ID` hisobi - HAR so'rovda qayta tekshiriladi (bot kabi): hisob
-    o'chirilsa, bloklansa yoki bo'limga ruxsati olinsa, darhol to'xtaydi."""
+    o'chirilsa yoki bloklansa, darhol to'xtaydi."""
     from ..api.deps import get_directory
-    from ..api.v1.meetings import meetings_allowed
 
     if not _config.meetings_enabled_now():
         raise Problem("Yig'ilishlar bo'limi o'chiq.")
@@ -129,8 +128,8 @@ def shared_account() -> AuthUser:
         raise Problem("Slack uchun belgilangan Venera hisobi topilmadi.")
     login = getattr(stored, "username", None)
     verdict = admin_users.access(stored.to_public(), login=login)
-    if verdict.blocked or not meetings_allowed(verdict.user, login):
-        raise Problem("Slack uchun belgilangan hisobga yig'ilishlar bo'limi ochiq emas.")
+    if verdict.blocked:
+        raise Problem("Slack uchun belgilangan Venera hisobi bloklangan.")
     return verdict.user
 
 
