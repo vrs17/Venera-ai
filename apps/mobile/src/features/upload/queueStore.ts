@@ -283,18 +283,27 @@ function fromDb(r: DbRow): QueueRow {
   };
 }
 
-export async function createSqliteQueueStore(db: SqlDb): Promise<QueueStore> {
+/**
+ * `upgradedToOwners` - shu ochilishda jadvalga ega ustunlari QO'SHILDI: telefonda 1.3.14 dan oldingi versiya
+ * ishlagan (yangi o'rnatishda jadval ular bilan yaratiladi). `services.tsx` shunda oxirgi hisob noma'lum
+ * bo'lsa uni `UNKNOWN_OWNER` qiladi - kirmasdan yozilgan yozuv keyingi kirgan odamga avtomatik o'tmasin.
+ */
+export async function createSqliteQueueStore(db: SqlDb): Promise<QueueStore & { upgradedToOwners: boolean }> {
+  const existed = (await db.getAllAsync<{ name: string }>('PRAGMA table_info(recordings)')).length > 0;
   await db.execAsync(CREATE_SQL);
   const have = new Set((await db.getAllAsync<{ name: string }>('PRAGMA table_info(recordings)')).map((c) => c.name));
+  let upgradedToOwners = false;
   for (const col of ADDED_COLUMNS) {
     if (have.has(col.name)) continue;
     await db.execAsync(col.sql);
     if (col.after) await db.execAsync(col.after);
+    if (col.name === 'owner' && existed) upgradedToOwners = true;
   }
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((l) => l());
 
-  const store: QueueStore = {
+  const store: QueueStore & { upgradedToOwners: boolean } = {
+    upgradedToOwners,
     async insert(row) {
       await db.runAsync(
         `INSERT OR REPLACE INTO recordings (${COLUMNS.join(',')}) VALUES (${COLUMNS.map(() => '?').join(',')})`,

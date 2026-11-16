@@ -117,10 +117,18 @@ export interface Session extends TokenProvider {
    * bilmaydi - shu oraliqda yozilgan yozuv eski hisobga qat'iy yozilsa, uni yozgan odam ololmasdi.
    */
   stamp(): Promise<OwnerStamp>;
-  /** Server shu tokenni qabul qildi (`TokenProvider.confirm`). */
-  confirm(token: string): void;
-  /** Ilova orqa fonga o'tdi - qaytganda server qayta tasdiqlaguncha yangi yozuvlar faqat taxmin bilan. */
-  unconfirm(): void;
+  /**
+   * Server shu tokenni qabul qildi (`TokenProvider.confirm`). Faqat ilova OLDINDA bo'lganda va so'rov shu
+   * oldinga chiqishda boshlangan bo'lsa (`epoch`) hisobga olinadi - orqa fondagi yuklash tasdiqlamaydi.
+   */
+  confirm(token: string, epoch?: number): void;
+  /** Hozirgi oldinga/orqaga son (`ApiClient` so'rov boshida oladi). */
+  epoch(): number;
+  /**
+   * Ilova oldinga (true) yoki orqa fonga (false) o'tdi. Har o'tishda tasdiq bekor: qaytganda server qayta
+   * qabul qilguncha yangi yozuvlar faqat taxmin bilan (shu orada telefon boshqa xodimga o'tgan bo'lishi mumkin).
+   */
+  setForeground(active: boolean): void;
 }
 
 export function createSession(deps: SessionDeps): Session {
@@ -171,6 +179,12 @@ export function createSession(deps: SessionDeps): Session {
   let inflight: Promise<string> | null = null;
   /** Server qabul qilgan token (shu jarayonda, ilova oxirgi marta oldinga chiqqandan beri). */
   let confirmed: string | null = null;
+  let active = true;
+  let fgEpoch = 0;
+  /** `at` - jarayon boshlangandagi `fgEpoch`: o'shandan beri ilova orqaga/oldinga o'tmagan va hozir oldinda bo'lsa. */
+  const markConfirmed = (token: string, at: number) => {
+    if (active && at === fgEpoch) confirmed = token;
+  };
 
   let registering: Promise<boolean> | null = null;
   /** Bo'lim yoqilmagan (403/404) tokenlar - shu jarayonda qayta urinilmaydi. */
@@ -191,11 +205,12 @@ export function createSession(deps: SessionDeps): Session {
       throw new AuthRequiredError();
     }
     try {
+      const at = fgEpoch;
       const prev = memo ?? (await store.getToken());
       const res = await deps.authApi.deviceSession(deviceToken);
       const owner = actorKey(res.user);
       await store.setToken(res.token, res.expiresAt, owner);
-      confirmed = res.token;
+      markConfirmed(res.token, at);
       if (owner) {
         await store.setOwner(owner);
         // O'sha qurilma tokeni - o'sha sessiya: noma'lum bo'lgan hisob endi aniq.
@@ -252,6 +267,7 @@ export function createSession(deps: SessionDeps): Session {
     },
 
     async loginWith(res, device) {
+      const at = fgEpoch;
       const owner = actorKey(res.user);
       await store.setToken(res.token, res.expiresAt, owner);
       try {
@@ -269,7 +285,7 @@ export function createSession(deps: SessionDeps): Session {
       }
       // Oxirgi hisob FAQAT kirish muvaffaqiyatli bo'lganda (ro'yxatdan o'tish yiqilsa - oldingisi qoladi).
       if (owner) await store.setOwner(owner);
-      confirmed = res.token;
+      markConfirmed(res.token, at);
       emit('signedIn');
       return res;
     },
@@ -382,6 +398,7 @@ export function createSession(deps: SessionDeps): Session {
     },
 
     async identify(fetchMe) {
+      const at = fgEpoch;
       const before = memo ?? (await store.getToken());
       if (!before || before.owner) return;
       const owner = actorKey(await fetchMe());
@@ -389,7 +406,7 @@ export function createSession(deps: SessionDeps): Session {
       if (!owner || !current || current.token !== before.token) return;
       await store.setToken(current.token, new Date(current.expiresAt).toISOString(), owner);
       await store.setOwner(owner);
-      confirmed = current.token;
+      markConfirmed(current.token, at);
       await deps.onOwnerLearned?.(owner);
     },
 
@@ -402,11 +419,18 @@ export function createSession(deps: SessionDeps): Session {
       return { owner: null, ownerHint: (await store.getOwner()) || null };
     },
 
-    confirm(token) {
-      confirmed = token;
+    confirm(token, at = fgEpoch) {
+      markConfirmed(token, at);
     },
 
-    unconfirm() {
+    epoch() {
+      return fgEpoch;
+    },
+
+    setForeground(next) {
+      if (next === active) return;
+      active = next;
+      fgEpoch++;
       confirmed = null;
     },
   };

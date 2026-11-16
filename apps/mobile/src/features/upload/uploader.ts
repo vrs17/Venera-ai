@@ -199,12 +199,13 @@ export function createUploader(deps: UploaderDeps): Uploader {
         if (isPending(r)) await update(r, { state: 'failed', lastError: OWNER_UNKNOWN, nextAttemptAt: null });
         continue;
       }
-      const revive = r.state === 'failed' && r.lastError === OWNER_UNKNOWN && !r.serverId;
+      // Server id li qator faqat taxmini aynan shu hisob bo'lsa qaytadi (aks holda 404 - yana `owner_unknown`).
+      const revive = r.state === 'failed' && r.lastError === OWNER_UNKNOWN && (!r.serverId || r.ownerHint === me);
       const claim = confirmed === me && !r.serverId;
       if (!revive && !claim) continue;
       await update(r, {
         ...(claim ? { owner: me, ownerHint: null } : {}),
-        ...(revive ? { state: 'stopped', lastError: null, attempts: 0, nextAttemptAt: null } : {}),
+        ...(revive ? { state: r.serverId ? 'uploading' : 'stopped', lastError: null, attempts: 0, nextAttemptAt: null } : {}),
       });
     }
   }
@@ -294,8 +295,15 @@ export function createUploader(deps: UploaderDeps): Uploader {
           // 404 "boshqa hisobniki" ham bo'lishi mumkin: faqat egasi aniq va hozir AYNAN u kirgan bo'lsa
           // qayta yaratamiz. Egasiz eski qator - to'xtaydi; ega boshqa (ish o'rtasida hisob almashgan) -
           // qatorga tegmaymiz, egasi qaytganda davom etadi.
-          if (row.owner == null) return fail(row, OWNER_UNKNOWN);
-          if (row.owner !== (await currentOwner())) return 'skipped';
+          const now = await currentOwner();
+          if (row.owner == null) {
+            // Taxmin aynan shu hisob (u yozuv shu hisob tokeni ostida yozilgan va yaratilgan) - 404 = server
+            // tozalagan: uniki qilib qayta yaratamiz. Taxminsiz yoki boshqaniki - kimniki noma'lum, to'xtaydi.
+            if (now == null || row.ownerHint !== now) return fail(row, OWNER_UNKNOWN);
+            row = await update(row, { owner: now, ownerHint: null });
+          } else if (row.owner !== now) {
+            return 'skipped';
+          }
         }
         // Server qatorni unutgan - eski id bilan har urinish yana 404 bo'lardi. Qaytadan yaratamiz.
         hashers.delete(row.clientId);
@@ -442,8 +450,8 @@ export function createUploader(deps: UploaderDeps): Uploader {
 
   /** true - sessiya yo'q (auth), qolgan qatorlar o'tkazib yuborildi. */
   async function runAll(): Promise<boolean> {
-    let rows = await deps.store.list();
-    await cleanup(rows);
+    // Avval `prepare` (egasi noma'lum sessiyani aniqlash): u '?' taxminli qatorlarni shu hisobga o'tkazadi -
+    // navbat SHUNDAN KEYIN o'qiladi, aks holda `adopt` eski nusxadagi '?' ni "boshqa hisob" deb to'xtatardi.
     if (deps.prepare) {
       try {
         await deps.prepare();
@@ -451,6 +459,8 @@ export function createUploader(deps: UploaderDeps): Uploader {
         /* masalan, tarmoq yo'q - keyingi ishlashda yana */
       }
     }
+    let rows = await deps.store.list();
+    await cleanup(rows);
     const me = deps.owner ? await currentOwner() : undefined;
     if (me) {
       let confirmed: string | null = null;

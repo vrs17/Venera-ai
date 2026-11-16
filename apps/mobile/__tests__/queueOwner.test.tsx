@@ -349,6 +349,35 @@ describe('uploader: recordings stay with their owner', () => {
     expect((await s.store.get('p1'))?.state).toBe('done');
   });
 
+  it("first run after the 1.3.13 upgrade: '?' rows resolved by prepare are NOT marked owner_unknown; a half-uploaded one resumes", async () => {
+    let s: ReturnType<typeof setup>;
+    s = setup([], undefined, { prepare: async () => resolveUnknownOwner(s.store, 'A') });
+    const mine = s.server.seed('A', 'g1', 1000);
+    await s.store.insert(rec('g1', { ownerHint: UNKNOWN_OWNER, state: 'uploading', serverId: mine, receivedBytes: 1000 }));
+    await s.store.insert(rec('g2', { ownerHint: UNKNOWN_OWNER }));
+    s.server.current = 'A';
+    await s.uploader.runOnce();
+    expect(await s.store.get('g1')).toMatchObject({ owner: 'A', state: 'done', serverId: mine });
+    expect(await s.store.get('g2')).toMatchObject({ owner: 'A', state: 'done' });
+  });
+
+  it("a row stuck as owner_unknown by 1.3.14 (hint = this account, has a server id) comes back by itself", async () => {
+    const s = setup([]);
+    const mine = s.server.seed('A', 'f1', 1000);
+    await s.store.insert(rec('f1', { ownerHint: 'A', state: 'failed', lastError: OWNER_UNKNOWN, serverId: mine, receivedBytes: 1000 }));
+    s.server.current = 'A';
+    await s.uploader.runOnce();
+    expect(await s.store.get('f1')).toMatchObject({ owner: 'A', state: 'done', serverId: mine });
+  });
+
+  it('a 404 for a row hinted to this account (server cleaned it up) re-creates it for this account', async () => {
+    const s = setup([]);
+    await s.store.insert(rec('z1', { ownerHint: 'A', state: 'uploading', serverId: 'gone', receivedBytes: 1000 }));
+    s.server.current = 'A';
+    await s.uploader.runOnce(); // 404 -> uniki, qayta yaratish navbatda (backoff)
+    expect(await s.store.get('z1')).toMatchObject({ owner: 'A', serverId: null, lastError: 'server_reset' });
+  });
+
   it('the same person signing back in uploads their own recording', async () => {
     const s = setup([rec('c9', { owner: 'A' })]);
     s.server.current = null; // sessiya tugagan: kutadi
@@ -524,7 +553,11 @@ describe('session.owner / lastOwner / identify', () => {
     expect(await s.session.stamp()).toEqual({ owner: null, ownerHint: null }); // hech kim kirmagan
     await s.session.loginWith(as(7, 'jwt-7'), device);
     expect(await s.session.stamp()).toEqual({ owner: '7', ownerHint: null });
-    s.session.unconfirm(); // orqa fonga o'tdi
+    s.session.setForeground(false); // orqa fonga o'tdi
+    expect(await s.session.stamp()).toEqual({ owner: null, ownerHint: '7' });
+    s.session.confirm('jwt-7'); // orqa fondagi yuklash javobi - tasdiqlamaydi
+    expect(await s.session.stamp()).toEqual({ owner: null, ownerHint: '7' });
+    s.session.setForeground(true); // qaytdi - hali server javobi yo'q
     expect(await s.session.stamp()).toEqual({ owner: null, ownerHint: '7' });
     s.session.confirm('jwt-7'); // server javob berdi
     expect(await s.session.stamp()).toEqual({ owner: '7', ownerHint: null });
@@ -560,6 +593,18 @@ describe('session.owner / lastOwner / identify', () => {
     expect(learned).toEqual(['11', '12']);
   });
 
+  it('a request started before the app went to the background does not confirm after it comes back', async () => {
+    const s = make();
+    await s.session.loginWith(as(7, 'jwt-7'), device);
+    const started = s.session.epoch();
+    s.session.setForeground(false);
+    s.session.setForeground(true);
+    s.session.confirm('jwt-7', started);
+    expect(await s.session.stamp()).toEqual({ owner: null, ownerHint: '7' });
+    s.session.confirm('jwt-7', s.session.epoch());
+    expect(await s.session.stamp()).toEqual({ owner: '7', ownerHint: null });
+  });
+
   it('ApiClient tells the session when the server accepted a token (2xx), not on errors', async () => {
     let status = 200;
     const ff = fakeFetch(() => (status === 200 ? { status: 200, json: { ok: true } } : { status, json: { status, message: 'x' } }));
@@ -567,10 +612,10 @@ describe('session.owner / lastOwner / identify', () => {
     const client = new ApiClient({
       baseUrl: 'https://x.uz',
       fetch: ff.fetch,
-      tokens: { getToken: async () => 'tok-1', refreshToken: async () => 'tok-2', confirm },
+      tokens: { getToken: async () => 'tok-1', refreshToken: async () => 'tok-2', confirm, epoch: () => 3 },
     });
     await client.request('/api/v1/x');
-    expect(confirm).toHaveBeenCalledWith('tok-1');
+    expect(confirm).toHaveBeenCalledWith('tok-1', 3);
     status = 500;
     await expect(client.request('/api/v1/x')).rejects.toBeInstanceOf(ApiError);
     expect(confirm).toHaveBeenCalledTimes(1);

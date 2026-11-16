@@ -76,7 +76,7 @@ async function createAppServices(): Promise<Services> {
   const Device = require('expo-device') as typeof import('expo-device');
   const Application = require('expo-application') as typeof import('expo-application');
   const FS = require('expo-file-system') as typeof import('expo-file-system');
-  const { createSqliteQueueStore, resolveUnknownOwner, withOwner } = require('@/features/upload/queueStore') as typeof import('@/features/upload/queueStore');
+  const { createSqliteQueueStore, resolveUnknownOwner, UNKNOWN_OWNER, withOwner } = require('@/features/upload/queueStore') as typeof import('@/features/upload/queueStore');
   const { createMemoryQueueStore } = require('@/features/upload/queueStore.memory') as typeof import('@/features/upload/queueStore.memory');
   const { recordingFile } = require('@/lib/paths') as typeof import('@/lib/paths');
   const { yieldToUi } = require('@/lib/appState') as typeof import('@/lib/appState');
@@ -98,10 +98,9 @@ async function createAppServices(): Promise<Services> {
   const session = createSession({ store: tokens, authApi: auth, onOwnerLearned: (owner) => onOwnerLearned(owner) });
   client.setTokenProvider(session);
   // Orqa fondan qaytgach server sessiyani qayta tasdiqlaguncha yangi yozuv faqat taxmin bilan (`session.stamp`):
-  // shu orada telefon boshqa xodimga o'tgan bo'lishi mumkin.
-  AppState.addEventListener('change', (s) => {
-    if (s !== 'active') session.unconfirm();
-  });
+  // shu orada telefon boshqa xodimga o'tgan bo'lishi mumkin. Fon vazifasi (ilova ochilmagan) - orqa fon.
+  session.setForeground(AppState.currentState !== 'background');
+  AppState.addEventListener('change', (s) => session.setForeground(s === 'active'));
   session.subscribe((e) => {
     if (e === 'expired') useAuth.getState().setSignedOut(true);
     if (e === 'signedOut') useAuth.getState().setSignedOut(false);
@@ -110,7 +109,11 @@ async function createAppServices(): Promise<Services> {
   let rawQueue: QueueStore;
   try {
     const db = await SQLite.openDatabaseAsync('venera-queue.db');
-    rawQueue = await createSqliteQueueStore(db);
+    const sqlite = await createSqliteQueueStore(db);
+    rawQueue = sqlite;
+    // 1.3.13 dan yangilangan telefon, oxirgi hisob hali yozilmagan: u noma'lum ('?') - kirmasdan yozilgan
+    // yozuv keyingi kirgan odamga avtomatik o'tmaydi (qo'lda «Qayta urinish»). Kirish/identify uni almashtiradi.
+    if (sqlite.upgradedToOwners && !(await tokens.getOwner())) await tokens.setOwner(UNKNOWN_OWNER);
   } catch {
     // SQLite ochilmasa ham yozish ishlasin (navbat faqat xotirada qoladi).
     rawQueue = createMemoryQueueStore();

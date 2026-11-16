@@ -74,9 +74,12 @@ export interface TokenProvider {
   refreshToken(): Promise<string>;
   /**
    * Server shu token bilan kelgan so'rovni QABUL QILDI (2xx). Ixtiyoriy: sessiya "server tasdiqlagan"
-   * belgisini qo'yadi - yangi yozuvning qat'iy egasi faqat shunda yoziladi (`session.stamp`).
+   * belgisini qo'yadi - yangi yozuvning qat'iy egasi faqat shunda yoziladi (`session.stamp`). `epoch` -
+   * so'rov BOSHLANGANDAGI `epoch()`: orqa fonda yoki oldingi oldinga chiqishda boshlangan so'rov tasdiqlamaydi.
    */
-  confirm?(token: string): void;
+  confirm?(token: string, epoch?: number): void;
+  /** Ilova oldinga/orqaga o'tganda o'zgaradigan son (`confirm` uchun). */
+  epoch?(): number;
 }
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -243,16 +246,17 @@ export class ApiClient {
       if (!this.tokens) throw new AuthRequiredError();
       token = await this.tokens.getToken();
     }
+    const epoch = this.tokens?.epoch?.();
     try {
       const res = await this.once<T>(path, options, token);
-      if (token) this.tokens?.confirm?.(token);
+      if (token) this.tokens?.confirm?.(token, epoch);
       return res;
     } catch (e) {
       if (auth && e instanceof ApiError && e.status === 401 && this.tokens && !(e instanceof AuthRequiredError)) {
         // Spec 7.5/7.6: device session orqali yangilab, BIR MARTA qaytaramiz.
         const fresh = await this.tokens.refreshToken();
         const res = await this.once<T>(path, options, fresh);
-        this.tokens.confirm?.(fresh);
+        this.tokens.confirm?.(fresh, epoch);
         return res;
       }
       throw e;

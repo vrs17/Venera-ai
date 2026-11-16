@@ -176,6 +176,7 @@ describe('QueueStore (sqlite) upgrade from an older app', () => {
       "INSERT INTO recordings (clientId, fileUri, contentType, language, template, source, state, serverId, receivedBytes, startedAt) VALUES ('sent', 'file:///s.aac', 'audio/aac', 'uz', 'auto', 'tile', 'done', 'm-0', 9000, '2026-11-14T08:00:00Z')",
     );
     const store = await createSqliteQueueStore(db);
+    expect(store.upgradedToOwners).toBe(true);
     // Yuklanmagan eski qator kimniki - noma'lum ('?'): avtomatik hech kimga berilmaydi; yuklangani tegilmaydi.
     expect(await store.get('old')).toMatchObject({ clientId: 'old', state: 'uploading', serverId: 'm-1', receivedBytes: 4000, owner: null, ownerHint: '?' });
     expect(await store.get('sent')).toMatchObject({ state: 'done', owner: null, ownerHint: null });
@@ -189,6 +190,10 @@ describe('QueueStore (sqlite) upgrade from an older app', () => {
       ['hint', null, '7'],
     ]);
     const again = await createSqliteQueueStore(db);
+    expect(again.upgradedToOwners).toBe(false);
     expect(await again.get('new')).toMatchObject({ owner: '7', ownerHint: null });
+    // Yangi o'rnatish (jadval yo'q edi) - "yangilangan" emas.
+    const fresh = nodeSqliteDb();
+    if (fresh) expect((await createSqliteQueueStore(fresh)).upgradedToOwners).toBe(false);
   });
 });
