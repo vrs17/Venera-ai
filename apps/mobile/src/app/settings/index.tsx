@@ -65,6 +65,8 @@ export default function SettingsScreen() {
   const voice = useVoiceSettings((s) => s.voice);
   const voiceSpeed = useVoiceSettings((s) => s.speed);
   const rows = useQueueRows();
+  // Chiqish telefondagi HAMMA yozuvni o'chiradi (boshqa hisobnikini ham) - ogohlantirish ham hammasini sanaydi.
+  const allRows = useQueueRows({ all: true });
   const meetingsVisible = useMeetingsVisible();
   const callsRow = useCallsHubRow(t);
   // Yozuv ketayotganda chiqish yozilayotgan faylni o'chirib yuborardi (yozuv jim yo'qoladi).
@@ -82,7 +84,7 @@ export default function SettingsScreen() {
   // Navbat qiymati: yuklanishi kerak bo'lgan (kutayotgan yoki xato bilan to'xtagan) yozuvlar.
   const queued = rows.filter((r) => isPending(r) || r.state === 'failed').length;
   // Chiqish ogohlantirishi eski hisobda qoladi: ketayotgan yozuv ham yo'qoladi.
-  const pending = rows.filter((r) => isPending(r) || r.state === 'recording' || r.state === 'failed');
+  const pending = allRows.filter((r) => isPending(r) || r.state === 'recording' || r.state === 'failed');
 
   const doLogout = async () => {
     if (isActive(useRecorderStore.getState().machine)) return;

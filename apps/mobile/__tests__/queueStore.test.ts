@@ -146,8 +146,9 @@ describe('QueueStore (sqlite) upgrade from an older app', () => {
   it("1.3.7 dagi jadvalga queuedAt ustuni qo'shiladi: eski qatorlar joyida (queuedAt null), yangisi yoziladi", async () => {
     const db = nodeSqliteDb();
     if (!db) return;
-    const oldSql = CREATE_SQL.replace(',\n  queuedAt TEXT', '');
+    const oldSql = CREATE_SQL.replace(',\n  queuedAt TEXT,\n  owner TEXT,\n  ownerHint TEXT', '');
     expect(oldSql).not.toContain('queuedAt');
+    expect(oldSql).not.toContain('owner');
     await db.execAsync(oldSql);
     await db.runAsync(
       "INSERT INTO recordings (clientId, fileUri, contentType, language, template, source, state, startedAt) VALUES ('old', 'file:///o.aac', 'audio/aac', 'uz', 'auto', 'call', 'stopped', '2026-11-01T08:00:00Z')",
@@ -159,5 +160,35 @@ describe('QueueStore (sqlite) upgrade from an older app', () => {
     // Ikkinchi ochilish: ustun bor - qayta qo'shilmaydi (xato bermaydi).
     const again = await createSqliteQueueStore(db);
     expect((await again.list()).map((r) => r.clientId)).toEqual(['old', 'new']);
+  });
+
+  it("1.3.13 dagi jadvalga owner ustuni qo'shiladi: kutayotgan eski yozuv joyida (owner null - keyingi kirgan oladi)", async () => {
+    const db = nodeSqliteDb();
+    if (!db) return;
+    const oldSql = CREATE_SQL.replace(',\n  owner TEXT,\n  ownerHint TEXT', '');
+    expect(oldSql).toContain('queuedAt');
+    expect(oldSql).not.toContain('owner');
+    await db.execAsync(oldSql);
+    await db.runAsync(
+      "INSERT INTO recordings (clientId, fileUri, contentType, language, template, source, state, serverId, receivedBytes, startedAt) VALUES ('old', 'file:///o.aac', 'audio/aac', 'uz', 'auto', 'tile', 'uploading', 'm-1', 4000, '2026-11-15T08:00:00Z')",
+    );
+    await db.runAsync(
+      "INSERT INTO recordings (clientId, fileUri, contentType, language, template, source, state, serverId, receivedBytes, startedAt) VALUES ('sent', 'file:///s.aac', 'audio/aac', 'uz', 'auto', 'tile', 'done', 'm-0', 9000, '2026-11-14T08:00:00Z')",
+    );
+    const store = await createSqliteQueueStore(db);
+    // Yuklanmagan eski qator kimniki - noma'lum ('?'): avtomatik hech kimga berilmaydi; yuklangani tegilmaydi.
+    expect(await store.get('old')).toMatchObject({ clientId: 'old', state: 'uploading', serverId: 'm-1', receivedBytes: 4000, owner: null, ownerHint: '?' });
+    expect(await store.get('sent')).toMatchObject({ state: 'done', owner: null, ownerHint: null });
+    await store.remove('sent');
+    await store.insert({ ...base('new', '2026-11-16T08:00:00Z'), owner: '7' });
+    await store.insert({ ...base('hint', '2026-11-16T09:00:00Z'), ownerHint: '7' });
+    await store.update('old', { owner: '9' });
+    expect((await store.list()).map((r) => [r.clientId, r.owner, r.ownerHint])).toEqual([
+      ['old', '9', '?'],
+      ['new', '7', null],
+      ['hint', null, '7'],
+    ]);
+    const again = await createSqliteQueueStore(db);
+    expect(await again.get('new')).toMatchObject({ owner: '7', ownerHint: null });
   });
 });

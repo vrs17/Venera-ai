@@ -45,6 +45,19 @@ export interface QueueRow {
    * 1.3.8 dan oldingi qatorlarda `null` - unda `startedAt`.
    */
   queuedAt: string | null;
+  /**
+   * Yozuv KIMNIKI - yozilgan paytda kirgan Barno hisobining `actorId` si (`session.owner()`). Yuklovchi
+   * faqat shu hisob kirganda yuklaydi, ro'yxat ham faqat unga ko'rsatadi (2026-11-16: telefon boshqa
+   * xodimga o'tsa, oldingi odamning yuklanmagan yozuvi yangi odamning hisobiga tushmasin).
+   * `null` - kirmasdan yozilgan (unda `ownerHint`) yoki 1.3.14 dan oldingi qator.
+   */
+  owner: string | null;
+  /**
+   * Kirmasdan yozilgan yozuvning TAXMINIY egasi - telefondagi oxirgi hisob (`session.lastOwner()`).
+   * O'sha hisob kirsa yozuv avtomatik uniki bo'ladi; boshqa odam kirsa yuklanmaydi, lekin unga
+   * ko'rinadi va «Qayta urinish» bilan o'ziga oladi (yozuvni u yozgan bo'lishi mumkin). `null` - taxmin yo'q.
+   */
+  ownerHint: string | null;
 }
 
 export type QueuePatch = Partial<Omit<QueueRow, 'clientId'>>;
@@ -76,8 +89,71 @@ export function newQueueRow(p: Pick<QueueRow, 'clientId' | 'fileUri' | 'language
     lastError: null,
     keepUntil: null,
     queuedAt: null,
+    owner: null,
+    ownerHint: null,
     ...p,
   };
+}
+
+/**
+ * `ownerHint` qiymati: yozilgan paytda token bor edi, lekin uning hisobi noma'lum (1.3.13 dan qolgan token)
+ * yoki qator 1.3.13 navbatidan qolgan. Hech bir `actorId` ga teng emas - avtomatik yuklanmaydi; o'sha
+ * sessiyaning hisobi aniqlansa (`resolveUnknownOwner`) unga o'tadi, aks holda kirgan odam qo'lda oladi.
+ */
+export const UNKNOWN_OWNER = '?';
+
+/** Yangi navbat qatori kimniki: qat'iy ega yoki faqat taxmin (`session.stamp`). */
+export interface OwnerStamp {
+  owner: string | null;
+  ownerHint: string | null;
+}
+
+/**
+ * Navbat qatoriga EGA qo'yadigan o'ram: `insert` da (qatorda ega ham taxmin ham bo'lmasa) `session.stamp()`
+ * yoziladi - server tasdiqlagan sessiyada qat'iy ega, aks holda taxmin. Hamma qo'shish joylari (yozuvchi,
+ * qo'ng'iroq importi, "Audio yuklash") shu orqali o'tadi - har birida alohida eslash shart emas.
+ */
+export function withOwner<S extends QueueStore>(store: S, who: { stamp(): Promise<OwnerStamp> }): S {
+  return {
+    ...store,
+    async insert(row: QueueRow) {
+      if (row.owner != null || row.ownerHint != null) return store.insert(row);
+      let stamp: OwnerStamp = { owner: null, ownerHint: null };
+      try {
+        stamp = await who.stamp();
+      } catch {
+        // O'qib bo'lmadi - kimniki noma'lum: hech kimga avtomatik berilmaydi.
+        stamp = { owner: null, ownerHint: UNKNOWN_OWNER };
+      }
+      await store.insert({ ...row, owner: stamp.owner, ownerHint: stamp.ownerHint });
+    },
+  };
+}
+
+/**
+ * Egasi noma'lum sessiyaning hisobi aniqlandi (`session` `onOwnerLearned`): `UNKNOWN_OWNER` taxminli qatorlar
+ * shu hisobga taxmin bo'lib o'tadi (yuklovchi server qabul qilganda qat'iy qiladi); shu sabab to'xtatilgani qaytadi.
+ */
+export async function resolveUnknownOwner(store: QueueStore, owner: string): Promise<void> {
+  for (const r of await store.list()) {
+    if (r.owner != null || r.ownerHint !== UNKNOWN_OWNER) continue;
+    const held = r.state === 'failed' && r.lastError === 'owner_unknown';
+    await store.update(r.clientId, {
+      ownerHint: owner,
+      ...(held ? { state: r.serverId ? 'uploading' : 'stopped', lastError: null, attempts: 0, nextAttemptAt: null } : {}),
+    });
+  }
+}
+
+/** Ro'yxatda `viewer` ga ko'rinadimi: egasiz (kirmasdan yozilgan yoki eski) yoki aynan uniki. */
+export function belongsTo(row: Pick<QueueRow, 'owner'>, viewer: string | null): boolean {
+  return row.owner == null || row.owner === viewer;
+}
+
+/** `me` sessiyasida AVTOMATIK yuklanadimi: uniki yoki egasiz va taxmini yo'q/u. */
+export function uploadableBy(row: Pick<QueueRow, 'owner' | 'ownerHint'>, me: string | null): boolean {
+  if (row.owner != null) return row.owner === me;
+  return row.ownerHint == null || row.ownerHint === me;
 }
 
 // ------------------------------------------------------------------ SQLite
@@ -112,6 +188,8 @@ const COLUMNS = [
   'lastError',
   'keepUntil',
   'queuedAt',
+  'owner',
+  'ownerHint',
 ] as const;
 
 export const CREATE_SQL = `
@@ -136,16 +214,27 @@ CREATE TABLE IF NOT EXISTS recordings (
   nextAttemptAt INTEGER,
   lastError TEXT,
   keepUntil INTEGER,
-  queuedAt TEXT
+  queuedAt TEXT,
+  owner TEXT,
+  ownerHint TEXT
 );`;
 
 /**
  * `CREATE_SQL` dan keyin qo'shilgan ustunlar: eski telefondagi jadvalga (`CREATE TABLE IF NOT EXISTS` uni
  * o'zgartirmaydi) ochilishda qo'shiladi. Faqat bo'sh qoldirsa bo'ladigan ustun (eski qatorda `NULL`).
  */
-export const ADDED_COLUMNS: readonly { name: (typeof COLUMNS)[number]; sql: string }[] = [
+export const ADDED_COLUMNS: readonly { name: (typeof COLUMNS)[number]; sql: string; after?: string }[] = [
   // 1.3.8: tayyor fayl Plaud ro'yxatida navbatga qo'shilgan kuniga tushadi.
   { name: 'queuedAt', sql: 'ALTER TABLE recordings ADD COLUMN queuedAt TEXT' },
+  // 1.3.14: qator egasi (telefon boshqa xodimga o'tsa yozuv oldingi egasida qoladi).
+  { name: 'owner', sql: 'ALTER TABLE recordings ADD COLUMN owner TEXT' },
+  {
+    name: 'ownerHint',
+    sql: 'ALTER TABLE recordings ADD COLUMN ownerHint TEXT',
+    // 1.3.13 dan qolgan yuklanmagan qatorlar kimniki - noma'lum (`UNKNOWN_OWNER`): kirgan sessiya hisobi
+    // aniqlansa unga o'tadi, aks holda keyingi kirgan odam qo'lda oladi (avtomatik emas).
+    after: `UPDATE recordings SET ownerHint = '${UNKNOWN_OWNER}' WHERE owner IS NULL AND state != 'done'`,
+  },
 ];
 
 type DbRow = Record<(typeof COLUMNS)[number], string | number | null>;
@@ -189,13 +278,19 @@ function fromDb(r: DbRow): QueueRow {
     lastError: r.lastError == null ? null : String(r.lastError),
     keepUntil: r.keepUntil == null ? null : Number(r.keepUntil),
     queuedAt: r.queuedAt == null ? null : String(r.queuedAt),
+    owner: r.owner == null || r.owner === '' ? null : String(r.owner),
+    ownerHint: r.ownerHint == null || r.ownerHint === '' ? null : String(r.ownerHint),
   };
 }
 
 export async function createSqliteQueueStore(db: SqlDb): Promise<QueueStore> {
   await db.execAsync(CREATE_SQL);
   const have = new Set((await db.getAllAsync<{ name: string }>('PRAGMA table_info(recordings)')).map((c) => c.name));
-  for (const col of ADDED_COLUMNS) if (!have.has(col.name)) await db.execAsync(col.sql);
+  for (const col of ADDED_COLUMNS) {
+    if (have.has(col.name)) continue;
+    await db.execAsync(col.sql);
+    if (col.after) await db.execAsync(col.after);
+  }
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((l) => l());
 

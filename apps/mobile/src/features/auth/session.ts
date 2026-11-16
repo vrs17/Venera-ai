@@ -15,10 +15,23 @@
  */
 import { ApiError, AuthRequiredError, type TokenProvider } from '@/api/client';
 import type { AuthApi } from '@/api/meetings';
-import type { LoginResponse, RegisterDeviceRequest } from '@/api/types';
+import type { AuthUser, LoginResponse, RegisterDeviceRequest } from '@/api/types';
+
+import { UNKNOWN_OWNER, type OwnerStamp } from '@/features/upload/queueStore';
 
 import { decodeJwtClaims } from './jwt';
 import type { StoredToken, TokenStore } from './tokenStore';
+
+/**
+ * Yozuv egasi kaliti - Barno hisobining `actorId` si (matn). NIMA UCHUN JWT `sub` EMAS: bitta odamning
+ * `sub` i kirish yo'liga qarab har xil (login + parol - email, BRB-Tech ID va qurilma sessiyasi - Keycloak
+ * id), server esa yig'ilishni `actorId` bo'yicha saqlaydi. `sub` bilan odam O'Z yozuvini yo'qotardi.
+ */
+export function actorKey(user: Pick<AuthUser, 'actorId'> | null | undefined): string | null {
+  const id = user?.actorId;
+  return typeof id === 'number' && Number.isFinite(id) ? String(id) : null;
+}
+
 
 /** Token shundan kam qolgan bo'lsa oldindan yangilanadi. */
 export const REFRESH_WINDOW_MS = 10 * 60 * 1000;
@@ -49,6 +62,12 @@ export interface SessionDeps {
   store: TokenStore;
   authApi: Pick<AuthApi, 'login' | 'logout' | 'registerDevice' | 'deviceSession' | 'revokeDevice'>;
   now?: () => number;
+  /**
+   * Egasi noma'lum token (1.3.13 dan qolgan) hisobi aniqlandi - `identify` yoki o'sha qurilma tokeni bilan
+   * yangilash orqali (ya'ni O'SHA sessiya). `UNKNOWN_OWNER` taxminli qatorlar shu hisobga o'tkaziladi.
+   * Yangi kirish (`loginWith`) buni chaqirmaydi: u boshqa odam bo'lishi mumkin.
+   */
+  onOwnerLearned?: (owner: string) => Promise<void> | void;
 }
 
 export interface Session extends TokenProvider {
@@ -72,6 +91,36 @@ export interface Session extends TokenProvider {
   ensureDevice(device: RegisterDeviceRequest): Promise<boolean>;
   /** WebView'ga beriladigan token: kamida `minValidityMs` yashaydigan (kerak bo'lsa yangilab). Yo'q - null, xato tashlamaydi. */
   webToken(minValidityMs?: number): Promise<string | null>;
+  /**
+   * HOZIRGI sessiya kimniki (`actorId`, navbat qatorining `owner` i bilan solishtiriladi): saqlangan token
+   * bilan birga yozilgan ega. Token yo'q yoki egasi noma'lum (1.3.13 dan qolgan token) - null: bunday
+   * holatda hech kimning yozuvi yuklanmaydi. Tarmoqqa chiqmaydi.
+   */
+  owner(): Promise<string | null>;
+  /**
+   * Telefondagi OXIRGI hisob (`actorId`): sessiya tashqaridan tugasa ham ("hamma joydan chiqarish", blok,
+   * "Qayta ulanish") qoladi; faqat tozalovchi chiqishda (`logout(wipe)`) o'chadi. Kirmasdan yozilgan
+   * yozuvning taxminiy egasi (`ownerHint`) va kirmagan holatda ro'yxatda ko'rinadigan yozuvlar shundan.
+   */
+  lastOwner(): Promise<string | null>;
+  /**
+   * Token bor, lekin egasi noma'lum (1.3.13 dan yangilangan telefon) bo'lsa - `fetchMe` (`GET /auth/me`)
+   * bilan aniqlaydi va token yoniga yozadi. Ega ma'lum yoki token yo'q - tarmoqqa chiqmaydi. So'rov
+   * paytida token almashgan bo'lsa natija tashlanadi (yangi tokenga eski odam yozilmasin).
+   */
+  identify(fetchMe: () => Promise<AuthUser>): Promise<void>;
+  /**
+   * Hozir yozilayotgan yozuv kimniki. Qat'iy ega - faqat server shu tokenni ilova oldinga chiqqandan beri
+   * qabul qilgan bo'lsa (kirish, yangilash, yoki 2xx javob - `confirm`). Aks holda faqat taxmin: tokenning
+   * hisobi (noma'lum bo'lsa `UNKNOWN_OWNER`), token yo'q bo'lsa oxirgi hisob. NIMA UCHUN: admin
+   * "hamma joydan chiqarish" qilgandan keyin telefon boshqa odamga o'tsa, ilova buni birinchi 401 gacha
+   * bilmaydi - shu oraliqda yozilgan yozuv eski hisobga qat'iy yozilsa, uni yozgan odam ololmasdi.
+   */
+  stamp(): Promise<OwnerStamp>;
+  /** Server shu tokenni qabul qildi (`TokenProvider.confirm`). */
+  confirm(token: string): void;
+  /** Ilova orqa fonga o'tdi - qaytganda server qayta tasdiqlaguncha yangi yozuvlar faqat taxmin bilan. */
+  unconfirm(): void;
 }
 
 export function createSession(deps: SessionDeps): Session {
@@ -97,13 +146,13 @@ export function createSession(deps: SessionDeps): Session {
       if (v === version) memo = stored;
       return stored;
     },
-    async setToken(token, expiresAtIso) {
+    async setToken(token, expiresAtIso, owner = null) {
       version++;
       memo = null;
-      await deps.store.setToken(token, expiresAtIso);
+      await deps.store.setToken(token, expiresAtIso, owner);
       version++;
       const expiresAt = Date.parse(expiresAtIso);
-      memo = { token, expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0 };
+      memo = { token, expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0, owner: owner ?? null };
     },
     async clearAuth() {
       version++;
@@ -116,8 +165,12 @@ export function createSession(deps: SessionDeps): Session {
     setDeviceToken: (deviceToken) => deps.store.setDeviceToken(deviceToken),
     getInstallKey: () => deps.store.getInstallKey(),
     setInstallKey: (key) => deps.store.setInstallKey(key),
+    getOwner: () => deps.store.getOwner(),
+    setOwner: (sub) => deps.store.setOwner(sub),
   };
   let inflight: Promise<string> | null = null;
+  /** Server qabul qilgan token (shu jarayonda, ilova oxirgi marta oldinga chiqqandan beri). */
+  let confirmed: string | null = null;
 
   let registering: Promise<boolean> | null = null;
   /** Bo'lim yoqilmagan (403/404) tokenlar - shu jarayonda qayta urinilmaydi. */
@@ -138,8 +191,16 @@ export function createSession(deps: SessionDeps): Session {
       throw new AuthRequiredError();
     }
     try {
+      const prev = memo ?? (await store.getToken());
       const res = await deps.authApi.deviceSession(deviceToken);
-      await store.setToken(res.token, res.expiresAt);
+      const owner = actorKey(res.user);
+      await store.setToken(res.token, res.expiresAt, owner);
+      confirmed = res.token;
+      if (owner) {
+        await store.setOwner(owner);
+        // O'sha qurilma tokeni - o'sha sessiya: noma'lum bo'lgan hisob endi aniq.
+        if (prev && !prev.owner) await deps.onOwnerLearned?.(owner);
+      }
       return res.token;
     } catch (e) {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
@@ -191,7 +252,8 @@ export function createSession(deps: SessionDeps): Session {
     },
 
     async loginWith(res, device) {
-      await store.setToken(res.token, res.expiresAt);
+      const owner = actorKey(res.user);
+      await store.setToken(res.token, res.expiresAt, owner);
       try {
         const reg = await deps.authApi.registerDevice(device, res.token);
         await store.setDeviceToken(reg.deviceToken);
@@ -205,6 +267,9 @@ export function createSession(deps: SessionDeps): Session {
           throw e;
         }
       }
+      // Oxirgi hisob FAQAT kirish muvaffaqiyatli bo'lganda (ro'yxatdan o'tish yiqilsa - oldingisi qoladi).
+      if (owner) await store.setOwner(owner);
+      confirmed = res.token;
       emit('signedIn');
       return res;
     },
@@ -233,6 +298,9 @@ export function createSession(deps: SessionDeps): Session {
       }
       if (wipe) await wipe();
       await store.clearAuth();
+      // Tozalovchi chiqish - telefon endi hech kimniki emas (navbat ham `wipe` da o'chdi). "Qayta ulanish"
+      // (wipe'siz) navbatni saqlaydi - oxirgi hisob ham qoladi, aks holda keyingi yozuvlar egasiz qolardi.
+      if (wipe) await store.setOwner(null);
       emit('signedOut');
     },
 
@@ -262,7 +330,8 @@ export function createSession(deps: SessionDeps): Session {
           /* best effort: token telefondan allaqachon o'chdi */
         });
       }
-      await store.setToken(token, new Date(expiresAt).toISOString());
+      // Ega faqat o'sha odamning tokeni bo'lsa saqlanadi; boshqa odam - noma'lum (`identify` aniqlaydi).
+      await store.setToken(token, new Date(expiresAt).toISOString(), sameUser ? (stored?.owner ?? null) : null);
       emit('signedIn');
       return stored && !sameUser ? 'switched' : 'adopted';
     },
@@ -300,6 +369,45 @@ export function createSession(deps: SessionDeps): Session {
       } catch {
         return null;
       }
+    },
+
+    async owner() {
+      // Xotiradagi nusxa (`memo`) - kirgan holatda SecureStore'ga bormaymiz (navbat har o'zgarishda so'raydi).
+      const stored = memo ?? (await store.getToken());
+      return stored?.owner ?? null;
+    },
+
+    async lastOwner() {
+      return (await store.getOwner()) || null;
+    },
+
+    async identify(fetchMe) {
+      const before = memo ?? (await store.getToken());
+      if (!before || before.owner) return;
+      const owner = actorKey(await fetchMe());
+      const current = await store.getToken();
+      if (!owner || !current || current.token !== before.token) return;
+      await store.setToken(current.token, new Date(current.expiresAt).toISOString(), owner);
+      await store.setOwner(owner);
+      confirmed = current.token;
+      await deps.onOwnerLearned?.(owner);
+    },
+
+    async stamp() {
+      const stored = memo ?? (await store.getToken());
+      if (stored) {
+        if (stored.owner && confirmed === stored.token) return { owner: stored.owner, ownerHint: null };
+        return { owner: null, ownerHint: stored.owner ?? UNKNOWN_OWNER };
+      }
+      return { owner: null, ownerHint: (await store.getOwner()) || null };
+    },
+
+    confirm(token) {
+      confirmed = token;
+    },
+
+    unconfirm() {
+      confirmed = null;
     },
   };
   return api;

@@ -402,6 +402,7 @@ export const ru: Record<TKey, string> = {
   'err.chunk_too_large': 'Фрагмент слишком большой',
   'err.unsupported_format': 'Формат аудио не поддерживается',
   'err.sha_mismatch': 'Файл повреждён при загрузке',
+  'err.owner_unknown': 'Неясно, чья это запись - нажмите «Повторить», чтобы загрузить её в свой аккаунт',
   'err.not_found': 'Не найдено на сервере',
   'err.network': 'Нет интернета',
   'err.timeout': 'Сервер не ответил',

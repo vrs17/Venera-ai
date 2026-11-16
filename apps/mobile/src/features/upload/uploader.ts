@@ -26,6 +26,24 @@
  * tozalagan yoki qator o'chirilgan): server id unutiladi va clientId bilan
  * qayta yaratiladi (clientId - idempotentlik kaliti; bayroq vaqtincha o'chiq
  * bo'lsa ham shu: `create` server holatini qaytaradi).
+ *
+ * EGA (2026-11-16, `owner` berilganda - ilovada doim; kalit - Barno `actorId`). Qator faqat EGASI
+ * kirgan holatda yuklanadi: telefon boshqa xodimga o'tsa (admin "hamma joydan chiqarish" yoki blokdan
+ * keyin), oldingi odamning yuklanmagan yozuvi yangi odamning hisobiga tushmaydi - u qatorlarga
+ * tegilmaydi, egasi qaytib kirganda yuklanadi. Server buni bilolmaydi: `create` (aktor, clientId)
+ * bo'yicha, 404 esa "boshqa odamniki" ni "server tozalagan" dan ajratmaydi. Shuning uchun:
+ *  - qat'iy ega (`owner`) faqat server o'sha sessiyani qabul qilganda yoziladi (`session.stamp`, shu yerda
+ *    `create`/`uploadPosition` muvaffaqiyatidan keyin). Undan oldin - taxmin (`ownerHint`);
+ *  - taxmin BOSHQA hisob (kirmasdan yoki tasdiqlanmagan sessiyada yozilgan, `UNKNOWN_OWNER` ham) -
+ *    yuklanmaydi, `owner_unknown` bilan to'xtab unga ko'rinadi: yozuvni u o'zi yozgan bo'lsa «Qayta
+ *    urinish» bilan o'ziga oladi. Taxmin qilingan hisob keyin kirsa - qaytadi;
+ *  - taxminsiz egasiz qator (hech kim kirmagan telefonda yozilgan) kirgan odamga o'tadi; server id bo'lsa -
+ *    faqat server uni SHU hisobniki deb tasdiqlasa (`uploadPosition` 200); 404 bo'lsa qayta yaratilmaydi,
+ *    `owner_unknown` (odam o'zi "Qayta urinish" bossa - o'ziga oladi);
+ *  - ega noma'lum sessiya (1.3.13 dan qolgan token) har ishlashdan oldin `prepare` (`session.identify`)
+ *    bilan aniqlanadi; aniqlanmaguncha egali va taxminli qatorlarga tegilmaydi;
+ *  - 404 dan keyin qayta yaratish va har `create` dan oldin ega YANA tekshiriladi (ish o'rtasida
+ *    boshqa hisob kirgan bo'lsa qator unga o'tmaydi).
  */
 import { ApiError, AuthRequiredError } from '@/api/client';
 import type { MeetingsApi } from '@/api/meetings';
@@ -34,7 +52,7 @@ import { Sha256 } from '@/lib/sha256';
 
 import { backoffMs } from './backoff';
 import { DEFAULT_CHUNK_BYTES, nextChunk } from './chunker';
-import type { QueuePatch, QueueRow, QueueStore } from './queueStore';
+import { uploadableBy, type QueuePatch, type QueueRow, type QueueStore } from './queueStore';
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
 /** Bitta ishga tushishda serverga moslashish (409) chegarasi - cheksiz aylanmaslik uchun. */
@@ -92,10 +110,27 @@ export interface UploaderDeps {
   yieldToUi?: () => Promise<void>;
   /** Taymer (testda soxta). Bekor qilish funksiyasini qaytaradi. */
   schedule?: (fn: () => void, ms: number) => () => void;
+  /**
+   * Hozir kim kirgan (`session.owner()`). Berilsa qator faqat egasiga yuklanadi (yuqoridagi "EGA").
+   * Berilmasa - eski xulq (hamma qator joriy sessiyaga).
+   */
+  owner?: () => Promise<string | null>;
+  /**
+   * Server tasdiqlagan sessiya hisobi (`session.stamp().owner`): egasiz qatorlarni so'rovsiz darhol shu
+   * odamga bog'lash uchun. Berilmasa - qatorlar faqat server javobidan keyin bog'lanadi.
+   */
+  confirmedOwner?: () => Promise<string | null>;
+  /** Har ishlashdan oldin (ilovada: egasi noma'lum sessiyani aniqlash). Xatosi yutiladi. */
+  prepare?: () => Promise<void>;
 }
 
 /** Server tugallanmagan yuklashni unutgan (404 ma'lum id bilan) - qator 0 dan qayta yaratiladi. */
 export const SERVER_RESET = 'server_reset';
+/**
+ * Egasiz eski qatorning server id si bu hisobda yo'q (404): kimniki ekani noma'lum - avtomatik qayta
+ * yaratilmaydi (boshqa odamning yozuvi bo'lishi mumkin). "Qayta urinish" - odam o'zi oladi.
+ */
+export const OWNER_UNKNOWN = 'owner_unknown';
 
 export type RowOutcome = 'done' | 'retry' | 'failed' | 'auth' | 'skipped';
 
@@ -138,6 +173,48 @@ export function createUploader(deps: UploaderDeps): Uploader {
 
   const update = async (row: QueueRow, patch: QueuePatch): Promise<QueueRow> =>
     (await deps.store.update(row.clientId, patch)) ?? { ...row, ...patch };
+
+  /** Hozir kirgan hisob; o'qib bo'lmasa null (null hech kimning qatoriga teng emas). */
+  async function currentOwner(): Promise<string | null> {
+    try {
+      return (await deps.owner?.()) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** `owner` berilmagan (eski xulq) - hamma qator; berilgan - `uploadableBy` qoidasi. */
+  const uploadable = (row: QueueRow, me: string | null | undefined): boolean => me === undefined || uploadableBy(row, me);
+
+  /**
+   * Egasiz qatorlar va `me` (har ishlashda, kutayotgani ham): taxmini BOSHQA hisob - yuklanmaydi,
+   * `owner_unknown` bilan to'xtab ko'rinadi (qo'lda oladi). Taxmini yo'q yoki aynan `me` - shu sabab
+   * to'xtagani qaytadi; server tasdiqlagan sessiyada (`confirmed`) darhol uniki bo'ladi, shunda sessiya
+   * keyin tashqaridan tugasa ham u yozuvlar shu odamda qoladi (server id li qator - faqat server javobida).
+   */
+  async function adopt(rows: QueueRow[], me: string, confirmed: string | null): Promise<void> {
+    for (const r of rows) {
+      if (r.owner != null || r.state === 'done') continue;
+      if (r.ownerHint != null && r.ownerHint !== me) {
+        if (isPending(r)) await update(r, { state: 'failed', lastError: OWNER_UNKNOWN, nextAttemptAt: null });
+        continue;
+      }
+      const revive = r.state === 'failed' && r.lastError === OWNER_UNKNOWN && !r.serverId;
+      const claim = confirmed === me && !r.serverId;
+      if (!revive && !claim) continue;
+      await update(r, {
+        ...(claim ? { owner: me, ownerHint: null } : {}),
+        ...(revive ? { state: 'stopped', lastError: null, attempts: 0, nextAttemptAt: null } : {}),
+      });
+    }
+  }
+
+  /** Server shu so'rovni qabul qildi: egasiz qator endi so'rov paytidagi hisobniki (hisob almashmagan bo'lsa). */
+  async function claimAfterServer(row: QueueRow, before: string | null | undefined): Promise<QueueRow> {
+    if (!deps.owner || row.owner != null || before == null || !uploadableBy(row, before)) return row;
+    if ((await currentOwner()) !== before) return row;
+    return update(row, { owner: before, ownerHint: null });
+  }
 
   async function wholeFileSha(row: QueueRow, size: number, maxChunk: number): Promise<string> {
     const h = hashers.get(row.clientId);
@@ -213,6 +290,13 @@ export function createUploader(deps: UploaderDeps): Uploader {
     if (err instanceof ApiError) {
       if (err.status === 413 || err.status === 415) return fail(row, err.code);
       if (err.status === 404 && row.serverId) {
+        if (deps.owner) {
+          // 404 "boshqa hisobniki" ham bo'lishi mumkin: faqat egasi aniq va hozir AYNAN u kirgan bo'lsa
+          // qayta yaratamiz. Egasiz eski qator - to'xtaydi; ega boshqa (ish o'rtasida hisob almashgan) -
+          // qatorga tegmaymiz, egasi qaytganda davom etadi.
+          if (row.owner == null) return fail(row, OWNER_UNKNOWN);
+          if (row.owner !== (await currentOwner())) return 'skipped';
+        }
         // Server qatorni unutgan - eski id bilan har urinish yana 404 bo'lardi. Qaytadan yaratamiz.
         hashers.delete(row.clientId);
         const reset = await update(row, { serverId: null, receivedBytes: 0, state: 'stopped' });
@@ -247,6 +331,9 @@ export function createUploader(deps: UploaderDeps): Uploader {
       let maxChunk = DEFAULT_CHUNK_BYTES;
 
       if (!row.serverId) {
+        const before = deps.owner ? await currentOwner() : undefined;
+        // `create` qatorni SHU so'rov tokenining hisobiga yozadi - ega boshqa bo'lsa yubormaymiz.
+        if (before !== undefined && !uploadableBy(row, before)) return 'skipped';
         row = await update(row, { state: 'creating', totalBytes: size });
         const res = await deps.api.create({
           clientId: row.clientId,
@@ -264,12 +351,17 @@ export function createUploader(deps: UploaderDeps): Uploader {
         const m = res.data;
         maxChunk = m.upload.maxChunkBytes || DEFAULT_CHUNK_BYTES;
         row = await update(row, { serverId: m.id, receivedBytes: m.upload.receivedBytes, state: 'uploading' });
+        row = await claimAfterServer(row, before);
         if (m.upload.complete) return finishDone(row, m);
       } else {
         // Resume: lokal receivedBytes eskirgan bo'lishi mumkin (crash) - serverdan so'raymiz.
-        const pos = await deps.api.uploadPosition(row.serverId);
+        const knownId = row.serverId;
+        const before = deps.owner ? await currentOwner() : undefined;
+        const pos = await deps.api.uploadPosition(knownId);
+        // Egasiz qator: server bu yig'ilishni so'rov paytidagi hisobniki deb qaytardi - endi uniki.
+        row = await claimAfterServer(row, before);
         maxChunk = pos.maxChunkBytes || DEFAULT_CHUNK_BYTES;
-        if (pos.complete) return finishDone(row, await deps.api.get(row.serverId));
+        if (pos.complete) return finishDone(row, await deps.api.get(knownId));
         row = await update(row, { receivedBytes: pos.receivedBytes, state: 'uploading', totalBytes: size });
       }
 
@@ -350,13 +442,32 @@ export function createUploader(deps: UploaderDeps): Uploader {
 
   /** true - sessiya yo'q (auth), qolgan qatorlar o'tkazib yuborildi. */
   async function runAll(): Promise<boolean> {
-    const rows = await deps.store.list();
+    let rows = await deps.store.list();
     await cleanup(rows);
+    if (deps.prepare) {
+      try {
+        await deps.prepare();
+      } catch {
+        /* masalan, tarmoq yo'q - keyingi ishlashda yana */
+      }
+    }
+    const me = deps.owner ? await currentOwner() : undefined;
+    if (me) {
+      let confirmed: string | null = null;
+      try {
+        confirmed = (await deps.confirmedOwner?.()) ?? null;
+      } catch {
+        confirmed = null;
+      }
+      await adopt(rows, me, confirmed);
+      rows = await deps.store.list();
+    }
     for (const row of rows) {
       if (!isPending(row)) continue;
+      if (!uploadable(row, me)) continue; // boshqa odamning yozuvi - egasi kirganda
       if (row.nextAttemptAt != null && row.nextAttemptAt > now()) continue;
       const fresh = await deps.store.get(row.clientId);
-      if (!fresh || !isPending(fresh)) continue;
+      if (!fresh || !isPending(fresh) || !uploadable(fresh, me)) continue;
       const outcome = await processRow(fresh);
       if (outcome === 'auth') return true; // sessiya yo'q - qolganlari ham o'tmaydi
     }
@@ -372,8 +483,10 @@ export function createUploader(deps: UploaderDeps): Uploader {
   async function rearm(): Promise<void> {
     clearTimer();
     let next: number | null = null;
+    const me = deps.owner ? await currentOwner() : undefined;
     for (const r of await deps.store.list()) {
-      if (!isPending(r) || r.nextAttemptAt == null) continue;
+      // Boshqa odamning qatori taymer qo'ymaydi (aks holda o'tgan `nextAttemptAt` har soniyada uyg'otardi).
+      if (!isPending(r) || r.nextAttemptAt == null || !uploadable(r, me)) continue;
       next = next == null ? r.nextAttemptAt : Math.min(next, r.nextAttemptAt);
     }
     if (next == null) return;
@@ -412,14 +525,23 @@ export function createUploader(deps: UploaderDeps): Uploader {
     async retry(clientId) {
       const row = await deps.store.get(clientId);
       if (!row || (row.state !== 'failed' && !isPending(row))) return;
+      const me = deps.owner ? await currentOwner() : undefined;
+      // Boshqa odamning qatori (ro'yxatda ko'rinmaydi) - qo'lda ham boshqa hisobga yuborilmaydi.
+      if (me !== undefined && row.owner != null && row.owner !== me) return;
+      // Egasiz qatorni kirgan odam O'ZI bosdi - endi uniki: kimniki noma'lum deb to'xtagan (`owner_unknown`)
+      // yoki serverga hali yetmagan yozuv. Server id li boshqa holat (masalan "server javob bermadi") -
+      // bosish uni egalamaydi: server tasdiqlaganda (`uploadPosition`) bog'lanadi.
+      const claim = me != null && row.owner == null && (row.lastError === OWNER_UNKNOWN || !row.serverId);
       // Eski versiya 404 ni `failed/not_found` qilgan: eski server id bilan qayta urinish yana 404.
-      const forget = row.lastError === 'not_found';
+      // `owner_unknown` + server id: u id boshqa hisobniki bo'lishi mumkin - 0 dan shu odamning hisobida.
+      const forget = row.lastError === 'not_found' || (claim && row.lastError === OWNER_UNKNOWN);
       await deps.store.update(clientId, {
         state: row.serverId && !forget ? 'uploading' : 'stopped',
         attempts: 0,
         nextAttemptAt: null,
         lastError: null,
         ...(forget ? { serverId: null, receivedBytes: 0 } : {}),
+        ...(claim ? { owner: me, ownerHint: null } : {}),
       });
       if (forget) hashers.delete(clientId);
       await runOnce();

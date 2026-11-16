@@ -106,6 +106,12 @@ export function fakeServices(over: { meetings?: MeetingsApi; actions?: ActionsAp
     adoptToken: jest.fn(async () => 'adopted' as const),
     ensureDevice: jest.fn(async () => true),
     webToken: jest.fn(async () => null),
+    owner: jest.fn(async () => null),
+    lastOwner: jest.fn(async () => null),
+    identify: jest.fn(async () => {}),
+    stamp: jest.fn(async () => ({ owner: null, ownerHint: null })),
+    confirm: jest.fn(),
+    unconfirm: jest.fn(),
   };
   const uploader: Uploader = { runOnce: jest.fn(async () => {}), retry: jest.fn(async () => {}), isRunning: () => false };
   return {

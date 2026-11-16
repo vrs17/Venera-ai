@@ -402,6 +402,7 @@ export const en: Record<TKey, string> = {
   'err.chunk_too_large': 'Chunk too large',
   'err.unsupported_format': 'Unsupported audio format',
   'err.sha_mismatch': 'The file was corrupted during upload',
+  'err.owner_unknown': 'It is unclear which account this recording belongs to - tap Retry to upload it to yours',
   'err.not_found': 'Not found on the server',
   'err.network': 'No internet',
   'err.timeout': 'The server did not respond',

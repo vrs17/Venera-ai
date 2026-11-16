@@ -72,6 +72,11 @@ export interface TokenProvider {
   peekToken?(): string | null;
   /** 401 dan keyin: tokenni majburan yangilash. */
   refreshToken(): Promise<string>;
+  /**
+   * Server shu token bilan kelgan so'rovni QABUL QILDI (2xx). Ixtiyoriy: sessiya "server tasdiqlagan"
+   * belgisini qo'yadi - yangi yozuvning qat'iy egasi faqat shunda yoziladi (`session.stamp`).
+   */
+  confirm?(token: string): void;
 }
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -239,12 +244,16 @@ export class ApiClient {
       token = await this.tokens.getToken();
     }
     try {
-      return await this.once<T>(path, options, token);
+      const res = await this.once<T>(path, options, token);
+      if (token) this.tokens?.confirm?.(token);
+      return res;
     } catch (e) {
       if (auth && e instanceof ApiError && e.status === 401 && this.tokens && !(e instanceof AuthRequiredError)) {
         // Spec 7.5/7.6: device session orqali yangilab, BIR MARTA qaytaramiz.
         const fresh = await this.tokens.refreshToken();
-        return this.once<T>(path, options, fresh);
+        const res = await this.once<T>(path, options, fresh);
+        this.tokens.confirm?.(fresh);
+        return res;
       }
       throw e;
     }

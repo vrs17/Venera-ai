@@ -7,7 +7,7 @@
  */
 import Constants from 'expo-constants';
 import { createContext, useContext, type ReactNode } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 
 import { createActionsApi, type ActionsApi } from '@/api/actions';
 import { createChatApi, type ChatApi } from '@/api/chat';
@@ -76,7 +76,7 @@ async function createAppServices(): Promise<Services> {
   const Device = require('expo-device') as typeof import('expo-device');
   const Application = require('expo-application') as typeof import('expo-application');
   const FS = require('expo-file-system') as typeof import('expo-file-system');
-  const { createSqliteQueueStore } = require('@/features/upload/queueStore') as typeof import('@/features/upload/queueStore');
+  const { createSqliteQueueStore, resolveUnknownOwner, withOwner } = require('@/features/upload/queueStore') as typeof import('@/features/upload/queueStore');
   const { createMemoryQueueStore } = require('@/features/upload/queueStore.memory') as typeof import('@/features/upload/queueStore.memory');
   const { recordingFile } = require('@/lib/paths') as typeof import('@/lib/paths');
   const { yieldToUi } = require('@/lib/appState') as typeof import('@/lib/appState');
@@ -93,21 +93,32 @@ async function createAppServices(): Promise<Services> {
     setItemAsync: (k, v) => SecureStore.setItemAsync(k, v),
     deleteItemAsync: (k) => SecureStore.deleteItemAsync(k),
   });
-  const session = createSession({ store: tokens, authApi: auth });
+  // 1.3.13 dan qolgan sessiyaning hisobi aniqlansa - "kimniki noma'lum" yozuvlar unga o'tadi (navbat pastda ochiladi).
+  let onOwnerLearned: (owner: string) => Promise<void> = async () => {};
+  const session = createSession({ store: tokens, authApi: auth, onOwnerLearned: (owner) => onOwnerLearned(owner) });
   client.setTokenProvider(session);
+  // Orqa fondan qaytgach server sessiyani qayta tasdiqlaguncha yangi yozuv faqat taxmin bilan (`session.stamp`):
+  // shu orada telefon boshqa xodimga o'tgan bo'lishi mumkin.
+  AppState.addEventListener('change', (s) => {
+    if (s !== 'active') session.unconfirm();
+  });
   session.subscribe((e) => {
     if (e === 'expired') useAuth.getState().setSignedOut(true);
     if (e === 'signedOut') useAuth.getState().setSignedOut(false);
   });
 
-  let queue: QueueStore;
+  let rawQueue: QueueStore;
   try {
     const db = await SQLite.openDatabaseAsync('venera-queue.db');
-    queue = await createSqliteQueueStore(db);
+    rawQueue = await createSqliteQueueStore(db);
   } catch {
     // SQLite ochilmasa ham yozish ishlasin (navbat faqat xotirada qoladi).
-    queue = createMemoryQueueStore();
+    rawQueue = createMemoryQueueStore();
   }
+  // Har yangi qatorga EGA (server tasdiqlagan sessiya - qat'iy; aks holda taxmin): telefon boshqa xodimga
+  // o'tsa yozuv egasida qoladi.
+  const queue = withOwner(rawQueue, session);
+  onOwnerLearned = (owner) => resolveUnknownOwner(rawQueue, owner);
 
   const files: FileAccess = {
     async size(uri) {
@@ -152,6 +163,10 @@ async function createAppServices(): Promise<Services> {
     yieldToUi,
     appVersion,
     device: deviceName,
+    owner: () => session.owner(),
+    confirmedOwner: async () => (await session.stamp()).owner,
+    // Egasi noma'lum sessiya (1.3.13 dan qolgan token) - har ishlashdan oldin aniqlashga urinamiz.
+    prepare: () => session.identify(() => auth.me()),
     onAuthRequired: () => {
       // Faqat kirgan foydalanuvchi uchun "sessiya tugadi"; kirmasdan yozganlar uchun jim.
       if (useAuth.getState().status === 'signedIn') useAuth.getState().setSignedOut(true);

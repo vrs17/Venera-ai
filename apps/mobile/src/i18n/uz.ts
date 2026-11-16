@@ -412,6 +412,7 @@ export const uz = {
   'err.chunk_too_large': 'Bo\'lak juda katta',
   'err.unsupported_format': "Audio formati qo'llab-quvvatlanmaydi",
   'err.sha_mismatch': "Fayl yuklashda buzildi",
+  'err.owner_unknown': "Bu yozuv qaysi hisobniki ekani noma'lum - o'zingizga yuklash uchun «Qayta urinish» ni bosing",
   'err.not_found': "Serverda topilmadi",
   'err.network': "Internet yo'q",
   'err.timeout': "Server javob bermadi",
