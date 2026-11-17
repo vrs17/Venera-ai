@@ -121,6 +121,16 @@ class Settings(BaseSettings):
     #: undan OLDIN to'xtatamiz: aks holda katta fayl butun tarmoqni bosib
     #: o'tib, faqat oxirida rad etilardi.
     stt_max_upload_mb: float = 10.0
+    #: Boshqa TIZIMLAR uchun STT (`POST /api/v1/stt/service/transcribe`) - odam
+    #: emas, servis chaqiradi (birinchisi: HRM boti, xodimning ovozli kechikish
+    #: sababi). `nom:sha256hex` juftliklari, vergul bilan. Kalitning O'ZI bu
+    #: serverda saqlanmaydi, faqat SHA-256 izi: `.env` sizib chiqsa ham kalit
+    #: ochilmaydi. Bo'sh - endpoint hamma uchun 401.
+    stt_service_keys: str = ""
+    #: Bitta servis kaliti uchun daqiqasiga so'rovlar. GAPI ning daqiqasiga 60
+    #: yuklash chegarasi Barno'ning o'zi bilan UMUMIY - servis uni yeb
+    #: qo'ymasligi kerak. Oshsa 429 (servis audioni matnsiz saqlaydi).
+    stt_service_per_min: int = 20
 
     # --- STT VARIANTI: qaysi xizmat ishlatiladi ---
     #: `router` - 1-variant, ichki STT Router (yuqorida). `gapi` -

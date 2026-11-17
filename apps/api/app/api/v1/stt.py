@@ -11,19 +11,22 @@ o'tadi.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import threading
 import time
 import urllib.error
 from collections import deque
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 
 from ...core.config import settings
-from ...core.errors import bad_request, error_status
+from ...core.errors import bad_request, error_status, unauthorized
 from ...schemas.auth import AuthUser
 from ...schemas.stt import TranscriptResponse, WakeResponse
 from ...services.analytics import begin
+from ...services.analytics import bind as _meter_bind
 from ...services.integrations.gapi_stt import GapiSttClient
 from ...services.stt import LOCALE_TO_STT, SttClient, SttError, Transcript
 from ...services.wake import FLAT_LIMIT, WakeLog, is_wake_phrase, measure
@@ -409,6 +412,13 @@ def transcribe(
     to'silmaydi - aks holda bitta uzun transkripsiya butun serverni
     to'xtatib qo'yardi.
     """
+    return _transcribe_upload(file, language, who=user.email, yol="Transkripsiya")
+
+
+def _transcribe_upload(file: UploadFile, language: str, *, who: str, yol: str,
+                       op: str = "transcribe") -> TranscriptResponse:
+    """Odam (`/transcribe`) va servis (`/service/transcribe`) uchun BIR XIL yo'l:
+    til, hajm chegarasi, GAPI -> Router zahirasi, foydalanuvchiga ko'rinadigan xato."""
     stt_language = LOCALE_TO_STT.get(language)
     if stt_language is None:
         raise bad_request(f"til qo'llab-quvvatlanmaydi: {language}")
@@ -421,12 +431,13 @@ def transcribe(
             audio,
             stt_language,
             file.content_type or "application/octet-stream",
-            yol="Transkripsiya",
+            yol=yol,
             # Butun so'rov uchun bitta byudjet - ikki klientga BO'LINADI.
             budget=settings.stt_deadline,
+            op=op,
         )
     except SttError as exc:
-        log.warning("STT (%s, %s): %s", user.email, stt_language, exc)
+        log.warning("STT (%s, %s): %s", who, stt_language, exc)
         status, message = public_error(exc)
         raise error_status(status, message) from exc
 
@@ -438,6 +449,87 @@ def transcribe(
         truncated=result.truncated,
         backend=result.backend,
     )
+
+
+def _service_keys() -> list[tuple[str, str]]:
+    """`STT_SERVICE_KEYS`: `[(nom, sha256hex)]`; noto'g'ri yozilgan juftlik tashlanadi."""
+    out: list[tuple[str, str]] = []
+    for item in settings.stt_service_keys.split(","):
+        name, _, digest = item.strip().partition(":")
+        name, digest = name.strip(), digest.strip().lower()
+        if name and len(digest) == 64 and all(c in "0123456789abcdef" for c in digest):
+            out.append((name, digest))
+    return out
+
+
+class _ServiceRate:
+    """Servis kaliti bo'yicha daqiqalik chegara (`stt_service_per_min`).
+
+    `_WakeBudget` dan farqi: oshgan so'rov Router'ga TUSHMAYDI, 429 oladi.
+    Servis (HRM boti) bunda audioni matnsiz saqlaydi - hech narsa yo'qolmaydi,
+    Barno'ning o'z foydalanuvchilari esa GAPI slotisiz qolmaydi."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._stamps: dict[str, deque[float]] = {}
+
+    def allow(self, name: str) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            stamps = self._stamps.setdefault(name, deque())
+            while stamps and now - stamps[0] > 60.0:
+                stamps.popleft()
+            if len(stamps) >= settings.stt_service_per_min:
+                return False
+            stamps.append(now)
+            return True
+
+
+_service_rate = _ServiceRate()
+
+
+async def service_caller(request: Request) -> str:
+    """`X-Service-Key` dan servis nomi; kalit yo'q yoki noto'g'ri - 401.
+
+    `async`, `current_user` dagi sabab bilan: hisob konteksti (`analytics.bind`)
+    so'rov vazifasining o'zida qo'yilishi kerak. Odam yo'q (`actor_id=None`),
+    kanal `api` - sarf hisobida servis Barno foydalanuvchilariga aralashmaydi,
+    amal nomi esa (`service_<nom>`) qaysi servis ekanini aytadi.
+    """
+    key = request.headers.get("x-service-key", "").strip()
+    if not key:
+        raise unauthorized("Servis kaliti yuborilmadi")
+    digest = hashlib.sha256(key.encode()).hexdigest()
+    name = None
+    for candidate, expected in _service_keys():
+        # Hamma kalit bilan solishtiriladi (to'xtamasdan) - vaqt farqi qaysi
+        # kalit "yaqin" ekanini aytmasin.
+        if hmac.compare_digest(expected, digest):
+            name = candidate
+    if name is None:
+        raise unauthorized("Servis kaliti noto'g'ri")
+    _meter_bind(None, "api")
+    return name
+
+
+@router.post("/service/transcribe", response_model=TranscriptResponse)
+def service_transcribe(
+    file: UploadFile = File(description="Audio (ogg/mp3/m4a/wav/webm)"),
+    language: str = Form(default="uz", description="uz | uz-Cyrl | ru | en"),
+    caller: str = Depends(service_caller),
+) -> TranscriptResponse:
+    """Boshqa tizim uchun audio -> matn (birinchisi: HRM boti - xodim kechikish
+    sababini ovozli xabar bilan yuborganda).
+
+    Yo'l `/transcribe` bilan AYNAN bir xil (`_transcribe_upload`): o'zbekcha -
+    GAPI, u berilmasa Router; hajm chegarasi `stt_max_upload_mb`. Audio
+    Barno'da SAQLANMAYDI - faqat matn qaytadi. Tashqi manzil (edge nginx)
+    ~1 MB dan katta tanani o'tkazmaydi - Telegram ovozli xabarining ~4 daqiqasi.
+    """
+    if not _service_rate.allow(caller):
+        raise error_status(429, _MESSAGES[429])
+    return _transcribe_upload(file, language, who=f"servis:{caller}",
+                              yol=f"Servis ({caller})", op=f"service_{caller}")
 
 
 @router.post("/wake", response_model=WakeResponse)
