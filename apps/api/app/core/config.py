@@ -132,6 +132,28 @@ class Settings(BaseSettings):
     #: qo'ymasligi kerak. Oshsa 429 (servis audioni matnsiz saqlaydi).
     stt_service_per_min: int = 20
 
+    # --- HRM: KECHIKISH SABABIGA AVTOMATIK QAROR (`POST /api/v1/hrm/late-decision`) ---
+    # EGA QARORI (2026-11-17): HR tarixda doim bir xil hal qilgan ANIQ holatlar avtomatik
+    # tasdiqlanadi yoki rad etiladi, qolgani HR manager'ga qoladi. Qarorni HRM o'zi qo'llaydi;
+    # Barno faqat toifa va ishonchni beradi (`services/hrm_late.py`).
+    #: Servis kalitlari (`nom:sha256hex`, vergul bilan). Bo'sh - `STT_SERVICE_KEYS` (HRM ning
+    #: bitta kaliti ikkala endpoint uchun).
+    hrm_late_service_keys: str = ""
+    #: Bitta servis kaliti uchun daqiqasiga so'rovlar. Oshsa 429 (HRM keyinroq qayta so'raydi).
+    hrm_late_per_min: int = 30
+    #: Model; bo'sh - `meetings_claude_model` (Claude Sonnet 5.5).
+    hrm_late_model: str = ""
+    #: Claude `effort`: toifalash uchun `low` yetarli (qisqa matn, aniq ro'yxat).
+    hrm_late_effort: str = "low"
+    #: Avtomatik TASDIQ toifalari va eng past ishonch.
+    hrm_late_approve_categories: str = ("work_task,overtime,study,medical,system_error,building_issue,"
+                                        "prior_permission,government_office")
+    hrm_late_approve_min_confidence: float = 0.85
+    #: Avtomatik RAD toifalari va eng past ishonch (rad xodimga ta'sir qiladi - chegara balandroq).
+    #: Bo'sh - avtomatik rad yo'q, bu holatlar HR'ga.
+    hrm_late_reject_categories: str = "overslept,traffic"
+    hrm_late_reject_min_confidence: float = 0.9
+
     # --- STT VARIANTI: qaysi xizmat ishlatiladi ---
     #: `router` - 1-variant, ichki STT Router (yuqorida). `gapi` -
     #: 2-variant, `console.gapi.uz`.

@@ -757,9 +757,15 @@ class ClaudeChat:
 
     def complete_meta(self, system: str, user: str, *, num_predict: int = 1200, temperature: float = 0.2,
                       op: str = "meeting", format: str | None = None, options: dict[str, Any] | None = None,
-                      think: bool | None = None) -> tuple[str, dict[str, Any]]:
+                      think: bool | None = None,
+                      schema: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
+        """`schema` - yig'ilishdan tashqari amallar uchun o'z JSON sxemasi (masalan HRM kechikish qarori);
+        berilmasa `shapes.for_op`. Sxema faqat `format="json"` da va xizmat uni rad etmagan bo'lsa yuboriladi."""
         key, sdk = self._sdk()
-        schema = shapes.for_op(op, system) if format == "json" and op not in self._formatless else None
+        if format == "json" and op not in self._formatless:
+            schema = schema if schema is not None else shapes.for_op(op, system)
+        else:
+            schema = None
         request = self._request(system, [{"role": "user", "content": user}], num_predict, options, schema)
         return self._call(request, op, len(system) + len(user), key, sdk)
 

@@ -11,26 +11,24 @@ o'tadi.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import logging
 import threading
 import time
 import urllib.error
 from collections import deque
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 
 from ...core.config import settings
-from ...core.errors import bad_request, error_status, unauthorized
+from ...core.errors import bad_request, error_status
 from ...schemas.auth import AuthUser
 from ...schemas.stt import TranscriptResponse, WakeResponse
 from ...services.analytics import begin
-from ...services.analytics import bind as _meter_bind
 from ...services.integrations.gapi_stt import GapiSttClient
 from ...services.stt import LOCALE_TO_STT, SttClient, SttError, Transcript
 from ...services.wake import FLAT_LIMIT, WakeLog, is_wake_phrase, measure
 from ..deps import current_user
+from .service_auth import PerMinuteRate, parse_service_keys, service_caller_for
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/stt", tags=["stt"])
@@ -453,16 +451,10 @@ def _transcribe_upload(file: UploadFile, language: str, *, who: str, yol: str,
 
 def _service_keys() -> list[tuple[str, str]]:
     """`STT_SERVICE_KEYS`: `[(nom, sha256hex)]`; noto'g'ri yozilgan juftlik tashlanadi."""
-    out: list[tuple[str, str]] = []
-    for item in settings.stt_service_keys.split(","):
-        name, _, digest = item.strip().partition(":")
-        name, digest = name.strip(), digest.strip().lower()
-        if name and len(digest) == 64 and all(c in "0123456789abcdef" for c in digest):
-            out.append((name, digest))
-    return out
+    return parse_service_keys(settings.stt_service_keys)
 
 
-class _ServiceRate:
+class _ServiceRate(PerMinuteRate):
     """Servis kaliti bo'yicha daqiqalik chegara (`stt_service_per_min`).
 
     `_WakeBudget` dan farqi: oshgan so'rov Router'ga TUSHMAYDI, 429 oladi.
@@ -470,46 +462,14 @@ class _ServiceRate:
     Barno'ning o'z foydalanuvchilari esa GAPI slotisiz qolmaydi."""
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._stamps: dict[str, deque[float]] = {}
-
-    def allow(self, name: str) -> bool:
-        now = time.monotonic()
-        with self._lock:
-            stamps = self._stamps.setdefault(name, deque())
-            while stamps and now - stamps[0] > 60.0:
-                stamps.popleft()
-            if len(stamps) >= settings.stt_service_per_min:
-                return False
-            stamps.append(now)
-            return True
+        super().__init__(lambda: settings.stt_service_per_min)
 
 
 _service_rate = _ServiceRate()
 
-
-async def service_caller(request: Request) -> str:
-    """`X-Service-Key` dan servis nomi; kalit yo'q yoki noto'g'ri - 401.
-
-    `async`, `current_user` dagi sabab bilan: hisob konteksti (`analytics.bind`)
-    so'rov vazifasining o'zida qo'yilishi kerak. Odam yo'q (`actor_id=None`),
-    kanal `api` - sarf hisobida servis Barno foydalanuvchilariga aralashmaydi,
-    amal nomi esa (`service_<nom>`) qaysi servis ekanini aytadi.
-    """
-    key = request.headers.get("x-service-key", "").strip()
-    if not key:
-        raise unauthorized("Servis kaliti yuborilmadi")
-    digest = hashlib.sha256(key.encode()).hexdigest()
-    name = None
-    for candidate, expected in _service_keys():
-        # Hamma kalit bilan solishtiriladi (to'xtamasdan) - vaqt farqi qaysi
-        # kalit "yaqin" ekanini aytmasin.
-        if hmac.compare_digest(expected, digest):
-            name = candidate
-    if name is None:
-        raise unauthorized("Servis kaliti noto'g'ri")
-    _meter_bind(None, "api")
-    return name
+#: `X-Service-Key` dan servis nomi; kalit yo'q yoki noto'g'ri - 401 (`service_auth.py`).
+#: Amal nomi hisobda `service_<nom>` - qaysi servis ekanini aytadi.
+service_caller = service_caller_for(_service_keys)
 
 
 @router.post("/service/transcribe", response_model=TranscriptResponse)
