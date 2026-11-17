@@ -20,6 +20,10 @@ serverda esa ffmpeg yo'q. Slack'ning o'zida yozilgan ovozli xabar boshqa formatd
 bo'lishi mumkin - unda fayl obyektidagi `aac` havolasidan Slack tayyorlagan AAC nusxasi
 olinadi. Tur Slack aytgan mimetype bo'yicha emas, faylning birinchi baytlari bo'yicha
 aniqlanadi, chunki yig'ilish ham aynan shuni tekshiradi (`audio.sniff`).
+
+VIDEO (2026-11-17, ega qarori). MP4/MOV video ham yozuv: yig'ilish uning audiosini ajratib oladi,
+video saqlanmaydi (`service._extract_video`). Chegara - `MEETINGS_MAX_VIDEO_MB` (1 GB). Boshqa video
+(WebM, MKV, AVI) - "MP4 yuboring". Video arxivga ham yozilmaydi (`keep.py` audio kabi o'tkazib yuboradi).
 """
 
 from __future__ import annotations
@@ -46,7 +50,7 @@ log = logging.getLogger(__name__)
 
 
 def audio_files(event: dict[str, Any]) -> list[dict[str, Any]]:
-    """Shaxsiy xabardagi audio fayllar; boshqa hamma narsa (kanal, bot, matn) - bo'sh."""
+    """Shaxsiy xabardagi audio va video fayllar (yozuvlar); boshqa hamma narsa (kanal, bot, matn) - bo'sh."""
     if event.get("channel_type") != "im" or event.get("bot_id"):
         return []
     if event.get("subtype") not in (None, "file_share"):
@@ -55,8 +59,18 @@ def audio_files(event: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def is_audio(file: dict[str, Any]) -> bool:
-    """Slack'da yozilgan ovozli xabar (`slack_audio`) yoki yuklangan audio fayl."""
-    return file.get("subtype") == "slack_audio" or str(file.get("mimetype") or "").startswith("audio/")
+    """Yozuv: Slack'da yozilgan ovozli xabar (`slack_audio`), yuklangan audio fayl yoki video (audiosi olinadi)."""
+    return (file.get("subtype") == "slack_audio" or str(file.get("mimetype") or "").startswith("audio/")
+            or is_video(file))
+
+
+def is_video(file: dict[str, Any]) -> bool:
+    """Video fayl (MP4, MOV, WebM ...) yoki Slack'da yozilgan video klip."""
+    return file.get("subtype") == "slack_video" or audio.is_video_type(file.get("mimetype"))
+
+
+#: Video MP4/MOV emas (yoki ichi o'qilmadi) - odamga aniq sabab (`errors.MESSAGES["video_unsupported"]` bilan bir xil).
+VIDEO_UNSUPPORTED = "Bu formatdan audio ajratib bo'lmadi, MP4 yuboring."
 
 
 def client_id(file_id: str) -> str:
@@ -155,6 +169,8 @@ def ingest(client: Any, user: AuthUser, file: dict[str, Any], *, language: str =
 def fetch(file: dict[str, Any], folder: Path) -> tuple[Path, int, str, str]:
     """Faylni yuklab oladi va yig'ilish qabul qiladigan nusxasini tanlaydi:
     (yo'l, hajm, sha256, tur)."""
+    if is_video(file):
+        return _fetch_video(file, folder)
     urls = [file.get("url_private_download") or file.get("url_private"), file.get("aac")]
     if audio.canonical_type(file.get("mimetype")) not in service.ACCEPTED_TYPES:
         # Masalan Slack'da yozilgan ovozli xabar: asl nusxa yaroqsizligi aniq - avval
@@ -171,7 +187,25 @@ def fetch(file: dict[str, Any], folder: Path) -> tuple[Path, int, str, str]:
     raise Problem("Bu audio formati qo'llab-quvvatlanmaydi (mp3, m4a, aac, wav).")
 
 
-def download(url: str, dest: Path, limit: int) -> tuple[int, str, bytes]:
+def _fetch_video(file: dict[str, Any], folder: Path) -> tuple[Path, int, str, str]:
+    """Video: asl fayl (Slack video uchun AAC nusxa bermaydi). MP4/MOV ekani mimetype va fayl boshidan tekshiriladi;
+    audio ajratish va videoni o'chirish - yig'ilishning o'zida (`service.complete`)."""
+    if audio.canonical_type(file.get("mimetype")) not in (audio.VIDEO_TYPE, ""):
+        log.info("Slack video (%s): MP4 emas (%s)", file.get("id"), file.get("mimetype"))
+        raise Problem(VIDEO_UNSUPPORTED)
+    url = file.get("url_private_download") or file.get("url_private")
+    if not url:
+        raise Problem("Slack video manzilini bermadi.", retry=True)
+    limit = service.max_upload_bytes(audio.VIDEO_TYPE)
+    path = folder / "video"
+    size, sha, head = download(url, path, limit, too_large=f"Video juda katta ({limit // (1024 * 1024)} MB gacha).")
+    if not audio.sniff(head, audio.VIDEO_TYPE):
+        log.info("Slack video (%s): MP4/MOV emas (%s)", file.get("id"), file.get("mimetype"))
+        raise Problem(VIDEO_UNSUPPORTED)
+    return path, size, sha, audio.VIDEO_TYPE
+
+
+def download(url: str, dest: Path, limit: int, *, too_large: str = "Fayl juda katta.") -> tuple[int, str, bytes]:
     """Slack faylini `dest` ga yozadi: (hajm, sha256, birinchi 16 bayt).
 
     Bot tokeni FAQAT Slack xostiga yuboriladi: boshqa xostga yo'naltirilsa so'rov
@@ -189,7 +223,7 @@ def download(url: str, dest: Path, limit: int) -> tuple[int, str, bytes]:
             while block := resp.read(256 * 1024):
                 size += len(block)
                 if size > limit:
-                    raise Problem("Fayl juda katta.")
+                    raise Problem(too_large)
                 head += block[:16 - len(head)]
                 digest.update(block)
                 fh.write(block)

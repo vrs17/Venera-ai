@@ -649,6 +649,8 @@ class MeetingsConfig(BaseModel):
     enabled: bool
     maxMinutes: int
     maxUploadBytes: int
+    #: Video (`video/mp4`: MP4/MOV) uchun chegara - audiodan katta; server audiosini ajratib, videoni o'chiradi.
+    maxVideoUploadBytes: int
     maxChunkBytes: int
     acceptedContentTypes: list[str]
     languages: list[Lang]

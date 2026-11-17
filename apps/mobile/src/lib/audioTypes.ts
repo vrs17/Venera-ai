@@ -3,6 +3,10 @@
  * saqlanadigan kengaytmalar va fayl boshi tekshiruvi. Server bilan AYNAN bir xil bo'lishi shart:
  * `apps/api/app/services/meetings/audio.py` (`TYPE_ALIASES`, `EXTENSIONS`, `sniff`, `mp3_header`).
  *
+ * VIDEO (2026-11-17, ega qarori): `video/mp4` - MP4/MOV/M4V. Server audiosini ajratib oladi va videoni
+ * o'chiradi; boshqa video (WebM, MKV, AVI ...) - "MP4 yuboring" (`isUnsupportedVideo`). `imports/` dagi
+ * nusxa `.m4v` nomi bilan: `.mp4` ni native (Kotlin) "o'zimniki" deb `audio/mp4` qilib o'qiydi.
+ *
  * NIMA UCHUN fayl boshi tekshiriladi: server birinchi bo'lakda (`PUT /audio`, offset 0) xuddi shu
  * qoidani qo'llaydi va mos kelmasa 415 qaytaradi. Telefonda oldindan aytsak, odam katta faylni
  * befoyda yuklamaydi va navbatda "yuklanmadi" qatori qolmaydi.
@@ -11,13 +15,18 @@
  */
 import type { AudioContentType } from '@/api/types';
 
-export const AUDIO_CONTENT_TYPES: readonly AudioContentType[] = ['audio/aac', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/ogg'];
+export const AUDIO_CONTENT_TYPES: readonly AudioContentType[] = ['audio/aac', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/ogg', 'video/mp4'];
 
 export function isAudioContentType(v: unknown): v is AudioContentType {
   return typeof v === 'string' && (AUDIO_CONTENT_TYPES as readonly string[]).includes(v);
 }
 
-export type AudioExtension = '.aac' | '.m4a' | '.mp3' | '.wav' | '.ogg';
+export type AudioExtension = '.aac' | '.m4a' | '.mp3' | '.wav' | '.ogg' | '.m4v';
+
+/** Video (server audiosini ajratadi) - hajm chegarasi ham, xato matni ham boshqacha. */
+export function isVideoContentType(v: unknown): boolean {
+  return v === 'video/mp4';
+}
 
 /** Tur -> saqlanadigan kengaytma (server `EXTENSIONS`; pleer va STT formatni shundan ham taniydi). */
 export const AUDIO_EXTENSIONS: Readonly<Record<AudioContentType, AudioExtension>> = {
@@ -26,6 +35,7 @@ export const AUDIO_EXTENSIONS: Readonly<Record<AudioContentType, AudioExtension>
   'audio/mpeg': '.mp3',
   'audio/wav': '.wav',
   'audio/ogg': '.ogg',
+  'video/mp4': '.m4v',
 };
 
 /**
@@ -53,6 +63,8 @@ const TYPE_ALIASES: ReadonlyMap<string, AudioContentType> = new Map<string, Audi
   ['audio/oga', 'audio/ogg'],
   ['audio/x-ogg', 'audio/ogg'],
   ['application/ogg', 'audio/ogg'],
+  ['video/quicktime', 'video/mp4'],
+  ['video/x-m4v', 'video/mp4'],
 ]);
 
 /** `Audio/MP3; charset=x` -> `audio/mpeg` (server `canonical_type`); qabul qilinmaydigan tur - null. */
@@ -65,7 +77,10 @@ export function canonicalAudioType(mime: string | null | undefined): AudioConten
 /** Kengaytma -> tur. Opus/Vorbis ham Ogg konteyneri (`.oga`, `.opus`). */
 const EXT_TYPES: ReadonlyMap<string, AudioContentType> = new Map<string, AudioContentType>([
   ['m4a', 'audio/mp4'],
-  ['mp4', 'audio/mp4'],
+  // .mp4 - deyarli doim video; ichida faqat audio bo'lsa ham server uni o'sha yo'l bilan ajratadi.
+  ['mp4', 'video/mp4'],
+  ['mov', 'video/mp4'],
+  ['m4v', 'video/mp4'],
   ['aac', 'audio/aac'],
   ['mp3', 'audio/mpeg'],
   ['wav', 'audio/wav'],
@@ -76,6 +91,19 @@ const EXT_TYPES: ReadonlyMap<string, AudioContentType> = new Map<string, AudioCo
 
 /** Aniq boshqa (server olmaydigan) audio kengaytmalari - bunda MIME'ga ishonilmaydi. */
 const OTHER_AUDIO_EXT = new Set(['amr', 'awb', '3gp', '3ga', 'flac', 'wma', 'mid', 'midi', 'webm']);
+
+/** Server audiosini ajrata olmaydigan video kengaytmalari - odamga "MP4 yuboring" deyiladi. */
+// .3gp yo'q: u ko'pincha AMR audio (qo'ng'iroq yozuvi) - unga "MP4 yuboring" deyish chalkashtirardi.
+const UNSUPPORTED_VIDEO_EXT = new Set(['webm', 'mkv', 'avi', 'wmv', 'flv', 'mts', 'm2ts', 'ts', 'mpg', 'mpeg', 'ogv']);
+
+/** Qabul qilinmaydigan VIDEO (WebM, MKV, AVI ...): kengaytma yoki `video/*` MIME - "MP4 yuboring" sababi. */
+export function isUnsupportedVideo(name: string | null | undefined, mimeType?: string | null): boolean {
+  if (audioTypeFor(name, mimeType)) return false;
+  const n = name ?? '';
+  const dot = n.lastIndexOf('.');
+  const ext = dot >= 0 && dot < n.length - 1 ? n.slice(dot + 1).toLowerCase() : '';
+  return UNSUPPORTED_VIDEO_EXT.has(ext) || (mimeType ?? '').trim().toLowerCase().startsWith('video/');
+}
 
 /**
  * Fayl turi: avval kengaytma, keyin MIME (taxalluslar bilan). NIMA UCHUN kengaytma birinchi:
@@ -128,6 +156,9 @@ export function matchesAudioType(head: Uint8Array, type: AudioContentType): bool
       return isAdts(head);
     case 'audio/mp4':
       return asciiAt(head, 4, 'ftyp');
+    case 'video/mp4':
+      // Server `is_iso_media`: odatda `ftyp`; eski QuickTime MOV `moov`/`mdat`/`wide`/`free` bilan boshlanadi.
+      return ['ftyp', 'moov', 'mdat', 'wide', 'free', 'skip', 'pnot'].some((box) => asciiAt(head, 4, box));
     case 'audio/ogg':
       return asciiAt(head, 0, 'OggS');
     default:

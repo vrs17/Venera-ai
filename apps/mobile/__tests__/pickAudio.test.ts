@@ -13,6 +13,8 @@ import {
   importPickedAudio,
   importStem,
   MAX_COPY_BYTES,
+  MAX_VIDEO_COPY_BYTES,
+  maxCopyBytes,
   PICK_MIME_TYPES,
   RESERVE_BYTES,
   uniqueImportName,
@@ -114,8 +116,46 @@ describe('pickAudio: names exactly like the native ImportActivity', () => {
     expect(headerProblem(new Uint8Array(), 'audio/ogg')).toBe('unsupported');
   });
 
-  it('the picker also offers application/ogg (Opus labelled that way is not audio/*)', () => {
-    expect([...PICK_MIME_TYPES]).toEqual(['audio/*', 'application/ogg']);
+  it('the picker also offers application/ogg (Opus labelled that way is not audio/*) and video (audio is extracted)', () => {
+    expect([...PICK_MIME_TYPES]).toEqual(['audio/*', 'application/ogg', 'video/*']);
+  });
+});
+
+describe('pickAudio: video (2026-11-17) - the server extracts the audio and deletes the video', () => {
+  it('MP4/MOV is copied as video/mp4 under a .m4v name (native would read .mp4 as audio/mp4)', async () => {
+    const f = fakeDir({ 'content://v': MP4, 'content://q': MP4 });
+    const out = await importPickedAudio(
+      f.dir,
+      [
+        asset({ uri: 'content://v', name: 'Kengash.mp4', mimeType: 'video/mp4', size: 400 * 1024 * 1024 }),
+        asset({ uri: 'content://q', name: 'IMG_0042.MOV', mimeType: 'video/quicktime' }),
+      ],
+      { now: () => BATCH },
+    );
+    expect(out).toEqual({ files: ['share_1728560000000_0_Kengash.m4v', 'share_1728560000000_1_IMG_0042.m4v'], skipped: 0, reason: null });
+    expect(out.files.map((n) => f.metas.get(n)?.contentType)).toEqual(['video/mp4', 'video/mp4']);
+    // Native o'zimniki demaydi - meta JS'da o'qiladi; tasdiq ekraniga havoladan o'tadi.
+    expect(out.files.some(isImportFileName)).toBe(false);
+    expect(parseImportParams({ files: out.files.join(',') }).files).toEqual(out.files);
+  });
+
+  it('WebM/MKV/AVI and a WebM inside ".mp4" say "send an MP4"; over the video limit - video_too_large', async () => {
+    const webm = Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0, 0, 0, 0, 0]);
+    const f = fakeDir({ 'content://w': webm, 'content://fake': webm });
+    const out = await importPickedAudio(f.dir, [
+      asset({ uri: 'content://w', name: 'screen.webm', mimeType: 'video/webm' }),
+      asset({ uri: 'content://fake', name: 'renamed.mp4', mimeType: 'video/mp4' }),
+      asset({ uri: 'content://big', name: 'long.mp4', mimeType: 'video/mp4', size: MAX_VIDEO_COPY_BYTES + 1 }),
+    ]);
+    expect(out).toEqual({ files: [], skipped: 3, reason: 'video_unsupported' });
+    // ".mp4" ichidagi WebM nusxalanib, tekshiruvdan keyin o'chirildi; qolgan ikkisi nusxalanmadi ham.
+    expect(f.removed).toHaveLength(1);
+    expect(f.removed[0]).toMatch(/_1_renamed\.m4v$/);
+    const big = await importPickedAudio(fakeDir({}).dir, [asset({ uri: 'content://big', name: 'long.mp4', mimeType: 'video/mp4', size: MAX_VIDEO_COPY_BYTES + 1 })]);
+    expect(big.reason).toBe('video_too_large');
+    // Audio chegarasi videoga qo'llanmaydi: 500 MB video - o'tadi (server 1 GB oladi).
+    expect(maxCopyBytes('video/mp4')).toBe(MAX_VIDEO_COPY_BYTES);
+    expect(maxCopyBytes('audio/mp4')).toBe(MAX_COPY_BYTES);
   });
 });
 
@@ -242,14 +282,18 @@ describe('pickAudio: importPickedAudio (same limits as the share flow)', () => {
 describe('pickAudio: why nothing was added (toast)', () => {
   const t = makeT('uz');
   it('names the cause and, for size, the server limit', () => {
-    expect(pickFailedText(t, 'unsupported', null)).toBe("Audio qo'shilmadi: faqat .m4a, .aac, .mp3, .wav yoki .ogg audio qabul qilinadi");
+    expect(pickFailedText(t, 'unsupported', null)).toBe("Audio qo'shilmadi: faqat .m4a, .aac, .mp3, .wav, .ogg audio yoki .mp4, .mov video qabul qilinadi");
     expect(pickFailedText(t, 'mismatch', null)).toBe("Audio qo'shilmadi: fayl ichidagi format kengaytmasiga mos emas");
-    expect(pickFailedText(makeT('ru'), 'unsupported', null)).toBe('Аудио не добавлено: подходят только аудио .m4a, .aac, .mp3, .wav и .ogg');
+    expect(pickFailedText(makeT('ru'), 'unsupported', null)).toBe('Аудио не добавлено: подходят только аудио .m4a, .aac, .mp3, .wav, .ogg и видео .mp4, .mov');
     expect(pickFailedText(t, 'too_large', 157286400)).toBe("Audio qo'shilmadi: fayl 150 MB dan katta");
     expect(pickFailedText(t, 'too_large', null)).toBe("Audio qo'shilmadi: fayl 160 MB dan katta");
     expect(pickFailedText(t, 'no_space', null)).toBe("Audio qo'shilmadi: telefonda joy kam - joy bo'shating");
     expect(pickFailedText(t, 'read', null)).toBe("Audio qo'shilmadi: faylni o'qib bo'lmadi");
-    expect(pickFailedText(makeT('en'), 'unsupported', null)).toBe('Audio not added: only .m4a, .aac, .mp3, .wav or .ogg audio is accepted');
+    expect(pickFailedText(makeT('en'), 'unsupported', null)).toBe('Audio not added: only .m4a, .aac, .mp3, .wav, .ogg audio or .mp4, .mov video is accepted');
+    // Video (2026-11-17): MP4/MOV dan boshqasi - server bilan bir xil sabab; katta video - video chegarasi.
+    expect(pickFailedText(t, 'video_unsupported', null)).toBe("Audio qo'shilmadi: bu formatdan audio ajratib bo'lmadi, MP4 yuboring");
+    expect(pickFailedText(t, 'video_too_large', 157286400, 1073741824)).toBe("Audio qo'shilmadi: fayl 1024 MB dan katta");
+    expect(pickFailedText(t, 'video_too_large', 157286400)).toBe("Audio qo'shilmadi: fayl 1100 MB dan katta");
     expect(pickFailedText(makeT('en'), 'mismatch', null)).toBe("Audio not added: the file's content doesn't match its extension");
   });
 });

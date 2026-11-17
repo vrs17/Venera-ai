@@ -1520,3 +1520,65 @@ def test_bayonnoma_chati_sof_funksiyalar():
                                      "bayonnomaga javob (Reply) qilib yozing: Barno tushunib, yangi versiyasini "
                                      "yuboradi.")
     assert render._balanced(plaud_mod.PROMPT)
+
+
+# --- video (2026-11-17, ega qarori): audiosi olinadi, video saqlanmaydi ---------------------
+
+
+def video_update(kind="video", *, file_id="vd1", mime="video/mp4", name=None, size=5000, message_id=22, tg_id=TG_ID):
+    payload = {"file_id": file_id, "file_unique_id": f"U{file_id}", "duration": 64, "file_size": size}
+    if mime:
+        payload["mime_type"] = mime
+    if name:
+        payload["file_name"] = name
+    return {"update_id": 7, "message": {"message_id": message_id, "date": 1762250000,
+                                        "from": {"id": tg_id, "is_bot": False},
+                                        "chat": {"id": tg_id, "type": "private"}, kind: payload}}
+
+
+@pytest.mark.parametrize("kind,mime,name,title", [
+    ("video", "video/mp4", "yigilish.mp4", "Telegram: yigilish.mp4"),
+    ("video_note", None, None, "Telegram: video"),                                  # dumaloq video
+    ("document", "video/quicktime", "yigilish.mov", "Telegram: yigilish.mov"),      # fayl sifatidagi video
+])
+def test_video_plaud_yozuvi_audiosi_olinadi(world, kind, mime, name, title):
+    from test_meetings_video import video_mp4
+
+    bot, tg, rt, plaud = world
+    tg.files["voice/vd1.oga"] = video_mp4(64)
+    bot.handle_update(video_update(kind, mime=mime, name=name))
+    assert len(rt.gapi.submits) == 1
+    rows, total = rt.store.list_meetings(1, limit=10, offset=0)
+    assert total == 1 and rows[0]["title"] == title
+    assert rows[0]["content_type"] == "audio/aac" and rows[0]["audio_path"].endswith(".aac")
+    status = next(kw for kw in tg.sent() if kw["text"].startswith("🎬 "))
+    assert "videodan faqat audio olinadi, video saqlanmaydi" in status["text"] and status["reply_to"] == 22
+    assert any(t.startswith("🎙 <b>Transkript</b>") for t in tg.texts())
+    # Odamning video xabari chatda qoladi (o'chirilmaydi), arxivga ham yozilmaydi.
+    assert not [kw for n, kw in tg.calls if n == "delete_message" and kw["message_id"] == 22]
+    assert not [r for r in archive.get().rows(channel="telegram") if r["kind"] in ("video", "video_note", "document")]
+
+
+def test_video_mp4_bolmasa_yoki_ovozsiz_yoki_katta(world):
+    from test_meetings_video import WEBM, video_mp4
+
+    bot, tg, rt, plaud = world
+    tg.files["voice/w1.oga"] = WEBM
+    bot.handle_update(video_update("document", file_id="w1", mime="video/webm", name="a.webm"))
+    assert tg.texts()[-1] == "Matnga o'girib bo'lmadi: Bu formatdan audio ajratib bo'lmadi, MP4 yuboring."
+    assert tg.sent()[-1]["reply_markup"] is None
+    tg.files["voice/s1.oga"] = video_mp4(sound=False)
+    bot.handle_update(video_update(file_id="s1", message_id=23))
+    assert tg.texts()[-1] == "Matnga o'girib bo'lmadi: Videoda ovoz yo'q." and tg.sent()[-1]["reply_markup"] is None
+    bot.handle_update(video_update(file_id="big", size=plaud_mod.MAX_FILE + 1, message_id=24))
+    assert "20 MB" in tg.texts()[-1] and "Slack" in tg.texts()[-1]
+    assert rt.gapi.submits == []
+
+
+def test_ulanmagan_odamning_videosi_avvalgidek_ochiriladi(world):
+    from test_telegram_bot import VIDEO_NOTE
+
+    bot, tg, rt, plaud = world
+    bot.handle_update(video_update(tg_id=5550099, message_id=25))
+    assert ("delete_message", {"chat_id": 5550099, "message_id": 25}) in tg.calls
+    assert tg.texts() == [VIDEO_NOTE] and rt.gapi.submits == []

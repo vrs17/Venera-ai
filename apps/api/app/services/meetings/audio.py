@@ -25,6 +25,11 @@ deploy'ni murakkablashtiradi. Bizga kerak bo'lgan ish esa oddiy:
     `granule_position` i (`ogg_info`), Router uchun sahifa chegarasida bo'linadi
     (`split_ogg`): har bo'lak = sarlavha sahifalari (OpusHead, OpusTags) + o'z sahifalari,
     tartib raqamlari qayta yozilib, CRC qayta hisoblanadi.
+  * VIDEO (2026-11-17, ega qarori): MP4/MOV/M4V/3GP - m4a bilan bir xil konteyner (ISO BMFF),
+    faqat yana video trek bor. `video_to_adts` AAC audio trekni `mp4_to_adts` bilan ajratadi (video
+    trek o'qilmaydi ham), video fayl esa saqlanmaydi. Audio treki yo'q - `NoAudioTrack` ("Videoda ovoz
+    yo'q"); audio AAC emas (PCM, AC-3, Opus...), fragmentlangan MP4 yoki boshqa konteyner (WebM, MKV,
+    AVI) - `UnsupportedAudio` ("MP4 yuboring"): ularni ffmpeg'siz o'qib bo'lmaydi.
 """
 
 from __future__ import annotations
@@ -180,9 +185,21 @@ def sniff(first: bytes, content_type: str) -> bool:
         return len(first) >= 2 and first[0] == 0xFF and (first[1] & 0xF6) == 0xF0
     if content_type == "audio/mp4":
         return len(first) >= 8 and first[4:8] == b"ftyp"
+    if content_type == VIDEO_TYPE:
+        return is_iso_media(first)
     if content_type == "audio/ogg":
         return first[:4] == b"OggS"
     return False
+
+
+#: ISO BMFF (MP4/MOV) faylining birinchi qutisi: odatda `ftyp`; eski QuickTime MOV `ftyp` siz -
+#: `moov`, `mdat`, `wide` yoki `free` bilan boshlanadi.
+_ISO_FIRST_BOXES = (b"ftyp", b"moov", b"mdat", b"wide", b"free", b"skip", b"pnot")
+
+
+def is_iso_media(first: bytes) -> bool:
+    """Fayl boshi MP4/MOV konteyneriga o'xshaydimi (video sifatida kelgan fayl uchun)."""
+    return len(first) >= 8 and first[4:8] in _ISO_FIRST_BOXES
 
 
 # --- MP4 o'qish -------------------------------------------------------------------
@@ -367,7 +384,7 @@ def _mvhd_duration(path: Path | str) -> float | None:
 def measure(path: Path | str, content_type: str) -> float | None:
     """Server o'lchagan davomiylik - u ilova aytganidan USTUN."""
     content_type = canonical_type(content_type)
-    if content_type == "audio/mp4":
+    if content_type in ("audio/mp4", VIDEO_TYPE):
         return mp4_duration(path)
     if content_type == "audio/mpeg":
         mp3 = mp3_info(path)
@@ -789,6 +806,85 @@ def mp4_to_adts(src: Path | str, dst: Path | str) -> dict:
     return {"frames": frames, "durationSec": round(frames * 1024 / rate, 2), "sampleRate": rate}
 
 
+# --- Video (2026-11-17) -----------------------------------------------------------
+
+
+class NoAudioTrack(RemuxError):
+    """Videoda audio trek yo'q (yoki trek bor, lekin bitta ham namunasi yo'q)."""
+
+
+class UnsupportedAudio(RemuxError):
+    """Videodan audioni ffmpeg'siz ajratib bo'lmaydi: AAC emas, fragmentlangan MP4, konteyner buzilgan."""
+
+
+def _handler(fh, trak: tuple[int, int]) -> bytes | None:
+    """Trek turi: `soun` (audio), `vide` (video), ... yoki topilmasa `None`."""
+    mdia = _child(fh, *trak, "mdia")
+    hdlr = _child(fh, *mdia, "hdlr") if mdia else None
+    if hdlr is None:
+        return None
+    fh.seek(hdlr[0] + 8)
+    return fh.read(4)
+
+
+def _tracks(path: Path | str) -> tuple[list[tuple[bytes | None, str | None]], bool]:
+    """MP4 treklari: [(tur, birinchi kodek)] va fragmentlangan-mi (`moov/mvex`). `moov` yo'q - `UnsupportedAudio`."""
+    size = os.path.getsize(path)
+    with open(path, "rb") as fh:
+        moov = next(((p, e) for k, p, e in _boxes(fh, 0, size) if k == "moov"), None)
+        if moov is None:
+            raise UnsupportedAudio("moov yo'q")
+        tracks = []
+        for kind, payload, end in list(_boxes(fh, *moov)):
+            if kind != "trak":
+                continue
+            handler = _handler(fh, (payload, end))
+            mdia = _child(fh, payload, end, "mdia")
+            minf = _child(fh, *mdia, "minf") if mdia else None
+            stbl = _child(fh, *minf, "stbl") if minf else None
+            entry = _sample_entry(fh, stbl) if stbl else None
+            tracks.append((handler, entry[0] if entry else None))
+        return tracks, _child(fh, *moov, "mvex") is not None
+
+
+def has_video_track(path: Path | str) -> bool:
+    """MP4 ichida video trek bormi (`audio/mp4` deb kelgan, aslida video fayl uchun)."""
+    try:
+        tracks, _ = _tracks(path)
+    except (OSError, struct.error, ValueError, RemuxError):
+        return False
+    return any(handler == b"vide" for handler, _ in tracks)
+
+
+def video_to_adts(src: Path | str, dst: Path | str) -> dict:
+    """MP4/MOV videodan AAC audio -> ADTS (`dst`). `{frames, durationSec, sampleRate, codecs}` qaytaradi.
+
+    Video trek o'qilmaydi: faqat audio namunalarining joylari (`stsz/stco/stsc`) bo'yicha baytlar
+    ko'chiriladi, ya'ni 1 GB video ham bir necha soniyada, kodlashsiz. Asl fayl o'zgarmaydi -
+    uni o'chirish chaqiruvchining ishi. Xato: `NoAudioTrack` yoki `UnsupportedAudio`."""
+    try:
+        tracks, fragmented = _tracks(src)
+    except (OSError, struct.error, ValueError) as exc:
+        raise UnsupportedAudio(f"video o'qilmadi: {exc}") from exc
+    codecs = [codec or "?" for handler, codec in tracks if handler == b"soun"]
+    if not codecs:
+        raise NoAudioTrack("audio trek yo'q")
+    if fragmented:
+        # Namunalar `moof` larda - `moov` jadvallari bo'sh: ffmpeg'siz o'qilmaydi.
+        raise UnsupportedAudio("fragmentlangan MP4")
+    if "mp4a" not in codecs:
+        raise UnsupportedAudio(f"audio AAC emas ({', '.join(codecs)})")
+    try:
+        result = mp4_to_adts(src, dst)
+    except NoAudioTrack:
+        raise
+    except RemuxError as exc:
+        if "namunalari yo'q" in str(exc) or "yozilgan kadr yo'q" in str(exc):
+            raise NoAudioTrack(str(exc)) from exc
+        raise UnsupportedAudio(str(exc)) from exc
+    return {**result, "codecs": codecs}
+
+
 # --- MP3 va WAV (2026-10-22) ------------------------------------------------------
 #
 # Ega so'radi: kompyuterdagi tayyor yozuvlar (diktofon, Zoom, Telegram) ko'pincha mp3 yoki
@@ -805,10 +901,21 @@ TYPE_ALIASES = {
     "audio/x-pn-wav": "audio/wav",
     "audio/x-m4a": "audio/mp4", "audio/m4a": "audio/mp4", "audio/x-aac": "audio/aac", "audio/aacp": "audio/aac",
     "audio/opus": "audio/ogg", "audio/oga": "audio/ogg", "audio/x-ogg": "audio/ogg", "application/ogg": "audio/ogg",
+    # Video (2026-11-17): bitta konteyner (ISO BMFF) - audiosi `video_to_adts` bilan ajratiladi.
+    "video/quicktime": "video/mp4", "video/x-m4v": "video/mp4", "video/3gpp": "video/mp4",
+    "video/3gpp2": "video/mp4",
 }
-#: Saqlanadigan fayl kengaytmasi (STT va pleyer formatni shundan ham taniydi).
+#: Videodan audio ajratiladigan yagona tur (MP4, MOV, M4V, 3GP - `TYPE_ALIASES`).
+VIDEO_TYPE = "video/mp4"
+#: Saqlanadigan fayl kengaytmasi (STT va pleyer formatni shundan ham taniydi). Video saqlanmaydi -
+#: `.mp4` faqat yuklash davomidagi vaqtinchalik nom uchun.
 EXTENSIONS = {"audio/aac": ".aac", "audio/mp4": ".m4a", "audio/mpeg": ".mp3", "audio/wav": ".wav",
-              "audio/ogg": ".ogg"}
+              "audio/ogg": ".ogg", VIDEO_TYPE: ".mp4"}
+
+
+def is_video_type(content_type: str | None) -> bool:
+    """Klient yoki chat (Slack, Telegram) aytgan tur video-mi (`video/*`, qabul qilinmaydiganlari ham)."""
+    return canonical_type(content_type).startswith("video/")
 
 
 def canonical_type(content_type: str | None) -> str:

@@ -152,6 +152,9 @@ def received(file: dict[str, Any]) -> str:
     if file.get("subtype") == "slack_audio":
         return "🎙 Ovozli xabaringiz qabul qilindi."
     name = " ".join(str(file.get("name") or file.get("title") or "audio").split())[:80]
+    if transcribe.is_video(file):
+        # Video saqlanmaydi - odam buni darhol bilsin (ega qarori 2026-11-17).
+        return f"🎬 «{render.escape(name)}» qabul qilindi - videodan faqat audio olinadi, video saqlanmaydi."
     return f"📎 «{render.escape(name)}» qabul qilindi."
 
 

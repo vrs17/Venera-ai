@@ -25,7 +25,7 @@ import { currentSendOptions } from '@/features/calls/CallAutoSend';
 import { limitMb, toastSendOutcome } from '@/features/calls/feedback';
 import { useCalls } from '@/features/calls/callsStore';
 import { displayStartMs, formatSize, parseCallFileName } from '@/features/calls/fileName';
-import { discardImports, importItemStatus, importSendDeps, loadImportItems, type ImportItem, type ImportItemStatus } from '@/features/calls/importFiles';
+import { discardImports, importItemStatus, importLimitFor, importSendDeps, loadImportItems, type ImportItem, type ImportItemStatus } from '@/features/calls/importFiles';
 import { confirmCallConsent } from '@/features/calls/permission';
 import { sendImportedFile, type SendOutcome } from '@/features/calls/send';
 import { parseImportParams } from '@/features/entry/deepLink';
@@ -75,6 +75,7 @@ export default function ImportScreen() {
   const uiLang = useSettings((s) => s.uiLang);
   const services = useServices();
   const maxBytes = useAuth((s) => s.config?.maxUploadBytes || null);
+  const maxVideoBytes = useAuth((s) => s.config?.maxVideoUploadBytes || null);
   const raw = useLocalSearchParams<Raw>();
   const filesKey = joinParam(raw.files);
   const skippedRaw = joinParam(raw.skipped);
@@ -99,7 +100,9 @@ export default function ImportScreen() {
     };
   }, [params, loadKey]);
 
-  const statuses = useMemo(() => (items ?? []).map((it) => importItemStatus(it, maxBytes)), [items, maxBytes]);
+  const statuses = useMemo(() => (items ?? []).map((it) => importItemStatus(it, maxBytes, maxVideoBytes)), [items, maxBytes, maxVideoBytes]);
+  // "Juda katta" matnidagi chegara - shu faylniki (video - alohida, 1 GB).
+  const limits = useMemo(() => (items ?? []).map((it) => importLimitFor(it, maxBytes, maxVideoBytes)), [items, maxBytes, maxVideoBytes]);
   const sendable = (items ?? []).flatMap((it, i) => (statuses[i] === 'ok' && it.meta ? [it.meta] : []));
 
   const leave = () => {
@@ -150,7 +153,7 @@ export default function ImportScreen() {
         <View style={s.root}>
           {items.length > 0 ? (
             <View style={s.emptyList}>
-              <ImportList items={items} statuses={statuses} lang={uiLang} maxBytes={maxBytes} />
+              <ImportList items={items} statuses={statuses} lang={uiLang} limits={limits} />
             </View>
           ) : null}
           <EmptyState
@@ -160,7 +163,7 @@ export default function ImportScreen() {
             // Ro'yxat ustida bo'lsa ixcham: ekranda ikkita "markaz" bo'lmasin.
             compact={items.length > 0}
             title={t('calls.import.emptyTitle')}
-            body={emptyBody(t, statuses, params.skipped, maxBytes)}
+            body={emptyBody(t, statuses, params.skipped, limits[0] ?? maxBytes)}
             action={{
               title: t('calls.import.toRecordings'),
               variant: 'secondary',
@@ -175,7 +178,7 @@ export default function ImportScreen() {
       ) : (
         <ScrollView contentContainerStyle={[s.content, { paddingBottom: 32 + insets.bottom }]} testID="import-screen">
           {params.skipped > 0 ? <Banner tone="warn" testID="import-skipped" text={t('calls.import.skipped', { n: params.skipped })} /> : null}
-          <ImportList items={items} statuses={statuses} lang={uiLang} maxBytes={maxBytes} />
+          <ImportList items={items} statuses={statuses} lang={uiLang} limits={limits} />
           <ListGroup header={t('calls.language')}>
             <View style={s.chips} testID="import-language">
               {LANGS.map((l) => (
@@ -211,7 +214,7 @@ export default function ImportScreen() {
   );
 }
 
-function ImportList({ items, statuses, lang, maxBytes }: { items: ImportItem[]; statuses: ImportItemStatus[]; lang: Lang; maxBytes: number | null }) {
+function ImportList({ items, statuses, lang, limits }: { items: ImportItem[]; statuses: ImportItemStatus[]; lang: Lang; limits: (number | null)[] }) {
   const t = useT();
   const th = useTheme();
   return (
@@ -227,7 +230,7 @@ function ImportList({ items, statuses, lang, maxBytes }: { items: ImportItem[]; 
           if (meta.durationMs > 0) parts.push(formatDuration(meta.durationMs / 1000));
           parts.push(formatSize(meta.sizeBytes, t, lang));
         }
-        const label = statusLabel(t, statuses[i], maxBytes);
+        const label = statusLabel(t, statuses[i], limits[i] ?? null);
         return (
           <View key={it.name} testID={`import-item-${it.name}`} style={[s.card, { backgroundColor: th.surfaceAlt }]}>
             <IconTile icon={parsed.looksLikeCall ? Phone : AudioLines} tone="raised" />

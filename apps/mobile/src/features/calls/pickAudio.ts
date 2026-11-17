@@ -6,8 +6,11 @@
  * suhbat tili, "Yuborish"/"Bekor qilish" -> navbat (source `share` - server tekshiradigan o'sha
  * qiymat) -> rezyumli yuklash.
  *
- * Turlar - serverning beshtasi (2026-11-09, ega roziligi): m4a/mp4, aac, mp3, wav, ogg/oga/opus
- * (avval kengaytma, keyin MIME taxalluslari bilan - `lib/audioTypes`). Native "Ulashish -> Barno AI"
+ * Turlar - serverning beshtasi (2026-11-09, ega roziligi): m4a, aac, mp3, wav, ogg/oga/opus
+ * (avval kengaytma, keyin MIME taxalluslari bilan - `lib/audioTypes`) va VIDEO (2026-11-17, ega qarori):
+ * mp4/mov/m4v - server audiosini ajratib oladi, video saqlanmaydi; chegarasi alohida
+ * (`MAX_VIDEO_COPY_BYTES`, server `maxVideoUploadBytes` - 1 GB); WebM/MKV/AVI - `video_unsupported`
+ * ("MP4 yuboring"). Video nusxasi `.m4v` nomli - native uni tanimaydi, meta JS'da. Native "Ulashish -> Barno AI"
  * esa avvalgidek faqat m4a/aac: Kotlin modulini bu serverda qayta yig'ib, sinab bo'lmaydi - shuning
  * uchun mp3/wav/ogg FAQAT shu JS yo'lida (meta o'qish va tozalash ham JS'da - `importFiles.ts`).
  *
@@ -26,13 +29,23 @@ import { Platform } from 'react-native';
 
 import type { AudioContentType } from '@/api/types';
 import { isCallImportAvailable } from '@/features/entry/nativeEntry';
-import { AUDIO_EXTENSIONS, audioTypeFor, matchesAudioType, sniffAudioType } from '@/lib/audioTypes';
+import { AUDIO_EXTENSIONS, audioTypeFor, isUnsupportedVideo, isVideoContentType, matchesAudioType, sniffAudioType } from '@/lib/audioTypes';
 
 // Sof yordamchilar native'siz (`nativeEntry` testlarda mock qilinadi) - deepLink.ts kabi to'g'ridan-to'g'ri.
 import { IMPORTS_DIR, MAX_SHARED_FILES } from '../../../modules/venera-entry/importNames';
 
 /** Bitta fayl nusxasi chegarasi - Kotlin `CallImport.MAX_COPY_BYTES` bilan bir xil. */
 export const MAX_COPY_BYTES = 160 * 1024 * 1024;
+/**
+ * Video nusxasi chegarasi: server 1 GB oladi (`maxVideoUploadBytes`) - ozgina ortig'i ham nusxalanadi,
+ * tasdiq ekrani serverning aniq chegarasi bilan "juda katta" deydi (audio 160/150 MB kabi).
+ */
+export const MAX_VIDEO_COPY_BYTES = 1100 * 1024 * 1024;
+
+/** Shu tur uchun nusxa chegarasi (video - alohida). */
+export function maxCopyBytes(contentType: AudioContentType): number {
+  return isVideoContentType(contentType) ? MAX_VIDEO_COPY_BYTES : MAX_COPY_BYTES;
+}
 /** Nusxadan keyin ham shuncha joy qolsin (yangi yig'ilish yozuvi uchun) - Kotlin `RESERVE_BYTES`. */
 export const RESERVE_BYTES = 50 * 1024 * 1024;
 /** Tasdiqlanmay qolgan nusxa shuncha vaqtdan keyin o'chiriladi - Kotlin `STALE_IMPORT_MS`. */
@@ -43,9 +56,9 @@ export const STALE_PART_MS = 60 * 60 * 1000;
 const HEADER_BYTES = 12;
 /**
  * Tanlash oynasidagi turlar. `application/ogg` - ba'zi manbalar Opus/Vorbis'ni shunday ataydi va u
- * `audio/*` ga tushmaydi (server ham uni `audio/ogg` deb oladi).
+ * `audio/*` ga tushmaydi (server ham uni `audio/ogg` deb oladi). `video/*` - 2026-11-17 dan (audiosi olinadi).
  */
-export const PICK_MIME_TYPES: readonly string[] = ['audio/*', 'application/ogg'];
+export const PICK_MIME_TYPES: readonly string[] = ['audio/*', 'application/ogg', 'video/*'];
 /** Asl nom (meta .json) chegarasi - Kotlin `MAX_DISPLAY_NAME`. */
 const MAX_DISPLAY_NAME = 200;
 
@@ -89,8 +102,11 @@ export interface ImportsDir {
   sweep(now: number): void;
 }
 
-/** `mismatch` - fayl boshi kengaytmasi aytgan formatga zid (masalan ".mp3" ichida WAV). */
-export type PickSkipReason = 'unsupported' | 'mismatch' | 'too_large' | 'no_space' | 'read';
+/**
+ * `mismatch` - fayl boshi kengaytmasi aytgan formatga zid (masalan ".mp3" ichida WAV);
+ * `video_unsupported` - MP4/MOV bo'lmagan video ("MP4 yuboring"); `video_too_large` - video chegarasidan katta.
+ */
+export type PickSkipReason = 'unsupported' | 'mismatch' | 'too_large' | 'no_space' | 'read' | 'video_unsupported' | 'video_too_large';
 
 export interface PickImportResult {
   /** `imports/` dagi nomlar - `/import?files=` ga shu. */
@@ -148,11 +164,14 @@ export function headerProblem(head: Uint8Array, contentType: AudioContentType): 
 
 /** Nusxa yaroqlimi: bo'sh emas, chegaradan katta emas, mazmun boshi turga mos. */
 function checkCopy(dir: ImportsDir, name: string, bytes: number, contentType: AudioContentType): PickSkipReason | null {
+  const video = isVideoContentType(contentType);
   if (!(bytes > 0)) return 'read';
-  if (bytes > MAX_COPY_BYTES) return 'too_large';
+  if (bytes > maxCopyBytes(contentType)) return video ? 'video_too_large' : 'too_large';
   try {
     // Kengaytma/MIME'ni fayl manbai aytadi - mazmun ham shu format ekani tekshiriladi.
-    return headerProblem(dir.head(name, HEADER_BYTES), contentType);
+    const bad = headerProblem(dir.head(name, HEADER_BYTES), contentType);
+    // ".mp4" ichida WebM/MKV - odamga aniq sabab: "MP4 yuboring".
+    return bad && video ? 'video_unsupported' : bad;
   } catch {
     return 'read';
   }
@@ -161,9 +180,9 @@ function checkCopy(dir: ImportsDir, name: string, bytes: number, contentType: Au
 /** Bitta fayl: tur -> hajm -> joy -> nusxa -> mazmun -> meta (native `importShared` tartibi). */
 async function importOne(dir: ImportsDir, asset: PickedAudio, batch: number, index: number): Promise<{ name: string } | { skip: PickSkipReason }> {
   const contentType = audioTypeFor(asset.name, asset.mimeType);
-  if (!contentType) return { skip: 'unsupported' };
+  if (!contentType) return { skip: isUnsupportedVideo(asset.name, asset.mimeType) ? 'video_unsupported' : 'unsupported' };
   const size = typeof asset.size === 'number' && asset.size > 0 ? asset.size : null;
-  if (size != null && size > MAX_COPY_BYTES) return { skip: 'too_large' };
+  if (size != null && size > maxCopyBytes(contentType)) return { skip: isVideoContentType(contentType) ? 'video_too_large' : 'too_large' };
   const free = dir.freeBytes();
   if (size != null && free != null && free < size + RESERVE_BYTES) return { skip: 'no_space' };
   let name: string;

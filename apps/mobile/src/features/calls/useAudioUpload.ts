@@ -1,6 +1,6 @@
 /**
- * Plaud ro'yxatidagi "Audio yuklash": tizim fayl oynasi (expo-document-picker - audio va
- * `application/ogg`, bir nechta fayl; m4a, aac, mp3, wav, ogg) -> `imports/` (`pickAudio`) -> mavjud
+ * Plaud ro'yxatidagi "Audio/video yuklash": tizim fayl oynasi (expo-document-picker - audio,
+ * `application/ogg` va video, bir nechta fayl; m4a, aac, mp3, wav, ogg, mp4, mov) -> `imports/` (`pickAudio`) -> mavjud
  * `/import` tasdiq ekrani ("Ulashish -> Barno AI" bilan bir yo'l). Hech bir fayl qabul qilinmasa -
  * sababi toast'da (format, mazmun, hajm, joy): odamni bo'sh tasdiq ekraniga olib bormaymiz.
  *
@@ -23,22 +23,26 @@ import type { TFn } from '@/i18n';
 import { showToast } from '@/ui/errors';
 
 import { limitMb } from './feedback';
-import { appImportsDir, audioUploadSupported, importPickedAudio, MAX_COPY_BYTES, PICK_MIME_TYPES, type PickSkipReason } from './pickAudio';
+import { appImportsDir, audioUploadSupported, importPickedAudio, MAX_COPY_BYTES, MAX_VIDEO_COPY_BYTES, PICK_MIME_TYPES, type PickSkipReason } from './pickAudio';
 
 /**
  * Hech bir fayl qabul qilinmadi -> "Audio qo'shilmadi: <sabab>" (sabab gap ichida kichik harf
  * bilan, `calls.sendFailed` kabi). Hajm - server chegarasi (bilinsa), aks holda nusxa chegarasi.
  */
-export function pickFailedText(t: TFn, reason: PickSkipReason | null, maxBytes: number | null): string {
-  return t('calls.pick.failed', { reason: pickReasonText(t, reason, maxBytes) });
+export function pickFailedText(t: TFn, reason: PickSkipReason | null, maxBytes: number | null, maxVideoBytes: number | null = null): string {
+  return t('calls.pick.failed', { reason: pickReasonText(t, reason, maxBytes, maxVideoBytes) });
 }
 
-function pickReasonText(t: TFn, reason: PickSkipReason | null, maxBytes: number | null): string {
+function pickReasonText(t: TFn, reason: PickSkipReason | null, maxBytes: number | null, maxVideoBytes: number | null): string {
   switch (reason) {
     case 'unsupported':
       return t('calls.pick.unsupported');
     case 'mismatch':
       return t('calls.pick.mismatch');
+    case 'video_unsupported':
+      return t('calls.pick.videoUnsupported');
+    case 'video_too_large':
+      return t('calls.err.tooLarge', { mb: limitMb(maxVideoBytes ?? MAX_VIDEO_COPY_BYTES) });
     case 'too_large':
       return t('calls.err.tooLarge', { mb: limitMb(maxBytes ?? MAX_COPY_BYTES) });
     case 'no_space':
@@ -51,6 +55,7 @@ function pickReasonText(t: TFn, reason: PickSkipReason | null, maxBytes: number 
 export function useAudioUpload(): { supported: boolean; busy: boolean; pick: () => Promise<void> } {
   const t = useT();
   const maxBytes = useAuth((s) => s.config?.maxUploadBytes || null);
+  const maxVideoBytes = useAuth((s) => s.config?.maxVideoUploadBytes || null);
   // Native funksiyalar mavjudligi ishga tushgandan keyin o'zgarmaydi - bir marta o'qiladi.
   const [supported] = useState(audioUploadSupported);
   const [busy, setBusy] = useState(false);
@@ -78,14 +83,14 @@ export function useAudioUpload(): { supported: boolean; busy: boolean; pick: () 
         router.push(buildImportPath({ files: out.files, skipped: out.skipped, n: String(Date.now()) }));
         return;
       }
-      showToast(pickFailedText(t, out.reason, maxBytes));
+      showToast(pickFailedText(t, out.reason, maxBytes, maxVideoBytes));
     } catch {
-      showToast(pickFailedText(t, 'read', maxBytes));
+      showToast(pickFailedText(t, 'read', maxBytes, maxVideoBytes));
     } finally {
       running.current = false;
       setBusy(false);
     }
-  }, [t, maxBytes]);
+  }, [t, maxBytes, maxVideoBytes]);
 
   return { supported, busy, pick };
 }

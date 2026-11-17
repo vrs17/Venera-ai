@@ -401,6 +401,8 @@ export const en: Record<TKey, string> = {
   'err.upload_too_large': 'The file is too large',
   'err.chunk_too_large': 'Chunk too large',
   'err.unsupported_format': 'Unsupported audio format',
+  'err.video_no_audio': 'The video has no sound',
+  'err.video_unsupported': "Couldn't extract audio from this format, send an MP4",
   'err.sha_mismatch': 'The file was corrupted during upload',
   'err.owner_unknown': 'It is unclear which account this recording belongs to - tap Retry to upload it to yours',
   'err.not_found': 'Not found on the server',

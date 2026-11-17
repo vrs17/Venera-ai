@@ -695,6 +695,10 @@ class Settings(BaseSettings):
     #: Bitta yozuvning eng katta hajmi. 48 kbps ADTS da 3 soat ~65 MB -
     #: 150 MB katta zahira (m4a yuklansa ham sig'adi).
     meetings_max_upload_mb: int = 150
+    #: Video (2026-11-17, ega qarori): MP4/MOV yuklanadi, server audiosini ajratib, videoni o'chiradi.
+    #: Video audiodan 10-50 barobar katta - shuning uchun alohida chegara; diskda faqat audio
+    #: ajratilguncha turadi. Telegram boti baribir 20 MB dan kattasini ololmaydi.
+    meetings_max_video_mb: int = 1024
     #: Bo'lak hajmi: nginx'ning `client_max_body_size` (12m deb faraz
     #: qilingan) dan ancha kichik, mobil tarmoqda esa qayta yuborish arzon.
     meetings_chunk_bytes: int = 4 * 1024 * 1024

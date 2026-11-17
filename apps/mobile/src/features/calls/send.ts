@@ -19,7 +19,7 @@ import { formatTime } from '@/features/meeting/formatDate';
 import { newQueueRow, type QueueStore } from '@/features/upload/queueStore';
 import type { Uploader } from '@/features/upload/uploader';
 import type { TFn } from '@/i18n';
-import { AUDIO_EXTENSIONS, type AudioExtension } from '@/lib/audioTypes';
+import { AUDIO_EXTENSIONS, type AudioExtension, isVideoContentType } from '@/lib/audioTypes';
 import { sha256Hex } from '@/lib/sha256';
 import { uuidV4 } from '@/lib/uuid';
 
@@ -102,6 +102,8 @@ export interface SendOptions {
   language: Lang;
   /** Server cheklovi (`config.maxUploadBytes`); noma'lum bo'lsa null - server o'zi 413 qaytaradi. */
   maxBytes: number | null;
+  /** Video chegarasi (`config.maxVideoUploadBytes`, 2026-11-17); noma'lum bo'lsa null - server o'zi 413 qaytaradi. */
+  maxVideoBytes?: number | null;
   t: TFn;
 }
 
@@ -228,7 +230,8 @@ export async function sendImportedFile(deps: ImportSendDeps, meta: ImportFileMet
   const now = deps.now ?? Date.now;
   if (!meta.contentType) return { kind: 'unsupported' };
   if (meta.sizeBytes < MIN_BYTES) return { kind: 'missing' };
-  if (opts.maxBytes && meta.sizeBytes > opts.maxBytes) return { kind: 'too_large', maxBytes: opts.maxBytes };
+  const limit = isVideoContentType(meta.contentType) ? (opts.maxVideoBytes ?? null) : opts.maxBytes;
+  if (limit && meta.sizeBytes > limit) return { kind: 'too_large', maxBytes: limit };
   const clientId = deps.newClientId();
   let fileUri: string;
   try {

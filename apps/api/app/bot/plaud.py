@@ -63,6 +63,10 @@ TELEGRAM CHEGARASI. Bot fayllarni 20 MB gacha yuklab ola oladi (`getFile`): ovoz
 soatiga ~14 MB, ya'ni bir soatlik yozuv sig'adi; kattaroq fayl uchun mobil ilova yoki Slack.
 Ovozli xabar - OGG/Opus, yig'ilish quvuri uni 2026-11-04 dan qabul qiladi (`audio.ogg_info`).
 
+VIDEO (2026-11-17, ega qarori). Video, dumaloq video va fayl sifatidagi video ham yozuv: yig'ilish
+audiosini ajratib oladi, video saqlanmaydi (`service._extract_video`). Faqat MP4/MOV; boshqasi -
+"MP4 yuboring". Telegram chegarasi o'sha 20 MB - kattasi uchun Slack yoki mobil ilova.
+
 TUGMALAR (`callback_data`, 64 baytgacha; yig'ilish id'si 32 belgi):
     p:q:<id>            savol berish: ForceReply so'rovi (yig'ilish chati)
     p:n:<id>            yangi suhbat: chat navbatlari arxivga (`service.chat_reset`)
@@ -157,6 +161,10 @@ _MARK = re.compile(r"^p:[a-z]:(?:[fm]:)?([0-9a-f]{32})")
 _EDIT_DATA = re.compile(r"^p:w:([0-9a-f]{32}):([a-z-]{2,7})(?::(docx|pdf))?$")
 #: Hujjat sifatida kelgan audio - kengaytmasidan (Telegram mime bermasligi mumkin).
 _AUDIO_EXT = (".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".opus")
+#: Hujjat sifatida kelgan video (2026-11-17). MP4/MOV dan boshqasi ham shu yerda - odamga "MP4 yuboring" deyilsin.
+_VIDEO_EXT = (".mp4", ".mov", ".m4v", ".3gp", ".webm", ".mkv", ".avi", ".wmv", ".flv", ".mts", ".ts")
+#: Video MP4/MOV emas (yoki ichi o'qilmadi) - `errors.MESSAGES["video_unsupported"]` bilan bir xil.
+VIDEO_UNSUPPORTED = "Bu formatdan audio ajratib bo'lmadi, MP4 yuboring."
 _TASHKENT = timezone(timedelta(hours=5))
 _REMEMBER = 2000
 
@@ -164,8 +172,10 @@ PROMPT = (
     "🎙 <b>Plaud</b> - audio yuboring, matnga o'girib, qisqa xulosa beraman.\n\n"
     "• mikrofon tugmasini bosib <b>ovozli xabar</b> yozing (uzun bo'lsa ham bo'ladi), yoki\n"
     "• <b>audio fayl</b> yuboring: mp3, m4a, aac, wav, ogg - 20 MB gacha (Telegram chegarasi), "
-    "3 soatgacha.\n\n"
-    "Keyingi 15 daqiqada kelgan ovozli xabar Plaud'ga ketadi; audio fayllar - har doim. "
+    "3 soatgacha, yoki\n"
+    "• <b>video</b> yuboring (mp4, mov) - faqat audiosi olinadi, video saqlanmaydi; 20 MB dan kattasini "
+    "Slack yoki mobil ilova orqali.\n\n"
+    "Keyingi 15 daqiqada kelgan ovozli xabar Plaud'ga ketadi; audio va video fayllar - har doim. "
     "Xulosa ostida: 💬 <b>Savol berish</b> (shu yozuv bo'yicha chat - Barno suhbatni eslab qoladi), "
     "vazifalar, eksport, boshqa til va 📄 <b>Bayonnoma</b> - rasmiy hujjat (Word/PDF) "
     "tanlangan tilda.\n\n"
@@ -227,16 +237,23 @@ class Plaud:
 
     @staticmethod
     def media(msg: dict[str, Any]) -> dict[str, Any] | None:
-        """Xabardagi audio: ovozli xabar, audio fayl yoki audio hujjat; `kind` qo'shiladi."""
+        """Xabardagi yozuv: ovozli xabar, audio fayl yoki audio hujjat; video, dumaloq video yoki video hujjat
+        (2026-11-17 - `video: True`, audiosi olinadi). `kind` qo'shiladi."""
         for kind in ("voice", "audio"):
             found = msg.get(kind)
             if isinstance(found, dict) and found.get("file_id"):
                 return {**found, "kind": kind}
+        for kind in ("video", "video_note"):
+            found = msg.get(kind)
+            if isinstance(found, dict) and found.get("file_id"):
+                return {**found, "kind": kind, "video": True}
         doc = msg.get("document")
         if isinstance(doc, dict) and doc.get("file_id"):
             name = str(doc.get("file_name") or "").lower()
             if str(doc.get("mime_type") or "").startswith("audio/") or name.endswith(_AUDIO_EXT):
                 return {**doc, "kind": "document"}
+            if audio.is_video_type(doc.get("mime_type")) or name.endswith(_VIDEO_EXT):
+                return {**doc, "kind": "document", "video": True}
         return None
 
     def wants(self, chat_id: int, media: dict[str, Any]) -> bool:
@@ -438,7 +455,14 @@ class Plaud:
             if exc.code == 413:
                 raise intake.Problem("Fayl juda katta (20 MB gacha).") from None
             raise intake.Problem("Telegram'dan faylni olib bo'lmadi.", retry=True) from None
-        kind = next((t for t in service.ACCEPTED_TYPES if audio.sniff(data[:16], t)), None)
+        if media.get("video"):
+            # Video: faqat MP4/MOV; audiosini ajratish va videoni o'chirish - yig'ilishning o'zida (`service.complete`).
+            kind = audio.VIDEO_TYPE if audio.sniff(data[:16], audio.VIDEO_TYPE) else None
+            if kind is None:
+                log.info("Telegram Plaud (%s): video MP4 emas (%s)", user.actorId, media.get("mime_type"))
+                raise intake.Problem(VIDEO_UNSUPPORTED)
+        else:
+            kind = next((t for t in service.ACCEPTED_TYPES if audio.sniff(data[:16], t)), None)
         if kind is None:
             log.info("Telegram Plaud (%s): mos format yo'q (%s)", user.actorId, media.get("mime_type"))
             raise intake.Problem("Bu audio formati qo'llab-quvvatlanmaydi (mp3, m4a, aac, wav, ogg).")
@@ -499,6 +523,10 @@ class Plaud:
         audio xabariga javob (`reply_to`), transkript ostidagisi - oddiy."""
         if media["kind"] == "voice":
             head = "🎙 Ovozli xabaringiz qabul qilindi."
+        elif media.get("video"):
+            # Video saqlanmaydi - odam buni darhol bilsin (ega qarori 2026-11-17).
+            name = export.one_line(media.get("file_name")) or "video"
+            head = f"🎬 «{esc(name[:80])}» qabul qilindi - videodan faqat audio olinadi, video saqlanmaydi."
         else:
             name = export.one_line(media.get("file_name") or media.get("title")) or "audio"
             head = f"📎 «{esc(name[:80])}» qabul qilindi."
@@ -1036,7 +1064,7 @@ def title_of(media: dict[str, Any], recorded_at: float) -> str:
     if media["kind"] == "voice":
         when = datetime.fromtimestamp(recorded_at, _TASHKENT).strftime("%d.%m.%Y %H:%M")
         return f"Telegram: ovozli xabar {when}"
-    name = export.one_line(media.get("title") or media.get("file_name")) or "audio"
+    name = export.one_line(media.get("title") or media.get("file_name")) or ("video" if media.get("video") else "audio")
     return f"Telegram: {name}"
 
 

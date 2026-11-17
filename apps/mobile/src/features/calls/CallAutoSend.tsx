@@ -45,6 +45,7 @@ export function currentSendOptions(t?: TFn): SendOptions {
     owner: auth.user ? String(auth.user.actorId) : calls.owner,
     language: calls.language ?? useSettings.getState().lastLanguage,
     maxBytes: auth.config?.maxUploadBytes || null,
+    maxVideoBytes: auth.config?.maxVideoUploadBytes || null,
     t: t ?? currentT(),
   };
 }

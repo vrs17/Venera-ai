@@ -401,6 +401,8 @@ export const ru: Record<TKey, string> = {
   'err.upload_too_large': 'Файл слишком большой',
   'err.chunk_too_large': 'Фрагмент слишком большой',
   'err.unsupported_format': 'Формат аудио не поддерживается',
+  'err.video_no_audio': 'В видео нет звука',
+  'err.video_unsupported': 'Из этого формата не удалось извлечь аудио, отправьте MP4',
   'err.sha_mismatch': 'Файл повреждён при загрузке',
   'err.owner_unknown': 'Неясно, чья это запись - нажмите «Повторить», чтобы загрузить её в свой аккаунт',
   'err.not_found': 'Не найдено на сервере',

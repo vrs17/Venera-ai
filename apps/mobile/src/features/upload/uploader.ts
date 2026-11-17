@@ -289,7 +289,8 @@ export function createUploader(deps: UploaderDeps): Uploader {
       return 'auth';
     }
     if (err instanceof ApiError) {
-      if (err.status === 413 || err.status === 415) return fail(row, err.code);
+      // 422 `video_no_audio` (2026-11-17): videoda ovoz yo'q - qayta urinish befoyda.
+      if (err.status === 413 || err.status === 415 || (err.status === 422 && err.code === 'video_no_audio')) return fail(row, err.code);
       if (err.status === 404 && row.serverId) {
         if (deps.owner) {
           // 404 "boshqa hisobniki" ham bo'lishi mumkin: faqat egasi aniq va hozir AYNAN u kirgan bo'lsa

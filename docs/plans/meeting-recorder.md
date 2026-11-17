@@ -350,7 +350,16 @@ default, `ru`, `en`). Errors: 404 when the feature is off, 403 when the user is 
 
 - Validation: `clientId` is a UUID; `language` must be in `languages`; `template` must not be
   `follow_up`; `expectedSpeakers` is 1..20 or null, and Gapi caps it at 4; `contentType` must be in
-  `acceptedContentTypes`, otherwise 415 `unsupported_format`.
+  `acceptedContentTypes`, otherwise 415 `unsupported_format` (`video_unsupported` for any other `video/*`).
+- **Video (2026-11-17, owner decision).** `video/mp4` (aliases `video/quicktime`, `video/x-m4v`,
+  `video/3gpp`) is accepted from the app, Slack and Telegram. The limit is separate: `maxVideoUploadBytes`
+  (`MEETINGS_MAX_VIDEO_MB`, 1024). `/complete` extracts the AAC audio track without ffmpeg
+  (`audio.video_to_adts`), deletes the video file and stores only `.aac`; the meeting continues as
+  `audio/aac`. A `audio/mp4` upload that contains a video track is handled the same way. Works for
+  MP4/MOV/M4V/3GP with AAC audio (phones, Zoom, Teams, Meet, WhatsApp, Telegram, Slack clips). No audio
+  track: 422 `video_no_audio` ("Videoda ovoz yo'q"). Non-AAC audio (PCM, AC-3, Opus, MP3 in MP4),
+  fragmented MP4, WebM/MKV/AVI: 415 `video_unsupported` ("Bu formatdan audio ajratib bo'lmadi, MP4
+  yuboring"). Telegram stays limited to 20 MB (bigger: Slack or the app).
 - Status `uploading`. The title defaults to `"Yig'ilish 9-oktyabr, 11:00"` (Tashkent time, in the
   meeting language) until the summary sets an automatic title.
 - 429 `rate_limited` above 30 creates per user per hour.
@@ -371,7 +380,8 @@ default, `ru`, `en`). Errors: 404 when the feature is off, 403 when the user is 
   - Anything else: **409** `{..., "code": "offset_mismatch", "receivedBytes": N}`. The client
     resumes from `receivedBytes`.
   - First chunk (offset 0): it must start with an ADTS sync word (`0xFFF`) for `audio/aac`, or have
-    `ftyp` at bytes 4..8 for `audio/mp4`. Otherwise 415 `unsupported_format`.
+    `ftyp` at bytes 4..8 for `audio/mp4` (`video/mp4`: `ftyp`, or `moov`/`mdat`/`wide`/`free` of an old
+    QuickTime MOV). Otherwise 415 `unsupported_format` (`video_unsupported` for video).
 - Errors: 400 `sha_mismatch`; 413 `chunk_too_large` or `upload_too_large` (total above
   `maxUploadBytes`); 409 `upload_closed` when the meeting status is not `uploading`.
 - Progressive upload while recording is allowed by this protocol: the client may append while the
@@ -729,6 +739,7 @@ uploading ──complete──▶ uploaded ──worker──▶ transcribing �
 - `summarizing` covers template classification, extraction, the writer step and verification.
 - Error codes:
   - `upload_incomplete`, `sha_mismatch`, `unsupported_format`, `too_long`, `too_large`
+  - `video_no_audio`, `video_unsupported` (2026-11-17, video uploads)
   - `audio_unreadable` (Gapi 422), `stt_rejected` (Gapi 400), `stt_not_configured`, `stt_auth`
     (Gapi 401/403)
   - `stt_job_lost` (404/410 while polling), `stt_timeout`, `router_too_long` (m4a for ru/en over

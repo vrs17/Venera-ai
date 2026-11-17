@@ -165,6 +165,8 @@ export interface MeetingsConfig {
   enabled: boolean;
   maxMinutes: number;
   maxUploadBytes: number;
+  /** Video (`video/mp4`: MP4/MOV) chegarasi - server 2026-11-17 dan beradi; eski serverda yo'q. */
+  maxVideoUploadBytes?: number;
   maxChunkBytes: number;
   acceptedContentTypes: string[];
   languages: Lang[];
@@ -179,9 +181,10 @@ export interface MeetingsConfig {
 // ---------------------------------------------------------------- endpoints 2-5
 /**
  * Server `ACCEPTED_TYPES` (kanonik nomlar - taxalluslar `lib/audioTypes`). Yozuvchi doim
- * `audio/aac`; qo'ng'iroq va "Ulashish" - aac/mp4; Plaud'dagi "Audio yuklash" - beshalasi.
+ * `audio/aac`; qo'ng'iroq va "Ulashish" - aac/mp4; Plaud'dagi "Audio yuklash" - beshalasi va
+ * `video/mp4` (2026-11-17: MP4/MOV video - server audiosini ajratib oladi, video saqlanmaydi).
  */
-export type AudioContentType = 'audio/aac' | 'audio/mp4' | 'audio/mpeg' | 'audio/wav' | 'audio/ogg';
+export type AudioContentType = 'audio/aac' | 'audio/mp4' | 'audio/mpeg' | 'audio/wav' | 'audio/ogg' | 'video/mp4';
 
 export interface CreateMeetingRequest {
   clientId: string;

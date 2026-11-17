@@ -5,9 +5,9 @@ Telegram xabari bitta fayl olib keladi. Izoh (caption) NIQOBLANIB yoziladi (`tg_
 Ovozli SAVOL audiosini `runner._voice` o'zi yozadi: u faylni baribir yuklab oladi, ikkinchi marta
 so'ralmaydi.
 
-NIMA EMAS: shaxsiy chatdagi video - qabul qilinmaydi va o'chiriladi (`runner.is_video`, kamera yozuvi
-hech kimdan olinmaydi); Plaud yozuvi - yig'ilish bo'ladi (audiosi o'sha yerda saqlanadi); stiker -
-umumiy to'plamdan, odamning ma'lumoti emas.
+NIMA EMAS: shaxsiy chatdagi video - arxivga yozilmaydi: ulangan odamniki Plaud yozuvi bo'ladi (2026-11-17:
+audiosi ajratib olinadi, video saqlanmaydi), qolgani o'chiriladi (`runner.is_video`); Plaud yozuvi -
+yig'ilish bo'ladi (audiosi o'sha yerda saqlanadi); stiker - umumiy to'plamdan, odamning ma'lumoti emas.
 
 Telegram botga 20 MB dan katta faylni bermaydi (`getFile`): bunday fayl qatori `too_large` bilan
 yoziladi (kim, qachon, nomi, hajmi). Yuklab bo'lmasa - `failed`. Xato hech qachon otilmaydi.

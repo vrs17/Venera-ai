@@ -23,6 +23,9 @@ MESSAGES: dict[str, str] = {
     "upload_incomplete": "Yozuv to'liq yuklanmagan - ilova qolgan qismini yuboradi.",
     "sha_mismatch": "Yuklangan fayl buzilgan - ilova uni qaytadan yuboradi.",
     "unsupported_format": "Bu audio formati qo'llab-quvvatlanmaydi.",
+    # Video (2026-11-17, ega qarori): faqat MP4/MOV ichidagi AAC audio ajratiladi, video saqlanmaydi.
+    "video_no_audio": "Videoda ovoz yo'q.",
+    "video_unsupported": "Bu formatdan audio ajratib bo'lmadi, MP4 yuboring.",
     "too_long": "Yozuv juda uzun - yangi yozuv boshlang.",
     "too_large": "Fayl juda katta.",
     "audio_unreadable": "Audioni o'qib bo'lmadi.",

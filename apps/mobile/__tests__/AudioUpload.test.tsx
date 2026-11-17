@@ -109,7 +109,7 @@ describe('Plaud: Audio yuklash', () => {
   it('header button opens the audio picker (several files, no cache copy) and hands the files to the /import screen', async () => {
     await renderList({ cards: true });
     const btn = await screen.findByTestId('meetings-upload');
-    expect(btn.props.accessibilityLabel).toBe('Audio yuklash');
+    expect(btn.props.accessibilityLabel).toBe('Audio/video yuklash');
     mockSources.set('content://docs/2', mockMp3);
     Picker.getDocumentAsync.mockResolvedValueOnce(
       picked([
@@ -120,7 +120,7 @@ describe('Plaud: Audio yuklash', () => {
     );
     await press('meetings-upload');
     // `application/ogg` ham: ba'zi manbalar Opus'ni shunday ataydi.
-    expect(Picker.getDocumentAsync).toHaveBeenCalledWith({ type: ['audio/*', 'application/ogg'], multiple: true, copyToCacheDirectory: false });
+    expect(Picker.getDocumentAsync).toHaveBeenCalledWith({ type: ['audio/*', 'application/ogg', 'video/*'], multiple: true, copyToCacheDirectory: false });
     expect(push).toHaveBeenCalledTimes(1);
     const path = push.mock.calls[0][0] as string;
     // Ulashish bilan bir xil havola: tekshirilgan nomlar (mp3 ham), qo'shilmaganlar soni, noyob `n`.
@@ -136,7 +136,7 @@ describe('Plaud: Audio yuklash', () => {
     await renderList();
     await waitFor(() => expect(screen.getByTestId('meetings-empty')).toBeTruthy());
     expect(screen.getByTestId('meetings-empty-record')).toBeTruthy();
-    expect(screen.getByTestId('meetings-empty-upload')).toHaveTextContent('Audio yuklash');
+    expect(screen.getByTestId('meetings-empty-upload')).toHaveTextContent('Audio/video yuklash');
     await press('meetings-empty-upload');
     expect(Picker.getDocumentAsync).toHaveBeenCalledTimes(1);
     expect(push).not.toHaveBeenCalled();
@@ -147,7 +147,7 @@ describe('Plaud: Audio yuklash', () => {
     await renderList({ cards: true });
     Picker.getDocumentAsync.mockResolvedValueOnce(picked([{ uri: 'content://docs/3', name: 'note.amr', mimeType: 'audio/amr' }]));
     await press('meetings-upload');
-    expect(toast).toHaveBeenCalledWith("Audio qo'shilmadi: faqat .m4a, .aac, .mp3, .wav yoki .ogg audio qabul qilinadi");
+    expect(toast).toHaveBeenCalledWith("Audio qo'shilmadi: faqat .m4a, .aac, .mp3, .wav, .ogg audio yoki .mp4, .mov video qabul qilinadi");
     // ".mp3" deyilgan, ichida WAV - mazmun kengaytmaga zid.
     mockSources.set('content://docs/6', mockWav);
     Picker.getDocumentAsync.mockResolvedValueOnce(picked([{ uri: 'content://docs/6', name: 'yozuv.mp3', mimeType: 'audio/mpeg' }]));

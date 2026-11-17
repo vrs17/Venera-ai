@@ -948,8 +948,9 @@ class VeneraBot:
         chat_id, tg_id = chat.get("id"), sender.get("id")
         if not isinstance(chat_id, int) or not isinstance(tg_id, int):
             return
-        if is_video(msg):
-            # Ulanganmi-yo'qmi - farqi yo'q: kamera yozuvi hech kimdan olinmaydi.
+        video = is_video(msg)
+        if video and self.plaud is None:
+            # Plaud o'chiq: kamera yozuvi hech kimdan olinmaydi (avvalgidek o'chiriladi).
             self._reject_video(chat_id, msg)
             return
         sent = msg.get("date")
@@ -964,6 +965,10 @@ class VeneraBot:
 
         link, state = self.links.lookup(tg_id)
         if link is None:
+            if video:
+                # Ulanmagan odamning videosi Plaud'ga ham ketmaydi - avvalgidek o'chiriladi.
+                self._reject_video(chat_id, msg)
+                return
             self._link_prompt(chat_id, state)
             return
         found = self._account(chat_id, link)
@@ -1003,6 +1008,10 @@ class VeneraBot:
                 return
             if text and media is None and self.plaud.on_reply(chat_id, user, msg, text):
                 return
+        if video:
+            # Video faqat Plaud yozuvi bo'ladi (audiosi olinadi, 2026-11-17) - HR yordamchisiga ham, arxivga ham emas.
+            self._reject_video(chat_id, msg)
+            return
         # "⚙️ Guruhlar" tugmasi (`group_admin.py`) - HR yordamchisiga ketmaydi.
         if (self.admin is not None and text == BTN_GROUPS
                 and self.admin.on_text(chat_id, text, user, login)):

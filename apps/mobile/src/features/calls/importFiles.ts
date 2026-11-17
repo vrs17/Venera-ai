@@ -16,7 +16,7 @@ import * as Crypto from 'expo-crypto';
 import { File } from 'expo-file-system';
 
 import { getImportMeta, removeImport } from '@/features/entry/nativeEntry';
-import { audioTypeFor, isAudioContentType } from '@/lib/audioTypes';
+import { audioTypeFor, isAudioContentType, isVideoContentType } from '@/lib/audioTypes';
 import { recordingFile, toFileUri } from '@/lib/paths';
 import { uuidV4 } from '@/lib/uuid';
 import type { Services } from '@/services';
@@ -34,10 +34,16 @@ export interface ImportItem {
   meta: ImportFileMeta | null;
 }
 
-export function importItemStatus(it: ImportItem, maxBytes: number | null): ImportItemStatus {
+/** Shu fayl uchun server chegarasi: video (`maxVideoBytes`) - alohida, audio - `maxBytes`. */
+export function importLimitFor(it: ImportItem, maxBytes: number | null, maxVideoBytes: number | null = null): number | null {
+  return isVideoContentType(it.meta?.contentType) ? maxVideoBytes : maxBytes;
+}
+
+export function importItemStatus(it: ImportItem, maxBytes: number | null, maxVideoBytes: number | null = null): ImportItemStatus {
   if (!it.meta || it.meta.sizeBytes <= 0) return 'missing';
   if (!it.meta.contentType) return 'unsupported';
-  if (maxBytes && it.meta.sizeBytes > maxBytes) return 'too_large';
+  const limit = importLimitFor(it, maxBytes, maxVideoBytes);
+  if (limit && it.meta.sizeBytes > limit) return 'too_large';
   return 'ok';
 }
 

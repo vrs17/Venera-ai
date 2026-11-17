@@ -46,7 +46,10 @@ LANGS = ("uz", "ru", "en")
 #: mp3 va wav - 2026-10-22 (ega: kompyuterdagi tayyor yozuvlar). Taxalluslar (`audio/mp3`, `audio/x-wav`,
 #: `audio/x-m4a`) `audio.canonical_type` bilan shularga keltiriladi.
 #: `audio/ogg` (2026-11-04) - Telegram ovozli xabari (Opus); GAPI uni to'g'ridan-to'g'ri oladi.
-ACCEPTED_TYPES = ("audio/aac", "audio/mp4", "audio/mpeg", "audio/wav", "audio/ogg")
+#: `video/mp4` (2026-11-17, ega qarori) - MP4/MOV video: `complete` audiosini ajratadi (`_extract_video`),
+#: video o'chiriladi, yig'ilish oddiy AAC yozuv bo'lib davom etadi. Boshqa video (WebM, MKV, AVI) -
+#: `video_unsupported` ("MP4 yuboring").
+ACCEPTED_TYPES = ("audio/aac", "audio/mp4", "audio/mpeg", "audio/wav", "audio/ogg", audio.VIDEO_TYPE)
 MIN_SECONDS = 10
 MAX_MARKS = 200
 #: `recordedAt` kelajakda bo'lolmaydi (telefon soati / qasddan): saqlash muddatini
@@ -75,7 +78,10 @@ def parse_time(value: Any) -> int | None:
     return int(moment.timestamp())
 
 
-def max_upload_bytes() -> int:
+def max_upload_bytes(content_type: str | None = None) -> int:
+    """Yuklash chegarasi: video (`video/mp4`) uchun alohida, kattaroq (`meetings_max_video_mb`)."""
+    if audio.canonical_type(content_type) == audio.VIDEO_TYPE:
+        return int(settings.meetings_max_video_mb) * 1024 * 1024
     return int(settings.meetings_max_upload_mb) * 1024 * 1024
 
 
@@ -256,7 +262,8 @@ def config(user: AuthUser, lang: str) -> dict[str, Any]:
     used = store.used_sec(dates.day_key(time.time()), user.actorId) / 60.0 if store.exists else 0.0
     return {
         "enabled": True, "maxMinutes": int(settings.meetings_max_minutes),
-        "maxUploadBytes": max_upload_bytes(), "maxChunkBytes": int(settings.meetings_chunk_bytes),
+        "maxUploadBytes": max_upload_bytes(), "maxVideoUploadBytes": max_upload_bytes(audio.VIDEO_TYPE),
+        "maxChunkBytes": int(settings.meetings_chunk_bytes),
         "acceptedContentTypes": list(ACCEPTED_TYPES), "languages": list(LANGS), "defaultLanguage": "uz",
         "maxDistinctSpeakers": MAX_MEETING_SPEAKERS,
         "userDailyMinutes": int(settings.meetings_user_daily_minutes), "userTodayMinutes": round(used, 1),
@@ -280,7 +287,8 @@ def create(user: AuthUser, body: Any, channel: str, now: float | None = None, *,
         return meeting_view(existing, now), False
     content_type = audio.canonical_type(body.contentType)
     if content_type not in ACCEPTED_TYPES:
-        raise MeetingProblem(415, "unsupported_format")
+        # Video, lekin MP4/MOV emas (WebM, MKV, AVI ...) - odamga aniq: "MP4 yuboring".
+        raise MeetingProblem(415, "video_unsupported" if audio.is_video_type(content_type) else "unsupported_format")
     _rate("create", user.actorId, 30)
     recorded = min(parse_time(body.recordedAt) or int(now), int(now) + FUTURE_SKEW_SEC)
     meeting_id = new_id()
@@ -352,10 +360,11 @@ def append_chunk(user: AuthUser, meeting_id: str, offset: int, data: bytes, chun
             raise MeetingProblem(409, "upload_closed", "Yuklash yopilgan", receivedBytes=received)
         path = store.upload_path(m["id"])
         if offset == received:
-            if offset + len(data) > max_upload_bytes():
+            if offset + len(data) > max_upload_bytes(m.get("content_type")):
                 raise MeetingProblem(413, "upload_too_large", message_for("too_large"))
             if offset == 0 and not audio.sniff(data, m.get("content_type") or ""):
-                raise MeetingProblem(415, "unsupported_format")
+                video = m.get("content_type") == audio.VIDEO_TYPE
+                raise MeetingProblem(415, "video_unsupported" if video else "unsupported_format")
             store.prepare()
             private_file(path)
             with open(path, "r+b") as fh:
@@ -381,6 +390,27 @@ def _file_sha(path: Path) -> str:
         for block in iter(lambda: fh.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _extract_video(m: dict[str, Any], path: Path, now: float) -> Path:
+    """Video -> faqat audio (ADTS, yuklash papkasida). Video fayl HAR HOLDA o'chiriladi (ega qarori
+    2026-11-17: video saqlanmaydi). Ovoz yo'q yoki ajratib bo'lmasa - yig'ilish `failed` va odamga aniq
+    sabab: `video_no_audio` ("Videoda ovoz yo'q") yoki `video_unsupported` ("MP4 yuboring")."""
+    out = path.with_name(path.name + ".aac")
+    try:
+        info = audio.video_to_adts(path, out)
+    except audio.RemuxError as exc:
+        no_audio = isinstance(exc, audio.NoAudioTrack)
+        code = "video_no_audio" if no_audio else "video_unsupported"
+        runtime().store.update_meeting(m["id"], now=now, status="failed", error_code=code, error_stage="upload")
+        log.info("Yig'ilish %s: videodan audio ajratilmadi (%s): %s", m["id"], code, exc)
+        raise MeetingProblem(422 if no_audio else 415, code) from None
+    finally:
+        with contextlib.suppress(OSError):
+            path.unlink()
+    log.info("Yig'ilish %s: videodan audio ajratildi (%s, %.1f s, %d bayt)", m["id"], ",".join(info["codecs"]),
+             info["durationSec"], out.stat().st_size)
+    return out
 
 
 def _marks(raw: list[Any], duration: float) -> list[dict[str, Any]]:
@@ -421,6 +451,9 @@ def complete(user: AuthUser, meeting_id: str, body: Any, now: float | None = Non
             store.update_meeting(m["id"], now=now, received_bytes=0)
             raise MeetingProblem(409, "sha_mismatch", receivedBytes=0)
         content_type = m.get("content_type") or "audio/aac"
+        if content_type == audio.VIDEO_TYPE or (content_type == "audio/mp4" and audio.has_video_track(path)):
+            # Video (yoki `audio/mp4` deb kelgan video): faqat audio qoladi, video fayl o'chiriladi.
+            path, content_type = _extract_video(m, path, now), "audio/aac"
         duration = audio.measure(path, content_type)
         if not duration:
             store.update_meeting(m["id"], now=now, status="failed", error_code="unsupported_format",
@@ -434,7 +467,7 @@ def complete(user: AuthUser, meeting_id: str, body: Any, now: float | None = Non
         with contextlib.suppress(OSError):
             os.chmod(target, 0o600)
         fields: dict[str, Any] = {
-            "audio_path": str(target), "audio_sha256": sha, "total_bytes": received,
+            "audio_path": str(target), "audio_sha256": sha, "total_bytes": received, "content_type": content_type,
             "duration_sec": round(float(duration), 2), "ended_at": parse_time(body.endedAt),
             "marks": jdump(_marks(body.marks or [], float(duration))), "completed_at": int(now),
             "progress": 0.0, "error_code": None, "error_stage": None, "next_attempt_at": None}
