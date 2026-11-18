@@ -13,6 +13,7 @@ import { Mic, RotateCcw, Send, Square, Trash2 } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { ApiError } from '@/api/client';
 import type { VoiceSampleView } from '@/api/types';
 import { useRecorderStore } from '@/features/recorder/RecorderProvider';
 import { isActive } from '@/features/recorder/recorderMachine';
@@ -34,7 +35,8 @@ const SAMPLE_PRESET: RecordingOptions = {
   ios: { ...RecordingPresets.HIGH_QUALITY.ios, extension: '.m4a', sampleRate: 16000 },
 };
 const MIN_SEC = 30;
-const MAX_SEC = 120;
+/** 90 s AAC (48 kbps) ~0.55 MB - edge proksining ~1 MB chegarasidan ancha past. */
+const MAX_SEC = 90;
 const POLL_MS = 2000;
 const POLL_LIMIT_MS = 120_000;
 
@@ -110,7 +112,7 @@ export default function VoiceSampleScreen() {
       recorder.record();
       setFileUri(null);
       setRecordedMs(0);
-      // Uzoq yozuv kerak emas: 2 daqiqada o'zi to'xtaydi.
+      // Uzoq yozuv kerak emas: 90 soniyada o'zi to'xtaydi.
       startedAt.current = Date.now();
       limit.current = setTimeout(() => void stop(), MAX_SEC * 1000);
     } catch {
@@ -124,9 +126,7 @@ export default function VoiceSampleScreen() {
     setError(null);
     setResult(null);
     try {
-      const size = (await services.files.size(fileUri)) ?? 0;
-      const bytes = await services.files.read(fileUri, 0, size);
-      let view = await services.meetings.uploadVoiceSample(bytes, fileUri.endsWith('.m4a') ? 'audio/mp4' : 'audio/aac');
+      let view = await services.meetings.uploadVoiceSample(fileUri, fileUri.endsWith('.m4a') ? 'audio/mp4' : 'audio/aac');
       const started = Date.now();
       while (view.status === 'processing' && alive.current && Date.now() - started < POLL_LIMIT_MS) {
         await new Promise((r) => setTimeout(r, POLL_MS));
@@ -140,7 +140,9 @@ export default function VoiceSampleScreen() {
       }
       await queryClient.invalidateQueries({ queryKey: ['voice-sample'] });
     } catch (e) {
-      if (alive.current) setError((e as { message?: string })?.message || t('vs.failed'));
+      // Server xabari bo'lsa (masalan "Oldingi namuna hali tekshirilmoqda") - o'sha; tarmoq yoki proksi xatosi
+      // (HTML 403/502, timeout) - tushunarli umumiy matn, "Request failed (403)" emas.
+      if (alive.current) setError(e instanceof ApiError && e.body?.message ? e.body.message : t('vs.failed'));
     } finally {
       if (alive.current) setBusy(false);
     }

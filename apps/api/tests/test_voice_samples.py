@@ -359,3 +359,54 @@ def test_ikkala_hisob_ishlamasa_xizmat_javob_bermadi(client, auth, fake):
     fake.results = {1: [gapi_error(503, "busy", retryable=True)], 2: [gapi_error(503, "busy", retryable=True)]}
     body = post(client, auth).json()
     assert body["status"] == "failed" and body["reason"] == "stt_unavailable"
+
+
+def test_bitta_xodim_bitta_ovoz_qaysi_kanaldan_yozmasin(client, auth, fake, _isolated_meetings):
+    """Ega talabi (2026-11-18): namuna KANALGA emas, XODIMGA (Barno hisobi, BRB-Tech ID) bog'lanadi. Telegram, Slack
+    yoki mobil ilovada yozilgan namuna uchala kanaldagi yig'ilishlarda ishlaydi; boshqa kanaldagi namuna o'sha BITTA
+    ovozga qo'shiladi (alohida "Slack ovozi", "Telegram ovozi" yo'q). Holat va o'chirish ham hamma kanalda bitta."""
+    from app.bot.voice_sample import instructions_html
+    from app.schemas.auth import AuthUser
+    from app.slack.voice import instructions_text
+
+    rt = _isolated_meetings
+    fake.accounts = [1]
+    fake.results = {1: [result("new", 100, "sp-a"), result("matched", 100, "sp-a"), result("matched", 100, "sp-a")]}
+    user = AuthUser(actorId=1, email="admin@venera.uz", fullName="Administrator")
+    assert voice.submit(user, AUDIO, "audio/ogg", "telegram", wait=True)["status"] == "ok"
+    assert voice.submit(user, AUDIO, "audio/mp4", "slack", wait=True)["status"] == "ok"
+    mobile = client.post("/api/v1/voice-sample", content=AUDIO,
+                         headers={**auth, "Content-Type": "audio/aac", "X-Venera-Client": "mobile"})
+    assert mobile.json()["status"] == "ok"
+    assert rt.store.scalar("SELECT COUNT(*) FROM voice_persons", (), 0) == 1
+    assert [r["speaker_key"] for r in rt.store.rows("SELECT speaker_key FROM voice_links")] == ["sp-a"]
+    assert sorted(r["channel"] for r in rt.store.rows("SELECT channel FROM voice_samples")) == \
+        ["mobile", "slack", "telegram"]
+    # Holat hamma kanalda bir xil: 3 ta namuna (mobil ilova, Telegram, Slack).
+    assert client.get("/api/v1/voice-sample", headers=auth).json()["samples"] == 3
+    assert "3 ta namuna" in instructions_html(voice.status(user)) and "3 ta namuna" in instructions_text(voice.status(user))
+    # Yig'ilish qaysi kanaldan kelmasin - o'sha ovoz o'sha xodim.
+    out = voice.identify(rt.store, 1, [{"id": "S1", "rawIndex": 0, "talkSec": 5.0,
+                                        "identity": {"status": "matched", "voice_id": 100, "speaker_id": "sp-a"}}])
+    assert out[0]["name"] == "Administrator" and out[0]["nameSource"] == "voice"
+    # Bitta kanaldan o'chirish - hammasini o'chiradi.
+    assert voice.delete(user)["samples"] == 3
+    assert client.get("/api/v1/voice-sample", headers=auth).json()["enrolled"] is False
+
+
+def test_multipart_yuborish_mobil_ilova_kabi(client, auth, fake, _isolated_meetings, monkeypatch):
+    """Mobil ilova namunani MULTIPART bilan yuboradi (`postForm`): edge nginx xom audio POST ni 403 bilan to'xtatadi
+    (1.3.17 dagi "Request failed (403)"). Fayl turi - qismdan; katta fayl - 413; fayl yo'q - 400."""
+    fake.results = {1: [result("new", 100, "sp-a")], 2: [result("new", 100, "sp-b")]}
+    response = client.post("/api/v1/voice-sample", files={"file": ("voice-sample.aac", AUDIO, "audio/aac")},
+                           headers={**auth, "X-Venera-Client": "mobile"})
+    assert response.status_code == 202, response.text
+    assert response.json()["status"] == "ok" and response.json()["channel"] == "mobile"
+    row = _isolated_meetings.store.row("SELECT content_type, bytes FROM voice_samples")
+    assert row == {"content_type": "audio/aac", "bytes": len(AUDIO)}           # tur - multipart qismidan
+    assert client.post("/api/v1/voice-sample", data={"x": "1"}, files={"other": ("a.txt", b"x", "text/plain")},
+                       headers=auth).status_code == 400
+    monkeypatch.setattr(settings, "voice_sample_max_bytes", 1000, raising=False)
+    big = client.post("/api/v1/voice-sample", files={"file": ("v.aac", b"\xff\xf1" + b"\x00" * 3000, "audio/aac")},
+                      headers=auth)
+    assert big.status_code == 413

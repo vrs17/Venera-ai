@@ -175,12 +175,16 @@ export function createMeetingsApi(client: ApiClient) {
     transcript: (id: string) => client.request<Transcript>(`${M}/${enc(id)}/transcript`),
     // Ovoz namunasi (spikerni ovozidan tanish, server 2026-11-18): holat + tartib va matn, yuborish, natija, o'chirish.
     voiceStatus: () => client.request<VoiceStatus>(VS),
-    uploadVoiceSample: (bytes: Uint8Array, contentType: string) =>
-      client.request<VoiceSampleView>(VS, {
-        method: 'POST',
-        rawBody: bytes,
-        headers: { 'Content-Type': contentType },
+    // MULTIPART (chat diktovkasi kabi): `llm.brb-tech.uz` oldidagi nginx xom audio POST ni 403 bilan to'xtatadi
+    // (1.3.17 - "Request failed (403)"), multipart esa o'tadi. RN FormData `{uri, name, type}` faylni o'zi o'qiydi.
+    uploadVoiceSample: (uri: string, mime: string) =>
+      client.postForm<VoiceSampleView>(VS, {
         timeoutMs: CHUNK_TIMEOUT_MS,
+        form: () => {
+          const form = new FormData();
+          form.append('file', { uri, name: `voice-sample${mime === 'audio/mp4' ? '.m4a' : '.aac'}`, type: mime } as unknown as Blob);
+          return form;
+        },
       }),
     voiceSample: (sampleId: string) => client.request<VoiceSampleView>(`${VS}/${enc(sampleId)}`),
     deleteVoice: () => client.request<VoiceDeleted>(VS, { method: 'DELETE' }),
