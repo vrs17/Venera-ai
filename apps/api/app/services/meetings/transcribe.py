@@ -456,6 +456,10 @@ class Transcriber:
             # Spikerni ovozidan tanish (`voice.py`): xodim - ismi, mehmon - doimiy raqami; transkript bilan BIRGA
             # yoziladi, ya'ni xulosa yozilayotganda ism allaqachon bor.
             normalized["speakers"] = voice.identify(self.store, account, normalized["speakers"])
+            # GAPI bitta odamga ikki ovoz ochib qo'ygan bo'lsa u odamni tanimaydi ("yangi ovoz"): bunday spiker
+            # "faqat xodimlar" maydonida qayta solishtiriladi va nusxa ovoz birlashtiriladi (`voice.py`, NUSXA OVOZ).
+            normalized["speakers"] = voice.resolve_meeting(self.store, account, m, normalized["speakers"],
+                                                           normalized["segments"])
         self.store.add_usage(dates.day_key(now), m["actor_id"], audio_sec)
         self.rt.gapi.note_meeting_audio(audio_sec)
         self._meter(m, "ok", http=200, started=m.get("stt_submitted_at"), now=now,

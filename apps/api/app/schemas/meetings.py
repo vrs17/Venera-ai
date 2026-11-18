@@ -272,6 +272,14 @@ class VoiceCoverage(BaseModel):
     guests: int
 
 
+class VoiceRecheck(BaseModel):
+    """Mehmonlarni xodimlar ovozi bilan qayta solishtirish natijasi."""
+
+    checked: int = 0
+    adopted: int = 0
+    busy: int = 0
+
+
 class Segment(BaseModel):
     id: int
     speaker: str | None = None

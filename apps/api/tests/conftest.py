@@ -398,6 +398,9 @@ def _isolated_meetings(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "meetings_dir", tmp_path / "meetings", raising=False)
     monkeypatch.setattr(settings, "devices_db", tmp_path / "devices.db", raising=False)
     monkeypatch.setattr(settings, "meetings_worker", False, raising=False)
+    # Nusxa ovozlarni tuzatish (GAPI "faqat xodimlar" maydoni) - faqat o'z testlarida yoqiladi
+    # (`test_voice_resolve.py`): qolgan testlardagi soxta GAPI bu chaqiruvlarni bilmaydi.
+    monkeypatch.setattr(settings, "voice_resolve_enabled", False, raising=False)
     monkeypatch.setattr(config_module, "meetings_enabled_now", lambda: bool(settings.meetings_enabled))
     rt = meetings.reset_for_tests(tmp_path / "meetings", gapi=FakeGapiMeeting(), router=FakeRouter(),
                                   llm=FakeLLM(), devices=DeviceStore(tmp_path / "devices.db", days=30))

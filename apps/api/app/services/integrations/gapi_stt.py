@@ -54,7 +54,12 @@ _MEETING_FILENAMES = {"audio/aac": "meeting.aac", "audio/mp4": "meeting.m4a", "a
 #: `emotion`/`pii` - narx tuzog'i (yuqoridagi izohga qara). `diarization`
 #: esa bizga keraksiz: biz bitta odamning bitta gapini o'giramiz, so'zlovchi
 #: ajratish bo'sh ish va natijani chalkashtiradi.
-_SETTINGS = {"diarization": False, "emotion": False, "pii": False}
+#:
+#: `speaker_identification`/`gender` - ANIQ o'chiq (2026-11-18). Yuborilmasa GAPI loyiha sozlamasini oladi
+#: (1-hisobda "ovozdan tanish" yoqiq): diktovka loyiha ovozlari ro'yxatiga xodimlarning NOMSIZ nusxa ovozlarini
+#: qo'shardi. Bitta odamning ikki ovozi bo'lsa GAPI yig'ilishda ikkalasi orasida tanlay olmaydi va odamni
+#: «yangi ovoz» deb yozadi (`services/meetings/voice.py`, "NUSXA OVOZ"). Ovozlar - faqat yig'ilish va namunadan.
+_SETTINGS = {"diarization": False, "emotion": False, "pii": False, "speaker_identification": False, "gender": False}
 
 #: LUG'AT YUBORILMAYDI - O'LCHANGAN QAROR.
 #:
@@ -746,15 +751,25 @@ class GapiSttClient:
     # `speaker_info[].identity.speaker_id`, ro'yxatda `id`), raqam (`voice_id` / `number`) - ko'rinish uchun.
     # Ovoz izining O'ZI hech qaysi javobda kelmaydi.
 
-    def transcribe_sample(self, audio: bytes, content_type: str, *, account: int = 1) -> tuple[dict[str, Any], str]:
+    def transcribe_sample(self, audio: bytes, content_type: str, *, account: int = 1, tenant: str | None = None,
+                          enroll: str | None = None) -> tuple[dict[str, Any], str]:
         """Ovoz namunasi -> GAPI natijasi XOM (`speaker_info`, `voices`, `speech_seconds`) va vazifa raqami
         (`enroll_speaker` uchun). Sinxron `/transcribe` (5 daqiqagacha), `202` bo'lsa kutiladi.
-        Hisob AYNAN berilgani - balans tugasa ham boshqasiga o'tmaydi: ovoz har hisobga alohida yoziladi."""
+        Hisob AYNAN berilgani - balans tugasa ham boshqasiga o'tmaydi: ovoz har hisobga alohida yoziladi.
+
+        `tenant` - ALOHIDA ovozlar maydoni (loyiha ovozlari bilan hech qachon solishtirilmaydi; jonli tekshirilgan
+        2026-11-18): `voice.py` undan "faqat xodimlar" maydoni sifatida foydalanadi. `enroll="off"` - faqat
+        solishtirish: yangi ovoz ochilmaydi (bunday vazifadan `enroll_speaker` ham ishlamaydi - iz saqlanmaydi)."""
         if not self.base_url or not self._key_of(account):
             raise SttError(f"GAPI STT sozlanmagan ({self._name(account)})", status=501)
         if not audio:
             raise SttError("audio bo'sh", status=400)
-        body, ctype = _multipart(audio, safe_filename(content_type), content_type, _SAMPLE_SETTINGS)
+        sample_settings: dict[str, Any] = dict(_SAMPLE_SETTINGS)
+        if tenant:
+            sample_settings["tenant"] = tenant
+        if enroll:
+            sample_settings["enroll"] = enroll
+        body, ctype = _multipart(audio, safe_filename(content_type), content_type, sample_settings)
         if not self._slots.acquire(timeout=30.0):
             busy = SttError(f"ilova GAPI chegarasida ({self.max_concurrent} parallel)", status=503, retryable=True)
             busy.local = True
@@ -773,9 +788,11 @@ class GapiSttClient:
         self._account(_num(payload.get("audio_seconds")) or 0.0)
         return payload, job_id
 
-    def speakers(self, *, account: int = 1) -> list[dict[str, Any]]:
-        """`GET /speakers` - loyihaning ovozlari: `id`, `number`, `name`, `kind`, `seen_count`, ..."""
-        payload, _ = self._send_any(self._get_request("/speakers", account))
+    def speakers(self, *, account: int = 1, tenant: str | None = None) -> list[dict[str, Any]]:
+        """`GET /speakers` - loyihaning (yoki `tenant` maydonining) ovozlari: `id`, `number`, `name`, `kind`,
+        `seen_count`, `voiceprints`, ..."""
+        path = "/speakers" + (f"?tenant={urllib.parse.quote(tenant, safe='')}" if tenant else "")
+        payload, _ = self._send_any(self._get_request(path, account))
         if isinstance(payload, dict):
             for key in ("speakers", "items", "data", "voices"):
                 if isinstance(payload.get(key), list):
@@ -783,9 +800,13 @@ class GapiSttClient:
                     break
         return [s for s in payload if isinstance(s, dict)] if isinstance(payload, list) else []
 
-    def create_speaker(self, name: str, *, account: int = 1) -> dict[str, Any]:
-        """`POST /speakers {"name"}` - izsiz ovoz (izi keyin `enroll_speaker` bilan)."""
-        return self._json("POST", "/speakers", {"name": name}, account)
+    def create_speaker(self, name: str, *, account: int = 1, tenant: str | None = None) -> dict[str, Any]:
+        """`POST /speakers {"name"}` - izsiz ovoz (izi keyin `enroll_speaker` bilan). `tenant` - o'sha maydonda;
+        iz faqat SHU maydonda ishlagan vazifadan qo'shiladi (boshqasi - 422 `tenant_mismatch`)."""
+        body: dict[str, Any] = {"name": name}
+        if tenant:
+            body["tenant"] = tenant
+        return self._json("POST", "/speakers", body, account)
 
     def rename_speaker(self, speaker_id: str, name: str, *, account: int = 1) -> dict[str, Any]:
         """`PATCH /speakers/{id} {"name"}`. Nom qo'yilgan ovoz (`named`) muddatsiz saqlanadi."""
@@ -811,6 +832,18 @@ class GapiSttClient:
         else:
             body["speaker_index"] = int(speaker_index or 0)
         return self._json("POST", f"/speakers/{urllib.parse.quote(speaker_id, safe='')}/enroll", body, account)
+
+    def speaker_clip(self, speaker_id: str, *, account: int = 1) -> bytes:
+        """`GET /speakers/{id}/sample` - shu ovoz eshitiladigan 12 soniyagacha WAV (eng uzun gapi). Saqlangan
+        yozuvi yo'q ovozda 404 `no_sample`, audiosi o'chgan bo'lsa 410 - ikkalasi `SttError`."""
+        request = self._get_request(f"/speakers/{urllib.parse.quote(speaker_id, safe='')}/sample", account)
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return response.read()
+        except urllib.error.HTTPError as exc:
+            raise self._from_http(exc) from None
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise SttError(f"GAPI ga ulanib bo'lmadi: {self._redact(str(exc))}", status=503, retryable=True) from exc
 
     def _json(self, method: str, path: str, body: dict[str, Any] | None, account: int) -> dict[str, Any]:
         data = None if body is None else json.dumps(body).encode("utf-8")

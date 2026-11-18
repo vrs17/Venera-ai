@@ -91,7 +91,8 @@ def test_yigilish_sozlamalari_aniq_kalitlar_va_biometrik_ochiq_emas():
 
 
 def test_chat_sozlamalari_ozgarmagan():
-    assert _SETTINGS == {"diarization": False, "emotion": False, "pii": False}
+    assert _SETTINGS == {"diarization": False, "emotion": False, "pii": False, "speaker_identification": False,
+                         "gender": False}
 
 
 def test_submit_oqim_bilan_fayl_butun_oqilmaydi(client, tmp_path, monkeypatch):
@@ -268,3 +269,36 @@ def test_natijada_speaker_info_va_voices_saqlanadi():
     assert result.speaker_info == [{"index": 0, "identity": {"status": "new"}}]
     assert result.voices == [{"speaker": 0, "voice_id": 100}]
     assert parse_meeting_result({"segments": []}).speaker_info == []
+
+
+def test_namuna_alohida_maydonda_va_faqat_solishtirish(client, monkeypatch):
+    """`tenant` - alohida ovozlar maydoni ("faqat xodimlar"), `enroll: off` - faqat solishtirish (`voice.py`)."""
+    transport = Transport([(200, {"segments": [], "speaker_info": []}, {"X-Job-Id": "j1"}),
+                           (200, {"segments": [], "speaker_info": []}, {"X-Job-Id": "j2"})])
+    monkeypatch.setattr(urllib.request, "urlopen", transport)
+    client.transcribe_sample(b"x" * 10, "audio/aac", account=1, tenant="barno-staff", enroll="off")
+    client.transcribe_sample(b"x" * 10, "audio/aac", account=1)
+    assert b'"tenant": "barno-staff"' in transport.requests[0]["body"]
+    assert b'"enroll": "off"' in transport.requests[0]["body"]
+    assert b"tenant" not in transport.requests[1]["body"] and b"enroll" not in transport.requests[1]["body"]
+    assert "tenant" not in gapi_stt._SAMPLE_SETTINGS                # umumiy sozlama o'zgarmaydi
+
+
+def test_maydon_ovozlari_va_ovoz_parchasi(client, monkeypatch):
+    transport = Transport([
+        (200, {"speakers": [{"id": "st-1", "number": 100, "name": "barno-3"}]}, {}),
+        (201, {"id": "st-2", "number": 101, "name": "barno-4", "tenant": "barno-staff"}, {}),
+        (200, {"riff": "wav"}, {}),
+        (404, {"error": "no_sample"}, {}),
+    ])
+    monkeypatch.setattr(urllib.request, "urlopen", transport)
+    assert client.speakers(tenant="barno-staff")[0]["name"] == "barno-3"
+    assert client.create_speaker("barno-4", tenant="barno-staff")["id"] == "st-2"
+    assert client.speaker_clip("sp 1") == json.dumps({"riff": "wav"}).encode()
+    with pytest.raises(SttError) as err:
+        client.speaker_clip("sp-2")
+    assert err.value.gapi_status == 404 and err.value.gapi_code == "no_sample"
+    urls = [(r["method"], r["url"].replace(BASE, "")) for r in transport.requests]
+    assert urls == [("GET", "/speakers?tenant=barno-staff"), ("POST", "/speakers"),
+                    ("GET", "/speakers/sp%201/sample"), ("GET", "/speakers/sp-2/sample")]
+    assert json.loads(transport.requests[1]["body"]) == {"name": "barno-4", "tenant": "barno-staff"}

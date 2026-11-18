@@ -136,7 +136,11 @@ def test_notogri_sozlama_kaliti_yuborilmaydi(gapi):
     shuning uchun yuboriladigan kalitlar ro'yxati QAT'IY."""
     client, fake = gapi
     client.transcribe(AUDIO, language="uz")
-    assert set(fake.settings_sent()) == {"diarization", "emotion", "pii"}
+    # `speaker_identification`/`gender` - ANIQ o'chiq (2026-11-18): yuborilmasa loyiha sozlamasidan olinadi va
+    # diktovka xodimlarning nomsiz nusxa ovozlarini ochishi mumkin (`voice.py`, NUSXA OVOZ). Ikkalasi ham GAPI
+    # biladigan kalit (yig'ilish va namuna sozlamalarida bor; jonli tekshirilgan).
+    assert set(fake.settings_sent()) == {"diarization", "emotion", "pii", "speaker_identification", "gender"}
+    assert fake.settings_sent()["speaker_identification"] is False and fake.settings_sent()["gender"] is False
 
 
 def test_til_maydoni_yuborilmaydi(gapi):

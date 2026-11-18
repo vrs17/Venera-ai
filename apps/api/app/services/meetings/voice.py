@@ -24,12 +24,30 @@ olishi mumkin) - to'liq yechim bitta hisob (GAPI bilan kelishuv).
 GAPI DAGI NOM - taxallus: `barno-<shaxs raqami>`, haqiqiy ism EMAS (ism faqat bizda). Nom qo'yilgan ovoz
 muddatsiz saqlanadi; nomsiz ovozni GAPI bir yozuvda eshitilgan bo'lsa 30 kundan keyin o'chiradi.
 
+NUSXA OVOZ (jonli muammo, 2026-11-18). GAPI ovozni faqat ikkinchi eng o'xshash ovozdan ANIQ ustun bo'lsa
+taniydi. Bitta odamning loyihada ikki ovozi bo'lsa (namunasi alohida, eski yig'ilishdagi ovozi alohida raqam
+olgan) - yig'ilishdagi nutqi ikkalasiga deyarli bir xil o'xshaydi, GAPI tanlamaydi va UCHINCHI ovoz ochadi:
+odam shundan keyin har yig'ilishda «Noma'lum» bo'lib qoladi. O'lchov: toza maydonda o'z ovozi 0.74-0.91, begona
+0.21-0.33 - ya'ni model yaxshi ajratadi, muammo faqat nusxalarda. Yechim - `resolve_meeting` va `sweep`:
+  * "FAQAT XODIMLAR" MAYDONI - GAPI `tenant` (`VOICE_STAFF_TENANT`, har hisobda): unda namuna yozgan har xodimning
+    bitta ovozi bor (`barno-<shaxs>`), mehmon ham, nusxa ham YO'Q. Loyiha ovozlari bilan hech qachon aralashmaydi.
+  * Xodimga bog'lanmagan spikerning nutq parchasi (yig'ilish audiosidan DEKODERSIZ kesiladi, `audio.cut_adts`)
+    shu maydonda `enroll: off` bilan qayta solishtiriladi. Mos keldi -> `_adopt`: yig'ilishdagi nutqi xodimning
+    loyihadagi ovoziga iz bo'lib qo'shiladi, nusxa ovoz GAPI dan o'chadi, mehmon shaxs xodimga qo'shiladi va
+    o'tgan yig'ilishlardagi «Noma'lum #N» ismga almashadi.
+  * QACHON: yig'ilishdan keyin (GAPI "yangi ovoz" degan, lekin mavjud ovozga `VOICE_HINT_SCORE` dan ko'p
+    o'xshagan spiker; yoki yangi namunalardan beri tekshirilmagan mehmon) va YANGI NAMUNADAN keyin (`sweep` -
+    oxirgi 30 kun mehmonlari). Ya'ni xodim namunani yig'ilishdan KEYIN yozsa ham o'sha yig'ilishga ismi qo'yiladi.
+  * KUCHAYTIRISH (`_reinforce`): GAPI o'zi tanigan xodimning yig'ilishdagi nutqi ham ovoziga iz bo'lib qo'shiladi
+    (`VOICE_PRINTS_MAX` gacha) - bitta o'qilgan namuna boshqa telefon/xonada chegarada qoladi (0.72-0.75).
+
 OVOZ IZI bizda yo'q (GAPI uni hech qachon bermaydi). Namuna AUDIOSI saqlanadi (`<meetings_dir>/voice/`, 700/600):
 2-bosqichda (o'z modelimiz) xodimlardan qayta yozdirmaslik uchun. Xodim ovozini o'chirsa - audio ham o'chadi.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
@@ -73,6 +91,8 @@ RECOMMENDED_SEC = 45
 INTRO = ("🗣 Ovoz namunasi - Plaud yig'ilishlarida ism-familiyangiz avtomatik chiqishi uchun. Bir marta yozasiz, "
          "Telegram, Slack va mobil ilovadagi yig'ilishlarning hammasida ishlaydi.")
 OK_TEXT = "✅ Ovozingiz saqlandi. Endi Plaud yig'ilishlarida ism-familiyangiz avtomatik chiqadi."
+#: Namunadan keyin o'tgan yig'ilishlardagi «Noma'lum» ham shu xodim bo'lib chiqsa - natija matniga qo'shiladi.
+RETRO_TEXT = " O'tgan {n} ta yig'ilishda ham ismingiz qo'yildi."
 DELETED_TEXT = "🗑 Ovoz namunangiz o'chirildi. Yig'ilishlarda endi «Noma'lum» deb chiqasiz."
 #: Rad etish / xato sababi -> xodimga matn (kod - API javobida `reason`).
 REASONS = {
@@ -171,7 +191,10 @@ def identify(store: MeetingStore, account: int, speakers: list[dict[str, Any]]) 
         status = str(identity.get("status") or "") or None
         item["voiceStatus"] = status
         item["voiceScore"] = _num(identity.get("score"))
-        key, voice_no, _ = _key(identity)
+        key, voice_no, speaker_id = _key(identity)
+        # Ichki (omborga yozilmaydi): `resolve_meeting` uchun GAPI dagi ovoz kaliti va ikkinchi ovozga o'xshashlik.
+        item["_voiceKey"] = speaker_id or None
+        item["_runnerUp"] = _num(identity.get("runner_up"))
         if key and status in ("matched", "new"):
             try:
                 person = _person_for(store, account, key, voice_no, identity.get("name"))
@@ -350,6 +373,9 @@ def _process(actor_id: int, name: str | None, sid: str, on_done: Callable[[dict[
         # balansi tugagan bo'lsa (kun oxiri) - 2-hisob asosiy bo'ladi, 1-hisobga keyingi namunada yoziladi.
         primary = False
         last_error: SttError | None = None
+        before: set[str] = set()
+        hint = False
+        first = not store.scalar("SELECT COUNT(*) FROM voice_samples WHERE actor_id=? AND status='ok'", (actor_id,), 0)
         for account in accounts:
             try:
                 payload, job_id = gapi.transcribe_sample(data, row["content_type"], account=account)
@@ -368,6 +394,7 @@ def _process(actor_id: int, name: str | None, sid: str, on_done: Callable[[dict[
                     report[str(account)] = {"rejected": check.reason, "speech": speech}
                     break
                 person_id = employee_id(store, actor_id, name)
+                before = _named_meetings(store, person_id)
             elif check.reason:
                 report[str(account)] = {"rejected": check.reason}
                 continue
@@ -382,6 +409,13 @@ def _process(actor_id: int, name: str | None, sid: str, on_done: Callable[[dict[
                 report[str(account)] = {"rejected": "voice_taken"}
                 continue
             primary = True
+            hint = hint or _similar_exists(check.identity, first)
+            # "Faqat xodimlar" maydoniga ham (nusxa ovozlarni tuzatish shu bilan ishlaydi). Xato namunani buzmaydi.
+            try:
+                report[str(account)]["staff"] = _staff_add(gapi, account, person_id, data, row["content_type"])
+                _staff_forget(account)
+            except SttError as exc:
+                log.warning("Ovoz namunasi %s: %d-hisobda xodimlar maydoniga yozilmadi - %s", sid[:8], account, exc)
         else:
             if not primary:
                 raise last_error or SttError("GAPI hisobi yo'q", status=501)
@@ -393,10 +427,25 @@ def _process(actor_id: int, name: str | None, sid: str, on_done: Callable[[dict[
     except Exception:  # noqa: BLE001 - namuna yo'qolmasin, odam aniq javob olsin
         log.exception("Ovoz namunasi %s: kutilmagan xato", sid[:8])
         status, reason = "failed", "failed"
-    store.execute("UPDATE voice_samples SET status=?, reason=?, speech_sec=?, person_id=?, result_json=?, done_at=? "
-                  "WHERE id=?", (status, reason, speech, person_id, jdump(report), _now(), sid))
+    # Namuna vaqti - tekshiruvdan OLDIN: mehmonning `checked_at` i undan keyin bo'ladi, ya'ni shu namunaga
+    # nisbatan "tekshirilgan" hisoblanadi (`_stale`) va keyingi yig'ilishda bekorga qayta solishtirilmaydi.
+    finished = _now()
     if status == "ok" and person_id is not None:
-        _backfill(store, person_id)
+        # O'TGAN YIG'ILISHLAR. Namuna mehmon ovoziga mos kelgan bo'lsa ism allaqachon ko'chgan (`merge_guest`);
+        # GAPI tanlay olmagan bo'lsa (`hint`: mavjud ovozga o'xshash, lekin bog'lanmadi) - oxirgi 30 kun
+        # mehmonlari xodimlar maydonida qayta solishtiriladi (`sweep`).
+        try:
+            _backfill(store, person_id)
+            if hint:
+                report["sweep"] = sweep(store, gapi, budget=float(settings.voice_sweep_budget_sec),
+                                        limit=int(settings.voice_sweep_max), fresh=finished)
+            gained = len(_named_meetings(store, person_id) - before)
+            if gained:
+                report["retro"] = {"meetings": gained}
+        except Exception:  # noqa: BLE001 - o'tgan yig'ilishlar qo'shimcha: namunaning o'zi saqlangan
+            log.exception("Ovoz namunasi %s: o'tgan yig'ilishlar tekshirilmadi", sid[:8])
+    store.execute("UPDATE voice_samples SET status=?, reason=?, speech_sec=?, person_id=?, result_json=?, done_at=? "
+                  "WHERE id=?", (status, reason, speech, person_id, jdump(report), finished, sid))
     log.info("Ovoz namunasi %s: %s%s", sid[:8], status, f" ({reason})" if reason else "")
     if on_done is not None:
         try:
@@ -513,6 +562,478 @@ def _backfill(store: MeetingStore, person_id: int) -> None:
         log.info("Ovoz: xodim #%d ismi %d ta spikerga qo'yildi", person_id, cur.rowcount)
 
 
+def _named_meetings(store: MeetingStore, person_id: int) -> set[str]:
+    """Shu xodim OVOZIDAN tanilgan yig'ilishlar."""
+    return {str(r["meeting_id"]) for r in store.rows(
+        "SELECT DISTINCT meeting_id FROM speakers WHERE person_id=? AND name_source='voice'", (person_id,))}
+
+
+# --- NUSXA OVOZ: "faqat xodimlar" maydonida qayta solishtirish (modul izohi) -----------------
+
+#: Maydondagi xodimlar ro'yxati shuncha soniya eslab qolinadi (har yig'ilishda GAPI dan so'ralmasin).
+_STAFF_TTL = 600.0
+_staff_lock = threading.Lock()
+_staff_cache: dict[int, tuple[float, frozenset[int]]] = {}
+#: Maydonga yozish - navbat bilan: ikki xodim bir vaqtda namuna yuborsa, birining hali taxallus olmagan yangi ovozi
+#: ikkinchisining "nomsiz ovozlarni tozalash" qadamida o'chib ketmasin.
+_staff_write_lock = threading.Lock()
+_sweep_lock = threading.Lock()
+#: GAPI natijasi 30 kun saqlanadi - undan eski yig'ilishdan iz qo'shib bo'lmaydi.
+_RETRO_DAYS = 30
+#: Bitta mehmondan xodim ovoziga qo'shiladigan yig'ilishlar soni (iz chegarasi - 10).
+_ADOPT_JOBS = 3
+#: Bitta yig'ilishda qayta solishtiriladigan spikerlar chegarasi (GAPI 4 tadan ortiq ovoz ajratmaydi).
+_MEETING_PROBES = 4
+
+
+def _staff_tenant() -> str:
+    """"Faqat xodimlar" maydoni nomi; bo'sh - tuzatish o'chiq."""
+    if not settings.voice_resolve_enabled:
+        return ""
+    return str(settings.voice_staff_tenant or "").strip()
+
+
+def _alias_id(name: Any) -> int | None:
+    match = _PSEUDONYM.match(str(name or ""))
+    return int(match.group(1)) if match else None
+
+
+def _similar_exists(identity: dict[str, Any], first: bool) -> bool:
+    """Namuna natijasi: loyihada shu odamga O'XSHASH, lekin unga bog'lanmagan ovoz bormi. "Yangi ovoz" bo'lsa -
+    eng yaqin ovozga o'xshashlik chegaradan baland. Tanilgan bo'lsa - IKKINCHI izga o'xshashlik, lekin faqat
+    BIRINCHI namunada: `runner_up` shu ovozning o'z ikkinchi izi ham bo'lishi mumkin (jonli: 0.913 / 0.875 - bitta
+    odamning ikki izi), ya'ni qayta namunada u doim baland va hech narsani bildirmaydi."""
+    status = str(identity.get("status") or "")
+    floor = float(settings.voice_hint_score)
+    if status == "new":
+        return (_num(identity.get("score")) or 0.0) >= floor
+    if status == "matched":
+        return first and (_num(identity.get("runner_up")) or 0.0) >= floor
+    return False
+
+
+def _staff_forget(account: int | None = None) -> None:
+    with _staff_lock:
+        if account is None:
+            _staff_cache.clear()
+        else:
+            _staff_cache.pop(account, None)
+
+
+def _staff_add(gapi: Any, account: int, person_id: int, data: bytes, content_type: str) -> str:
+    """Xodim namunasi -> "faqat xodimlar" maydonidagi ovozi (`barno-<shaxs>`; yo'q bo'lsa ochiladi).
+    `created` | `added` | `conflict` (maydonda boshqa xodimga mos keldi) | `rejected` | `off`. Xato - `SttError`.
+
+    `enroll` - odatiy (`auto`): `off` bilan ishlagan vazifadan iz qo'shib bo'lmaydi (422 `no_voiceprint`, jonli
+    tekshirilgan). Shuning uchun GAPI yangi ovozni o'zi ochadi - unga taxallus qo'yiladi; namunadagi ikkinchi
+    (qisqa) ovozdan ochilgan nomsiz ovoz esa oxirida o'chiriladi: maydonda FAQAT taxallusli ovozlar qoladi."""
+    tenant = _staff_tenant()
+    if not tenant:
+        return "off"
+    with _staff_write_lock:
+        return _staff_write(gapi, account, person_id, data, content_type, tenant)
+
+
+def _staff_write(gapi: Any, account: int, person_id: int, data: bytes, content_type: str, tenant: str) -> str:
+    alias = PSEUDONYM.format(id=person_id)
+    payload, job_id = gapi.transcribe_sample(data, content_type, account=account, tenant=tenant)
+    check = assess(payload)
+    if check.reason or not job_id:
+        return "rejected"
+    status = str(check.identity.get("status") or "")
+    _, _, heard = _key(check.identity)                    # GAPI shu vazifada tanigan yoki ochgan ovoz
+    voices = gapi.speakers(account=account, tenant=tenant)
+    names = {str(v.get("id") or ""): str(v.get("name") or "") for v in voices}
+    own = next((key for key, name in names.items() if key and name == alias), None)
+    other = _alias_id(names.get(heard) or check.identity.get("name"))
+    result = "added"
+    if status == "matched" and other is not None and other != person_id:
+        result = "conflict"
+    elif own is None and heard and other is None:
+        gapi.rename_speaker(heard, alias, account=account)
+        own, result = heard, "created"
+    elif own is None:
+        created = gapi.create_speaker(alias, account=account, tenant=tenant)
+        own = str(created.get("id") or created.get("speaker_id") or "")
+        if not own:
+            raise SttError("GAPI ovoz raqamini bermadi", status=502)
+        gapi.enroll_speaker(own, job_id, speaker_index=check.index, account=account)
+        result = "created"
+    else:
+        # O'z ovozi bor: shu namunaning izi ham unga (boshqa sharoit - aniqroq tanish). Chegara (10 iz) - jim.
+        _quiet(gapi.enroll_speaker, own, job_id, speaker_index=check.index, account=account)
+    for key, name in names.items():
+        if key and key != own and _alias_id(name) is None:
+            _quiet(gapi.delete_speaker, key, account=account)
+    return result
+
+
+def _staff_learn(gapi: Any, account: int, person_id: int, clip: tuple[bytes, str], score: float | None) -> None:
+    """Xodim deb topilgan spikerning YIG'ILISHDAGI nutqi maydondagi ovoziga ham iz bo'ladi: maydonda faqat o'qilgan
+    namuna bo'lsa boshqa telefon/xonadagi nutq chegarada chiqadi (jonli: 0.721, chegara 0.72) - keyingi safar
+    aniqroq tanilsin. Solishtirish vazifasidan (`enroll: off`) iz qo'shib bo'lmaydi, shuning uchun parcha maydonga
+    yana bir marta yuboriladi (~40 s). Yaxshi tanilgan (>= 0.85) bo'lsa kerak emas. Xato - jim."""
+    if score is not None and score >= 0.85:
+        return
+    try:
+        outcome = _staff_add(gapi, account, person_id, clip[0], clip[1])
+    except SttError as exc:
+        log.info("Xodimlar maydoni (hisob %s): #%d yig'ilish nutqi qo'shilmadi - %s", account, person_id, exc)
+        return
+    log.info("Xodimlar maydoni (hisob %s): xodim #%d yig'ilish nutqi - %s", account, person_id, outcome)
+
+
+def _staff_remove(gapi: Any, person_id: int) -> None:
+    """Xodim ovozini o'chirdi - maydondagi ovozi ham (har hisobda). Xato - jim (maydon yordamchi)."""
+    tenant = _staff_tenant()
+    if not tenant:
+        return
+    alias = PSEUDONYM.format(id=person_id)
+    for account in list(getattr(gapi, "accounts", None) or [1]):
+        try:
+            for v in gapi.speakers(account=account, tenant=tenant):
+                if str(v.get("name") or "") == alias and v.get("id"):
+                    gapi.delete_speaker(str(v["id"]), account=account)
+        except SttError as exc:
+            log.info("Xodimlar maydonidan ovoz o'chmadi (hisob %s): %s", account, exc)
+    _staff_forget()
+
+
+def _staff_people(store: MeetingStore, gapi: Any, account: int) -> frozenset[int]:
+    """Shu hisobning maydonida ovozi bor XODIMLAR (shaxs raqamlari). Yetishmayotgani saqlangan namunasidan
+    to'ldiriladi (maydon yo'q bo'lsa yoki xodim maydon paydo bo'lishidan oldin yozgan bo'lsa) - maydon o'zi tiklanadi."""
+    tenant = _staff_tenant()
+    if not tenant:
+        return frozenset()
+    with _staff_lock:
+        cached = _staff_cache.get(account)
+        if cached is not None and time.monotonic() - cached[0] < _STAFF_TTL:
+            return cached[1]
+        have = {pid for v in gapi.speakers(account=account, tenant=tenant)
+                if (pid := _alias_id(v.get("name"))) is not None}
+        tried: set[int] = set()
+        for row in store.rows("SELECT p.id, s.path, s.content_type FROM voice_persons p JOIN voice_samples s "
+                              "ON s.actor_id = p.actor_id WHERE p.kind='employee' AND s.status='ok' "
+                              "ORDER BY s.created_at DESC, s.rowid DESC"):
+            pid = int(row["id"])
+            if pid in have or pid in tried:
+                continue
+            tried.add(pid)
+            try:
+                outcome = _staff_add(gapi, account, pid, Path(str(row["path"])).read_bytes(), row["content_type"])
+            except (OSError, SttError) as exc:
+                log.warning("Xodimlar maydoni (hisob %s): #%d namunasi yozilmadi - %s", account, pid, exc)
+                continue
+            log.info("Xodimlar maydoni (hisob %s): xodim #%d - %s", account, pid, outcome)
+            if outcome in ("created", "added"):
+                have.add(pid)
+        employees = {int(r["id"]) for r in store.rows("SELECT id FROM voice_persons WHERE kind='employee'")}
+        people = frozenset(have & employees)
+        _staff_cache[account] = (time.monotonic(), people)
+        return people
+
+
+def _ranges(segments: list[dict[str, Any]], label: str) -> list[tuple[float, float]]:
+    """Spikerning eng uzun gaplari - jami `VOICE_CLIP_SEC` gacha (uzun gap - toza ovoz: ustma-ust gap kam)."""
+    target, floor = float(settings.voice_clip_sec), float(settings.voice_clip_min_sec)
+    spans = sorted(((float(s["end"]) - float(s["start"]), float(s["start"]), float(s["end"]))
+                    for s in segments if s.get("speaker") == label), reverse=True)
+    picked: list[tuple[float, float]] = []
+    total = 0.0
+    for length, start, end in spans:
+        if total >= target or length < 1.0:
+            break
+        take = min(length - 0.2, target - total)
+        if take <= 0.5:
+            continue
+        picked.append((start + 0.1, start + 0.1 + take))
+        total += take
+    return picked if total >= floor else []
+
+
+def _meeting_clip(meeting: dict[str, Any], label: str, segments: list[dict[str, Any]]) -> tuple[bytes, str] | None:
+    """Yig'ilish audiosidan shu spikerning nutq parchasi - dekodersiz (AAC/ADTS, m4a, MP3). Bo'lmasa `None`."""
+    path = Path(str(meeting.get("audio_path") or ""))
+    if meeting.get("audio_deleted_at") or not str(meeting.get("audio_path") or "") or not path.is_file():
+        return None
+    ranges = _ranges(segments, label)
+    if not ranges:
+        return None
+    kind = audio.canonical_type(meeting.get("content_type"))
+    try:
+        if kind == "audio/aac":
+            data, out = audio.cut_adts(path, ranges), "audio/aac"
+        elif kind == "audio/mp4":
+            tmp = path.with_name(f"{path.stem}.clip-{new_id()[:8]}.aac")
+            try:
+                private_file(tmp)
+                audio.mp4_to_adts(path, tmp)
+                data, out = audio.cut_adts(tmp, ranges), "audio/aac"
+            finally:
+                remove_file(tmp)
+        elif kind == "audio/mpeg":
+            data, out = audio.cut_mp3(path, ranges), "audio/mpeg"
+        else:
+            return None
+    except Exception as exc:  # noqa: BLE001 - parcha qo'shimcha: kesilmasa GAPI dagi qisqa parcha sinab ko'riladi
+        log.info("Spiker parchasi kesilmadi (%s): %s", path.name, exc)
+        return None
+    return (data, out) if len(data) >= 4000 else None
+
+
+def _voice_clip(gapi: Any, account: int, key: Any) -> tuple[bytes, str] | None:
+    """Zaxira: GAPI dagi shu ovozning 12 soniyagacha parchasi (audio bizda yo'q yoki kesib bo'lmaydigan tur)."""
+    key = str(key or "")
+    if not key or key.startswith("n:"):
+        return None
+    try:
+        data = gapi.speaker_clip(key, account=account)
+    except SttError:
+        return None
+    return (data, "audio/wav") if data and len(data) >= 4000 else None
+
+
+def _probe(store: MeetingStore, gapi: Any, account: int, clip: tuple[bytes, str]) -> tuple[int | None, float | None]:
+    """Nutq parchasi -> ("faqat xodimlar" maydonida mos kelgan XODIM, o'xshashlik). `enroll: off` - maydon
+    o'zgarmaydi. Qaror GAPI niki (chegara 0.72 va ikkinchi ovozdan ustunlik) - toza maydonda u ishonchli."""
+    payload, _ = gapi.transcribe_sample(clip[0], clip[1], account=account, tenant=_staff_tenant(), enroll="off")
+    info = [s for s in (payload.get("speaker_info") or []) if isinstance(s, dict)]
+    if not info:
+        return None, None
+    main = max(info, key=lambda s: _num(s.get("speech_seconds")) or 0.0)
+    identity = main.get("identity") if isinstance(main.get("identity"), dict) else {}
+    score = _num(identity.get("score"))
+    if str(identity.get("status") or "") != "matched":
+        return None, score
+    pid = _alias_id(identity.get("name"))
+    if pid is None:
+        return None, score
+    known = store.row("SELECT id FROM voice_persons WHERE id=? AND kind='employee'", (pid,))
+    return (pid if known is not None else None), score
+
+
+def _adopt(store: MeetingStore, gapi: Any, account: int, employee: int, *, guest: int | None,
+           voice_key: str | None, jobs: list[tuple[str, int]]) -> None:
+    """Spiker (va uning mehmon ovozi) shu XODIM bo'lib chiqdi: yig'ilishdagi nutqi xodimning loyihadagi ovoziga
+    iz bo'ladi, NUSXA ovoz GAPI dan o'chadi (bitta odam - bitta ovoz), mehmon shaxs xodimga qo'shiladi va
+    o'tgan yig'ilishlarga ism qo'yiladi."""
+    now = _now()
+    if guest is not None and store.row("SELECT id FROM voice_persons WHERE id=? AND kind='guest'", (guest,)) is None:
+        guest = None                                           # faqat MEHMON shaxs qo'shiladi, xodim - hech qachon
+    own = store.row("SELECT speaker_key FROM voice_links WHERE person_id=? AND account=? AND speaker_key NOT LIKE 'n:%' "
+                    "ORDER BY created_at LIMIT 1", (employee, account))
+    if own is None:
+        created = gapi.create_speaker(PSEUDONYM.format(id=employee), account=account)
+        own_key = str(created.get("id") or created.get("speaker_id") or "")
+        if not own_key:
+            raise SttError("GAPI ovoz raqamini bermadi", status=502)
+        number = _int(created.get("number") if created.get("number") is not None else created.get("voice_id"))
+        store.execute("INSERT OR REPLACE INTO voice_links (account, speaker_key, voice_no, person_id, named, "
+                      "created_at, last_seen_at) VALUES (?,?,?,?,1,?,?)", (account, own_key, number, employee, now, now))
+    else:
+        own_key = str(own["speaker_key"])
+    for job_id, raw_index in jobs[:_ADOPT_JOBS]:
+        _quiet(gapi.enroll_speaker, own_key, str(job_id), speaker_index=int(raw_index), account=account)
+    keys: set[str] = set()
+    if guest is not None:
+        keys |= {str(r["speaker_key"]) for r in store.rows(
+            "SELECT speaker_key FROM voice_links WHERE person_id=? AND account=?", (guest, account))}
+    if voice_key:
+        holder = store.row("SELECT p.kind FROM voice_links l JOIN voice_persons p ON p.id = l.person_id "
+                           "WHERE l.account=? AND l.speaker_key=?", (account, voice_key))
+        if holder is None or holder["kind"] == "guest":       # boshqa XODIMNING ovoziga hech qachon tegilmaydi
+            keys.add(str(voice_key))
+    keys.discard(own_key)
+    for key in sorted(keys):
+        if key.startswith("n:"):
+            continue
+        try:
+            gapi.delete_speaker(key, account=account)
+        except SttError as exc:
+            # O'chmadi - bog'lanish pastda xodimga o'tadi: ovoz uning ikkinchi ovozi bo'lib qoladi (ism to'g'ri chiqadi).
+            log.warning("Nusxa ovoz GAPI dan o'chmadi (hisob %s): %s", account, exc)
+            continue
+        store.execute("DELETE FROM voice_links WHERE account=? AND speaker_key=?", (account, key))
+    if guest is not None and guest != employee:
+        merge_guest(store, guest, employee)
+    _backfill(store, employee)
+
+
+def _stale(store: MeetingStore, guest: Any, fresh: int) -> bool:
+    """Mehmon oxirgi namunadan (`fresh`) beri xodimlar maydonida solishtirilmaganmi."""
+    row = store.row("SELECT checked_at FROM voice_persons WHERE id=? AND kind='guest'", (guest,))
+    return row is not None and (row["checked_at"] is None or int(row["checked_at"]) < fresh)
+
+
+def _checked(store: MeetingStore, guest: Any) -> None:
+    if guest is not None:
+        store.execute("UPDATE voice_persons SET checked_at=? WHERE id=? AND kind='guest'", (_now(), guest))
+
+
+def _fresh(store: MeetingStore) -> int:
+    """Oxirgi muvaffaqiyatli namuna vaqti: undan keyin xodimlar maydoni o'zgarmagan."""
+    return int(store.scalar("SELECT MAX(done_at) FROM voice_samples WHERE status='ok'", (), 0) or 0)
+
+
+def resolve_meeting(store: MeetingStore, account: int, meeting: dict[str, Any], speakers: list[dict[str, Any]],
+                    segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`identify` dan keyin, transkript saqlanishidan OLDIN: (1) GAPI tanigan xodimning nutqi ovoziga iz bo'lib
+    qo'shiladi; (2) xodimga bog'lanmagan, lekin kimningdir NUSXASI bo'lishi mumkin spiker xodimlar maydonida
+    qayta solishtiriladi. Hech qachon xato bermaydi - tuzatib bo'lmasa spikerlar o'zgarishsiz qaytadi."""
+    if not _staff_tenant() or not meeting.get("stt_job_id"):
+        return speakers
+    try:
+        return _resolve_meeting(store, _gapi(), account, meeting, [dict(sp) for sp in speakers], segments)
+    except Exception:  # noqa: BLE001 - tuzatish ixtiyoriy: transkript baribir saqlansin
+        log.exception("Ovoz: yig'ilish %s spikerlari qayta solishtirilmadi", meeting.get("id"))
+        return speakers
+
+
+def _resolve_meeting(store: MeetingStore, gapi: Any, account: int, meeting: dict[str, Any],
+                     speakers: list[dict[str, Any]], segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    job_id = str(meeting["stt_job_id"])
+    employees = {int(r["id"]) for r in store.rows("SELECT id FROM voice_persons WHERE kind='employee'")}
+    if not employees:
+        return speakers
+    _reinforce(gapi, account, job_id, speakers, employees)
+    fresh = _fresh(store)
+    floor, shortest = float(settings.voice_hint_score), float(settings.voice_clip_min_sec)
+
+    def suspect(sp: dict[str, Any]) -> bool:
+        if sp.get("rawIndex") is None or sp.get("personId") in employees or (sp.get("talkSec") or 0.0) < shortest:
+            return False
+        if sp.get("voiceStatus") == "new":                    # mavjud ovozga o'xshash "yangi" - kimningdir nusxasi
+            return (sp.get("voiceScore") or 0.0) >= floor
+        if sp.get("voiceStatus") == "matched" and sp.get("personId") is not None:
+            return _stale(store, sp["personId"], fresh)       # mehmon - yangi namunalardan beri tekshirilmagan
+        return False
+
+    pending = [sp for sp in speakers if suspect(sp)][:_MEETING_PROBES]
+    if not pending or not _staff_people(store, gapi, account):
+        return speakers
+    for sp in pending:
+        guest = sp.get("personId")
+        clip = _meeting_clip(meeting, sp["id"], segments) or _voice_clip(gapi, account, sp.get("_voiceKey"))
+        if clip is None:
+            continue
+        try:
+            found, score = _probe(store, gapi, account, clip)
+            if found is None:
+                _checked(store, guest)
+                continue
+            _adopt(store, gapi, account, found, guest=guest, voice_key=sp.get("_voiceKey"),
+                   jobs=[(job_id, int(sp["rawIndex"]))])
+        except SttError as exc:
+            log.warning("Ovoz: yig'ilish %s, %s qayta solishtirilmadi - %s", meeting.get("id"), sp.get("id"), exc)
+            continue
+        _staff_learn(gapi, account, found, clip, score)
+        person = store.row("SELECT name FROM voice_persons WHERE id=?", (found,)) or {}
+        sp.update(personId=found, nameSource="voice", voiceStatus="matched",
+                  voiceScore=score if score is not None else sp.get("voiceScore"))
+        if person.get("name"):
+            sp["name"] = person["name"]
+        log.info("Ovoz: yig'ilish %s, %s - nusxa ovoz xodim #%d ga birlashtirildi (o'xshashlik %s)",
+                 meeting.get("id"), sp.get("id"), found, score)
+    return speakers
+
+
+def _reinforce(gapi: Any, account: int, job_id: str, speakers: list[dict[str, Any]], employees: set[int]) -> None:
+    """GAPI o'zi tanigan xodim: shu yig'ilishdagi nutqi ham ovoziga iz bo'lib qo'shiladi (`VOICE_PRINTS_MAX` gacha) -
+    faqat ovoz bu sharoitni hali yaxshi bilmasa (< 0.9) va nutq yetarli bo'lsa (20 s). Ishonch - GAPI ning
+    "tanildi" qarori (chegara 0.72 va boshqa OVOZDAN ustunlik); `runner_up` ga qaralmaydi - u shu ovozning o'z
+    ikkinchi izi ham bo'ladi (jonli: 0.913 / 0.875), ya'ni ikki izli ovozda doim baland."""
+    todo = []
+    for sp in speakers:
+        key, score = str(sp.get("_voiceKey") or ""), sp.get("voiceScore")
+        if (sp.get("personId") in employees and sp.get("voiceStatus") == "matched" and key
+                and sp.get("rawIndex") is not None and (sp.get("talkSec") or 0.0) >= 20.0
+                and score is not None and score < 0.9):
+            todo.append(sp)
+    if not todo:
+        return
+    try:
+        prints = {str(v.get("id") or ""): _int(v.get("voiceprints")) or 0 for v in gapi.speakers(account=account)}
+    except SttError as exc:
+        log.info("Ovoz izlari soni olinmadi (hisob %s): %s", account, exc)
+        return
+    for sp in todo:
+        key = str(sp["_voiceKey"])
+        if prints.get(key, 0) < int(settings.voice_prints_max):
+            _quiet(gapi.enroll_speaker, key, job_id, speaker_index=int(sp["rawIndex"]), account=account)
+
+
+def sweep(store: MeetingStore | None = None, gapi: Any = None, *, budget: float | None = None,
+          limit: int | None = None, fresh: int | None = None, force: bool = False) -> dict[str, int]:
+    """Oxirgi 30 kun MEHMONLARI xodimlar maydonida qayta solishtiriladi: namunani yig'ilishdan KEYIN yozgan xodim
+    o'sha yig'ilishda ham ismi bilan chiqsin. Yangi namunadan keyin ishlaydi (`_process`); `force` - hammasi
+    (qo'lda tuzatish). Bitta vaqtda bitta tekshiruv. -> `{"checked", "adopted"}`."""
+    if not _staff_tenant():
+        return {"checked": 0, "adopted": 0}
+    store = store if store is not None else _rt().store
+    gapi = gapi if gapi is not None else _gapi()
+    if not _sweep_lock.acquire(blocking=False):
+        return {"checked": 0, "adopted": 0, "busy": 1}
+    try:
+        return _sweep(store, gapi, budget, limit, _fresh(store) if fresh is None else int(fresh), force)
+    finally:
+        _sweep_lock.release()
+
+
+def _sweep(store: MeetingStore, gapi: Any, budget: float | None, limit: int | None, fresh: int,
+           force: bool) -> dict[str, int]:
+    started = time.monotonic()
+    rows = store.rows(
+        "SELECT s.person_id AS guest, s.meeting_id, s.id AS label, s.raw_index, s.talk_sec, m.stt_job_id, "
+        "m.stt_account, m.audio_path, m.content_type, m.audio_deleted_at, m.id AS id "
+        "FROM speakers s JOIN meetings m ON m.id = s.meeting_id JOIN voice_persons p ON p.id = s.person_id "
+        "WHERE p.kind='guest' AND s.merged_into IS NULL AND s.raw_index IS NOT NULL AND m.stt_engine='gapi' "
+        "AND m.stt_job_id IS NOT NULL AND m.created_at > ? ORDER BY m.created_at DESC",
+        (_now() - _RETRO_DAYS * 86400,))
+    groups: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        groups.setdefault(int(row["guest"]), []).append(row)
+    checked = adopted = 0
+    for guest, items in groups.items():
+        if (limit is not None and checked >= limit) or (budget is not None and time.monotonic() - started > budget):
+            break
+        if not force and not _stale(store, guest, fresh):
+            continue
+
+        def playable_first(r: dict[str, Any]) -> tuple[int, float]:
+            there = bool(r.get("audio_path")) and not r.get("audio_deleted_at") and Path(str(r["audio_path"])).is_file()
+            return (1 if there else 0, float(r.get("talk_sec") or 0.0))
+
+        best = max(items, key=playable_first)
+        account = int(best.get("stt_account") or 1)
+        try:
+            if not _staff_people(store, gapi, account):
+                continue
+            link = store.row("SELECT speaker_key FROM voice_links WHERE person_id=? AND account=? LIMIT 1", (guest, account))
+            clip = (_meeting_clip(best, str(best["label"]), store.segments(str(best["meeting_id"])))
+                    or _voice_clip(gapi, account, (link or {}).get("speaker_key")))
+            if clip is None:
+                _checked(store, guest)
+                continue
+            checked += 1
+            found, score = _probe(store, gapi, account, clip)
+            if found is None:
+                _checked(store, guest)
+                continue
+            jobs = [(str(r["stt_job_id"]), int(r["raw_index"])) for r in items if int(r.get("stt_account") or 1) == account]
+            _adopt(store, gapi, account, found, guest=guest, voice_key=None, jobs=jobs)
+        except SttError as exc:
+            log.warning("Ovoz: mehmon #%d qayta solishtirilmadi - %s", guest, exc)
+            if getattr(exc, "gapi_code", "") == "insufficient_balance":
+                break
+            continue
+        _staff_learn(gapi, account, found, clip, score)
+        adopted += 1
+        log.info("Ovoz: mehmon #%d - xodim #%d (o'xshashlik %s), o'tgan yig'ilishlarga ism qo'yildi", guest, found, score)
+    if checked:
+        log.info("Ovoz: %d ta mehmon qayta solishtirildi, %d tasi xodim bo'lib chiqdi", checked, adopted)
+    return {"checked": checked, "adopted": adopted}
+
+
 # --- holat, o'chirish, qamrov ------------------------------------------------------------
 
 
@@ -524,9 +1045,22 @@ def sample_view(row: dict[str, Any] | None) -> dict[str, Any]:
         status, reason = "failed", "interrupted"
     message = OK_TEXT if status == "ok" else ("⏳ Namuna tekshirilmoqda…" if status == "processing"
                                              else reason_text(reason))
+    if status == "ok":
+        gained = _retro_of(row)
+        if gained:
+            message += RETRO_TEXT.format(n=gained)
     return {"id": row["id"], "status": status, "reason": reason, "message": message,
             "speechSeconds": row.get("speech_sec"), "channel": row.get("channel"),
             "createdAt": int(row["created_at"]), "doneAt": row.get("done_at")}
+
+
+def _retro_of(row: dict[str, Any]) -> int:
+    """Shu namunadan keyin nechta o'tgan yig'ilishda ism qo'yilgani (`result_json.retro`)."""
+    try:
+        report = json.loads(row.get("result_json") or "{}")
+        return int(((report or {}).get("retro") or {}).get("meetings") or 0)
+    except (TypeError, ValueError, AttributeError):
+        return 0
 
 
 def _derived(path: Path) -> Path:
@@ -626,6 +1160,7 @@ def delete(user: AuthUser) -> dict[str, Any]:
             store.execute("DELETE FROM voice_links WHERE account=? AND speaker_key=?",
                           (link["account"], link["speaker_key"]))
             removed += 1
+        _staff_remove(gapi, int(person["id"]))
     samples = store.rows("SELECT id, path FROM voice_samples WHERE actor_id=?", (user.actorId,))
     for s in samples:
         remove_file(s.get("path"))

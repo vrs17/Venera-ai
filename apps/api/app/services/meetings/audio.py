@@ -433,6 +433,76 @@ def split_adts(path: Path | str, max_sec: float, out_dir: Path | str | None = No
     return pieces
 
 
+# --- vaqt oraliqlarini kesib olish (dekodersiz) ----------------------------------
+
+
+def _merged(ranges: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Oraliqlar vaqt tartibida, ustma-ust tushganlari birlashtirilgan."""
+    out: list[tuple[float, float]] = []
+    for start, end in sorted((float(a), float(b)) for a, b in ranges if float(b) > float(a)):
+        if out and start <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], end))
+        else:
+            out.append((start, end))
+    return out
+
+
+def cut_adts(path: Path | str, ranges: list[tuple[float, float]]) -> bytes:
+    """ADTS dan berilgan vaqt oraliqlariga (soniya) tushgan kadrlar - ketma-ket, yana yaroqli ADTS.
+
+    NEGA: bitta spikerning nutq parchasini yig'ilish audiosidan DEKODERSIZ olish (`voice.py` uni GAPI da qayta
+    solishtiradi). AAC kadri mustaqil o'qiladi; ulanish joyidagi bir kadrlik shitirlash ovoz iziga ta'sir qilmaydi."""
+    spans = _merged(ranges)
+    if not spans:
+        return b""
+    out = bytearray()
+    samples = 0
+    index = 0
+    with open(path, "rb") as fh:
+        for frame, params in iter_frames(path):
+            rate = SAMPLE_RATES[params[1]]
+            at = samples / rate
+            samples += 1024 * frame.blocks
+            while index < len(spans) and at >= spans[index][1]:
+                index += 1
+            if index >= len(spans):
+                break
+            if at >= spans[index][0]:
+                fh.seek(frame.offset)
+                out += fh.read(frame.length)
+    return bytes(out)
+
+
+def cut_mp3(path: Path | str, ranges: list[tuple[float, float]]) -> bytes:
+    """`cut_adts` ning MP3 varianti (Slack/Telegram'dan kelgan fayllar). Bit rezervuari ulanish joyida bir-ikki
+    kadrni buzishi mumkin - nutq parchasi uchun ahamiyatsiz."""
+    spans = _merged(ranges)
+    if not spans:
+        return b""
+    out = bytearray()
+    samples = 0
+    rate = 0
+    index = 0
+    with open(path, "rb") as fh:
+        for frame in iter_mp3_frames(path):
+            if not rate:
+                fh.seek(frame.offset)
+                header = mp3_header(fh.read(4))
+                rate = header[2] if header else 0
+                if not rate:
+                    return b""
+            at = samples / rate
+            samples += frame.samples
+            while index < len(spans) and at >= spans[index][1]:
+                index += 1
+            if index >= len(spans):
+                break
+            if at >= spans[index][0]:
+                fh.seek(frame.offset)
+                out += fh.read(frame.length)
+    return bytes(out)
+
+
 # --- ADTS -> m4a -----------------------------------------------------------------
 
 

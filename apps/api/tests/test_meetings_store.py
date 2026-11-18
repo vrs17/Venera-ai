@@ -258,7 +258,7 @@ def test_migratsiya_v1_dan_v2_ga_malumot_bilan(tmp_path):
     conn.close()
 
     st = MeetingStore(root)
-    assert st.version() == store_mod.SCHEMA_VERSION == 9
+    assert st.version() == store_mod.SCHEMA_VERSION == 10
     # v4: eski yozuvning GAPI hisobi bo'sh - ya'ni birinchi kalit (`GAPI_API_KEY`).
     assert st.rows("SELECT stt_account FROM meetings WHERE id='m1'")[0]["stt_account"] is None
     summary = st.summary("m1", "s1")
@@ -313,7 +313,7 @@ def test_migratsiya_v6_manba_va_royxatdagi_orni(tmp_path):
     conn.close()
 
     st = MeetingStore(root)
-    assert st.version() == store_mod.SCHEMA_VERSION == 9
+    assert st.version() == store_mod.SCHEMA_VERSION == 10
     stored = {r["id"]: r["origin"] for r in st.rows("SELECT id, origin FROM meetings")}
     assert stored == {mid: ("slack" if mid == "slack" else None) for mid, *_ in rows}
 
@@ -367,7 +367,7 @@ def test_migratsiya_v7_dan_v8_ga(tmp_path):
     conn.close()
 
     st = MeetingStore(root)
-    assert st.version() == store_mod.SCHEMA_VERSION == 9
+    assert st.version() == store_mod.SCHEMA_VERSION == 10
     columns = {r["name"] for r in st.rows("PRAGMA table_info(questions)")}
     assert {"kind", "minutes_json", "minutes_id"} <= columns
     columns = {r["name"] for r in st.rows("PRAGMA table_info(minutes)")}

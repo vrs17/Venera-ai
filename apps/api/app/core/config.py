@@ -764,6 +764,27 @@ class Settings(BaseSettings):
     voice_sample_max_bytes: int = 12 * 1024 * 1024
     #: GAPI ga namuna bo'yicha BITTA HTTP amal chegarasi (sinxron `/transcribe`, ~45 s audio).
     voice_gapi_timeout: float = 90.0
+    #: NUSXA OVOZLARNI TUZATISH (`voice.py`, 2026-11-18). GAPI bitta odamga ikki ovoz ochib qo'ysa (namunasi va
+    #: yig'ilishdagi ovozi alohida raqam oldi) u odamni keyin HECH QACHON tanimaydi: ikki o'xshash ovoz orasida
+    #: tanlamaydi. Yoqiq - tanilmagan spikerning nutq parchasi "faqat xodimlar" maydonida (`voice_staff_tenant`)
+    #: qayta solishtiriladi; mos kelsa spiker xodimga bog'lanadi, nusxa ovoz o'chadi, o'tgan yig'ilishlarga ism
+    #: qo'yiladi. Yig'ilishdan keyin ham, yangi namunadan keyin ham ishlaydi. O'chiq - faqat GAPI ning o'z qarori.
+    voice_resolve_enabled: bool = True
+    #: "Faqat xodimlar" maydoni - GAPI `tenant` (har hisobda alohida). Unda mehmon va nusxa ovoz YO'Q: namuna
+    #: yozgan har xodimning bitta ovozi (`barno-<shaxs>`). Bo'sh - tuzatish o'chiq.
+    voice_staff_tenant: str = "barno-staff"
+    #: Solishtirish uchun spikerning yig'ilish audiosidan kesiladigan parchasi (soniya): mo'ljal va eng kami.
+    voice_clip_sec: float = 40.0
+    voice_clip_min_sec: float = 12.0
+    #: GAPI "yangi ovoz" degan spiker mavjud ovozga kamida shuncha o'xshasa (begona ovozlar 0.2-0.35, o'z ovozi
+    #: 0.7-0.9; o'lchov 2026-11-18) - bu kimningdir NUSXASI, tekshiriladi. Pastroq - chindan yangi odam.
+    voice_hint_score: float = 0.5
+    #: Yangi namunadan keyin bir yo'la tekshiriladigan mehmonlar soni va vaqt chegarasi (soniya): xodim natijani
+    #: kutib turadi. Sig'maganlari keyingi yig'ilishda yoki keyingi namunada tekshiriladi.
+    voice_sweep_max: int = 25
+    voice_sweep_budget_sec: float = 45.0
+    #: Xodim ovoziga yig'ilishlardan qo'shiladigan izlar chegarasi (GAPI: bir ovozda 10 tagacha).
+    voice_prints_max: int = 6
     #: Xulosa modeli. Bo'sh - `ollama_model` (gemma4:31b).
     meetings_llm_model: str = ""
     #: Bitta model chaqiruvi (va o'z navbatimizni kutish) chegarasi. 8K tokenlik

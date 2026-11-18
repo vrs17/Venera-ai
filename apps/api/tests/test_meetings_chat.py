@@ -1414,7 +1414,7 @@ def test_migratsiya_v6_dan_v7_ga_savollar_bilan(tmp_path):
     conn.close()
 
     st = MeetingStore(root)
-    assert st.version() == store_mod.SCHEMA_VERSION == 9
+    assert st.version() == store_mod.SCHEMA_VERSION == 10
     columns = {r["name"] for r in st.rows("PRAGMA table_info(questions)")}
     assert {"channel", "model", "language", "archived_at", "asker", "client_id"} <= columns
     [index] = [r for r in st.rows("PRAGMA index_list(questions)") if r["name"] == "questions_client"]

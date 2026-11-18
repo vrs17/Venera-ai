@@ -237,8 +237,15 @@ _V9: tuple[str, ...] = (
     "CREATE INDEX speakers_person ON speakers(person_id) WHERE person_id IS NOT NULL",
 )
 
+#: v10 (2026-11-18): mehmon ovozi "faqat xodimlar" maydonida OXIRGI MARTA qachon qayta solishtirilgani
+#: (`voice.resolve_meeting`, `voice.sweep`). Bo'sh yoki oxirgi namunadan eski - yana tekshiriladi; shu bilan bitta
+#: mehmon har yig'ilishda qayta-qayta (pullik) solishtirilmaydi.
+_V10: tuple[str, ...] = (
+    "ALTER TABLE voice_persons ADD COLUMN checked_at INTEGER",
+)
+
 #: `MIGRATIONS[i]` fayl `user_version = i` dan `i + 1` ga o'tkazadi. FAQAT OXIRIGA.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4, _V5, _V6, _V7, _V8, _V9)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4, _V5, _V6, _V7, _V8, _V9, _V10)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 #: Yozuv manbasi (Plaud filtri; mobil `MeetingOrigin`). `recording` - telefonda yozilgan, `upload` - telefondan

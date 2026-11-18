@@ -82,6 +82,13 @@ def get_coverage(user: AuthUser = Depends(meetings_access), _admin: AuthUser = D
     return voice.coverage()
 
 
+@router.post("/recheck", response_model=schemas.VoiceRecheck)
+def post_recheck(user: AuthUser = Depends(meetings_access), _admin: AuthUser = Depends(require_roles("ADMIN"))) -> dict:
+    """ADMIN: oxirgi 30 kun mehmonlarini xodimlar ovozi bilan qayta solishtirish (`voice.sweep`) - namunasi bor,
+    lekin yig'ilishda «Noma'lum» bo'lib qolgan xodimlarni tuzatish. GAPI balansidan har mehmonga ~40 s yechiladi."""
+    return voice.sweep(budget=120.0, limit=int(settings.voice_sweep_max), force=True)
+
+
 @router.get("/{sample_id}/audio")
 def get_sample_audio(sample_id: str, user: AuthUser = Depends(meetings_access)) -> FileResponse:
     """Xodimning O'Z namunasi - eshitish uchun (mobil pleer `{uri, headers}` bilan oqimda o'ynatadi; Range ishlaydi).
