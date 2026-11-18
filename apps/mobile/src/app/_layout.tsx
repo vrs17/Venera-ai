@@ -138,6 +138,7 @@ function AppStack() {
           <Stack.Screen name="settings/about" options={{ title: t('settings.about') }} />
           <Stack.Screen name="settings/voice" options={{ title: t('nav.voice.settingsTitle') }} />
           <Stack.Screen name="settings/calls" options={{ title: t('calls.settingsTitle') }} />
+          <Stack.Screen name="settings/voice-sample" options={{ title: t('vs.title') }} />
           {/* "Ulashish -> Barno AI": kirilmagan bo'lsa login chiqadi, fayllar imports/ da kutadi (chiqishda o'chiriladi). */}
           <Stack.Screen name="import" options={{ title: t('calls.import.title') }} />
           {/* Jonli ovozli suhbat: to'liq ekran, doim qorong'i, o'z tugmalari bor (✕ / orqaga = tugatish). */}

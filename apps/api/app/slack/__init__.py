@@ -131,7 +131,7 @@ def _on_message(event: dict[str, Any], client: Any, context: Any) -> None:
     2026-11-13, "thread qoidasi"). Chat xabari bayonnoma ishini boshlasa, vazifa uni kutadi
     (`meeting._follow_minutes`) - kutish `_sleep` bilan: restartda darhol uziladi. Har xabar (matn, audio bo'lmagan
     fayl) qo'shimcha ravishda arxivga (`keep.py`)."""
-    from . import assistant, home, keep, meeting, transcribe
+    from . import assistant, home, keep, meeting, transcribe, voice
 
     pool = _pool
     if pool is None:
@@ -140,11 +140,16 @@ def _on_message(event: dict[str, Any], client: Any, context: Any) -> None:
     if keep.wants(event):
         pool.submit(keep.record, event)
     bot_user = context.get("bot_user_id")
-    if transcribe.audio_files(event):
+    if voice.wants(event):
+        # «🗣 Ovoz namunasi» bosilgandan keyingi audio - namuna (Plaud yozuvi emas, `voice.py`).
+        pool.submit(voice.on_audio, client, event)
+    elif transcribe.audio_files(event):
         # Til savoli - darhol, shu ipda; ish til tanlangach (`meeting.start`, tugma navbatda).
         meeting.acknowledge(client, event)
     elif meeting.wants(event):
         pool.submit(meeting.on_message, client, event, bot_user=bot_user, sleep=_sleep)
+    elif voice.is_text(event):
+        pool.submit(voice.on_text, client, event)
     elif home.is_text(event):
         pool.submit(assistant.on_text, client, event)
 
@@ -180,7 +185,7 @@ def _stamp_team(event: dict[str, Any], context: Any) -> None:
 
 def _on_action(ack: Any, body: dict[str, Any], client: Any) -> None:
     """Tugma va ro'yxat. Slack javobni 3 s ichida kutadi - `ack` darhol, ish navbatda."""
-    from . import assistant, home, link, meeting
+    from . import assistant, home, link, meeting, voice
 
     ack()
     pool = _pool
@@ -191,6 +196,9 @@ def _on_action(ack: Any, body: dict[str, Any], client: Any) -> None:
         pool.submit(link.on_action, client, body)
     elif home.is_plaud(body):
         pool.submit(home.on_plaud, client, body)
+    elif voice.handles(body):
+        # «🗣 Ovoz namunasi» va «🗑 Ovozimni o'chirish» (`voice.py`).
+        pool.submit(voice.on_action, client, body)
     elif assistant.handles(body):
         # HR/CRM yordamchisi: yangi suhbat, hujjat havolasi, taklifni tasdiqlash, hujjatning boshqa formati.
         pool.submit(assistant.on_action, client, body)

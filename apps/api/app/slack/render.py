@@ -417,7 +417,8 @@ def _warning_count(warnings: list[str], prefix: str) -> int:
 
 def speakers(view_speakers: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Yig'ilish ko'rinishidagi spikerlar -> `export.speaker_name` kutgan shakl."""
-    return {sp["id"]: {"name": sp.get("name"), "merged_into": sp.get("mergedInto")} for sp in view_speakers}
+    return {sp["id"]: {"name": sp.get("name"), "merged_into": sp.get("mergedInto"), "person_id": sp.get("personId")}
+            for sp in view_speakers}
 
 
 def clock(seconds: Any) -> str:

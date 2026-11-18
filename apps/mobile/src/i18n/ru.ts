@@ -4,6 +4,7 @@ import { minutesPart } from './parts/minutes';
 import { nav } from './parts/nav';
 import { recordingsPart } from './parts/recordings';
 import { settingsPart } from './parts/settings';
+import { voiceSamplePart } from './parts/voiceSample';
 import { sharePart } from './parts/share';
 import type { TKey } from './uz';
 
@@ -522,6 +523,7 @@ export const ru: Record<TKey, string> = {
   // UI qayta ishlanishi (2026-10-10): har bo'lim o'z faylida - parallel ishda to'qnashmasin.
   ...nav.ru,
   ...settingsPart.ru,
+  ...voiceSamplePart.ru,
   ...recordingsPart.ru,
   ...sharePart.ru,
   ...callsPart.ru,

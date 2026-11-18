@@ -18,7 +18,7 @@ MEETING_FIELDS = {"id", "clientId", "title", "titleSource", "status", "progress"
                   "primarySummaryId", "openActionItems", "audioAvailable", "error"}
 CARD_FIELDS = {"id", "clientId", "title", "status", "progress", "recordedAt", "durationSec", "language",
                "template", "summaryStatus", "openActionItems", "overview", "error", "source", "origin", "listedAt"}
-SPEAKER_FIELDS = {"id", "name", "suggestedName", "talkSec", "mergedInto"}
+SPEAKER_FIELDS = {"id", "name", "suggestedName", "talkSec", "mergedInto", "personId", "nameSource", "voiceScore"}
 SEGMENT_FIELDS = {"id", "speaker", "start", "end", "text", "edited"}
 SUMMARY_CARD_FIELDS = {"id", "template", "language", "status", "primary", "stale", "transcriptRev", "createdAt",
                        "finishedAt", "error"}

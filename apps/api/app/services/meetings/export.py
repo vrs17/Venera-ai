@@ -38,6 +38,8 @@ from .templates import layout as template_layout
 _TOKEN = re.compile(r"\[(S\d{1,2})\]")
 
 _FALLBACK = {"uz": "{n}-ishtirokchi", "ru": "Участник {n}", "en": "Speaker {n}"}
+#: Ovozi tanilgan, ismi yo'q spiker (`voice.UNKNOWN` bilan bir xil).
+_UNKNOWN = {"uz": "Noma'lum #{n}", "ru": "Неизвестный #{n}", "en": "Unknown #{n}"}
 _CHECK = {"uz": "tekshiring", "ru": "проверьте", "en": "check"}
 _DUE = {"uz": "muddat", "ru": "срок", "en": "due"}
 #: `followUps[].reasons` - nima uchun kuzatish kerak (kod chizadi, model emas).
@@ -75,9 +77,14 @@ def speaker_name(sid: str | None, speakers: dict[str, dict[str, Any]], lang: str
         return "?"
     # NEGA `one_line`: `rename_speaker` faqat bo'shliqlarni yig'adi - eski yozuvlarda boshqaruv
     # belgili ism (`Aziz\x01`) qolgan bo'lishi mumkin, u DOCX XML ni buzib 500 berardi.
-    name = one_line((speakers.get(sid) or {}).get("name"))
+    sp = speakers.get(sid) or {}
+    name = one_line(sp.get("name"))
     if name:
         return name
+    # Ismsiz, lekin ovozi tanilgan (mehmon yoki namuna yozmagan xodim) - doimiy raqami (`voice.py`).
+    person = sp.get("person_id") or sp.get("personId")
+    if person:
+        return _UNKNOWN.get(lang, _UNKNOWN["uz"]).format(n=person)
     number = re.sub(r"\D", "", sid) or "?"
     return _FALLBACK.get(lang, _FALLBACK["uz"]).format(n=number)
 

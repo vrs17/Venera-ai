@@ -64,7 +64,9 @@ def test_gapi_toliq_yol_va_sozlamalar(client, auth, monkeypatch, _isolated_meeti
     run_all(rt)
     sub = rt.gapi.submits[0]
     assert sub["settings"]["diarization"] is True and sub["settings"]["max_speakers"] == 3
-    assert sub["settings"]["speaker_identification"] is False and sub["settings"]["emotion"] is False
+    # Spikerni ovozidan tanish (ega qarori 2026-11-18) - standart yoqiq; emotion/pii baribir o'chiq.
+    assert sub["settings"]["speaker_identification"] is True and sub["settings"]["emotion"] is False
+    assert "enroll" not in sub["settings"]
     detail = client.get(f"/api/v1/meetings/{meeting['id']}", headers=auth).json()
     assert detail["status"] == "ready" and detail["transcript"]["engine"] == "gapi"
     assert detail["transcript"]["timing"] == "exact" and detail["transcript"]["speakersAvailable"] is True

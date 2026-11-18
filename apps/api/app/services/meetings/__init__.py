@@ -65,6 +65,9 @@ class Runtime:
     #: Savol-javob va CRM uchun v3 klienti. `None` - chatning o'zi (`chat._assistant`):
     #: odam kutib turgan so'rov chat bilan bir navbatda, taklif ham o'sha klientda tasdiqlanadi.
     live_assistant: Any = None
+    #: OVOZ NAMUNASI va GAPI ovozlari (`voice.py`) - O'Z klienti: namuna tekshiruvi yig'ilishning yagona
+    #: slotini kutmasin (va aksincha). `None` - yig'ilish klienti (`gapi`) ishlatiladi (testlar).
+    voice_gapi: Any = None
     clock: Callable[[], float] = time.time
     last_auth_failure: float | None = None
     worker: Any = None
@@ -107,6 +110,14 @@ def _gapi_meeting_client() -> GapiSttClient:
     urinishsiz (ishchi o'zi kutadi va holatni diskda saqlaydi)."""
     return GapiSttClient(settings.gapi_base_url, settings.gapi_api_key, timeout=settings.meetings_stt_timeout,
                          max_concurrent=1, deadline=settings.meetings_stt_deadline, attempts=1,
+                         api_key2=settings.gapi_api_key2)
+
+
+def _gapi_voice_client() -> GapiSttClient:
+    """TO'RTINCHI GAPI klienti - ovoz namunasi va loyiha ovozlari (`voice.py`): ikki slot, ~45 s lik namuna
+    uchun sinxron `/transcribe` (`VOICE_GAPI_TIMEOUT`), ichki qayta urinishsiz - xodim natijani kutyapti."""
+    return GapiSttClient(settings.gapi_base_url, settings.gapi_api_key, timeout=settings.voice_gapi_timeout,
+                         max_concurrent=2, deadline=max(120.0, settings.voice_gapi_timeout * 2), attempts=1,
                          api_key2=settings.gapi_api_key2)
 
 
@@ -189,6 +200,7 @@ def runtime() -> Runtime:
             _runtime = Runtime(
                 store=MeetingStore(settings.meetings_dir),
                 gapi=_gapi_meeting_client(),
+                voice_gapi=_gapi_voice_client(),
                 router=_router_client(),
                 llm=_llm(1, settings.meetings_llm_timeout),
                 # Savol-javob odam kutib turgan paytda - xulosa navbatida turmasin.
@@ -212,7 +224,7 @@ def runtime() -> Runtime:
 def reset_for_tests(root: Path | str, *, gapi: Any = None, router: Any = None, llm: Any = None,
                     ask_llm: Any = None, devices: Any = None, assistant: Any = None, openai: Any = None,
                     ask_openai: Any = None, live_assistant: Any = None, claude: Any = None,
-                    ask_claude: Any = None) -> Runtime:
+                    ask_claude: Any = None, voice_gapi: Any = None) -> Runtime:
     """Ish vaqtini vaqtinchalik papka va soxta klientlarga almashtiradi. `ask_*` berilmasa -
     o'sha xulosa klienti (test bitta soxtani kuzatadi). Claude default `None` (sozlanmagan):
     testlar `FakeAnthropic` li `ClaudeChat` ni o'zi qo'yadi (`rt.claude`, `rt.ask_claude`)."""
@@ -224,7 +236,7 @@ def reset_for_tests(root: Path | str, *, gapi: Any = None, router: Any = None, l
                            assistant=assistant, openai=openai,
                            ask_openai=ask_openai if ask_openai is not None else openai,
                            claude=claude, ask_claude=ask_claude if ask_claude is not None else claude,
-                           live_assistant=live_assistant,
+                           live_assistant=live_assistant, voice_gapi=voice_gapi,
                            # Testlar haqiqatan uxlamaydi (v3 slotini kutish, qayta urinish).
                            sleep=lambda seconds: None)
     if old is not None:
@@ -294,4 +306,8 @@ def status() -> dict[str, Any]:
                              "WHERE status IN ('uploaded','transcribing','summarizing','waiting_quota')")
     out["oldestQueuedSec"] = int(now - oldest) if oldest else None
     out["lastAuthFailureAt"] = rt.last_auth_failure
+    # Spikerni ovozidan tanish (`voice.py`): namuna yozgan xodimlar, raqamli mehmonlar - faqat sonlar.
+    from . import voice
+
+    out["voices"] = voice.stats(rt.store)
     return out

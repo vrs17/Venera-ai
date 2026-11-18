@@ -14,7 +14,7 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { Directory, Paths } from 'expo-file-system';
 import { router, useFocusEffect } from 'expo-router';
-import { AudioLines, Brain, ChevronRight, Info, Languages, LogOut, Mic, PhoneCall, Plug, SunMoon, Zap } from 'lucide-react-native';
+import { AudioLines, Brain, ChevronRight, Info, Languages, LogOut, Mic, PhoneCall, Plug, Speech, SunMoon, Zap } from 'lucide-react-native';
 import { useCallback } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -74,6 +74,14 @@ export default function SettingsScreen() {
   const connectors = useQuery({ queryKey: ['connectors'], queryFn: () => services.chat.connectors(), staleTime: 30_000 });
   // "Xotira" qiymati ("3 ta"): "Xotira" sahifasi bilan bitta kesh - band unutilsa son ham kamayadi.
   const memory = useMemoryQuery(60_000);
+  // «Ovoz namunasi» qiymati: sahifasi bilan bitta kesh. Eski server (yo'l yo'q) - qator ko'rinmaydi.
+  const voiceSample = useQuery({
+    queryKey: ['voice-sample'],
+    queryFn: () => services.meetings.voiceStatus(),
+    staleTime: 60_000,
+    enabled: meetingsVisible,
+    retry: false,
+  });
 
   // "Tez yozish" sahifasida belgi yoqilgan yoki Android sozlamasidan qaytilgan bo'lishi
   // mumkin - hub'ga qaytganda son yangilansin.
@@ -170,6 +178,16 @@ export default function SettingsScreen() {
             title={t('set.recording')}
             subtitle={recordingValue}
             onPress={() => router.push('/settings/recording')}
+          />
+        ) : null}
+        {meetingsVisible && voiceSample.data ? (
+          <ListRow
+            testID="settings-voice-sample"
+            icon={Speech}
+            title={t('vs.title')}
+            subtitle={voiceSample.data.enrolled ? t('vs.hubOn', { n: voiceSample.data.samples }) : t('vs.hubOff')}
+            subtitleTone={voiceSample.data.enrolled ? undefined : 'warn'}
+            onPress={() => router.push('/settings/voice-sample')}
           />
         ) : null}
         {meetingsVisible && callsRow.visible ? (

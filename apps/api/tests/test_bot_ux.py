@@ -458,7 +458,7 @@ def test_logout_va_chiqish(world):
 
 
 def test_menyu_buyruqlari():
-    assert [c["command"] for c in COMMANDS] == ["start", "plaud", "new", "help", "logout"]
+    assert [c["command"] for c in COMMANDS] == ["start", "plaud", "ovoz", "new", "help", "logout"]
     assert all(len(c["description"]) <= 256 for c in COMMANDS)
 
 

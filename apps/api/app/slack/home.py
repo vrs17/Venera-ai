@@ -62,13 +62,20 @@ def view(team: str | None = None, user: str | None = None) -> dict[str, Any]:
         account = []
     if account:
         blocks += [{"type": "divider"}, *account]
+    # «🗣 Ovoz namunasi» (ega qarori 2026-11-18) - yig'ilishlarda ism-familiya chiqishi uchun.
+    from . import voice
+
+    blocks += [{"type": "divider"}, *voice.home_blocks()]
     return {"type": "home", "blocks": blocks}
 
 
 def prompt_blocks() -> list[dict[str, Any]]:
     """Yo'riqnoma va «🎙 Plaud» tugmasi - chatdagi xabar uchun."""
-    return render.sections(PROMPT) + [
-        {"type": "actions", "block_id": "barno:plaud", "elements": [render.button("🎙 Plaud", PLAUD_ACTION, "plaud")]}]
+    from . import voice
+
+    return render.sections(PROMPT + "\n\n" + voice.HOME_TEXT) + [
+        {"type": "actions", "block_id": "barno:plaud",
+         "elements": [render.button("🎙 Plaud", PLAUD_ACTION, "plaud"), voice.start_button()]}]
 
 
 def is_plaud(body: dict[str, Any]) -> bool:

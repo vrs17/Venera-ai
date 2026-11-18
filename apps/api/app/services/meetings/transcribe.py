@@ -40,7 +40,7 @@ from ...core.config import settings
 from ..analytics import bind, record_call
 from ..integrations.gapi_stt import MeetingTranscript, meeting_settings, out_of_balance, parse_meeting_result
 from ..stt import SttError
-from . import audio, dates
+from . import audio, dates, voice
 from .errors import RETRYABLE
 from .prompts import PROMPT_VERSION
 from .store import jdump, new_id
@@ -157,6 +157,20 @@ def normalize(result: MeetingTranscript) -> dict[str, Any]:
         segments.append({"id": number, "start": start, "end": end, "speaker": label, "text": text})
     speakers = [{"id": label, "rawIndex": raw_index.get(label), "talkSec": round(talk.get(label, 0.0), 2)}
                 for label in labels.values()]
+    # "Ovoz bo'yicha tanish" yoqiq bo'lsa - har spikerning GAPI identity'si (kimligi: `voice.identify` uni
+    # bizning shaxsga bog'laydi). Kalit - yozuvdagi spiker raqami (`segments[].speaker` = `speaker_info[].index`).
+    identities: dict[int, dict[str, Any]] = {}
+    for n, info in enumerate(result.speaker_info):
+        index = info.get("index", n)
+        if isinstance(info.get("identity"), dict):
+            try:
+                identities[int(index)] = info["identity"]
+            except (TypeError, ValueError):
+                continue
+    if identities:
+        for sp in speakers:
+            if sp["rawIndex"] is not None and sp["rawIndex"] in identities:
+                sp["identity"] = identities[sp["rawIndex"]]
     detected = detected_language(result.language)
     return {
         "segments": segments, "speakers": speakers, "detected": detected,
@@ -374,8 +388,8 @@ class Transcriber:
         path = Path(m["audio_path"])
         account = int(m.get("stt_account") or 1)
         try:
-            job = self.rt.gapi.submit_job(path, m.get("content_type") or "audio/aac",
-                                          meeting_settings(m.get("expected_speakers")), account=account)
+            options = meeting_settings(m.get("expected_speakers"), identify=settings.meetings_speaker_id)
+            job = self.rt.gapi.submit_job(path, m.get("content_type") or "audio/aac", options, account=account)
         except SttError as exc:
             if _local(exc):
                 # O'z slotimiz band - so'rov KETMAGAN: belgi va urinish qaytariladi.
@@ -438,6 +452,10 @@ class Transcriber:
         result = parse_meeting_result(payload)
         audio_sec = result.audio_seconds or float(m.get("duration_sec") or 0)
         normalized = normalize(result)
+        if settings.meetings_speaker_id:
+            # Spikerni ovozidan tanish (`voice.py`): xodim - ismi, mehmon - doimiy raqami; transkript bilan BIRGA
+            # yoziladi, ya'ni xulosa yozilayotganda ism allaqachon bor.
+            normalized["speakers"] = voice.identify(self.store, account, normalized["speakers"])
         self.store.add_usage(dates.day_key(now), m["actor_id"], audio_sec)
         self.rt.gapi.note_meeting_audio(audio_sec)
         self._meter(m, "ok", http=200, started=m.get("stt_submitted_at"), now=now,

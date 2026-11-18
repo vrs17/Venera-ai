@@ -141,7 +141,7 @@ def test_tugma_va_buyruq_qurollantiradi_va_klaviatura_hammada(world):
     assert plaud.wants(TG_ID, {"kind": "audio"})
     assert plaud.wants(TG_ID, {"kind": "voice", "duration": settings.telegram_voice_max_sec + 1})
     row = [{"text": BTN_PLAUD}, {"text": plaud_mod.BTN_APP}]                 # yonida - "📲 Ilovani yuklab olish"
-    assert plaud_mod.KEYBOARD["keyboard"] == [row]
+    assert plaud_mod.KEYBOARD["keyboard"] == [row, [{"text": plaud_mod.BTN_VOICE}]]   # ostida - «🗣 Ovoz namunasi»
     assert row in REPLY_KEYBOARD["keyboard"] and row in REPLY_KEYBOARD_ADMIN["keyboard"]
     assert "plaud" in [c["command"] for c in COMMANDS]
     bot.handle_update(text_update("/start"))

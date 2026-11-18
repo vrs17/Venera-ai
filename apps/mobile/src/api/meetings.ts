@@ -64,10 +64,14 @@ import type {
   Transcript,
   TranscriptExportFormat,
   UploadPosition,
+  VoiceDeleted,
+  VoiceSampleView,
+  VoiceStatus,
 } from './types';
 
 export const API_PREFIX = '/api/v1';
 const M = `${API_PREFIX}/meetings`;
+const VS = `${API_PREFIX}/voice-sample`;
 const enc = encodeURIComponent;
 
 export interface TranscriptExportOptions {
@@ -169,6 +173,17 @@ export function createMeetingsApi(client: ApiClient) {
       client.request<Meeting>(`${M}/${enc(id)}/retranscribe`, { method: 'POST', body }),
     // 12
     transcript: (id: string) => client.request<Transcript>(`${M}/${enc(id)}/transcript`),
+    // Ovoz namunasi (spikerni ovozidan tanish, server 2026-11-18): holat + tartib va matn, yuborish, natija, o'chirish.
+    voiceStatus: () => client.request<VoiceStatus>(VS),
+    uploadVoiceSample: (bytes: Uint8Array, contentType: string) =>
+      client.request<VoiceSampleView>(VS, {
+        method: 'POST',
+        rawBody: bytes,
+        headers: { 'Content-Type': contentType },
+        timeoutMs: CHUNK_TIMEOUT_MS,
+      }),
+    voiceSample: (sampleId: string) => client.request<VoiceSampleView>(`${VS}/${enc(sampleId)}`),
+    deleteVoice: () => client.request<VoiceDeleted>(VS, { method: 'DELETE' }),
     // 13
     renameSpeaker: (id: string, speakerId: string, name: string | null) =>
       client.request<SpeakersResponse>(`${M}/${enc(id)}/speakers/${enc(speakerId)}`, { method: 'PATCH', body: { name } }),

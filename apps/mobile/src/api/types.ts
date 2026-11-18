@@ -47,10 +47,55 @@ export type MeetingOrigin = 'recording' | 'upload' | 'slack' | 'telegram' | 'min
 
 export interface Speaker {
   id: string; // 'S1'..'S4' (order of first appearance)
-  name: string | null; // user-confirmed name
+  name: string | null; // user-confirmed name, or the employee recognised by voice (nameSource 'voice')
   suggestedName: string | null; // from the summary, never auto-applied
   talkSec: number;
   mergedInto: string | null; // set after a merge; clients hide merged speakers
+  /** Doimiy spiker raqami (ovozidan tanilgan, server 2026-11-18): ismsiz bo'lsa «Noma'lum #N». Eski server - yo'q. */
+  personId?: number | null;
+  /** 'voice' - ism ovozdan (namuna yozgan xodim), 'manual' - odam qo'ygan. */
+  nameSource?: 'voice' | 'manual' | null;
+  voiceScore?: number | null;
+}
+
+/** Ovoz namunasi (`/api/v1/voice-sample`): spikerni ovozidan tanish uchun. */
+export interface VoiceSampleView {
+  id: string;
+  status: 'processing' | 'ok' | 'rejected' | 'failed';
+  reason: string | null;
+  message: string;
+  speechSeconds: number | null;
+  channel: string | null;
+  createdAt: number;
+  doneAt: number | null;
+}
+
+export interface VoiceInstructions {
+  intro: string;
+  steps: string[];
+  text: string;
+  freeSpeech: string;
+  recommendedSeconds: number;
+  minSpeechSeconds: number;
+  maxBytes: number;
+  acceptedContentTypes: string[];
+}
+
+export interface VoiceStatus {
+  enabled: boolean;
+  enrolled: boolean;
+  personId: number | null;
+  name: string | null;
+  samples: number;
+  lastSampleAt: number | null;
+  latest: VoiceSampleView | null;
+  instructions: VoiceInstructions;
+}
+
+export interface VoiceDeleted {
+  deleted: number;
+  samples: number;
+  message: string;
 }
 
 export interface Segment {

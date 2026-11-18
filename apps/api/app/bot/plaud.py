@@ -116,12 +116,14 @@ from ..services.meetings.errors import MeetingProblem
 from . import render
 from .mobile_app import BTN_APP
 from .render import esc
+from .voice_sample import BTN_VOICE, VoiceSample
 
 log = logging.getLogger(__name__)
 
 BTN_PLAUD = "🎙 Plaud"
 #: Pastdagi klaviatura: Plaud va "📲 Ilovani yuklab olish" (`mobile_app.py`) yonma-yon.
-KEYBOARD = {"keyboard": [[{"text": BTN_PLAUD}, {"text": BTN_APP}]], "resize_keyboard": True, "is_persistent": True}
+KEYBOARD = {"keyboard": [[{"text": BTN_PLAUD}, {"text": BTN_APP}], [{"text": BTN_VOICE}]], "resize_keyboard": True,
+            "is_persistent": True}
 #: Tugmadan keyin shuncha vaqt ichida kelgan ovozli xabar - yozuv.
 ARMED_SEC = 15 * 60
 #: Telegram Bot API `getFile` chegarasi.
@@ -232,6 +234,8 @@ class Plaud:
         self._formats: OrderedDict[tuple[int, str, str], str] = OrderedDict()
         self._pool = None if inline else ThreadPoolExecutor(max_workers=max(1, workers),
                                                              thread_name_prefix="tg-plaud")
+        #: «🗣 Ovoz namunasi» (`voice_sample.py`) - Plaud bilan birga yoqiladi.
+        self.voice = VoiceSample(api, clock=clock)
 
     # --- kirish ---------------------------------------------------------------------------
 
@@ -273,11 +277,19 @@ class Plaud:
             self._armed[chat_id] = self._clock() + ARMED_SEC
             if len(self._armed) > _REMEMBER:
                 self._armed.clear()
+        # Oxirgi bosilgan tugma ustun: ovoz namunasi kutilayotgan bo'lsa - endi yozuv kutiladi.
+        self.voice.disarm(chat_id)
         self._send(chat_id, PROMPT, markup=KEYBOARD)
+
+    def disarm(self, chat_id: int) -> None:
+        """«🗣 Ovoz namunasi» bosildi - keyingi ovozli xabar Plaud yozuvi emas."""
+        with self._lock:
+            self._armed.pop(chat_id, None)
 
     def show_keyboard(self, chat_id: int) -> None:
         self._send(chat_id, "🎙 <b>Plaud</b> - pastdagi tugma: audio yuboring, matn va qisqa xulosa olasiz.\n"
-                            "📲 <b>Ilovani yuklab olish</b> - Barno AI ilovasi (Android).",
+                            "📲 <b>Ilovani yuklab olish</b> - Barno AI ilovasi (Android).\n"
+                            "🗣 <b>Ovoz namunasi</b> - Plaud yig'ilishlarida ism-familiyangiz avtomatik chiqishi uchun.",
                    markup=KEYBOARD)
 
     def on_audio(self, chat_id: int, user: AuthUser, msg: dict[str, Any], media: dict[str, Any]) -> None:
@@ -1116,7 +1128,9 @@ def is_prompt(message: dict[str, Any]) -> bool:
 
 
 def speakers_of(view_speakers: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    return {sp["id"]: {"name": sp.get("name"), "merged_into": sp.get("mergedInto")} for sp in view_speakers}
+    """`person_id` - ismsiz, lekin ovozi tanilgan spiker «Noma'lum #N» bo'lib chiqsin (`export.speaker_name`)."""
+    return {sp["id"]: {"name": sp.get("name"), "merged_into": sp.get("mergedInto"), "person_id": sp.get("personId")}
+            for sp in view_speakers}
 
 
 def clock(seconds: Any) -> str:

@@ -207,8 +207,38 @@ _V8: tuple[str, ...] = (
     "CREATE UNIQUE INDEX minutes_turn ON minutes(turn_id) WHERE turn_id IS NOT NULL",
 )
 
+#: v9 (2026-11-18): SPIKERNI OVOZIDAN TANISH (ega qarori: 1-bosqich - GAPI `speaker_identification`;
+#: `services/meetings/voice.py`). `voice_persons` - bizning DOIMIY spiker raqamimiz: xodim (namuna yozgan, ismi
+#: bor) yoki mehmon (ismsiz - «Noma'lum #<id>», ega talabi: ovozi saqlansin, ID bo'lsin, ismi bo'lmasin).
+#: `voice_links` - GAPI ovozi (har hisobda alohida: `account` + ovozning `speaker_id`) -> shaxs; bir shaxsda
+#: bir nechta ovoz bo'lishi mumkin. `voice_samples` - xodim yozgan namunalar (Telegram, Slack, mobil).
+#: Spiker qatorida: shaxs, ism manbai (`voice` - ovozdan, `manual` - odam qo'ydi) va GAPI natijasi.
+_V9: tuple[str, ...] = (
+    """CREATE TABLE voice_persons (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL DEFAULT 'guest', actor_id INTEGER, name TEXT,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)""",
+    "CREATE UNIQUE INDEX voice_persons_actor ON voice_persons(actor_id) WHERE actor_id IS NOT NULL",
+    """CREATE TABLE voice_links (
+  account INTEGER NOT NULL, speaker_key TEXT NOT NULL, voice_no INTEGER,
+  person_id INTEGER NOT NULL REFERENCES voice_persons(id) ON DELETE CASCADE,
+  named INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, last_seen_at INTEGER,
+  PRIMARY KEY (account, speaker_key))""",
+    "CREATE INDEX voice_links_person ON voice_links(person_id)",
+    """CREATE TABLE voice_samples (
+  id TEXT PRIMARY KEY, actor_id INTEGER NOT NULL, person_id INTEGER, channel TEXT NOT NULL,
+  status TEXT NOT NULL, reason TEXT, speech_sec REAL, content_type TEXT, bytes INTEGER, path TEXT,
+  result_json TEXT, created_at INTEGER NOT NULL, done_at INTEGER)""",
+    "CREATE INDEX voice_samples_actor ON voice_samples(actor_id, created_at DESC)",
+    "ALTER TABLE speakers ADD COLUMN person_id INTEGER",
+    "ALTER TABLE speakers ADD COLUMN name_source TEXT",
+    "ALTER TABLE speakers ADD COLUMN voice_status TEXT",
+    "ALTER TABLE speakers ADD COLUMN voice_score REAL",
+    "CREATE INDEX speakers_person ON speakers(person_id) WHERE person_id IS NOT NULL",
+)
+
 #: `MIGRATIONS[i]` fayl `user_version = i` dan `i + 1` ga o'tkazadi. FAQAT OXIRIGA.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4, _V5, _V6, _V7, _V8)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_V1, _V2, _V3, _V4, _V5, _V6, _V7, _V8, _V9)
 SCHEMA_VERSION = len(MIGRATIONS)
 
 #: Yozuv manbasi (Plaud filtri; mobil `MeetingOrigin`). `recording` - telefonda yozilgan, `upload` - telefondan
@@ -536,10 +566,14 @@ class MeetingStore:
                 "VALUES (?,?,?,?,?,?,?,0)",
                 [(meeting_id, s["id"], s["start"], s["end"], s["speaker"], s["text"], s["text"])
                  for s in segments])
+            # Ovozdan tanilgan xodimning ismi (`name_source='voice'`) va shaxs raqami shu yerda - xulosa
+            # navbatga tushganda ism allaqachon bor (model "ma'lum ismlar"ni ko'radi, `prompts.py`).
             conn.executemany(
-                "INSERT INTO speakers (meeting_id, id, raw_index, name, suggested_name, talk_sec, merged_into) "
-                "VALUES (?,?,?,NULL,NULL,?,NULL)",
-                [(meeting_id, sp["id"], sp.get("rawIndex"), sp.get("talkSec", 0.0)) for sp in speakers])
+                "INSERT INTO speakers (meeting_id, id, raw_index, name, suggested_name, talk_sec, merged_into, "
+                "person_id, name_source, voice_status, voice_score) VALUES (?,?,?,?,NULL,?,NULL,?,?,?,?)",
+                [(meeting_id, sp["id"], sp.get("rawIndex"), sp.get("name"), sp.get("talkSec", 0.0),
+                  sp.get("personId"), sp.get("nameSource"), sp.get("voiceStatus"), sp.get("voiceScore"))
+                 for sp in speakers])
             meeting_fields["updated_at"] = now
             sets = ", ".join(f"{name}=?" for name in meeting_fields)
             conn.execute(f"UPDATE meetings SET transcript_rev=transcript_rev+1, transcript_gen=transcript_gen+1, "

@@ -191,3 +191,80 @@ def test_parse_meeting_result_shakllarga_chidamli():
     wrapped = parse_meeting_result({"result": {"segments": [{"text": "a"}], "audio_seconds": "3"}})
     assert wrapped.segments == [{"text": "a"}] and wrapped.audio_seconds == 3.0
     assert gapi_stt.MAX_MEETING_SPEAKERS == 4
+
+
+# --- spikerni ovozidan tanish (2026-11-18): sozlamalar, namuna, loyiha ovozlari ---------------
+
+
+def test_yigilish_tanish_yoqilsa_faqat_speaker_identification_ozgaradi():
+    on = meeting_settings(3, identify=True)
+    assert on["speaker_identification"] is True
+    assert {k: v for k, v in on.items() if k != "speaker_identification"} == \
+        {k: v for k, v in meeting_settings(3).items() if k != "speaker_identification"}
+    assert "enroll" not in on                                 # GAPI standarti: yangi ovoz ro'yxatga olinadi
+    assert meeting_settings(3)["speaker_identification"] is False
+    assert _MEETING_SETTINGS["speaker_identification"] is False
+
+
+def test_namuna_sozlamalari_kalitlari_yigilishniki_bilan_bir_xil():
+    assert set(gapi_stt._SAMPLE_SETTINGS) == set(_MEETING_SETTINGS)
+    assert gapi_stt._SAMPLE_SETTINGS["diarization"] is True
+    assert gapi_stt._SAMPLE_SETTINGS["speaker_identification"] is True
+    assert gapi_stt._SAMPLE_SETTINGS["emotion"] is False and gapi_stt._SAMPLE_SETTINGS["pii"] is False
+
+
+def test_namuna_sinxron_transcribe_va_vazifa_raqami(client, monkeypatch):
+    result = {"segments": [], "speech_seconds": 31.0, "audio_seconds": 40.0,
+              "speaker_info": [{"index": 0, "speech_seconds": 31.0, "has_voiceprint": True,
+                                "identity": {"status": "new", "voice_id": 100, "speaker_id": "sp-1"}}]}
+    transport = Transport([(200, result, {"X-Job-Id": "job-77"})])
+    monkeypatch.setattr(urllib.request, "urlopen", transport)
+    payload, job = client.transcribe_sample(b"OggS" + b"\x00" * 100, "audio/ogg", account=1)
+    assert job == "job-77" and payload["speech_seconds"] == 31.0
+    req = transport.requests[0]
+    assert req["url"] == f"{BASE}/transcribe" and req["method"] == "POST"
+    assert b'"speaker_identification": true' in req["body"] and b'"diarization": true' in req["body"]
+    assert b'filename="speech.ogg"' in req["body"]
+
+
+def test_namuna_202_bolsa_kutiladi(client, monkeypatch):
+    monkeypatch.setattr(gapi_stt, "_POLL_EVERY", 0.0)
+    done = {"segments": [], "speaker_info": []}
+    transport = Transport([(202, {"id": "job-5", "state": "queued"}, {}), (200, {"state": "done"}, {}),
+                           (200, done, {})])
+    monkeypatch.setattr(urllib.request, "urlopen", transport)
+    payload, job = client.transcribe_sample(b"x" * 10, "audio/aac", account=1)
+    assert job == "job-5" and payload == done
+    assert transport.requests[2]["url"] == f"{BASE}/jobs/job-5/result"
+
+
+def test_loyiha_ovozlari_api(client, monkeypatch):
+    transport = Transport([
+        (200, {"speakers": [{"id": "sp-1", "number": 100, "name": None, "kind": "candidate"}]}, {}),
+        (201, {"id": "sp-2", "number": 101, "name": "barno-7"}, {}),
+        (200, {"id": "sp-2", "name": "barno-8"}, {}),
+        (202, {"ok": True}, {}),
+        (200, {}, {}),
+        (404, {"error": "speaker_not_found"}, {}),
+    ])
+    monkeypatch.setattr(urllib.request, "urlopen", transport)
+    assert client.speakers()[0]["number"] == 100
+    assert client.create_speaker("barno-7")["id"] == "sp-2"
+    client.rename_speaker("sp-2", "barno-8")
+    client.enroll_speaker("sp-2", "job-9", speaker_index=1)
+    assert client.delete_speaker("sp-2") is True
+    assert client.delete_speaker("sp-2") is True             # allaqachon yo'q - ham muvaffaqiyat
+    methods = [(r["method"], r["url"].replace(BASE, "")) for r in transport.requests]
+    assert methods == [("GET", "/speakers"), ("POST", "/speakers"), ("PATCH", "/speakers/sp-2"),
+                       ("POST", "/speakers/sp-2/enroll"), ("DELETE", "/speakers/sp-2"), ("DELETE", "/speakers/sp-2")]
+    assert json.loads(transport.requests[1]["body"]) == {"name": "barno-7"}
+    assert json.loads(transport.requests[3]["body"]) == {"job_id": "job-9", "speaker_index": 1}
+    assert all(r["auth"] == f"Bearer {KEY}" for r in transport.requests)
+
+
+def test_natijada_speaker_info_va_voices_saqlanadi():
+    result = parse_meeting_result({"segments": [], "speaker_info": [{"index": 0, "identity": {"status": "new"}}, "x"],
+                                   "voices": [{"speaker": 0, "voice_id": 100}]})
+    assert result.speaker_info == [{"index": 0, "identity": {"status": "new"}}]
+    assert result.voices == [{"speaker": 0, "voice_id": 100}]
+    assert parse_meeting_result({"segments": []}).speaker_info == []

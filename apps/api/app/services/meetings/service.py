@@ -157,8 +157,12 @@ def accept_language(header: str | None) -> str:
 
 
 def speaker_view(sp: dict[str, Any]) -> dict[str, Any]:
+    """`personId` - doimiy spiker raqami (ovozidan, `voice.py`): ismsiz bo'lsa klient «Noma'lum #<personId>»
+    ko'rsatadi; `nameSource` - `voice` (ovozdan tanilgan xodim) yoki `manual` (odam qo'ygan)."""
     return {"id": sp["id"], "name": sp.get("name"), "suggestedName": sp.get("suggested_name"),
-            "talkSec": round(float(sp.get("talk_sec") or 0), 2), "mergedInto": sp.get("merged_into")}
+            "talkSec": round(float(sp.get("talk_sec") or 0), 2), "mergedInto": sp.get("merged_into"),
+            "personId": sp.get("person_id"), "nameSource": sp.get("name_source") if sp.get("name") else None,
+            "voiceScore": round(float(sp["voice_score"]), 3) if sp.get("voice_score") is not None else None}
 
 
 def segment_view(seg: dict[str, Any]) -> dict[str, Any]:
@@ -657,8 +661,9 @@ def rename_speaker(user: AuthUser, meeting_id: str, speaker_id: str, name: str |
     clean = " ".join(export.clean(name).split()) or None
     if clean is not None and len(clean) > 60:
         raise MeetingProblem(400, "invalid_name", "Ism 60 belgidan oshmasin")
-    if store.execute("UPDATE speakers SET name=? WHERE meeting_id=? AND id=?",
-                     (clean, m["id"], speaker_id)).rowcount != 1:
+    # Odam qo'ygan ism ovozdan tanishdan ustun: keyingi namuna (`voice._backfill`) uni almashtirmaydi.
+    if store.execute("UPDATE speakers SET name=?, name_source=? WHERE meeting_id=? AND id=?",
+                     (clean, "manual" if clean else None, m["id"], speaker_id)).rowcount != 1:
         raise MeetingProblem(404, "speaker_not_found", "Spiker topilmadi")
     return {"speakers": [speaker_view(sp) for sp in store.speakers(m["id"])]}
 

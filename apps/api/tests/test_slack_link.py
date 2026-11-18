@@ -340,7 +340,7 @@ def test_home_varagi_ulash_va_uzish(linking):
     opened = {"type": "app_home_opened", "user": "U2", "tab": "home", "team": "T1"}
     home.on_open(slack, opened)
     view = slack.published[-1]["view"]
-    assert home.TAGLINE in _texts(view) and _actions(view) == [link.CONNECT_ACTION]
+    assert home.TAGLINE in _texts(view) and _actions(view) == [link.CONNECT_ACTION, "barno_voice"]
 
     # Home'da kanal yo'q - ulash havolasi shaxsiy xabarda.
     link.on_action(slack, {"actions": [{"action_id": link.CONNECT_ACTION}], "user": {"id": "U2", "team_id": "T1"},
@@ -350,20 +350,23 @@ def test_home_varagi_ulash_va_uzish(linking):
     link.store().link("T1", "U2", 2)
     home.on_open(slack, opened)
     view = slack.published[-1]["view"]
-    assert "Demo Foydalanuvchi" in _texts(view) and _actions(view) == [link.UNLINK_ACTION]
+    assert "Demo Foydalanuvchi" in _texts(view) and _actions(view) == [link.UNLINK_ACTION, "barno_voice"]
 
     link.on_action(slack, {"actions": [{"action_id": link.UNLINK_ACTION, "value": "unlink"}],
                            "user": {"id": "U2", "team_id": "T1"}, "team": {"id": "T1"}})
     assert link.store().lookup("T1", "U2") == (None, "none")
     assert "uzildi" in slack.posted[-1]["text"]
-    assert _actions(slack.published[-1]["view"]) == [link.CONNECT_ACTION]
+    assert _actions(slack.published[-1]["view"]) == [link.CONNECT_ACTION, "barno_voice"]
 
 
 def test_ulash_ochiq_bolmasa_home_eskicha(users_file, monkeypatch):
     setup(monkeypatch, users_file)
     assert not link.required()
+    from app.slack import voice as slack_voice
+
     assert home.view("T1", "U2") == {"type": "home", "blocks": [
-        {"type": "section", "text": {"type": "mrkdwn", "text": home.TAGLINE}}]}
+        {"type": "section", "text": {"type": "mrkdwn", "text": home.TAGLINE}},
+        {"type": "divider"}, *slack_voice.home_blocks()]}
 
 
 # --- dispetcher va ombor -------------------------------------------------------------------------

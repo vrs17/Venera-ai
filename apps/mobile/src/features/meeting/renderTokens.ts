@@ -38,11 +38,19 @@ export function unknownSpeakerLabel(lang: Lang): string {
   return "Noma'lum";
 }
 
+/** Ovozi tanilgan, ismi yo'q spiker (mehmon yoki namuna yozmagan xodim) - doimiy raqami bilan (server bilan bir xil). */
+export function personLabel(personId: number, lang: Lang): string {
+  if (lang === 'ru') return `Неизвестный #${personId}`;
+  if (lang === 'en') return `Unknown #${personId}`;
+  return `Noma'lum #${personId}`;
+}
+
 export function speakerLabel(id: string | null | undefined, speakers: Speaker[], lang: Lang): string {
   if (!id) return unknownSpeakerLabel(lang);
   const resolved = resolveSpeakerId(id, speakers);
   const sp = speakers.find((s) => s.id === resolved);
   if (sp?.name) return sp.name;
+  if (sp?.personId) return personLabel(sp.personId, lang);
   const n = speakerNumber(resolved);
   return n != null ? fallbackSpeakerLabel(n, lang) : resolved;
 }

@@ -100,6 +100,7 @@ from .group_admin import GROUP_NOT_ENABLED, GROUP_PAUSED, GroupAdmin
 from .groups import GroupAssistant
 from .mobile_app import BTN_APP, MobileApp
 from .plaud import BTN_PLAUD, Plaud
+from .voice_sample import BTN_VOICE
 from .render import esc
 
 log = logging.getLogger(__name__)
@@ -160,6 +161,7 @@ _TURNS_KEPT = 2000
 COMMANDS = [
     {"command": "start", "description": "Barnoni ochish"},
     {"command": "plaud", "description": "Audio -> matn va qisqa xulosa"},
+    {"command": "ovoz", "description": "Ovoz namunasi - yig'ilishda ismingiz chiqsin"},
     {"command": "new", "description": "Yangi suhbat"},
     {"command": "help", "description": "Bot nima qila oladi"},
     {"command": "logout", "description": "Hisobni botdan uzish"},
@@ -199,8 +201,10 @@ _HELP = (
     "• 🎙 <b>Plaud</b> (pastdagi tugma yoki /plaud): audio yuboring - matn, qisqa xulosa, "
     "vazifalar, eksport; yozuv bo'yicha savol uchun «💬 Savol berish» tugmasini bosing yoki "
     "xulosaga javob (Reply) qilib yozing (ovozli xabar ham bo'ladi) - Barno suhbatni eslab qoladi. "
-    "Bayonnoma uchun ko'rsatma va tayyor bayonnomadagi o'zgartirishlar ham shunday yoziladi.\n\n"
-    "/new - yangi suhbat · /plaud - audio → matn · /start - Barnoni ochish · /logout - botdan chiqish"
+    "Bayonnoma uchun ko'rsatma va tayyor bayonnomadagi o'zgartirishlar ham shunday yoziladi. 🗣 <b>Ovoz namunasi</b> "
+    "(pastdagi tugma yoki /ovoz) - yig'ilishlarda ism-familiyangiz avtomatik chiqadi.\n\n"
+    "/new - yangi suhbat · /plaud - audio → matn · /ovoz - ovoz namunasi · /start - Barnoni ochish · "
+    "/logout - botdan chiqish"
 )
 #: `telegram_voice_max_sec` dan uzun ovoz (`{minutes}` - chegara): HR savoli va yozuv bo'yicha ovozli savol.
 _VOICE_LONG = "Ovozli xabar juda uzun - {minutes} daqiqagacha yuboring."
@@ -987,6 +991,15 @@ class VeneraBot:
             # Klaviaturada tugma qolgan, bo'lim esa o'chiq - HR yordamchisiga ketmasin.
             self._send(chat_id, "🎙 Plaud hozir o'chiq (yig'ilishlar bo'limi yoqilmagan).")
             return
+        if text == BTN_VOICE:
+            # «🗣 Ovoz namunasi» (`voice_sample.py`) - HR yordamchisiga ketmaydi.
+            if self.plaud is None:
+                self._send(chat_id, "🗣 Ovoz namunasi hozir o'chiq (yig'ilishlar bo'limi yoqilmagan).")
+            else:
+                log.info("Telegram ovoz namunasi: tugma (%s)", user.actorId)
+                self.plaud.disarm(chat_id)
+                self.plaud.voice.on_button(chat_id, user)
+            return
         if self.plaud is not None:
             # "🎙 Plaud" tugmasi, yozuv (audio fayl, qurollangan yoki uzun ovozli xabar) va
             # yozuv xabariga javob (savol, matn yoki ovoz) - HR yordamchisiga ketmaydi (`plaud.py`).
@@ -995,6 +1008,11 @@ class VeneraBot:
                 self.plaud.on_button(chat_id, user)
                 return
             media = self.plaud.media(msg)
+            if self.plaud.voice.wants(chat_id, media):
+                # «🗣 Ovoz namunasi» bosilgandan keyingi audio - namuna (yozuv ham, savol ham emas).
+                log.info("Telegram ovoz namunasi (%s): %s", user.actorId, media["kind"])
+                self.plaud.voice.on_audio(chat_id, user, msg, media)
+                return
             if media is not None and media["kind"] == "voice" and self.plaud.claims_reply(chat_id, user, msg):
                 # Yozuv xabariga (bayonnoma fayliga ham) yoki Plaud so'roviga (💬 / ✍️ / ✏️) ovozli javob - shu
                 # yozuv chatiga: `wants` dan OLDIN (yangi yozuv bo'lmasin, qurollanish sarflanmasin).
@@ -1244,6 +1262,16 @@ class VeneraBot:
                 found = self._account(chat_id, link)
                 if found is not None:
                     self.plaud.on_button(chat_id, found[0])
+        elif name in ("ovoz", "voice"):
+            if link is None:
+                self._link_prompt(chat_id, state, force=True)
+            elif self.plaud is None:
+                self._send(chat_id, _UNKNOWN)
+            else:
+                found = self._account(chat_id, link)
+                if found is not None:
+                    self.plaud.disarm(chat_id)
+                    self.plaud.voice.on_button(chat_id, found[0])
         elif name == "help":
             # Ulanmagan odamga - BITTA xabar: yordam va ilova tugmasi.
             self._send(chat_id, _HELP,
@@ -1596,6 +1624,14 @@ class VeneraBot:
                 return
             with bind(found[0].actorId, "bot"):
                 self.admin.on_callback(cq_id, chat_id, msg, found[0], found[1], data)
+            return
+        if self.plaud is not None and data.startswith("v:"):
+            user = self._user_for(chat_id, link)
+            if user is None:
+                self._answer_cb(cq_id)
+                return
+            with bind(user.actorId, "bot"):
+                self.plaud.voice.on_callback(cq_id, chat_id, msg, user, data)
             return
         if self.plaud is not None and data.startswith("p:"):
             user = self._user_for(chat_id, link)

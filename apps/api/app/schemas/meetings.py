@@ -208,6 +208,66 @@ class Speaker(BaseModel):
     suggestedName: str | None = None
     talkSec: float
     mergedInto: str | None = None
+    #: Doimiy spiker raqami (ovozidan tanilgan, `voice.py`): ismsiz bo'lsa - «Noma'lum #<personId>».
+    personId: int | None = None
+    #: `voice` - ism ovozdan (namuna yozgan xodim), `manual` - odam qo'ygan; ism yo'q bo'lsa `None`.
+    nameSource: str | None = None
+    #: GAPI o'xshashlik bali (0-1).
+    voiceScore: float | None = None
+
+
+class VoiceSampleView(BaseModel):
+    id: str
+    status: str
+    reason: str | None = None
+    message: str
+    speechSeconds: float | None = None
+    channel: str | None = None
+    createdAt: int
+    doneAt: int | None = None
+
+
+class VoiceInstructions(BaseModel):
+    intro: str
+    steps: list[str]
+    text: str
+    freeSpeech: str
+    recommendedSeconds: int
+    minSpeechSeconds: float
+    maxBytes: int
+    acceptedContentTypes: list[str]
+
+
+class VoiceStatus(BaseModel):
+    enabled: bool
+    enrolled: bool
+    personId: int | None = None
+    name: str | None = None
+    samples: int
+    lastSampleAt: int | None = None
+    latest: VoiceSampleView | None = None
+    instructions: VoiceInstructions
+
+
+class VoiceDeleted(BaseModel):
+    deleted: int
+    samples: int
+    message: str
+
+
+class VoiceCoveragePerson(BaseModel):
+    personId: int | None = None
+    actorId: int | None = None
+    name: str | None = None
+    voices: int = 0
+    samples: int = 0
+    lastSampleAt: int | None = None
+
+
+class VoiceCoverage(BaseModel):
+    enrolled: list[VoiceCoveragePerson]
+    missing: list[VoiceCoveragePerson]
+    guests: int
 
 
 class Segment(BaseModel):

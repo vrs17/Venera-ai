@@ -241,6 +241,8 @@ function SpeakerChip({ speaker, label, onPress }: { speaker: Speaker; label: str
       <View style={[s.dot, { backgroundColor: color }]} />
       <Text style={{ color: th.text, fontWeight: '600' }}>{label}</Text>
       {speaker.suggestedName && !speaker.name ? <Text style={{ color: th.textMuted }}> ?</Text> : null}
+      {/* Ism ovozdan aniqlangan (namuna yozgan xodim) - kichik belgi. */}
+      {speaker.name && speaker.nameSource === 'voice' ? <Text style={{ color: th.textMuted }}> 🎙</Text> : null}
     </Pressable>
   );
 }

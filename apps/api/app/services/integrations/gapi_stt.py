@@ -121,8 +121,9 @@ def _safe(text: str, key: str = "") -> str:
     return " ".join("<key>" if _KEY_LIKE in word else word for word in text.split())
 
 
-def _multipart(audio: bytes, filename: str, content_type: str) -> tuple[bytes, str]:
-    """`file` + `settings` - boshqa hech narsa.
+def _multipart(audio: bytes, filename: str, content_type: str,
+               settings: dict[str, Any] | None = None) -> tuple[bytes, str]:
+    """`file` + `settings` - boshqa hech narsa. `settings` berilmasa - chat diktovkasiniki (`_SETTINGS`).
 
     `language` maydoni ATAYLAB YUBORILMAYDI: GAPI o'zbek uchun bitta
     model, va hujjatda bunday maydon yo'q. Noma'lum narsa yuborish esa
@@ -138,7 +139,7 @@ def _multipart(audio: bytes, filename: str, content_type: str) -> tuple[bytes, s
     body += b"\r\n"
     body += head
     body += b'Content-Disposition: form-data; name="settings"\r\n\r\n'
-    body += json.dumps(_SETTINGS).encode()
+    body += json.dumps(_SETTINGS if settings is None else settings).encode()
     body += f"\r\n--{boundary}--\r\n".encode()
     return bytes(body), f"multipart/form-data; boundary={boundary}"
 
@@ -164,12 +165,28 @@ _MEETING_SETTINGS = {"diarization": True, "max_speakers": 0, "speaker_roles": Fa
 MAX_MEETING_SPEAKERS = 4
 
 
-def meeting_settings(expected_speakers: int | None = None) -> dict[str, Any]:
-    """Yig'ilish uchun sozlamalar NUSXASI; `max_speakers` = min(kutilgan, 4)."""
+def meeting_settings(expected_speakers: int | None = None, *, identify: bool = False) -> dict[str, Any]:
+    """Yig'ilish uchun sozlamalar NUSXASI; `max_speakers` = min(kutilgan, 4).
+
+    `identify` - "ovoz bo'yicha tanish" (`speaker_identification`, ega qarori 2026-11-18: hamma xodim rozi).
+    GAPI har spikerning ovoz izini loyihadagi ovozlar bilan solishtiradi: tanish ovoz o'z doimiy raqamini oladi,
+    10 s dan ko'p gapirgan yangi ovoz ro'yxatga olinadi (mehmon ham - ega talabi: ovozi saqlansin, ID bo'lsin,
+    ismi bo'lmasin). Tarif o'zgarmaydi (x1). `enroll` ATAYLAB yuborilmaydi - GAPI'ning standarti (`auto`)."""
     out = dict(_MEETING_SETTINGS)
     if expected_speakers:
         out["max_speakers"] = max(1, min(int(expected_speakers), MAX_MEETING_SPEAKERS))
+    if identify:
+        out["speaker_identification"] = True
     return out
+
+
+#: OVOZ NAMUNASI sozlamalari (`services/meetings/voice.py`): xodim yozgan ~45 s lik namuna sinxron
+#: `/transcribe` ga. `diarization` - namunada BIR odam ekanini tekshirish uchun (ikkinchi ovoz bo'lsa
+#: rad etiladi), `speaker_identification` - ovoz izi va loyihadagi ovoz bilan solishtirish. Qolganlari
+#: yig'ilishdagidek ATAYLAB o'chiq (narx va ortiqcha taxmin). Kalitlar yig'ilishnikidan olinadi: GAPI
+#: noma'lum kalitni `400 unknown_setting` bilan rad etadi.
+_SAMPLE_SETTINGS = {**_MEETING_SETTINGS, "diarization": True, "max_speakers": 0, "speaker_identification": True,
+                    "language_detection": False}
 
 
 class _StreamBody:
@@ -256,6 +273,10 @@ class MeetingTranscript:
     speakers: int | None = None
     options: dict[str, Any] = field(default_factory=dict)
     keys: list[str] = field(default_factory=list)
+    #: "Ovoz bo'yicha tanish" yoqiq bo'lsa: har spiker xulosasi (`identity` - kim ekani) va
+    #: "yozuv spikeri -> loyiha ovozi" bog'lanishi. Ovoz izining O'ZI javobda hech qachon yo'q.
+    speaker_info: list[dict[str, Any]] = field(default_factory=list)
+    voices: list[dict[str, Any]] = field(default_factory=list)
 
 
 def parse_meeting_result(payload: Any) -> MeetingTranscript:
@@ -283,6 +304,10 @@ def parse_meeting_result(payload: Any) -> MeetingTranscript:
         speakers=speakers if isinstance(speakers, int) and not isinstance(speakers, bool) else None,
         options=payload.get("options") if isinstance(payload.get("options"), dict) else {},
         keys=sorted(str(k) for k in payload.keys()),
+        speaker_info=[s for s in (payload.get("speaker_info") or []) if isinstance(s, dict)]
+        if isinstance(payload.get("speaker_info"), list) else [],
+        voices=[v for v in (payload.get("voices") or []) if isinstance(v, dict)]
+        if isinstance(payload.get("voices"), list) else [],
     )
 
 
@@ -713,6 +738,88 @@ class GapiSttClient:
     def note_meeting_audio(self, seconds: float) -> None:
         """Yig'ilish natijasi keldi - kunlik sarfga qo'shiladi (`spend`)."""
         self._account(seconds)
+
+    # --- loyiha ovozlari va ovoz namunasi (`services/meetings/voice.py`) ----------
+    #
+    # OVOZLAR GAPI LOYIHASIDA saqlanadi, ya'ni HAR HISOBDA ALOHIDA (`account`): 1-hisobdagi #100 va
+    # 2-hisobdagi #100 - boshqa-boshqa odam. API kaliti ovozning `speaker_id` si (natijada
+    # `speaker_info[].identity.speaker_id`, ro'yxatda `id`), raqam (`voice_id` / `number`) - ko'rinish uchun.
+    # Ovoz izining O'ZI hech qaysi javobda kelmaydi.
+
+    def transcribe_sample(self, audio: bytes, content_type: str, *, account: int = 1) -> tuple[dict[str, Any], str]:
+        """Ovoz namunasi -> GAPI natijasi XOM (`speaker_info`, `voices`, `speech_seconds`) va vazifa raqami
+        (`enroll_speaker` uchun). Sinxron `/transcribe` (5 daqiqagacha), `202` bo'lsa kutiladi.
+        Hisob AYNAN berilgani - balans tugasa ham boshqasiga o'tmaydi: ovoz har hisobga alohida yoziladi."""
+        if not self.base_url or not self._key_of(account):
+            raise SttError(f"GAPI STT sozlanmagan ({self._name(account)})", status=501)
+        if not audio:
+            raise SttError("audio bo'sh", status=400)
+        body, ctype = _multipart(audio, safe_filename(content_type), content_type, _SAMPLE_SETTINGS)
+        if not self._slots.acquire(timeout=30.0):
+            busy = SttError(f"ilova GAPI chegarasida ({self.max_concurrent} parallel)", status=503, retryable=True)
+            busy.local = True
+            raise busy
+        try:
+            started = time.monotonic()
+            with self._spend_lock:
+                self._spend_sent += 1
+            payload, job_id = self._post("/transcribe", body, ctype, account)
+            if payload.get("state") and not isinstance(payload.get("segments"), list):
+                job_id = str(payload.get("id") or payload.get("job_id") or job_id)
+                payload = self._await_job(job_id, started, account)
+        finally:
+            self._slots.release()
+        job_id = job_id or str(payload.get("job_id") or payload.get("id") or "")
+        self._account(_num(payload.get("audio_seconds")) or 0.0)
+        return payload, job_id
+
+    def speakers(self, *, account: int = 1) -> list[dict[str, Any]]:
+        """`GET /speakers` - loyihaning ovozlari: `id`, `number`, `name`, `kind`, `seen_count`, ..."""
+        payload, _ = self._send_any(self._get_request("/speakers", account))
+        if isinstance(payload, dict):
+            for key in ("speakers", "items", "data", "voices"):
+                if isinstance(payload.get(key), list):
+                    payload = payload[key]
+                    break
+        return [s for s in payload if isinstance(s, dict)] if isinstance(payload, list) else []
+
+    def create_speaker(self, name: str, *, account: int = 1) -> dict[str, Any]:
+        """`POST /speakers {"name"}` - izsiz ovoz (izi keyin `enroll_speaker` bilan)."""
+        return self._json("POST", "/speakers", {"name": name}, account)
+
+    def rename_speaker(self, speaker_id: str, name: str, *, account: int = 1) -> dict[str, Any]:
+        """`PATCH /speakers/{id} {"name"}`. Nom qo'yilgan ovoz (`named`) muddatsiz saqlanadi."""
+        return self._json("PATCH", f"/speakers/{urllib.parse.quote(speaker_id, safe='')}", {"name": name}, account)
+
+    def delete_speaker(self, speaker_id: str, *, account: int = 1) -> bool:
+        """`DELETE /speakers/{id}` - ovoz barcha izlari bilan. Allaqachon yo'q (404) - ham muvaffaqiyat."""
+        try:
+            self._json("DELETE", f"/speakers/{urllib.parse.quote(speaker_id, safe='')}", None, account)
+        except SttError as exc:
+            if getattr(exc, "gapi_status", None) == 404:
+                return True
+            raise
+        return True
+
+    def enroll_speaker(self, speaker_id: str, job_id: str, *, speaker_index: int | None = None,
+                       segment_indexes: list[int] | None = None, account: int = 1) -> dict[str, Any]:
+        """`POST /speakers/{id}/enroll` - tugagan vazifadagi spiker (yoki gaplar) izini shu ovozga qo'shadi.
+        Iz GAPI tomonida saqlangan yozuvdan hisoblanadi (bir ovozda ko'pi bilan 10 ta iz)."""
+        body: dict[str, Any] = {"job_id": job_id}
+        if segment_indexes:
+            body["segment_indexes"] = [int(i) for i in segment_indexes]
+        else:
+            body["speaker_index"] = int(speaker_index or 0)
+        return self._json("POST", f"/speakers/{urllib.parse.quote(speaker_id, safe='')}/enroll", body, account)
+
+    def _json(self, method: str, path: str, body: dict[str, Any] | None, account: int) -> dict[str, Any]:
+        data = None if body is None else json.dumps(body).encode("utf-8")
+        headers = self._headers(account)
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(f"{self.base_url}{path}", data=data, method=method, headers=headers)
+        payload, _ = self._send_any(request)
+        return payload if isinstance(payload, dict) else {}
 
     def _get_request(self, path: str, account: int = 1) -> urllib.request.Request:
         return urllib.request.Request(f"{self.base_url}{path}", headers=self._headers(account))

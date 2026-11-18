@@ -13,7 +13,7 @@ from fastapi import APIRouter
 from . import actions, auth, chat, chats, connectors, hrm, pro, stt, telegram, tts
 from . import admin_users, reports
 from . import admin, admin_engines, admin_osmap, admin_playground, admin_probe
-from . import devices, meetings
+from . import devices, meetings, voice
 from . import assistant_extras
 from . import slack
 
@@ -48,6 +48,8 @@ router.include_router(assistant_extras.router)
 # (`meetings_access`) `MEETINGS_ENABLED` o'chiq bo'lsa 404 qaytaradi - bayroq
 # `.env` dan jonli o'qiladi, ya'ni yoqish uchun restart kerak emas.
 router.include_router(meetings.router)
+# Ovoz namunasi (spikerni ovozidan tanish, `services/meetings/voice.py`).
+router.include_router(voice.router)
 router.include_router(devices.router)
 # Slack hisobini Barno hisobiga ulash - tasdiq sahifasining yo'llari (`slack.py`; Slack ilovasining
 # o'zi HTTP emas, Socket Mode - `app/slack/`).

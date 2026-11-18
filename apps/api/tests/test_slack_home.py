@@ -21,8 +21,10 @@ def test_bosh_chat_ochilganda_xush_kelibsiz_tugma_bilan():
     assert "o'sha yozuv xabarining thread'iga yozing" in sent["text"] and "suhbatni eslab qoladi" in sent["text"]
     assert "*Barno AI yordamchisi* — chatning o'ziga yozing" in sent["text"] and "CRM" in sent["text"]
     assert "oxirgi yuborilgan yozuv" not in sent["text"]
-    [button] = next(b for b in sent["blocks"] if b["type"] == "actions")["elements"]
+    button, voice_button = next(b for b in sent["blocks"] if b["type"] == "actions")["elements"]
     assert button["action_id"] == home.PLAUD_ACTION and button["text"]["text"] == "🎙 Plaud"
+    # Yonida «🗣 Ovoz namunasi» (ega qarori 2026-11-18, `slack/voice.py`).
+    assert voice_button["action_id"] == "barno_voice" and "Ovoz namunasi" in str(sent["blocks"])
     # Chat bo'sh emas - qayta yozilmaydi.
     client.history["D1"] = [sent]
     home.on_open(client, {"type": "app_home_opened", "user": "U1", "tab": "messages", "channel": "D1"})
@@ -58,8 +60,11 @@ def test_home_varagi():
     home.on_open(client, {"type": "app_home_opened", "user": "U1", "tab": "home"})
     [published] = client.published
     assert published["user_id"] == "U1"
+    from app.slack import voice as slack_voice
+
     assert published["view"] == {"type": "home", "blocks": [
-        {"type": "section", "text": {"type": "mrkdwn", "text": "BRB-TECHning foydali, aniq va xavfsiz AI yordamchisi"}}]}
+        {"type": "section", "text": {"type": "mrkdwn", "text": "BRB-TECHning foydali, aniq va xavfsiz AI yordamchisi"}},
+        {"type": "divider"}, *slack_voice.home_blocks()]}
 
 
 def test_slack_xatosi_odamni_toxtatmaydi():

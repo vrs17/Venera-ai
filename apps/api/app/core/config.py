@@ -750,6 +750,20 @@ class Settings(BaseSettings):
     #: GAPI vazifasini jami shuncha kutamiz, keyin `stt_timeout` (qayta
     #: urinish o'sha vazifa raqami bilan - pul qayta yechilmaydi).
     meetings_stt_deadline: float = 3600.0
+    #: SPIKERNI OVOZIDAN TANISH (ega qarori 2026-11-18, 1-bosqich - GAPI `speaker_identification`).
+    #: Yoqiq: yig'ilish GAPI ga "ovoz bo'yicha tanish" bilan yuboriladi. Namuna yozgan xodim ism-familiyasi
+    #: bilan chiqadi, qolganlar (mehmon, namuna yozmagan xodim) - doimiy raqam bilan, ismsiz: «Noma'lum #12»
+    #: (`services/meetings/voice.py`). GAPI tarifi o'zgarmaydi (x1). O'chiq - avvalgidek, faqat S1, S2...
+    meetings_speaker_id: bool = True
+    #: OVOZ NAMUNASI (Telegram, Slack, mobil ilova). O'chiq - namuna qabul qilinmaydi (503).
+    voice_samples_enabled: bool = True
+    #: Namunada bitta odamning kamida shuncha soniya nutqi bo'lsin. GAPI 10 s dan kamini ro'yxatga olmaydi,
+    #: tavsiyasi 20-30 s; xodimdan ~45 s so'raladi (matn + erkin gap).
+    voice_sample_min_speech_sec: float = 15.0
+    #: Namuna fayli chegarasi (bayt): 45 s AAC ~0.3 MB, WAV ~1.5 MB; 3 daqiqalik WAV ham sig'adi.
+    voice_sample_max_bytes: int = 12 * 1024 * 1024
+    #: GAPI ga namuna bo'yicha BITTA HTTP amal chegarasi (sinxron `/transcribe`, ~45 s audio).
+    voice_gapi_timeout: float = 90.0
     #: Xulosa modeli. Bo'sh - `ollama_model` (gemma4:31b).
     meetings_llm_model: str = ""
     #: Bitta model chaqiruvi (va o'z navbatimizni kutish) chegarasi. 8K tokenlik

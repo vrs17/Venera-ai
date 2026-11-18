@@ -10,6 +10,7 @@ import { minutesPart } from './parts/minutes';
 import { nav } from './parts/nav';
 import { recordingsPart } from './parts/recordings';
 import { settingsPart } from './parts/settings';
+import { voiceSamplePart } from './parts/voiceSample';
 import { sharePart } from './parts/share';
 
 export const uz = {
@@ -534,6 +535,7 @@ export const uz = {
   // UI qayta ishlanishi (2026-10-10): har bo'lim o'z faylida - parallel ishda to'qnashmasin.
   ...nav.uz,
   ...settingsPart.uz,
+  ...voiceSamplePart.uz,
   ...recordingsPart.uz,
   ...sharePart.uz,
   ...callsPart.uz,

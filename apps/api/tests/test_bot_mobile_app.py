@@ -155,5 +155,5 @@ def test_ulanmagan_odamga_yoq_ochiq_bolmasa_aytadi_va_klaviaturada(world):
     assert tg.texts()[-1] == "📲 Ilovani yuklab olish hozir o'chiq." and bot.backend.questions == []
 
     row = [{"text": plaud.BTN_PLAUD}, {"text": BTN_APP}]                  # pastdagi klaviaturada, Plaud yonida
-    assert plaud.KEYBOARD["keyboard"] == [row]
+    assert plaud.KEYBOARD["keyboard"] == [row, [{"text": plaud.BTN_VOICE}]]       # ostida - «🗣 Ovoz namunasi»
     assert row in briefs.REPLY_KEYBOARD["keyboard"] and row in briefs.REPLY_KEYBOARD_ADMIN["keyboard"]
