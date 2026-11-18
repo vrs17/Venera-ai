@@ -30,7 +30,10 @@ _rate = PerMinuteRate(lambda: settings.hrm_late_per_min)
 @router.post("/late-decision", response_model=LateDecisionResponse)
 def late_decision(body: LateDecisionRequest, caller: str = Depends(hrm_caller)) -> LateDecisionResponse:
     """Kechikish sababi -> APPROVE / REJECT / MANUAL. Xodim ismi yuborilmaydi va Barno'da hech narsa
-    saqlanmaydi. 429 - daqiqalik chegara; 503 - model hozir javob bermadi (HRM keyinroq qayta so'raydi)."""
+    saqlanmaydi. 429 - daqiqalik chegara; 503 - funksiya o'chiq (`HRM_LATE_ENABLED=false`) yoki model hozir
+    javob bermadi (HRM keyinroq qayta so'raydi, hech narsa o'zgarmaydi)."""
+    if not settings.hrm_late_enabled:
+        raise error_status(503, "Avtomatik kechikish qarori o'chirilgan")
     if not _rate.allow(caller):
         raise error_status(429, "So'rovlar juda ko'p - birozdan keyin qayta urinib ko'ring")
     try:

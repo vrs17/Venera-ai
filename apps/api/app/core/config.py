@@ -136,6 +136,10 @@ class Settings(BaseSettings):
     # EGA QARORI (2026-11-17): HR tarixda doim bir xil hal qilgan ANIQ holatlar avtomatik
     # tasdiqlanadi yoki rad etiladi, qolgani HR manager'ga qoladi. Qarorni HRM o'zi qo'llaydi;
     # Barno faqat toifa va ishonchni beradi (`services/hrm_late.py`).
+    #: Umumiy kalit. EGA QARORI (2026-11-18): HR manager ma'qullamadi - hozircha O'CHIQ, kod qoladi.
+    #: `false` - endpoint 503 ("o'chirilgan"), modelga bormaydi; yoqish: `.env` da HRM_LATE_ENABLED=true
+    #: (HRM tomonida ham BARNO_LATE_DECISION_ENABLED=true kerak). STT bunga bog'liq emas.
+    hrm_late_enabled: bool = False
     #: Servis kalitlari (`nom:sha256hex`, vergul bilan). Bo'sh - `STT_SERVICE_KEYS` (HRM ning
     #: bitta kaliti ikkala endpoint uchun).
     hrm_late_service_keys: str = ""

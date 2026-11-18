@@ -48,6 +48,7 @@ def llm(monkeypatch):
     import app.services.hrm_late as service
     from app.api.v1.service_auth import PerMinuteRate
 
+    monkeypatch.setattr(settings, "hrm_late_enabled", True)
     monkeypatch.setattr(settings, "hrm_late_service_keys", "")
     monkeypatch.setattr(settings, "stt_service_keys", f"hrm:{_digest(KEY)}")
     monkeypatch.setattr(settings, "hrm_late_per_min", 30)
@@ -73,6 +74,28 @@ def _body(*texts: str, **extra) -> dict:
 def _post(client, body, key=KEY):
     headers = {"X-Service-Key": key} if key else {}
     return client.post(URL, json=body, headers=headers)
+
+
+# --- umumiy kalit (EGA QARORI 2026-11-18: hozircha o'chiq) -----------------------------------------
+
+
+def test_standart_holatda_ochiq():
+    from app.core.config import Settings
+
+    assert Settings.model_fields["hrm_late_enabled"].default is False
+
+
+def test_ochirilgan_bolsa_503_va_modelga_bormaydi(client, llm, monkeypatch):
+    monkeypatch.setattr(settings, "hrm_late_enabled", False)
+    response = _post(client, _body("Uxlab qolibman"))
+    assert response.status_code == 503
+    assert "o'chirilgan" in response.text
+    assert not llm.calls
+
+
+def test_ochirilgan_bolsa_ham_kalitsiz_401(client, llm, monkeypatch):
+    monkeypatch.setattr(settings, "hrm_late_enabled", False)
+    assert _post(client, _body("Uxlab qolibman"), key=None).status_code == 401
 
 
 # --- kalit -----------------------------------------------------------------------------------------
