@@ -24,6 +24,14 @@ const uz = {
   'vs.busyRecorder': "Yig'ilish yozilmoqda - namunani yozish uchun avval uni tugating.",
   'vs.disabled': "Ovoz namunasi hozir o'chiq.",
   'vs.failed': "Yuborib bo'lmadi - internetni tekshirib, qayta urinib ko'ring.",
+  'vs.savedTitle': 'Saqlangan namunalar',
+  'vs.listen': 'Eshitish',
+  'vs.stopListen': "To'xtatish",
+  'vs.ch.mobile': 'Mobil ilova',
+  'vs.ch.telegram': 'Telegram',
+  'vs.ch.slack': 'Slack',
+  'vs.ch.other': 'Ilova',
+  'vs.playFailed': "Namunani eshittirib bo'lmadi - internetni tekshiring.",
 };
 
 type Keys = keyof typeof uz;
@@ -49,6 +57,14 @@ const ru: Record<Keys, string> = {
   'vs.busyRecorder': 'Идёт запись встречи - сначала завершите её.',
   'vs.disabled': 'Образец голоса сейчас отключён.',
   'vs.failed': 'Не удалось отправить - проверьте интернет и попробуйте ещё раз.',
+  'vs.savedTitle': 'Сохранённые образцы',
+  'vs.listen': 'Прослушать',
+  'vs.stopListen': 'Остановить',
+  'vs.ch.mobile': 'Мобильное приложение',
+  'vs.ch.telegram': 'Telegram',
+  'vs.ch.slack': 'Slack',
+  'vs.ch.other': 'Приложение',
+  'vs.playFailed': 'Не удалось воспроизвести образец - проверьте интернет.',
 };
 
 const en: Record<Keys, string> = {
@@ -72,6 +88,14 @@ const en: Record<Keys, string> = {
   'vs.busyRecorder': 'A meeting is being recorded - finish it first.',
   'vs.disabled': 'Voice samples are turned off right now.',
   'vs.failed': 'Could not send - check the connection and try again.',
+  'vs.savedTitle': 'Saved samples',
+  'vs.listen': 'Listen',
+  'vs.stopListen': 'Stop',
+  'vs.ch.mobile': 'Mobile app',
+  'vs.ch.telegram': 'Telegram',
+  'vs.ch.slack': 'Slack',
+  'vs.ch.other': 'App',
+  'vs.playFailed': 'Could not play the sample - check the connection.',
 };
 
 export const voiceSamplePart = { uz, ru, en };

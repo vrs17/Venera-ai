@@ -14,6 +14,7 @@ Javob darhol (`202`, `processing`); natija - `GET /{sampleId}` (tekshiruv 5-60 s
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request, status
+from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
 from ...core.channels import channel_of
@@ -79,6 +80,14 @@ def delete_voice(user: AuthUser = Depends(meetings_access)) -> dict:
 @router.get("/coverage", response_model=schemas.VoiceCoverage)
 def get_coverage(user: AuthUser = Depends(meetings_access), _admin: AuthUser = Depends(require_roles("ADMIN"))) -> dict:
     return voice.coverage()
+
+
+@router.get("/{sample_id}/audio")
+def get_sample_audio(sample_id: str, user: AuthUser = Depends(meetings_access)) -> FileResponse:
+    """Xodimning O'Z namunasi - eshitish uchun (mobil pleer `{uri, headers}` bilan oqimda o'ynatadi; Range ishlaydi).
+    Mobil ilova yozgan ADTS - m4a ko'rinishida (`voice.playable`)."""
+    path, kind, name = voice.sample_audio(user, sample_id)
+    return FileResponse(path, media_type=kind, filename=name, content_disposition_type="inline")
 
 
 @router.get("/{sample_id}", response_model=schemas.VoiceSampleView)

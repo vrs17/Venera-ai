@@ -23,6 +23,13 @@ def vworld(world, monkeypatch):
     rt.voice_gapi = gapi
     monkeypatch.setattr(voice, "_pool", _Inline())
     tg.files["voice/s1.oga"] = ogg_opus_bytes(40.0)
+
+    def send_voice(chat_id, filename, content, content_type, *, caption=None, reply_markup=None):
+        tg._rec("send_voice", chat_id=chat_id, filename=filename, size=len(content), content_type=content_type,
+                caption=caption)
+        return {"message_id": 999}
+
+    tg.send_voice = send_voice
     return bot, tg, rt, plaud, gapi
 
 
@@ -35,7 +42,8 @@ def test_tugma_tartib_matn_va_namuna_qabul(vworld):
     bot.handle_update(voice_update("s1", duration=40, message_id=41))
     assert tg.sent()[-1]["text"] == WAIT_TEXT
     assert last_edit(tg)["text"] == voice.OK_TEXT
-    assert last_edit(tg)["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "v:del"
+    keys = [row[0]["callback_data"] for row in last_edit(tg)["reply_markup"]["inline_keyboard"]]
+    assert keys == ["v:play", "v:del"]
     assert rt.store.row("SELECT channel, status FROM voice_samples") == {"channel": "telegram", "status": "ok"}
     assert rt.store.scalar("SELECT COUNT(*) FROM meetings", (), 0) == 0              # Plaud yozuvi EMAS
     # Qurollanish sarflandi: keyingi qisqa ovozli xabar namuna emas.
@@ -80,3 +88,16 @@ def test_ochirish_tasdiq_bilan(vworld):
     bot.handle_update(callback("v:del!", message_id=99))
     assert last_edit(tg)["text"] == voice.DELETED_TEXT
     assert ("delete", 1, "sp-a") in gapi.calls and rt.store.rows("SELECT * FROM voice_links") == []
+
+
+def test_namunani_eshitish_ovozli_xabar(vworld):
+    bot, tg, rt, plaud, gapi = vworld
+    bot.handle_update(callback("v:play"))
+    assert tg.sent("send_voice") == []                                      # hali namuna yo'q - faqat ogohlantirish
+    bot.handle_update(text_update(BTN_VOICE))
+    gapi.results = {1: [result("new", 100, "sp-a")]}
+    bot.handle_update(voice_update("s1", duration=40, message_id=41))
+    bot.handle_update(callback("v:play"))
+    [sent] = tg.sent("send_voice")
+    assert sent["content_type"] == "audio/ogg" and sent["filename"] == "ovoz-namunasi.ogg" and sent["size"] > 1000
+    assert sent["caption"].startswith("🗣 Ovoz namunangiz - Telegram, ")

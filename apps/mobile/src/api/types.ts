@@ -89,6 +89,8 @@ export interface VoiceStatus {
   samples: number;
   lastSampleAt: number | null;
   latest: VoiceSampleView | null;
+  /** Saqlangan namunalar (eshitish uchun), eng yangisi birinchi - qaysi kanalda yozilgan bo'lsa ham. */
+  items?: VoiceSampleView[];
   instructions: VoiceInstructions;
 }
 

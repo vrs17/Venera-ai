@@ -8,9 +8,19 @@
  * xizmatini buzardi (`features/voice/native.ts` dagi qoida).
  */
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder, useAudioRecorderState, type RecordingOptions } from 'expo-audio';
-import { Mic, RotateCcw, Send, Square, Trash2 } from 'lucide-react-native';
-import { useEffect, useRef, useState } from 'react';
+import {
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+  useAudioPlayer,
+  useAudioPlayerStatus,
+  useAudioRecorder,
+  useAudioRecorderState,
+  type AudioSource,
+  type RecordingOptions,
+} from 'expo-audio';
+import { Mic, Play, RotateCcw, Send, Square, Trash2 } from 'lucide-react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ApiError } from '@/api/client';
@@ -18,6 +28,7 @@ import type { VoiceSampleView } from '@/api/types';
 import { useRecorderStore } from '@/features/recorder/RecorderProvider';
 import { isActive } from '@/features/recorder/recorderMachine';
 import { useT } from '@/features/settings/settingsStore';
+import type { TKey } from '@/i18n';
 import { useServices } from '@/services';
 import { Banner, Button, Card, Loading, Muted, SectionTitle } from '@/ui/components';
 import { useSafeInsets } from '@/ui/insets';
@@ -40,6 +51,48 @@ const MAX_SEC = 90;
 const POLL_MS = 2000;
 const POLL_LIMIT_MS = 120_000;
 
+const CHANNEL_KEY: Record<string, TKey> = { mobile: 'vs.ch.mobile', telegram: 'vs.ch.telegram', slack: 'vs.ch.slack' };
+
+function when(epochSec: number): string {
+  const d = new Date(epochSec * 1000);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/**
+ * Bitta namunani o'ynatadi (ko'rinmas): server audiosi `{uri, headers}` bilan oqimda - yig'ilish pleeri
+ * (`RemotePlayer`) kabi. Yuklangach o'zi boshlanadi, tugaganda (yoki xatoda) `onDone`.
+ */
+function SamplePlayer({ id, onDone }: { id: string; onDone: (failed: boolean) => void }) {
+  const { session, meetings } = useServices();
+  const [source, setSource] = useState<AudioSource>(null);
+  const player = useAudioPlayer(source, { updateInterval: 250 });
+  const status = useAudioPlayerStatus(player);
+
+  useEffect(() => {
+    let alive = true;
+    session
+      .getToken()
+      .then((token) => {
+        if (alive) setSource({ uri: meetings.voiceSampleAudioUrl(id), headers: { Authorization: `Bearer ${token}`, 'X-Venera-Client': 'mobile' } });
+      })
+      .catch(() => alive && onDone(true));
+    return () => {
+      alive = false;
+    };
+  }, [id, meetings, onDone, session]);
+
+  useEffect(() => {
+    if (source && status.isLoaded && !status.playing && !status.didJustFinish && status.currentTime === 0) player.play();
+  }, [player, source, status.isLoaded, status.playing, status.didJustFinish, status.currentTime]);
+
+  useEffect(() => {
+    if (status.didJustFinish) onDone(false);
+  }, [onDone, status.didJustFinish]);
+
+  return null;
+}
+
 function clock(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
@@ -60,6 +113,8 @@ export default function VoiceSampleScreen() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<VoiceSampleView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Hozir eshitilayotgan namuna (bittadan). */
+  const [playingId, setPlayingId] = useState<string | null>(null);
   const alive = useRef(true);
   const limit = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startedAt = useRef(0);
@@ -95,6 +150,7 @@ export default function VoiceSampleScreen() {
   const start = async () => {
     setError(null);
     setResult(null);
+    setPlayingId(null);
     if (meetingRecording) {
       setError(t('vs.busyRecorder'));
       return;
@@ -148,6 +204,14 @@ export default function VoiceSampleScreen() {
     }
   };
 
+  const onPlayDone = useCallback(
+    (failed: boolean) => {
+      setPlayingId(null);
+      if (failed) setError(t('vs.playFailed'));
+    },
+    [t],
+  );
+
   const confirmDelete = () =>
     Alert.alert(t('vs.delete'), t('vs.deleteConfirm'), [
       { text: t('common.cancel'), style: 'cancel' },
@@ -186,6 +250,32 @@ export default function VoiceSampleScreen() {
       <Text style={[typeScale.body, { color: th.text }]}>{info.intro}</Text>
       {!data.enabled ? <Banner tone="warn" text={t('vs.disabled')} /> : null}
       {data.enrolled ? <Banner tone="good" text={t('vs.saved', { n: data.samples })} testID="voice-sample-saved" /> : null}
+
+      {data.items && data.items.length > 0 ? (
+        <Card>
+          <SectionTitle>{t('vs.savedTitle')}</SectionTitle>
+          {data.items.map((item) => {
+            const active = playingId === item.id;
+            const channel = t(CHANNEL_KEY[item.channel ?? ''] ?? 'vs.ch.other');
+            const speech = item.speechSeconds ? ` · ${Math.round(item.speechSeconds)} s` : '';
+            return (
+              <View key={item.id} style={styles.sampleRow} testID={`voice-sample-item-${item.id}`}>
+                <Text style={[typeScale.sub, { color: th.text, flex: 1 }]}>{`${channel} · ${when(item.createdAt)}${speech}`}</Text>
+                <Button
+                  small
+                  variant={active ? 'record' : 'secondary'}
+                  icon={active ? Square : Play}
+                  title={active ? t('vs.stopListen') : t('vs.listen')}
+                  disabled={rec.isRecording}
+                  onPress={() => setPlayingId(active ? null : item.id)}
+                  testID={`voice-sample-play-${item.id}`}
+                />
+              </View>
+            );
+          })}
+          {playingId ? <SamplePlayer key={playingId} id={playingId} onDone={onPlayDone} /> : null}
+        </Card>
+      ) : null}
 
       <Card>
         <SectionTitle>{t('vs.steps')}</SectionTitle>
@@ -244,6 +334,7 @@ export default function VoiceSampleScreen() {
 
 const styles = StyleSheet.create({
   step: { marginTop: 6 },
+  sampleRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 10 },
   sampleText: { marginTop: 8, fontSize: 17, lineHeight: 26, borderLeftWidth: 3, paddingLeft: 12 },
   row: { flexDirection: 'row', gap: 12, marginTop: 12 },
   half: { flex: 1 },

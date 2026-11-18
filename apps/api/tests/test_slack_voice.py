@@ -112,3 +112,24 @@ def test_dispetcher_namunani_plauddan_oldin_oladi(vslack, monkeypatch):
     text = client.say("D1", "ovoz namunasi", user="U2", team="T1")
     slack_pkg._on_message(text, client, {"team_id": "T1", "bot_user_id": "UBOT"})
     assert submitted[-1] == "on_text"
+
+
+def test_namunani_eshitish_shaxsiy_chatga_fayl(vslack):
+    gapi, rt = vslack
+    link.store().link("T1", "U2", 2)
+    client = FakeSlack(files={"F1": AUDIO})
+    client.conversations_open = lambda users: {"channel": {"id": "D7"}}
+    slack_voice.on_action(client, _action(slack_voice.PLAY_ACTION))
+    assert "Hali saqlangan namuna yo'q" in client.posted[-1]["text"] and client.uploaded == []
+    slack_voice.on_action(client, _action(slack_voice.START_ACTION))
+    gapi.results = {1: [result("new", 100, "sp-a")]}
+    audio = client.say("D1", files=[AUDIO], user="U2", team="T1")
+    assert slack_voice.wants(audio)
+    slack_voice.on_audio(client, audio)
+    slack_voice.on_action(client, _action(slack_voice.START_ACTION))
+    ids = [e.get("action_id") for b in client.posted[-1]["blocks"] for e in b.get("elements") or []]
+    assert slack_voice.PLAY_ACTION in ids and slack_voice.DELETE_ACTION in ids
+    slack_voice.on_action(client, _action(slack_voice.PLAY_ACTION))           # "Home" dan - DM ochiladi
+    upload = client.uploaded[-1]
+    assert upload["channel"] == "D7" and upload["filename"].startswith("ovoz-namunasi.")
+    assert client.posted[-1]["text"].startswith("🗣 Ovoz namunangiz - Slack, ")

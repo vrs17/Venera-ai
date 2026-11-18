@@ -187,6 +187,8 @@ export function createMeetingsApi(client: ApiClient) {
         },
       }),
     voiceSample: (sampleId: string) => client.request<VoiceSampleView>(`${VS}/${enc(sampleId)}`),
+    /** Namuna audiosi (pleer `{uri, headers}` bilan oqimda o'ynatadi - yig'ilish audiosi kabi). */
+    voiceSampleAudioUrl: (sampleId: string) => client.url(`${VS}/${enc(sampleId)}/audio`),
     deleteVoice: () => client.request<VoiceDeleted>(VS, { method: 'DELETE' }),
     // 13
     renameSpeaker: (id: string, speakerId: string, name: string | null) =>

@@ -246,6 +246,8 @@ class VoiceStatus(BaseModel):
     samples: int
     lastSampleAt: int | None = None
     latest: VoiceSampleView | None = None
+    #: Saqlangan (ok) namunalar - eshitish uchun, eng yangisi birinchi (ko'pi bilan 10 ta).
+    items: list[VoiceSampleView] = []
     instructions: VoiceInstructions
 
 

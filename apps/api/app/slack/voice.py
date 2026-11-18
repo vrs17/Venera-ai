@@ -6,6 +6,8 @@ mantiq - `services/meetings/voice.py`, Telegram va mobil ilova bilan BITTA).
     oraliqda shaxsiy chatga yuborgan audio (Slack'ning mikrofon tugmasi bilan yozilgan klip yoki fayl) namuna deb
     olinadi - Plaud yozuvi emas. Bitta audioga ishlaydi; rad etilsa yana qurollanadi.
   * natija - audio xabarining thread'ida "⏳" o'rnida: ✅ saqlandi yoki aniq sabab.
+  * «▶️ Namunani eshitish» - oxirgi saqlangan namuna shaxsiy chatga audio fayl bo'lib keladi (qaysi kanalda yozilgan
+    bo'lsa ham).
   * «🗑 Ovozimni o'chirish» - Slack'ning o'z tasdiq oynasi bilan.
 
 KIMNING NOMIDAN - FAQAT odamning O'Z Barno hisobi (`link.person`): umumiy `SLACK_ACTOR_ID` hisobiga ovoz
@@ -32,6 +34,7 @@ log = logging.getLogger(__name__)
 
 START_ACTION = "barno_voice"
 DELETE_ACTION = "barno_voice_del"
+PLAY_ACTION = "barno_voice_play"
 ARMED_SEC = 15 * 60
 BUTTON = "🗣 Ovoz namunasi"
 WAIT_TEXT = "⏳ Namuna tekshirilmoqda… (odatda 10-60 soniya)"
@@ -82,6 +85,10 @@ def delete_button() -> dict[str, Any]:
         "deny": {"type": "plain_text", "text": "Bekor qilish"}})
 
 
+def play_button() -> dict[str, Any]:
+    return render.button("▶️ Namunani eshitish", PLAY_ACTION, "play")
+
+
 def home_blocks() -> list[dict[str, Any]]:
     return [{"type": "section", "text": {"type": "mrkdwn", "text": HOME_TEXT}},
             {"type": "actions", "block_id": "barno:voice", "elements": [start_button()]}]
@@ -103,7 +110,7 @@ def instructions_text(status: dict[str, Any] | None = None) -> str:
 def instructions_blocks(status: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     blocks = render.sections(instructions_text(status))
     if status and status.get("enrolled"):
-        blocks.append({"type": "actions", "block_id": "barno:voice-del", "elements": [delete_button()]})
+        blocks.append({"type": "actions", "block_id": "barno:voice-del", "elements": [play_button(), delete_button()]})
     return blocks
 
 
@@ -112,7 +119,7 @@ def instructions_blocks(status: dict[str, Any] | None = None) -> list[dict[str, 
 
 def handles(body: dict[str, Any]) -> bool:
     action = (body.get("actions") or [{}])[0]
-    return str(action.get("action_id") or "") in (START_ACTION, DELETE_ACTION)
+    return str(action.get("action_id") or "") in (START_ACTION, DELETE_ACTION, PLAY_ACTION)
 
 
 def is_text(event: dict[str, Any]) -> bool:
@@ -187,6 +194,9 @@ def on_action(client: Any, body: dict[str, Any]) -> None:
     person = _person(client, team, user, channel)
     if person is None:
         return
+    if action == PLAY_ACTION:
+        play(client, person, user, channel)
+        return
     try:
         result = voice.delete(person)
         text = result.get("message") or voice.DELETED_TEXT
@@ -196,6 +206,26 @@ def on_action(client: Any, body: dict[str, Any]) -> None:
         client.chat_postMessage(channel=user, text=text)
     except Exception as exc:  # noqa: BLE001
         log.warning("Slack ovoz namunasi: javob yuborilmadi: %s", exc)
+
+
+def play(client: Any, person: AuthUser, user: str | None, channel: str | None) -> None:
+    """Oxirgi saqlangan namuna - odamning shaxsiy chatiga audio fayl bo'lib (Slack o'z pleerida o'ynatadi; namuna
+    Telegram yoki mobil ilovada yozilgan bo'lsa ham)."""
+    from . import meeting
+
+    row = voice.latest_ok(person)
+    if row is None:
+        client.chat_postMessage(channel=user, text="Hali saqlangan namuna yo'q - avval «🗣 Ovoz namunasi»ni yozing.")
+        return
+    try:
+        path, _kind, name = voice.playable(row)
+        data = path.read_bytes()
+        dm = channel if channel and channel.startswith("D") else client.conversations_open(users=user)["channel"]["id"]
+        meeting.upload(client, dm, None, data, name)
+        client.chat_postMessage(channel=dm, text=voice.sample_caption(row))
+    except Exception as exc:  # noqa: BLE001 - SlackApiError, fayl yo'q, ruxsat (`files:write`)
+        log.warning("Slack ovoz namunasi: audio yuborilmadi: %s", exc)
+        client.chat_postMessage(channel=user, text="Namunani yuborib bo'lmadi - birozdan keyin qayta urinib ko'ring.")
 
 
 def on_audio(client: Any, event: dict[str, Any]) -> None:

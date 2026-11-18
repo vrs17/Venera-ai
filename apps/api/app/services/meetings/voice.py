@@ -529,6 +529,63 @@ def sample_view(row: dict[str, Any] | None) -> dict[str, Any]:
             "createdAt": int(row["created_at"]), "doneAt": row.get("done_at")}
 
 
+def _derived(path: Path) -> Path:
+    """Namunaning pleer uchun nusxasi (ADTS -> m4a) - asl fayl yonida."""
+    return path.with_name(f"{path.stem}.play.m4a")
+
+
+def playable(row: dict[str, Any]) -> tuple[Path, str, str]:
+    """Namuna -> (fayl, turi, nomi): pleer, Telegram va Slack o'ynata oladigan shakl. Mobil ilova yozgan ADTS
+    (`audio/aac`) - bir marta m4a ga o'giriladi (`audio.adts_to_m4a`, ffmpeg siz; davomiylik va siljitish ishlaydi),
+    qolganlari (Telegram OGG/Opus, m4a, mp3, wav) - o'zi."""
+    path = Path(str(row.get("path") or ""))
+    if not path.is_file():
+        raise MeetingProblem(404, "audio_missing", "Namuna audiosi topilmadi")
+    kind = str(row.get("content_type") or "")
+    if kind == "audio/aac":
+        target = _derived(path)
+        if not target.is_file():
+            tmp = target.with_name(target.name + ".part")
+            try:
+                private_file(tmp)
+                audio.adts_to_m4a(path, tmp)
+                tmp.replace(target)
+            except Exception as exc:  # noqa: BLE001 - o'girilmasa asl ADTS beriladi (ko'p pleer uni ham o'qiydi)
+                remove_file(tmp)
+                log.info("Ovoz namunasi m4a ga o'girilmadi (%s): %s", path.name, exc)
+                return path, kind, "ovoz-namunasi.aac"
+        return target, "audio/mp4", "ovoz-namunasi.m4a"
+    return path, kind or "application/octet-stream", f"ovoz-namunasi{_EXT.get(kind, '.bin')}"
+
+
+def sample_audio(user: AuthUser, sample_id: str) -> tuple[Path, str, str]:
+    """Xodimning O'Z namunasi audiosi (eshitish uchun)."""
+    row = _rt().store.row("SELECT * FROM voice_samples WHERE id=? AND actor_id=?", (sample_id, user.actorId))
+    if row is None:
+        raise MeetingProblem(404, "sample_not_found", "Namuna topilmadi")
+    return playable(row)
+
+
+def latest_ok(user: AuthUser) -> dict[str, Any] | None:
+    """Oxirgi saqlangan (ok) namuna - Telegram va Slack'dagi «▶️ Namunani eshitish» uchun."""
+    return _rt().store.row("SELECT * FROM voice_samples WHERE actor_id=? AND status='ok' "
+                           "ORDER BY created_at DESC, rowid DESC LIMIT 1", (user.actorId,))
+
+
+#: Kanal kodi -> xodimga ko'rinadigan nom.
+CHANNELS = {"mobile": "mobil ilova", "telegram": "Telegram", "slack": "Slack", "web": "veb", "miniapp": "Mini App",
+            "desktop": "kompyuter", "api": "ilova"}
+
+
+def sample_caption(row: dict[str, Any]) -> str:
+    """"🗣 Ovoz namunangiz - mobil ilova, 18.11.2026 12:33, 25 s" (Toshkent vaqti)."""
+    from datetime import datetime, timedelta, timezone
+
+    when = datetime.fromtimestamp(int(row["created_at"]), timezone(timedelta(hours=5))).strftime("%d.%m.%Y %H:%M")
+    speech = f", {round(float(row['speech_sec']))} s nutq" if row.get("speech_sec") else ""
+    return f"🗣 Ovoz namunangiz - {CHANNELS.get(str(row.get('channel') or ''), row.get('channel') or '')}, {when}{speech}"
+
+
 def sample(user: AuthUser, sample_id: str) -> dict[str, Any]:
     return sample_view(_rt().store.row("SELECT * FROM voice_samples WHERE id=? AND actor_id=?",
                                        (sample_id, user.actorId)))
@@ -539,12 +596,15 @@ def status(user: AuthUser) -> dict[str, Any]:
     store = _rt().store
     person = store.row("SELECT * FROM voice_persons WHERE actor_id=?", (user.actorId,))
     voices = int(store.scalar("SELECT COUNT(*) FROM voice_links WHERE person_id=?", (person["id"],), 0)) if person else 0
-    rows = store.rows("SELECT * FROM voice_samples WHERE actor_id=? ORDER BY created_at DESC LIMIT 50", (user.actorId,))
+    rows = store.rows("SELECT * FROM voice_samples WHERE actor_id=? ORDER BY created_at DESC, rowid DESC LIMIT 50",
+                      (user.actorId,))
     ok = [r for r in rows if r["status"] == "ok"]
     return {"enabled": bool(settings.voice_samples_enabled), "enrolled": bool(person and voices and ok),
             "personId": int(person["id"]) if person else None, "name": (person or {}).get("name"),
             "samples": len(ok), "lastSampleAt": ok[0].get("done_at") if ok else None,
-            "latest": sample_view(rows[0]) if rows else None, "instructions": instructions()}
+            "latest": sample_view(rows[0]) if rows else None,
+            # Saqlangan namunalar (eshitish uchun), eng yangisi birinchi - qaysi kanaldan yozilgan bo'lsa ham.
+            "items": [sample_view(r) for r in ok[:10]], "instructions": instructions()}
 
 
 def delete(user: AuthUser) -> dict[str, Any]:
@@ -569,6 +629,8 @@ def delete(user: AuthUser) -> dict[str, Any]:
     samples = store.rows("SELECT id, path FROM voice_samples WHERE actor_id=?", (user.actorId,))
     for s in samples:
         remove_file(s.get("path"))
+        if s.get("path"):
+            remove_file(_derived(Path(s["path"])))
     store.execute("DELETE FROM voice_samples WHERE actor_id=?", (user.actorId,))
     log.info("Ovoz namunasi o'chirildi (%s): %d ovoz, %d namuna", user.actorId, removed, len(samples))
     return {"deleted": removed, "samples": len(samples), "message": DELETED_TEXT}

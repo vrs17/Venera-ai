@@ -306,6 +306,18 @@ class TelegramApi:
         return self.upload("sendDocument", fields, file_field="document", filename=filename,
                            content=content, content_type=content_type, timeout=timeout)
 
+    def send_voice(self, chat_id: int, filename: str, content: bytes, content_type: str, *,
+                   caption: str | None = None, reply_markup: Mapping[str, Any] | None = None) -> Any:
+        """Ovozli xabar (pleer bilan): OGG/Opus, MP3 yoki M4A (`sendVoice`)."""
+        fields: dict[str, Any] = {"chat_id": str(chat_id)}
+        if caption:
+            fields["caption"] = caption
+            fields["parse_mode"] = "HTML"
+        if reply_markup:
+            fields["reply_markup"] = dict(reply_markup)
+        return self.upload("sendVoice", fields, file_field="voice", filename=filename, content=content,
+                           content_type=content_type)
+
     def send_document_id(self, chat_id: int, file_id: str, *, caption: str | None = None) -> Any:
         """Telegram'da allaqachon turgan faylni (`file_id`) qayta yuklamasdan yuborish."""
         params: dict[str, Any] = {"chat_id": chat_id, "document": file_id}

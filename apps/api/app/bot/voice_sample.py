@@ -6,6 +6,8 @@ mantiq - `services/meetings/voice.py`, Slack va mobil ilova bilan BITTA).
     Plaud yozuvi ham, HR savoli ham emas. Bitta xabarga ishlaydi; rad etilsa chat yana qurollanadi (qayta
     yuborish uchun tugmani qayta bosish shart emas).
   * natija - "⏳ Tekshirilmoqda" xabarining o'rnida (5-60 s): ✅ saqlandi yoki aniq sabab (qisqa, ikki ovoz ...).
+  * «▶️ Namunani eshitish» (`v:play`) - oxirgi saqlangan namuna ovozli xabar bo'lib keladi (Slack yoki mobil ilovada
+    yozilgan bo'lsa ham - namuna xodimniki, kanalniki emas).
   * «🗑 Ovozimni o'chirish» - tasdiq bilan (`v:del` -> `v:del!`).
 
 Plaud bo'limi bilan birga yoqiladi (`Plaud.voice`): yig'ilishlar o'chiq bo'lsa namuna ham kerak emas.
@@ -52,9 +54,11 @@ def instructions_html(status: dict[str, Any] | None = None) -> str:
 
 
 def delete_menu(enrolled: bool) -> dict[str, Any] | None:
+    """Ovoz saqlangan bo'lsa: «▶️ Namunani eshitish» (oxirgi namuna, qaysi kanalda yozilgan bo'lsa ham) va o'chirish."""
     if not enrolled:
         return None
-    return {"inline_keyboard": [[{"text": "🗑 Ovozimni o'chirish", "callback_data": "v:del"}]]}
+    return {"inline_keyboard": [[{"text": "▶️ Namunani eshitish", "callback_data": "v:play"}],
+                                [{"text": "🗑 Ovozimni o'chirish", "callback_data": "v:del"}]]}
 
 
 class VoiceSample:
@@ -132,6 +136,9 @@ class VoiceSample:
 
     def on_callback(self, cq_id: str, chat_id: int, msg: dict[str, Any], user: AuthUser, data: str) -> None:
         message_id = msg.get("message_id")
+        if data == "v:play":
+            self._play(cq_id, chat_id, user)
+            return
         if data == "v:del":
             self._answer(cq_id)
             self._send(chat_id, "Ovoz namunangiz o'chirilsinmi? Yig'ilishlarda ismingiz endi avtomatik chiqmaydi.",
@@ -152,6 +159,30 @@ class VoiceSample:
             self._edit(chat_id, message_id, esc(result.get("message") or voice.DELETED_TEXT))
             return
         self._answer(cq_id, "Tugma eskirgan", alert=True)
+
+    def _play(self, cq_id: str, chat_id: int, user: AuthUser) -> None:
+        """Oxirgi saqlangan namuna - ovozli xabar bo'lib (pleer bilan); o'ynatib bo'lmaydigan tur - fayl."""
+        row = voice.latest_ok(user)
+        if row is None:
+            self._answer(cq_id, "Hali saqlangan namuna yo'q", alert=True)
+            return
+        try:
+            path, kind, name = voice.playable(row)
+            data = path.read_bytes()
+        except (MeetingProblem, OSError) as exc:
+            log.warning("Telegram ovoz namunasi: audio o'qilmadi (%s): %s", user.actorId, exc)
+            self._answer(cq_id, "Namuna audiosi topilmadi", alert=True)
+            return
+        self._answer(cq_id)
+        caption = esc(voice.sample_caption(row))
+        try:
+            if kind in ("audio/ogg", "audio/mp4", "audio/mpeg"):
+                self.api.send_voice(chat_id, name, data, kind, caption=caption)
+            else:
+                self.api.send_document(chat_id, name, data, kind, caption=caption)
+        except TelegramError as exc:
+            log.warning("Telegram ovoz namunasi: audio yuborilmadi: %s", exc)
+            self._send(chat_id, "Namunani yuborib bo'lmadi - birozdan keyin qayta urinib ko'ring.")
 
     # --- yordamchilar -----------------------------------------------------------------------
 

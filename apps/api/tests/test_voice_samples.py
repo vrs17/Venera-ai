@@ -410,3 +410,36 @@ def test_multipart_yuborish_mobil_ilova_kabi(client, auth, fake, _isolated_meeti
     big = client.post("/api/v1/voice-sample", files={"file": ("v.aac", b"\xff\xf1" + b"\x00" * 3000, "audio/aac")},
                       headers=auth)
     assert big.status_code == 413
+
+
+# --- namunani eshitish (2026-11-18, ega talabi: mobil, Slack, Telegram) -------------------------------------
+
+
+def test_namunalar_royxati_va_audio_m4a_korinishida(client, auth, user_auth, fake, _isolated_meetings):
+    """Mobil ilova yozgan ADTS - pleer uchun m4a ga o'giriladi (bir marta, yonida); OGG - o'zi; begona - 404."""
+    from meetings_fakes import adts_bytes
+
+    rt = _isolated_meetings
+    fake.accounts = [1]
+    fake.results = {1: [result("new", 100, "sp-a"), result("matched", 100, "sp-a")]}
+    aac = adts_bytes(30.0)
+    first = client.post("/api/v1/voice-sample", files={"file": ("v.aac", aac, "audio/aac")}, headers=auth).json()
+    second = post(client, auth).json()                                       # OGG (Telegram kabi)
+    items = client.get("/api/v1/voice-sample", headers=auth).json()["items"]
+    assert [i["id"] for i in items] == [second["id"], first["id"]] and all(i["status"] == "ok" for i in items)
+    played = client.get(f"/api/v1/voice-sample/{first['id']}/audio", headers=auth)
+    assert played.status_code == 200 and played.headers["content-type"] == "audio/mp4"
+    assert played.content[4:8] == b"ftyp" and "inline" in played.headers["content-disposition"]
+    derived = Path(rt.store.row("SELECT path FROM voice_samples WHERE id=?", (first["id"],))["path"])
+    derived = derived.with_name(f"{derived.stem}.play.m4a")
+    assert derived.is_file() and oct(derived.stat().st_mode)[-3:] == "600"
+    ogg = client.get(f"/api/v1/voice-sample/{second['id']}/audio", headers=auth)
+    assert ogg.headers["content-type"] == "audio/ogg" and ogg.content == AUDIO
+    assert client.get(f"/api/v1/voice-sample/{first['id']}/audio", headers=user_auth).status_code == 404
+    client.delete("/api/v1/voice-sample", headers=auth)
+    assert not derived.exists()
+
+
+def test_sarlavha_kanal_va_vaqt():
+    caption = voice.sample_caption({"channel": "mobile", "created_at": 1795000000, "speech_sec": 25.4})
+    assert caption.startswith("🗣 Ovoz namunangiz - mobil ilova, ") and caption.endswith(", 25 s nutq")
