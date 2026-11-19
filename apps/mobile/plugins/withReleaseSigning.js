@@ -13,6 +13,11 @@
  * Faqat o'zingiz sinash uchun: `-PveneraAllowDebugSigned=true` (bunday APK
  * pilotga berilmaydi). Debug/dev client'ga ta'sir qilmaydi.
  *
+ * GOOGLE PLAY (2026-11-19, ega qarori): `-PbarnoPlayUpload=true` bo'lsa release Play UPLOAD
+ * kaliti bilan imzolanadi - BARNO_UPLOAD_STORE_FILE, BARNO_UPLOAD_STORE_PASSWORD,
+ * BARNO_UPLOAD_KEY_ALIAS, BARNO_UPLOAD_KEY_PASSWORD (`~/Barno_AI/scripts/play/`). Ilova imzo
+ * kalitini Google boshqaradi (Play App Signing); APK kanali (VENERA_*) o'zgarmaydi.
+ *
  * Shablon matniga tayanmaydi: build.gradle oxiriga ikkinchi `android {}`
  * bloki qo'shiladi (Gradle bir xil kengaytmani qayta sozlaydi va release
  * `signingConfig` ni almashtiradi). Marker bilan idempotent.
@@ -23,16 +28,19 @@ const MARKER = '// @venera-release-signing';
 
 const BLOCK = `
 ${MARKER} (plugins/withReleaseSigning.js) - prebuild har safar qayta qo'shadi.
-def veneraReleaseProps = ['VENERA_STORE_FILE', 'VENERA_STORE_PASSWORD', 'VENERA_KEY_ALIAS', 'VENERA_KEY_PASSWORD']
+def veneraPlayUpload = project.hasProperty('barnoPlayUpload')
+def veneraReleaseProps = veneraPlayUpload
+    ? ['BARNO_UPLOAD_STORE_FILE', 'BARNO_UPLOAD_STORE_PASSWORD', 'BARNO_UPLOAD_KEY_ALIAS', 'BARNO_UPLOAD_KEY_PASSWORD']
+    : ['VENERA_STORE_FILE', 'VENERA_STORE_PASSWORD', 'VENERA_KEY_ALIAS', 'VENERA_KEY_PASSWORD']
 def veneraHasReleaseKey = veneraReleaseProps.every { project.hasProperty(it) }
 android {
     signingConfigs {
         if (veneraHasReleaseKey) {
             veneraRelease {
-                storeFile file(project.property('VENERA_STORE_FILE'))
-                storePassword project.property('VENERA_STORE_PASSWORD')
-                keyAlias project.property('VENERA_KEY_ALIAS')
-                keyPassword project.property('VENERA_KEY_PASSWORD')
+                storeFile file(project.property(veneraReleaseProps[0]))
+                storePassword project.property(veneraReleaseProps[1])
+                keyAlias project.property(veneraReleaseProps[2])
+                keyPassword project.property(veneraReleaseProps[3])
             }
         }
     }
@@ -47,6 +55,9 @@ android {
 gradle.taskGraph.whenReady { graph ->
     def wantsRelease = graph.allTasks.any { t -> t.project == project && t.name ==~ /(assemble|bundle|package|install)Release/ }
     if (wantsRelease && !veneraHasReleaseKey && !project.hasProperty('veneraAllowDebugSigned')) {
+        if (veneraPlayUpload) {
+            throw new GradleException("Barno Play: upload kaliti yo'q (BARNO_UPLOAD_STORE_FILE, BARNO_UPLOAD_STORE_PASSWORD, BARNO_UPLOAD_KEY_ALIAS, BARNO_UPLOAD_KEY_PASSWORD - ~/.gradle/gradle.properties). ~/Barno_AI/scripts/play/create-upload-keystore.sh va configure-upload-signing.sh ni ishga tushiring.")
+        }
         throw new GradleException("Venera: release kaliti yo'q (VENERA_STORE_FILE, VENERA_STORE_PASSWORD, VENERA_KEY_ALIAS, VENERA_KEY_PASSWORD - ~/.gradle/gradle.properties). README 4-bo'lim. Faqat o'zingiz sinash uchun: -PveneraAllowDebugSigned=true - bunday APK'ni pilotga BERMANG.")
     }
 }

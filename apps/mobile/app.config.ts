@@ -16,6 +16,12 @@
  *   VENERA_WEB_URL  (ixtiyoriy) Mini App manzili (`<url>/tg/` - asosiy ekran).
  *                   Default - VENERA_API_URL; dev'da API (:8001) Mini App'ni bermasa
  *                   Vite manziliga qaratiladi.
+ *   BARNO_PLAY      1 - Google Play build'i (2026-11-19, ega qarori): package `uz.brbtech.barno`.
+ *                   Play'dagi ilova ALOHIDA ilova: APK bilan tarqatilgan `uz.brbtech.venera.meetings`
+ *                   o'zgarmaydi (o'rnatganlar yangilanishni avvalgidek oladi). Imzo - Play upload
+ *                   kaliti (`-PbarnoPlayUpload=true`, `plugins/withReleaseSigning.js`); ilova imzo
+ *                   kalitini Google boshqaradi. Sxema (`venera-rec`) o'sha - SSO qaytish manzili
+ *                   Keycloak'da o'zgarmaydi. Build: `~/Barno_AI/scripts/play/build-aab.sh`.
  *
  * DIQQAT: bu fayl HAR Expo CLI buyrug'ida qayta o'qiladi (prebuild, run:android,
  * start). Dev client `extra.apiBaseUrl` ni Metro bergan manifestdan oladi -
@@ -26,6 +32,9 @@
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 
 const variant = process.env.APP_VARIANT ?? 'production';
+/** Google Play build'i (`BARNO_PLAY=1`) - alohida package ID; boshqa hamma narsa APK bilan bir xil. */
+const isPlay = process.env.BARNO_PLAY === '1';
+const androidPackage = isPlay ? 'uz.brbtech.barno' : 'uz.brbtech.venera.meetings';
 const isDev = variant === 'development';
 const apiBaseUrl = (process.env.VENERA_API_URL ?? 'https://llm.brb-tech.uz').replace(/\/+$/, '');
 
@@ -41,7 +50,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   // shakl, rang theme.ts `brand` (#EE5A24). Ilgari ikonka berilmagan edi - APK'da Android'ning standart robotchasi turardi.
   icon: './assets/icon.png',
   android: {
-    package: 'uz.brbtech.venera.meetings',
+    package: androidPackage,
     versionCode: 24,
     // Adaptive ikonka (Android 8+): oq fon + yulduzcha (qatlamning 50% - har qanday niqobda uchlari kesilmaydi).
     // monochromeImage - Android 13+ "mavzuli ikonkalar" yoqilganda rangni tizim beradi.
