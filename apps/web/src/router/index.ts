@@ -108,6 +108,13 @@ const routes: RouteRecordRaw[] = [
     props: { kind: 'telegram' },
     meta: { requiresAuth: true, loginDirect: true },
   },
+  {
+    // Jonli ovozli suhbat (llm.brb-tech.uz/barno). Kirishsiz ham ochiladi: hozircha faqat interfeys
+    // (demo transport). Kirgan odamga ismi bilan salom beradi.
+    path: '/barno',
+    name: 'live',
+    component: () => import('../views/LiveView.vue'),
+  },
   adminRoutes,
   ...devRoutes,
   { path: '/:pathMatch(.*)*', redirect: '/' },
