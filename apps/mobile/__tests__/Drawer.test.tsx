@@ -158,6 +158,8 @@ describe('AppDrawer', () => {
   it('offline with a local recording: Plaud stays reachable and shows the not-uploaded count', async () => {
     await renderDrawer({ rows: [localRow(), localRow({ clientId: 'c-2', state: 'failed' }), localRow({ clientId: 'c-3', state: 'done' })] });
     const row = await screen.findByTestId('drawer-recordings');
+    // Plaud belgisi - yig'ilish (`MeetingsIcon`), jonli suhbatning to'lqini emas.
+    expect(within(row).getByTestId('icon-Meetings')).toBeTruthy();
     // `done` sanalmaydi.
     expect(screen.getByText('2')).toBeTruthy();
     expect(row.props.accessibilityLabel).toBe('Plaud, 2 ta yozuv yuklanmagan');

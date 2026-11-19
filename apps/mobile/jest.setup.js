@@ -66,6 +66,15 @@ jest.mock('lucide-react-native', () => {
     {
       get: (_t, name) => {
         if (name === '__esModule') return true;
+        // Ilovaning o'z belgilari (`src/ui/icons.ts`): `createLucideIcon('meetings', ...)` -> `icon-Meetings`.
+        if (name === 'createLucideIcon') {
+          return (iconName) => {
+            const pascal = String(iconName).replace(/(^|-)([a-z0-9])/g, (_m, _d, c) => c.toUpperCase());
+            return function Icon() {
+              return React.createElement(View, { testID: `icon-${pascal}` });
+            };
+          };
+        }
         return function Icon() {
           return React.createElement(View, { testID: `icon-${String(name)}` });
         };

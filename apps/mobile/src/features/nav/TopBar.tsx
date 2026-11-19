@@ -1,18 +1,21 @@
 /**
  * Chat tepa paneli va yozuv paytidagi qizil chiziq (Claude ilovasi kabi):
  *
- *   ☰  menyu (drawer)  ·  suhbat nomi (markazda)  ·  ≋ Yozuvlar  ·  ✎ yangi suhbat
+ *   ☰  menyu (drawer)  ·  suhbat nomi (markazda)  ·  Plaud (yozuvlar)  ·  ✎ yangi suhbat
  *   ● Yozilmoqda 03:12                                   Ochish ›   (faqat yozuv paytida)
  *
- * NIMA UCHUN ≋ tepada: egasi "yozuvlarni qayerdan ko'raman?" dedi - chatdan yozuvlarga
+ * NIMA UCHUN Plaud tepada: egasi "yozuvlarni qayerdan ko'raman?" dedi - chatdan yozuvlarga
  * BIR bosish. Profil (avatar) bu yerdan drawer pastiga ko'chdi: tepada uchta belgi
  * yetarli, sozlamalar kamdan-kam ochiladi.
+ *
+ * Plaud belgisi - `MeetingsIcon` (pufak va uch kishi, `@/ui/icons`), `AudioLines` EMAS: to'lqin belgisi -
+ * chatdagi jonli suhbat tugmasiniki, ikkalasi bir xil bo'lib qolgan edi (ega, 2026-11-19).
  *
  * Qizil chiziq alohida komponent: soat har soniya yangilanadi - butun chat ekrani
  * (javoblar ro'yxati) har soniya qayta chizilmasin.
  */
 import { router } from 'expo-router';
-import { AudioLines, ChevronRight, Menu, SquarePen } from 'lucide-react-native';
+import { ChevronRight, Menu, SquarePen } from 'lucide-react-native';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useChat } from '@/features/chat/chatStore';
@@ -21,6 +24,7 @@ import { useRecorderStore } from '@/features/recorder/RecorderProvider';
 import { useRecordingClock } from '@/features/recorder/useRecordingClock';
 import { useT } from '@/features/settings/settingsStore';
 import { IconButton } from '@/ui/IconButton';
+import { MeetingsIcon } from '@/ui/icons';
 import { useTheme } from '@/ui/theme';
 import { hit, iconSize, stroke, type as typeScale } from '@/ui/tokens';
 
@@ -44,7 +48,7 @@ export function ChatTopBar({ title, onMenu }: { title: string; onMenu: () => voi
       <View style={[s.side, s.sideRight]}>
         {meetings ? (
           <IconButton
-            icon={AudioLines}
+            icon={MeetingsIcon}
             label={t('nav.recordings')}
             // Yozuv ketayotganda belgi qizil - "yozuv shu yerda" degan ishora.
             color={live ? th.record : th.textSoft}

@@ -16,7 +16,7 @@
  * eng ko'zga tashlanadigan joy yozuvga. Qizil rang ilovaning hamma joyida "yozuv" degani.
  */
 import { router } from 'expo-router';
-import { AudioLines, ListChecks, Search, Settings, SquarePen, X } from 'lucide-react-native';
+import { ListChecks, Search, Settings, SquarePen, X } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import {
   Animated,
@@ -43,6 +43,7 @@ import { useQueueRows } from '@/features/upload/useQueue';
 import { useServices } from '@/services';
 import { Avatar } from '@/ui/Avatar';
 import { IconButton } from '@/ui/IconButton';
+import { MeetingsIcon } from '@/ui/icons';
 import { useSafeInsets } from '@/ui/insets';
 import { ListDivider, ListRow, type ListRowRight } from '@/ui/list';
 import { StatusPill } from '@/ui/StatusPill';
@@ -265,7 +266,7 @@ function DrawerContent({ onClose, backRef }: { onClose: () => void; backRef: Mut
               <ListRow
                 variant="plain"
                 testID="drawer-recordings"
-                icon={AudioLines}
+                icon={MeetingsIcon}
                 iconColor={live ? th.record : undefined}
                 title={t('nav.recordings')}
                 right={recordingsRight}

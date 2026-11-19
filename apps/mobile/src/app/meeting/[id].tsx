@@ -31,7 +31,6 @@
  */
 import { Stack, useLocalSearchParams } from 'expo-router';
 import {
-  AudioLines,
   CloudOff,
   EllipsisVertical,
   FilePen,
@@ -76,6 +75,7 @@ import { Banner, Button, Loading, Segmented, styles as ui } from '@/ui/component
 import { EmptyState } from '@/ui/EmptyState';
 import { errorText } from '@/ui/errors';
 import { IconButton } from '@/ui/IconButton';
+import { MeetingsIcon } from '@/ui/icons';
 import { PromptModal } from '@/ui/modals';
 import { useTheme } from '@/ui/theme';
 
@@ -186,7 +186,7 @@ function RecordingNotFound() {
         testID="recording-not-found"
         icon={CloudOff}
         title={t('recs.notFound')}
-        action={{ title: t('nav.recordings'), icon: AudioLines, onPress: leaveRecording, variant: 'secondary', testID: 'recording-not-found-back' }}
+        action={{ title: t('nav.recordings'), icon: MeetingsIcon, onPress: leaveRecording, variant: 'secondary', testID: 'recording-not-found-back' }}
       />
     </View>
   );

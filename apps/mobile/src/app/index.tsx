@@ -1,7 +1,7 @@
 /**
  * Asosiy ekran - Barno bilan suhbat (NATIVE; Mini App'ning dizayni va mantig'i).
  *
- *   tepada   ☰ menyu (drawer) · suhbat nomi · ≋ yozuvlar · ✎ yangi suhbat (`features/nav/TopBar`)
+ *   tepada   ☰ menyu (drawer) · suhbat nomi · Plaud (yozuvlar) · ✎ yangi suhbat (`features/nav/TopBar`)
  *            yozuv paytida ostida qizil chiziq - bir bosishda yozuv ekrani
  *   o'rtada  salomlashuv (bo'sh suhbatda) yoki savol-javoblar
  *   pastda   Claude uslubidagi yozish maydoni (matn + Pro + mikrofon + yuborish)

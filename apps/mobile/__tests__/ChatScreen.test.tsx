@@ -2,9 +2,9 @@
  * Native chat ekrani: salomlashuv -> tayyor savol -> oqimli javob (manbalar bilan),
  * HRM/CRM ulanmagan xatosi -> "Qayta ulash", to'xtatish, drawer'dan tarixni ochish,
  * Pro kaliti, diktovka (to'xtatib tahrirlash va darhol yuborish), tepa panel
- * (☰ / ≋ Yozuvlar / qizil yozuv chizig'i).
+ * (☰ / Plaud / qizil yozuv chizig'i).
  */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import { router } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -163,7 +163,7 @@ describe('ChatScreen', () => {
     expect(router.push).toHaveBeenCalledWith('/settings');
   });
 
-  it('top bar: ≋ Plaud is hidden without meetings and opens /meetings in one tap when enabled', async () => {
+  it('top bar: Plaud is hidden without meetings and opens /meetings in one tap when enabled', async () => {
     await renderChat();
     expect(screen.queryByTestId('chat-meetings')).toBeNull();
     await act(async () => {
@@ -171,6 +171,9 @@ describe('ChatScreen', () => {
     });
     const btn = await screen.findByTestId('chat-meetings');
     expect(btn.props.accessibilityLabel).toBe('Plaud');
+    // Belgi - yig'ilish (pufak va uch kishi), jonli suhbat tugmasining to'lqini EMAS (ega, 2026-11-19).
+    expect(within(btn).getByTestId('icon-Meetings')).toBeTruthy();
+    expect(within(btn).queryByTestId('icon-AudioLines')).toBeNull();
     await act(async () => {
       await fireEvent.press(btn);
     });
@@ -186,7 +189,7 @@ describe('ChatScreen', () => {
     });
     // Soat har soniya yuradi - aniq soniyaga emas, formatga qaraymiz.
     expect(await screen.findByText(/^Yozilmoqda 01:0\d$/)).toBeTruthy();
-    // Yozuv paytida ≋ ham ko'rinadi (konfig bo'lmasa ham - yozuv topiladigan bo'lsin).
+    // Yozuv paytida Plaud belgisi ham ko'rinadi (konfig bo'lmasa ham - yozuv topiladigan bo'lsin).
     expect(screen.getByTestId('chat-meetings')).toBeTruthy();
     await act(async () => {
       await fireEvent.press(screen.getByTestId('chat-recording'));
