@@ -343,6 +343,21 @@ class Settings(BaseSettings):
     #: slotlaridan bittasini ushlab turadi.
     tts_max_chars: int = 3000
 
+    # --- JONLI OVOZLI SUHBAT: Speko agenti (llm.brb-tech.uz/barno, `api/v1/live.py`) ---
+    #: Speko PLATFORMA kaliti (`sk_live_...`) - FAQAT serverda: brauzerga faqat bir martalik transport tokeni
+    #: beriladi. Nomi tarixiy (`.env` da shu nom bilan turibdi), ichida agent raqami emas, kalit. Bo'sh -
+    #: jonli suhbat o'chiq (endpoint 503 qaytaradi).
+    speko_agent_key: str = ""
+    speko_api_url: str = "https://api.speko.dev"
+    #: Speko'dagi «O'zbek operator» agenti - sahifadagi Barno. Agent sozlamasi (prompt, ovoz) Speko panelida.
+    speko_agent_id: str = "agent_80e9eb51d0b747e5"
+    speko_timeout: float = 15.0
+    #: Bitta odam ocha oladigan sessiyalar: har sessiya - Speko hisobidagi pullik daqiqalar.
+    live_sessions_per_min: int = 4
+    live_sessions_per_hour: int = 30
+    #: Suhbatdan keyingi baholar (rahmat sahifasi) - JSON qatorlar: vaqt, kim, sessiya, baho, sabablar, izoh.
+    live_feedback_file: Path = BASE_DIR / "data" / "live" / "feedback.jsonl"
+
     # --- Uyg'otish so'zi jurnali ---
     #: "Salom Venera" urinishlari yozib boriladi: audio + transkript + qaror.
     #: Muammoni TAXMIN bilan emas, dalil bilan tuzatish uchun - qaysi

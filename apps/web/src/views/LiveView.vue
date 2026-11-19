@@ -3,23 +3,26 @@
  * Jonli ovozli suhbat - llm.brb-tech.uz/barno.
  *
  * Uch sahna, bitta sahifa:
- *   home  - salomlashish (kirgan odamga ismi bilan) va ikki suhbatdosh kartasi; karta bosilsa -
- *           qo'ng'iroq boshlanadi. Mikrofon xatolari shu yerda, "Qayta urinish" bilan;
- *   call  - suhbatdosh nomi, holat va taymer, katta ovoz shari, subtitr, uch tugma
+ *   home  - salomlashish (kirgan odamga ismi bilan) va suhbatdosh kartasi; bosilsa - qo'ng'iroq boshlanadi.
+ *           Mikrofon va ulanish xatolari shu yerda, "Qayta urinish" bilan;
+ *   call  - suhbatdosh nomi, holat va taymer, katta ovoz shari, subtitr (oxirgi gap), uch tugma
  *           (mikrofon, tugatish, subtitr). Sahifadan chiqish tasdiq so'raydi;
  *   after - rahmat, davomiylik, baho (yulduz) va sabablar, "Yana qo'ng'iroq qilish".
  *
- * HOZIR FAQAT INTERFEYS (2026-11-19): transport - demo (`features/live/transport.ts`), mikrofon
- * esa haqiqiy. Integratsiyada `useLiveCall(createRealTransport)` - sahifa o'zgarmaydi.
- * Sarlavhadagi "Demo" belgisi shu bosqichni ko'rsatib turadi.
+ * SUHBATDOSH - Speko agenti («O'zbek operator» = Barno; `features/live/spekoTransport.ts`). Har qo'ng'iroq -
+ * pullik daqiqalar, shuning uchun qo'ng'iroq FAQAT tizimga kirgan odamga: mehmon kartani bossa kirish sahifasiga
+ * o'tadi va kirgach shu yerga qaytadi. Sahifaning o'zi kirishsiz ham ochiladi.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { onBeforeRouteLeave } from 'vue-router'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Captions, CaptionsOff, Check, Mic, MicOff, Moon, Phone, PhoneOff, Star, Sun, Wifi } from 'lucide-vue-next'
+import {
+  Captions, CaptionsOff, Check, Mic, MicOff, Moon, Phone, PhoneOff, Star, Sun, Volume2, VolumeX, Wifi,
+} from 'lucide-vue-next'
 import { useAuth } from '../composables/useAuth'
 import { useTheme } from '../theme'
 import { secureUrl } from '../api/stt.api'
+import { sendLiveFeedback } from '../api/live.api'
 import BrandSpark from '../components/BrandSpark.vue'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import VButton from '../ui/VButton.vue'
@@ -30,16 +33,17 @@ import LiveOrb from '../features/live/LiveOrb.vue'
 import { PERSONAS } from '../features/live/personas'
 import type { LivePersona, OrbMode } from '../features/live/personas'
 import { useLiveCall } from '../features/live/useLiveCall'
-import type { DemoScript } from '../features/live/transport'
+import { preloadSpeko } from '../features/live/spekoTransport'
 
 const { t, locale } = useI18n({ useScope: 'global' })
+const router = useRouter()
 const { isAuthenticated, user } = useAuth()
 const { theme, toggle: toggleTheme } = useTheme()
 const isDark = computed(() => theme.value === 'dark')
 
 const call = useLiveCall()
-const { status, error, phase, muted, elapsed, userLevel, agentLevel, agentCaption, userCaption, captionFinal,
-  poorNetwork, noInput, callId } = call
+const { status, error, phase, muted, elapsed, userLevel, agentLevel, caption, audioBlocked, poorNetwork, noInput,
+  callId } = call
 
 type Stage = 'home' | 'call' | 'after'
 const stage = computed<Stage>(() => (status.value === 'idle' ? 'home' : status.value === 'ended' ? 'after' : 'call'))
@@ -48,21 +52,27 @@ const live = computed(() => status.value === 'live')
 // --- suhbatdosh ----------------------------------------------------------------------
 
 const personaName = (p: LivePersona) => t(`live.persona.${p.id}.name`)
-const current = computed(() => call.persona.value)
-const name = computed(() => (current.value ? personaName(current.value) : ''))
-/** Oxirgi tanlangan - xato kartasidagi "Qayta urinish" va rahmat sahifasidagi "Yana" uchun. */
-const lastPersona = ref<LivePersona>(PERSONAS[0])
+/** Oxirgi tanlangan: qo'ng'iroq tugagach ham nomi, rangi va "Yana qo'ng'iroq qilish" shundan. */
+const selected = ref<LivePersona>(PERSONAS[0])
+const name = computed(() => personaName(selected.value))
 const hovered = ref<string | null>(null)
+const LOGIN = { name: 'login', query: { redirect: '/barno' } } as const
 
-function script(p: LivePersona): DemoScript {
-  const n = personaName(p)
-  return { greeting: t('live.demoGreeting', { name: n }), replies: [t('live.demoReply1'), t('live.demoReply2')] }
+/** Karta ustiga kelindi: shar jonlanadi va (kirgan odamga) ovozli SDK oldindan yuklanadi. */
+function onHover(id: string | null) {
+  hovered.value = id
+  if (id && isAuthenticated.value) preloadSpeko()
 }
 
 function startCall(p: LivePersona) {
-  lastPersona.value = p
+  // Qo'ng'iroq faqat kirgan odamga (pullik daqiqalar): mehmon kirish sahifasiga, kirgach shu yerga qaytadi.
+  if (!isAuthenticated.value) {
+    void router.push(LOGIN)
+    return
+  }
+  selected.value = p
   resetFeedback()
-  void call.start(p, script(p), String(locale.value))
+  void call.start(p)
 }
 
 // --- salomlashish ----------------------------------------------------------------------
@@ -129,25 +139,30 @@ function toggleCaptions() {
     /* maxfiy rejim - tanlov shu sahifada baribir ishlaydi */
   }
 }
-/** Ekran o'quvchiga faqat TUGAGAN gap aytiladi - so'zma-so'z emas. */
-const spokenCaption = computed(() => (captionFinal.value ? agentCaption.value : ''))
+/** Ekran o'quvchiga faqat agentning TUGAGAN gapi aytiladi - so'zma-so'z emas. */
+const spokenCaption = computed(() =>
+  captionsOn.value && caption.value?.role === 'agent' && caption.value.final ? caption.value.text : '',
+)
 
 // --- xato ------------------------------------------------------------------------------
 
 const errorText = computed(() => {
-  const n = personaName(lastPersona.value)
   switch (error.value) {
     case 'insecure': return t('live.errInsecure')
     case 'blocked': return t('live.errBlocked')
     case 'denied': return t('live.errDenied')
     case 'no-mic': return t('live.errNoMic')
     case 'mic': return t('live.errMic')
-    case 'connect': return t('live.errConnect', { name: n })
+    case 'auth': return t('live.errAuth')
+    case 'busy': return t('live.errBusy')
+    case 'connect': return t('live.errConnect', { name: name.value })
     case 'dropped': return t('live.errDropped')
     default: return ''
   }
 })
 const httpsLink = computed(() => (error.value === 'insecure' ? secureUrl() : ''))
+/** Qayta urinish foyda beradigan xatolar (HTTPS yo'q va sayt siyosati - bermaydi). */
+const canRetry = computed(() => !!error.value && !['insecure', 'blocked', 'auth'].includes(error.value))
 
 // --- baho -------------------------------------------------------------------------------
 
@@ -155,6 +170,8 @@ const rating = ref(0)
 const reasons = ref<string[]>([])
 const comment = ref('')
 const sent = ref(false)
+const sending = ref(false)
+const sendFailed = ref(false)
 const GOOD = ['natural', 'fast', 'helpful', 'understood'] as const
 const BAD = ['misheard', 'slow', 'interrupted', 'voice', 'wrong'] as const
 const reasonOptions = computed(() =>
@@ -169,6 +186,7 @@ function resetFeedback() {
   reasons.value = []
   comment.value = ''
   sent.value = false
+  sendFailed.value = false
 }
 
 function onStarKey(e: KeyboardEvent) {
@@ -176,10 +194,25 @@ function onStarKey(e: KeyboardEvent) {
   if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); rating.value = Math.max(1, rating.value - 1) }
 }
 
-/** Integratsiyada: baho, sabablar va izoh `callId` bilan serverga. Hozir - faqat rahmat. */
-function sendFeedback() {
-  if (!rating.value) return
-  sent.value = true
+async function sendFeedback() {
+  if (!rating.value || sending.value) return
+  sending.value = true
+  sendFailed.value = false
+  try {
+    await sendLiveFeedback({
+      sessionId: callId.value,
+      persona: selected.value.id,
+      rating: rating.value,
+      reasons: reasons.value,
+      comment: comment.value.trim(),
+      durationSec: elapsed.value,
+    })
+    sent.value = true
+  } catch {
+    sendFailed.value = true
+  } finally {
+    sending.value = false
+  }
 }
 
 function goHome() {
@@ -204,19 +237,16 @@ onMounted(() => {
 watch(locale, () => { document.title = t('live.docTitle') })
 onBeforeUnmount(() => { document.title = previousTitle })
 
-const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool' ? 'var(--viz-1)' : 'var(--brand)'))
+const tint = computed(() => (selected.value.tone === 'cool' ? 'var(--viz-1)' : 'var(--brand)'))
 </script>
 
 <template>
-  <div class="live" :data-stage="stage" :style="{ '--tint': stage === 'home' ? 'var(--brand)' : tint }">
+  <div class="live" :data-stage="stage" :style="{ '--tint': tint }">
     <header class="live__bar">
-      <div class="live__brand">
-        <RouterLink to="/" class="live__logo">
-          <span class="live__spark"><BrandSpark :size="16" /></span>
-          <span>Barno</span>
-        </RouterLink>
-        <span class="live__badge" :title="t('live.demoHint')">{{ t('live.demo') }}</span>
-      </div>
+      <RouterLink to="/" class="live__logo">
+        <span class="live__spark"><BrandSpark :size="16" /></span>
+        <span>Barno</span>
+      </RouterLink>
       <div class="live__tools">
         <LanguageSwitcher />
         <VIconButton
@@ -225,13 +255,7 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
           tooltip-placement="bottom"
           @click="toggleTheme"
         />
-        <VButton
-          v-if="!isAuthenticated && stage !== 'call'"
-          size="sm"
-          variant="outline"
-          pill
-          :to="{ name: 'login', query: { redirect: '/barno' } }"
-        >
+        <VButton v-if="!isAuthenticated && stage !== 'call'" size="sm" variant="outline" pill :to="LOGIN">
           {{ t('live.login') }}
         </VButton>
       </div>
@@ -241,16 +265,17 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
       <!-- BOSH SAHIFA -->
       <main v-if="stage === 'home'" key="home" class="home">
         <h1 class="home__title">{{ greeting }}</h1>
-        <p class="home__sub">{{ t('live.pick') }}</p>
+        <p class="home__sub">{{ t('live.sub') }}</p>
 
         <div v-if="error" class="home__alert" role="alert">
           <p>
             {{ errorText }}
             <a v-if="httpsLink" class="home__link" :href="httpsLink">{{ httpsLink }}</a>
           </p>
-          <VButton v-if="error !== 'insecure' && error !== 'blocked'" size="sm" variant="secondary" @click="startCall(lastPersona)">
+          <VButton v-if="canRetry" size="sm" variant="secondary" @click="startCall(selected)">
             {{ t('live.retry') }}
           </VButton>
+          <VButton v-else-if="error === 'auth'" size="sm" variant="secondary" :to="LOGIN">{{ t('live.login') }}</VButton>
         </div>
 
         <div class="home__grid">
@@ -259,13 +284,12 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
             :key="p.id"
             type="button"
             class="persona"
-            :data-tone="p.tone"
             :aria-label="t('live.callAria', { name: personaName(p) })"
             @click="startCall(p)"
-            @pointerenter="hovered = p.id"
-            @pointerleave="hovered = null"
-            @focus="hovered = p.id"
-            @blur="hovered = null"
+            @pointerenter="onHover(p.id)"
+            @pointerleave="onHover(null)"
+            @focus="onHover(p.id)"
+            @blur="onHover(null)"
           >
             <span class="persona__orb">
               <LiveOrb :tone="p.tone" mode="idle" :level="hovered === p.id ? 0.35 : 0" />
@@ -276,12 +300,13 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
             </span>
             <span class="persona__cta" aria-hidden="true">
               <Phone :size="16" :stroke-width="1.9" />
-              <span class="persona__cta-text">{{ t('live.call') }}</span>
+              <span>{{ t('live.call') }}</span>
             </span>
           </button>
         </div>
 
-        <p class="home__note">{{ t('disclaimer') }}</p>
+        <p v-if="!isAuthenticated" class="home__login">{{ t('live.loginToCall') }}</p>
+        <p class="home__note">{{ t('live.disclaimerAgent', { name }) }}</p>
       </main>
 
       <!-- QO'NG'IROQ -->
@@ -298,6 +323,13 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
         </div>
 
         <div class="call__banners" aria-live="polite">
+          <p v-if="audioBlocked" class="call__banner">
+            <VolumeX :size="15" :stroke-width="1.9" aria-hidden="true" />
+            <span>{{ t('live.audioBlocked') }}</span>
+            <VButton size="sm" variant="secondary" :icon="Volume2" @click="call.resumeAudio()">
+              {{ t('live.enableSound') }}
+            </VButton>
+          </p>
           <p v-if="poorNetwork" class="call__banner">
             <Wifi :size="15" :stroke-width="1.9" aria-hidden="true" />
             {{ t('live.poorNetwork') }}
@@ -309,18 +341,23 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
         </div>
 
         <div class="call__stage">
-          <LiveOrb :tone="current?.tone ?? 'brand'" :mode="orbMode" :level="orbLevel" />
+          <LiveOrb :tone="selected.tone" :mode="orbMode" :level="orbLevel" />
         </div>
 
+        <!-- Subtitr: suhbatdagi OXIRGI gap (agentniki yoki odamniki). Uzun gapning oxiri ko'rinadi. -->
         <div class="call__captions" :class="{ 'call__captions--hidden': !captionsOn }" aria-hidden="true">
-          <p v-if="agentCaption" class="call__caption" :class="{ 'call__caption--past': phase !== 'speaking' }">
-            {{ agentCaption }}
-          </p>
-          <p v-if="userCaption" class="call__caption call__caption--user">
-            <span class="call__who">{{ t('live.you') }}:</span> {{ userCaption }}
+          <p
+            v-if="caption"
+            class="call__caption"
+            :class="{
+              'call__caption--user': caption.role === 'user',
+              'call__caption--past': caption.role === 'agent' && phase !== 'speaking',
+            }"
+          >
+            <span v-if="caption.role === 'user'" class="call__who">{{ t('live.you') }}: </span>{{ caption.text }}
           </p>
         </div>
-        <p class="sr-only" aria-live="polite">{{ captionsOn ? spokenCaption : '' }}</p>
+        <p class="sr-only" aria-live="polite">{{ spokenCaption }}</p>
 
         <div class="call__controls">
           <div class="ctl">
@@ -369,7 +406,7 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
 
       <!-- RAHMAT -->
       <main v-else key="after" class="after">
-        <span class="after__orb"><LiveOrb :tone="current?.tone ?? 'brand'" mode="idle" /></span>
+        <span class="after__orb"><LiveOrb :tone="selected.tone" mode="idle" /></span>
         <h1 class="after__title">{{ t('live.thanks', { name }) }}</h1>
         <p class="after__meta">{{ t('live.duration', { time: mmss(elapsed) }) }}</p>
 
@@ -396,15 +433,16 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
             <p class="after__question after__question--sm">{{ rating >= 4 ? t('live.chipsGood') : t('live.chipsBad') }}</p>
             <VChoiceChips
               :model-value="reasons"
-              @update:model-value="(v) => (reasons = Array.isArray(v) ? v.map(String) : [])"
               :options="reasonOptions"
               multiple
               size="sm"
               :aria-label="rating >= 4 ? t('live.chipsGood') : t('live.chipsBad')"
               class="after__chips"
+              @update:model-value="(v) => (reasons = Array.isArray(v) ? v.map(String) : [])"
             />
             <textarea v-model="comment" class="after__comment" rows="2" maxlength="500" :placeholder="t('live.comment')" />
           </template>
+          <p v-if="sendFailed" class="after__failed" role="alert">{{ t('live.sendFailed') }}</p>
         </section>
         <p v-else class="after__sent" role="status">
           <Check :size="18" :stroke-width="2" aria-hidden="true" />
@@ -412,8 +450,10 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
         </p>
 
         <div class="after__actions">
-          <VButton v-if="!sent" variant="primary" pill :disabled="!rating" @click="sendFeedback">{{ t('live.send') }}</VButton>
-          <VButton variant="secondary" pill :icon="Phone" @click="startCall(current ?? lastPersona)">{{ t('live.again') }}</VButton>
+          <VButton v-if="!sent" variant="primary" pill :disabled="!rating" :loading="sending" @click="sendFeedback">
+            {{ t('live.send') }}
+          </VButton>
+          <VButton variant="secondary" pill :icon="Phone" @click="startCall(selected)">{{ t('live.again') }}</VButton>
           <VButton variant="ghost" pill @click="goHome">{{ t('live.home') }}</VButton>
         </div>
 
@@ -450,12 +490,6 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
   padding: 0 var(--gutter);
   flex-shrink: 0;
 }
-.live__brand {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  min-width: 0;
-}
 .live__logo {
   display: inline-flex;
   align-items: center;
@@ -474,17 +508,6 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
 .live__spark {
   display: inline-flex;
   color: var(--brand);
-}
-.live__badge {
-  padding: 2px 8px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-full);
-  color: var(--text-3);
-  font-size: var(--fs-caption);
-  line-height: var(--lh-caption);
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  cursor: default;
 }
 .live__tools {
   display: flex;
@@ -531,6 +554,7 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
   color: var(--text-2);
   font-size: var(--fs-body-lg);
   line-height: var(--lh-body);
+  text-wrap: balance;
 }
 .home__alert {
   display: flex;
@@ -556,19 +580,29 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
   font-weight: 600;
   word-break: break-all;
 }
+/* Kartalar soni o'zgarsa ham markazda: hozir bitta (Barno), keyin yonma-yon ikkita ham sig'adi. */
 .home__grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: var(--s-5);
   width: 100%;
-  max-width: 760px;
   margin-top: var(--s-10);
 }
+.home__login {
+  margin-top: var(--s-5);
+  color: var(--text-2);
+  font-size: var(--fs-body-sm);
+  line-height: var(--lh-body-sm);
+}
 .home__note {
-  margin-top: var(--s-10);
+  margin-top: var(--s-8);
   color: var(--text-3);
   font-size: var(--fs-caption);
   line-height: var(--lh-caption);
+}
+.home__login + .home__note {
+  margin-top: var(--s-4);
 }
 
 .persona {
@@ -576,6 +610,8 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
   flex-direction: column;
   align-items: center;
   gap: var(--s-4);
+  width: 100%;
+  max-width: 372px;
   padding: var(--s-8) var(--s-6) var(--s-6);
   border: 1px solid var(--line);
   border-radius: var(--r-xl);
@@ -600,17 +636,13 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
     box-shadow: var(--e2);
     transform: translateY(-2px);
   }
-  .persona:hover .persona__cta {
-    background: var(--ink);
-    color: var(--on-ink);
-  }
 }
 .persona:active {
   transform: translateY(0) scale(0.99);
 }
 .persona__orb {
   display: block;
-  width: 168px;
+  width: 184px;
   margin: var(--s-2) 0 var(--s-3);
   transition: transform var(--dur-3) var(--ease-out);
 }
@@ -633,19 +665,25 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
   font-size: var(--fs-body-sm);
   line-height: var(--lh-body-sm);
 }
+/* Yagona asosiy harakat - siyoh fon (bitta ekranda bitta "primary"). */
 .persona__cta {
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
-  height: 40px;
+  height: 44px;
   margin-top: var(--s-2);
-  padding: 0 var(--s-5);
+  padding: 0 var(--s-6);
   border-radius: var(--r-full);
-  background: var(--fill);
-  color: var(--text);
+  background: var(--ink);
+  color: var(--on-ink);
   font-size: var(--fs-body-sm);
   font-weight: 500;
-  transition: background-color var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out);
+  transition: background-color var(--dur-2) var(--ease-out);
+}
+@media (hover: hover) {
+  .persona:hover .persona__cta {
+    background: var(--ink-hover);
+  }
 }
 
 /* --- qo'ng'iroq -------------------------------------------------------------------- */
@@ -722,14 +760,17 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
   min-height: 200px;
   margin: var(--s-6) 0;
 }
+/* Uch qator joy: matn pastdan o'sadi, sig'magan boshi tepada so'nib ketadi (uzun gapning OXIRI ko'rinadi). */
 .call__captions {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  gap: var(--s-2);
   width: 100%;
   max-width: 560px;
-  min-height: calc(var(--lh-body-lg) * 3);
+  height: calc(var(--lh-body-lg) * 3);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 34%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 34%);
   transition: opacity var(--dur-2) var(--ease-out);
 }
 .call__captions--hidden {
@@ -739,15 +780,12 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
   color: var(--text);
   font-size: var(--fs-body-lg);
   line-height: var(--lh-body-lg);
-  text-wrap: balance;
+  text-wrap: pretty;
   transition: color var(--dur-3) var(--ease-out);
 }
-.call__caption--past {
-  color: var(--text-3);
-}
+.call__caption--past,
 .call__caption--user {
   color: var(--text-2);
-  font-size: var(--fs-body);
 }
 .call__who {
   color: var(--text-3);
@@ -932,6 +970,11 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
   outline-offset: 1px;
   border-color: transparent;
 }
+.after__failed {
+  margin-top: var(--s-3);
+  color: var(--crit-text);
+  font-size: var(--fs-body-sm);
+}
 .after__sent {
   display: inline-flex;
   align-items: center;
@@ -983,40 +1026,10 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
     font-size: var(--fs-body);
   }
   .home__grid {
-    grid-template-columns: 1fr;
-    gap: var(--s-3);
     margin-top: var(--s-8);
   }
-  /* Kartalar yonma-yon emas, ixcham qator: shar - matn - qo'ng'iroq belgisi. */
-  .persona {
-    flex-direction: row;
-    gap: var(--s-4);
-    padding: var(--s-4) var(--s-4) var(--s-4) var(--s-5);
-    text-align: left;
-  }
   .persona__orb {
-    width: 64px;
-    margin: 0;
-  }
-  .persona__text {
-    flex: 1;
-    min-width: 0;
-  }
-  .persona__name {
-    font-size: var(--fs-title-3);
-    line-height: var(--lh-title-3);
-  }
-  .persona__cta {
-    width: 44px;
-    height: 44px;
-    margin: 0;
-    padding: 0;
-    justify-content: center;
-    background: var(--ink);
-    color: var(--on-ink);
-  }
-  .persona__cta-text {
-    display: none;
+    width: 152px;
   }
   .call__name {
     font-size: var(--fs-title-2);
@@ -1030,7 +1043,7 @@ const tint = computed(() => ((current.value ?? lastPersona.value).tone === 'cool
     line-height: var(--lh-body);
   }
   .call__captions {
-    min-height: calc(var(--lh-body) * 3);
+    height: calc(var(--lh-body) * 3);
   }
 }
 

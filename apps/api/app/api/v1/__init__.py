@@ -13,7 +13,7 @@ from fastapi import APIRouter
 from . import actions, auth, chat, chats, connectors, hrm, pro, stt, telegram, tts
 from . import admin_users, reports
 from . import admin, admin_engines, admin_osmap, admin_playground, admin_probe
-from . import devices, meetings, voice
+from . import devices, live, meetings, voice
 from . import assistant_extras
 from . import slack
 
@@ -50,6 +50,8 @@ router.include_router(assistant_extras.router)
 router.include_router(meetings.router)
 # Ovoz namunasi (spikerni ovozidan tanish, `services/meetings/voice.py`).
 router.include_router(voice.router)
+# Jonli ovozli suhbat (/barno sahifasi): Speko agenti bilan sessiya ochish (`live.py`).
+router.include_router(live.router)
 router.include_router(devices.router)
 # Slack hisobini Barno hisobiga ulash - tasdiq sahifasining yo'llari (`slack.py`; Slack ilovasining
 # o'zi HTTP emas, Socket Mode - `app/slack/`).

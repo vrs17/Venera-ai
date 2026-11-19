@@ -109,8 +109,9 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, loginDirect: true },
   },
   {
-    // Jonli ovozli suhbat (llm.brb-tech.uz/barno). Kirishsiz ham ochiladi: hozircha faqat interfeys
-    // (demo transport). Kirgan odamga ismi bilan salom beradi.
+    // Jonli ovozli suhbat (llm.brb-tech.uz/barno) - Speko agenti bilan. Sahifa kirishsiz ham ochiladi, lekin
+    // qo'ng'iroq faqat kirgan odamga (pullik daqiqalar): mehmon kartani bossa kirish sahifasiga o'tadi va
+    // kirgach shu yerga qaytadi (`views/LiveView.vue`).
     path: '/barno',
     name: 'live',
     component: () => import('../views/LiveView.vue'),
