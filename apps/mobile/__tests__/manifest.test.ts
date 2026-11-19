@@ -82,6 +82,19 @@ describe('app config', () => {
     expect(c.scheme).toBe('venera-rec');
     expect(c.android.package).toBe('uz.brbtech.venera.meetings');
     expect(c.android.allowBackup).toBe(false);
+    // Google Play build'i (BARNO_PLAY=1) - alohida package; qolgani (nom, sxema) o'sha.
+    process.env.BARNO_PLAY = '1';
+    try {
+      jest.isolateModules(() => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const play = (require('../app.config').default as typeof make)({ config: {} });
+        expect(play.android.package).toBe('uz.brbtech.barno');
+        expect(play.scheme).toBe('venera-rec');
+        expect(play.name).toBe('Barno AI');
+      });
+    } finally {
+      delete process.env.BARNO_PLAY;
+    }
     expect(c.android.blockedPermissions).toEqual(
       expect.arrayContaining(['android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK', 'android.permission.SYSTEM_ALERT_WINDOW']),
     );

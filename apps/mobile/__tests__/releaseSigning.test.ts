@@ -34,6 +34,10 @@ describe('release signing config plugin', () => {
     expect(out).toMatch(/\(assemble\|bundle\|package\|install\)Release/);
     expect(out).toContain("project.hasProperty('veneraAllowDebugSigned')");
     expect(out).toContain('throw new GradleException(');
+    // Google Play (2026-11-19): `-PbarnoPlayUpload=true` - Play upload kaliti; APK kaliti (VENERA_*) o'zgarmaydi.
+    expect(out).toContain("project.hasProperty('barnoPlayUpload')");
+    for (const k of ['BARNO_UPLOAD_STORE_FILE', 'BARNO_UPLOAD_STORE_PASSWORD', 'BARNO_UPLOAD_KEY_ALIAS', 'BARNO_UPLOAD_KEY_PASSWORD']) expect(out).toContain(`'${k}'`);
+    expect(out).toContain('Barno Play: upload kaliti yo');
     expect(plugin.addReleaseSigning(out)).toBe(out);
     // Groovy qavslari muvozanatda.
     const count = (c: string) => out.split(c).length - 1;

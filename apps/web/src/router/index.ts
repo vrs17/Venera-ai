@@ -116,6 +116,12 @@ const routes: RouteRecordRaw[] = [
     name: 'live',
     component: () => import('../views/LiveView.vue'),
   },
+  {
+    // Maxfiylik siyosati (Google Play talabi, 2026-11-19) - OCHIQ sahifa: `meta` yo'q, kirish so'ralmaydi.
+    path: '/privacy',
+    name: 'privacy',
+    component: () => import('../views/PrivacyView.vue'),
+  },
   adminRoutes,
   ...devRoutes,
   { path: '/:pathMatch(.*)*', redirect: '/' },
