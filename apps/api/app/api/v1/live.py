@@ -1,6 +1,6 @@
 """Jonli ovozli suhbat - `/api/v1/live` (llm.brb-tech.uz/barno sahifasi, `apps/web/src/views/LiveView.vue`).
 
-`POST /live/session`: Speko'da («O'zbek operator» agenti) yangi sessiya ochadi va brauzerga uning bir martalik
+`POST /live/session`: Speko'da («Barno AI» agenti) yangi sessiya ochadi va brauzerga uning bir martalik
 transport tokeni va manzilini qaytaradi (`services/integrations/speko.py`). Brauzer shu bilan agentga
 to'g'ridan-to'g'ri ulanadi (WebRTC) - ovoz bizning server orqali o'tmaydi.
 
@@ -50,7 +50,7 @@ def _client() -> SpekoClient:
 
 
 def _agent_of(persona: str) -> str:
-    """Suhbatdosh -> Speko agenti. Hozircha bitta: Barno = «O'zbek operator»."""
+    """Suhbatdosh -> Speko agenti. Hozircha bitta: Barno -> «Barno AI» (`settings.speko_agent_id`)."""
     return {"barno": settings.speko_agent_id}[persona]
 
 

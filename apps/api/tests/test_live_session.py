@@ -1,4 +1,4 @@
-"""Jonli ovozli suhbat: `POST /api/v1/live/session` - Speko agentida («O'zbek operator» = Barno) sessiya ochish.
+"""Jonli ovozli suhbat: `POST /api/v1/live/session` - Speko'dagi «Barno AI» agentida sessiya ochish.
 
 Speko soxta (`urllib.request.urlopen`) - `api.speko.dev` chaqirilmaydi, hisobdan daqiqa yechilmaydi.
 """

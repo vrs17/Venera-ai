@@ -9,7 +9,7 @@
  *           (mikrofon, tugatish, subtitr). Sahifadan chiqish tasdiq so'raydi;
  *   after - rahmat, davomiylik, baho (yulduz) va sabablar, "Yana qo'ng'iroq qilish".
  *
- * SUHBATDOSH - Speko agenti («O'zbek operator» = Barno; `features/live/spekoTransport.ts`). Har qo'ng'iroq -
+ * SUHBATDOSH - Speko'dagi «Barno AI» agenti (`features/live/spekoTransport.ts`). Har qo'ng'iroq -
  * pullik daqiqalar, shuning uchun qo'ng'iroq FAQAT tizimga kirgan odamga: mehmon kartani bossa kirish sahifasiga
  * o'tadi va kirgach shu yerga qaytadi. Sahifaning o'zi kirishsiz ham ochiladi.
  */

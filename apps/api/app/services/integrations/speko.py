@@ -1,4 +1,4 @@
-"""Speko (api.speko.dev) - jonli ovozli agent sessiyalari («O'zbek operator» = /barno sahifasidagi Barno).
+"""Speko (api.speko.dev) - jonli ovozli agent sessiyalari: «Barno AI» agenti (/barno sahifasidagi Barno).
 
 QANDAY ISHLAYDI. Brauzer Barno API dan sessiya so'raydi (`api/v1/live.py`), biz Speko'da `POST /v1/sessions` bilan
 sessiya ochamiz va brauzerga FAQAT qisqa muddatli transport tokeni va manzilini beramiz. Ovoz brauzer bilan

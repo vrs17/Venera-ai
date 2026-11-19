@@ -349,7 +349,7 @@ class Settings(BaseSettings):
     #: jonli suhbat o'chiq (endpoint 503 qaytaradi).
     speko_agent_key: str = ""
     speko_api_url: str = "https://api.speko.dev"
-    #: Speko'dagi «O'zbek operator» agenti - sahifadagi Barno. Agent sozlamasi (prompt, ovoz) Speko panelida.
+    #: Speko'dagi «Barno AI» agenti - sahifadagi Barno. Agent sozlamasi (prompt, ovoz, salomlashuv) Speko panelida.
     speko_agent_id: str = "agent_80e9eb51d0b747e5"
     speko_timeout: float = 15.0
     #: Bitta odam ocha oladigan sessiyalar: har sessiya - Speko hisobidagi pullik daqiqalar.

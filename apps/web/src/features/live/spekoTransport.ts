@@ -1,4 +1,4 @@
-// Speko agenti («O'zbek operator» = Barno) bilan jonli suhbat - `LiveTransport` ning amalga oshiruvi.
+// Speko'dagi «Barno AI» agenti bilan jonli suhbat - `LiveTransport` ning amalga oshiruvi.
 //
 // OQIM: (1) serverimizdan sessiya (`POST /api/v1/live/session` - platforma kaliti serverda qoladi);
 // (2) Speko'ning brauzer SDK si `@spekoai/client` shu sessiyaning bir martalik tokeni bilan agentga ulanadi

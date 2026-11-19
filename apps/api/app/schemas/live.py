@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, StringConstraints
 
 
 class LiveSessionRequest(BaseModel):
-    #: Suhbatdosh. Hozircha faqat Barno (Speko'dagi «O'zbek operator» agenti): boshqa ovoz yo'q.
+    #: Suhbatdosh. Hozircha faqat Barno (Speko'dagi «Barno AI» agenti): boshqa ovoz yo'q.
     persona: Literal["barno"] = "barno"
 
 
