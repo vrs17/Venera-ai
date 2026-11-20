@@ -9,7 +9,7 @@
  * Yozuv ketayotganda tepada jonli karta ("Yozilmoqda 12:34").
  *
  * "Audio yuklash" (sarlavhada va bo'sh holatda): telefondagi audio fayl(lar) tizim oynasidan
- * tanlanadi va "Ulashish -> Barno AI" bilan bir yo'ldan o'tadi - `/import` tasdiq ekrani
+ * tanlanadi va "Ulashish -> Barno" bilan bir yo'ldan o'tadi - `/import` tasdiq ekrani
  * (`features/calls/useAudioUpload`). Faqat native import bor ilovada (tasdiq ekrani shunga tayanadi).
  *
  * Saqlangan xatti-harakat: sessiya tugadi banneri, 403/404 -> "bo'lim yoqilmagan",

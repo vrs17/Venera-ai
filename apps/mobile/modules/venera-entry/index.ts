@@ -119,7 +119,7 @@ export interface CallRecording {
   contentType: CallContentType | null;
 }
 
-/** "Ulashish -> Barno AI" bilan kelgan fayl (filesDir/imports/<fileName> + .json meta). */
+/** "Ulashish -> Barno" bilan kelgan fayl (filesDir/imports/<fileName> + .json meta). */
 export interface ImportMeta {
   fileName: string;
   /** Absolyut yo'l; expo-file-system uchun `toFileUri(path)` (src/lib/paths.ts). */

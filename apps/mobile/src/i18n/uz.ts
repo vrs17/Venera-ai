@@ -14,7 +14,7 @@ import { voiceSamplePart } from './parts/voiceSample';
 import { sharePart } from './parts/share';
 
 export const uz = {
-  'app.name': 'Barno AI',
+  'app.name': 'Barno',
   'common.ok': 'OK',
   'common.cancel': 'Bekor qilish',
   'common.save': 'Saqlash',
@@ -69,7 +69,7 @@ export const uz = {
   'template.short_call': "Qisqa qo'ng'iroq",
   'template.follow_up': 'Kuzatuv xabari',
 
-  'login.title': 'Barno AI',
+  'login.title': 'Barno',
   'login.subtitle': "HRM/CRM login va parolingiz bilan kiring. Bir marta kirasiz - keyin ilova o'zi kiradi.",
   'login.username': 'Login',
   'login.password': 'Parol',
@@ -88,7 +88,7 @@ export const uz = {
 
   'shell.offlineTitle': "Internet yo'q",
   'shell.offlineBody': "Barnoga ulanib bo'lmadi. Internet qaytsa sahifa o'zi ochiladi. Yig'ilishni internetsiz ham yozish mumkin - keyin yuklanadi.",
-  'shell.errorTitle': "Barno AI ochilmadi",
+  'shell.errorTitle': "Barno ochilmadi",
   'shell.errorBody': "Server javob bermadi. Birozdan keyin qayta urinib ko'ring. Yig'ilish yozish ishlayveradi.",
   'shell.record': "Yig'ilishni yozish",
   // Bo'lim nomi Slack/Telegram'dagi «🎙 Plaud» bilan bir xil (2026-11-06) - marshrut va id'lar o'zgarmaydi.
@@ -136,10 +136,10 @@ export const uz = {
   'record.openSettings': 'Sozlamalarni ochish',
   'record.consentTitle': 'Yozishdan oldin',
   'record.consentBody':
-    "Yig'ilishni yozishdan oldin ishtirokchilarni ogohlantiring. Audio Barno AI serverida matnga o'giriladi va xulosa yoziladi.",
+    "Yig'ilishni yozishdan oldin ishtirokchilarni ogohlantiring. Audio Barno serverida matnga o'giriladi va xulosa yoziladi.",
   'record.batteryTitle': 'Uzoq yozuvlar uchun',
   'record.batteryBody':
-    "Samsung'da: Sozlamalar > Batareya > Fon rejimidagi cheklovlar > \"Hech qachon uxlamaydigan ilovalar\" ro'yxatiga Barno AI ilovasini qo'shing. Aks holda uzoq yozuv to'xtab qolishi mumkin.",
+    "Samsung'da: Sozlamalar > Batareya > Fon rejimidagi cheklovlar > \"Hech qachon uxlamaydigan ilovalar\" ro'yxatiga Barno ilovasini qo'shing. Aks holda uzoq yozuv to'xtab qolishi mumkin.",
   'record.batteryAction': 'Batareya sozlamalari',
   'record.untrustedLink': "Yozish havola orqali ochildi. Boshlash uchun tugmani bosing.",
   'record.backToList': "Ro'yxatga qaytish",
@@ -494,7 +494,7 @@ export const uz = {
   'dict.sending': "Yuborilmoqda…",
   'dict.starting': "Mikrofon ulanmoqda…",
   'dict.noSpeech': "Ovoz eshitilmadi",
-  'dict.denied': "Mikrofonga ruxsat berilmagan. Telefon sozlamalarida Barno AI uchun mikrofonni yoqing.",
+  'dict.denied': "Mikrofonga ruxsat berilmagan. Telefon sozlamalarida Barno uchun mikrofonni yoqing.",
   'dict.meetingBusy': "Yig'ilish yozilmoqda - avval uni to'xtating.",
   'dict.failed': "Ovozni matnga aylantirib bo'lmadi. Qayta urinib ko'ring.",
   'dict.truncated': "Yozuv uzun edi - faqat boshi matnga aylantirildi.",

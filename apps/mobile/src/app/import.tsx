@@ -1,5 +1,5 @@
 /**
- * "Ulashish -> Barno AI" tasdiq ekrani: ulashilgan audio fayl(lar), suhbat tili va
+ * "Ulashish -> Barno" tasdiq ekrani: ulashilgan audio fayl(lar), suhbat tili va
  * "Yuborish" / "Bekor qilish".
  *
  * NIMA UCHUN doim tasdiq: deep link'ni istalgan ilova ochishi mumkin. Fayl foydalanuvchi

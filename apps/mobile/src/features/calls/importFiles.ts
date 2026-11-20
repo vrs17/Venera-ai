@@ -1,5 +1,5 @@
 /**
- * "Ulashish -> Barno AI" va Plaud'dagi "Audio yuklash": `imports/` dagi fayllar bilan ishlash -
+ * "Ulashish -> Barno" va Plaud'dagi "Audio yuklash": `imports/` dagi fayllar bilan ishlash -
  * meta o'qish, holat (yuborsa bo'ladimi), navbatga ko'chirish va tashlab yuborish.
  *
  * Ikki manba, bitta papka: native ImportActivity (m4a/aac) va JS tanlash oynasi (yana mp3/wav/ogg).

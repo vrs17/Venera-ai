@@ -12,7 +12,7 @@
  * kelsa expo-router qayta render bermaydi va ikkinchi bosish yo'qolardi
  * (masalan, ruxsatni sozlamada yoqib, yon tugmani qayta bosganda).
  *
- * "Ulashish -> Barno AI" (2026-10-10): ImportActivity fayllarni `imports/` ga nusxalab
+ * "Ulashish -> Barno" (2026-10-10): ImportActivity fayllarni `imports/` ga nusxalab
  *   venera-rec://import?files=<a.m4a,b.aac>[&skipped=<n>]&n=<nonce>
  * ochadi (Plaud'dagi "Audio yuklash" ham shu ekranga - yana .mp3/.wav/.ogg bilan). Fayl nomlari
  * qat'iy tekshiriladi (faqat ASCII, `..` yo'q, qabul qilinadigan audio kengaytmasi) - begona

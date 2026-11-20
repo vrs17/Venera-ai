@@ -56,6 +56,26 @@ jest.mock('expo-intent-launcher', () => ({
   startActivityAsync: jest.fn(async () => ({ resultCode: 0 })),
 }));
 
+// react-native-webview (jonli suhbat, `/live`): native ko'rinish Jest'da yo'q - props'ni eslab qoluvchi oddiy View.
+// Testlar `jest.requireMock('react-native-webview')` dan oladi: `__state.last` - oxirgi props (onMessage,
+// source, injectedJavaScriptBeforeContentLoaded...), `__state.mounts` - necha marta qayta ochildi, `__inject` -
+// `ref.injectJavaScript` chaqiruvlari.
+jest.mock('react-native-webview', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  const inject = jest.fn();
+  const state = { last: null, mounts: 0 };
+  const WebView = React.forwardRef(function WebView(props, ref) {
+    state.last = props;
+    React.useEffect(() => {
+      state.mounts += 1;
+    }, []);
+    React.useImperativeHandle(ref, () => ({ injectJavaScript: inject, reload: jest.fn() }));
+    return React.createElement(View, { testID: props.testID });
+  });
+  return { __esModule: true, default: WebView, WebView, __state: state, __inject: inject };
+});
+
 // lucide-react-native: SVG belgilar Jest'da kerak emas - nomli bo'sh ko'rinish (testID
 // orqali qaysi belgi chizilganini tekshirish mumkin).
 jest.mock('lucide-react-native', () => {

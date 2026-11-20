@@ -416,7 +416,7 @@ describe('export API helpers', () => {
     );
     expect(fileNameFromDisposition('attachment; filename="narxlar-2026-10-10.docx"', 'T', 'docx')).toBe('narxlar-2026-10-10.docx');
     expect(fileNameFromDisposition("attachment; filename*=UTF-8''%E0%A4%A", 'Haftalik reja', 'md')).toBe('Haftalik reja.md');
-    expect(fileNameFromDisposition(null, '', 'txt')).toBe('Barno AI.txt');
+    expect(fileNameFromDisposition(null, '', 'txt')).toBe('Barno.txt');
     expect(fileNameFromDisposition('attachment; filename="Отчёт"', 'T', 'pdf')).toBe('Отчёт.pdf');
     const long = safeFileName('x'.repeat(300), 'pdf');
     expect([long.length, long.endsWith('.pdf')]).toEqual([100, true]);

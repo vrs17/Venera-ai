@@ -77,8 +77,8 @@ describe('app config', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const make = require('../app.config').default as (ctx: { config: object }) => Record<string, any>;
     const c = make({ config: {} });
-    // Mahsulot nomi "Barno AI" (launcher); texnik nomlar (sxema, paket) o'zgarmaydi.
-    expect(c.name).toBe('Barno AI');
+    // Mahsulot nomi "Barno" (launcher); texnik nomlar (sxema, paket) o'zgarmaydi.
+    expect(c.name).toBe('Barno');
     expect(c.scheme).toBe('venera-rec');
     expect(c.android.package).toBe('uz.brbtech.venera.meetings');
     expect(c.android.allowBackup).toBe(false);
@@ -90,7 +90,7 @@ describe('app config', () => {
         const play = (require('../app.config').default as typeof make)({ config: {} });
         expect(play.android.package).toBe('uz.brbtech.barno');
         expect(play.scheme).toBe('venera-rec');
-        expect(play.name).toBe('Barno AI');
+        expect(play.name).toBe('Barno');
       });
     } finally {
       delete process.env.BARNO_PLAY;

@@ -6,6 +6,7 @@
 import { computed, ref } from 'vue'
 import * as authApi from '../api/auth.api'
 import { clearToken, clientChannel, getToken, setToken } from '../api/http'
+import { appTokenReady } from '../appBridge'
 import type { AuthUser, ChangePasswordResponse, LoginResponse, SignupRequest, SignupResponse, SsoConfig } from '../types'
 
 const user = ref<AuthUser | null>(null)
@@ -28,6 +29,8 @@ export function useAuth() {
   // first navigation resolves.
   async function bootstrap(): Promise<void> {
     if (initialized.value) return
+    // Mobil ilova ichida (/barno): token ilovadan keladi - kelguncha kutiladi (oddiy brauzerda - darhol).
+    await appTokenReady()
     const token = getToken()
     if (!token) {
       user.value = null

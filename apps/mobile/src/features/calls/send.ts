@@ -225,7 +225,7 @@ export interface ImportSendDeps {
   now?: () => number;
 }
 
-/** "Ulashish -> Barno AI" bilan kelgan bitta faylni navbatga qo'shadi (uploader'ni chaqiruvchi turtadi). */
+/** "Ulashish -> Barno" bilan kelgan bitta faylni navbatga qo'shadi (uploader'ni chaqiruvchi turtadi). */
 export async function sendImportedFile(deps: ImportSendDeps, meta: ImportFileMeta, opts: SendOptions): Promise<SendOutcome> {
   const now = deps.now ?? Date.now;
   if (!meta.contentType) return { kind: 'unsupported' };

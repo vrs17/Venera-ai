@@ -496,7 +496,7 @@ export function safeFileName(name: string | null | undefined, ext: string): stri
   let base = (name ?? '').replace(UNSAFE_NAME, ' ').replace(/\s+/g, ' ').trim();
   if (base.toLowerCase().endsWith(dotExt.toLowerCase())) base = base.slice(0, -dotExt.length);
   base = base.replace(/^[.\s]+|[.\s]+$/g, '').slice(0, MAX_NAME - dotExt.length).trim();
-  return `${base || 'Barno AI'}${dotExt}`;
+  return `${base || 'Barno'}${dotExt}`;
 }
 
 /**

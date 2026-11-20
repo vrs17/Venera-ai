@@ -12,7 +12,7 @@ import android.os.Looper
 import android.widget.Toast
 
 /**
- * "Ulashish -> Barno AI" (2026-10-10): istalgan ilovadan (Samsung Telefon,
+ * "Ulashish -> Barno" (2026-10-10): istalgan ilovadan (Samsung Telefon,
  * Mening fayllarim, Telegram ...) audio fayl(lar)ni qabul qiladi.
  *
  * Hech narsa chizmaydi (shaffof). Oqimlarni SHU YERDA filesDir/imports/ ga

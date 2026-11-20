@@ -130,7 +130,7 @@ describe('install key and app shortcut', () => {
   });
 });
 
-describe('import deep link ("Ulashish -> Barno AI")', () => {
+describe('import deep link ("Ulashish -> Barno")', () => {
   const A = 'share_1728560000000_0_Call_recording_Alisher_241010_143012.m4a';
   const B = 'share_1728560000000_1_voice.aac';
 

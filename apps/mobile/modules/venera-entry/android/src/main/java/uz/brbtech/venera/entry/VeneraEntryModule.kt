@@ -21,7 +21,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
  *   isLauncherEnabled(), setTrustedKey(key)
  *   Qo'ng'iroq yozuvlari: hasAudioReadPermission(), listCallRecordings(sinceMs, limit),
  *   copyToAppStorage(uri, destFileName), getImportMeta(fileName), removeImport(fileName),
- *   clearImports() - CallImport.kt; "Ulashish -> Barno AI" - ImportActivity.kt.
+ *   clearImports() - CallImport.kt; "Ulashish -> Barno" - ImportActivity.kt.
  *
  * Holat (yozilmoqdami, ishonchli kalit) private SharedPreferences'da: plitka
  * va launcher activity JS ishlamayotganda ham uni o'qiy oladi.

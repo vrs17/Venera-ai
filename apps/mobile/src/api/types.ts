@@ -32,7 +32,7 @@ export type MeetingStatus =
 export type SummaryStatus = 'none' | 'queued' | 'running' | 'ready' | 'failed' | 'skipped';
 /**
  * Yozuv qayerdan kelgan. `call` - Samsung Telefon yozgan qo'ng'iroq (MediaStore), `share` -
- * "Ulashish -> Barno AI". Bular yozish kirish nuqtasi EMAS (deep link `src=` ularni qabul qilmaydi),
+ * "Ulashish -> Barno". Bular yozish kirish nuqtasi EMAS (deep link `src=` ularni qabul qilmaydi),
  * server esa `call` uchun qo'ng'iroq shablonlarini afzal ko'radi. `volume` - olib tashlangan ovoz
  * tugmasi (2026-11-09): faqat yangilanishdan oldin yozilib, hali yuklanmagan qatorlar va server
  * tarixi uchun qoldi (server ham qabul qiladi); yangi yozuvda ishlatilmaydi.
@@ -40,7 +40,7 @@ export type SummaryStatus = 'none' | 'queued' | 'running' | 'ready' | 'failed' |
 export type EntrySource = 'app' | 'tile' | 'launcher' | 'volume' | 'shortcut' | 'notification' | 'link' | 'call' | 'share';
 /**
  * Plaud filtri - yozuv qaysi kanaldan kelgan (server `store.ORIGIN_SQL`, 2026-11-11). `recording` - shu
- * ilovada yozilgan, `upload` - telefondan yuborilgan tayyor fayl ("Audio yuklash", "Ulashish -> Barno AI",
+ * ilovada yozilgan, `upload` - telefondan yuborilgan tayyor fayl ("Audio yuklash", "Ulashish -> Barno",
  * qo'ng'iroq yozuvi), `slack`/`telegram` - bot orqali, `miniapp`/`web`/`desktop` - o'sha klient, `api` - qolgani.
  */
 export type MeetingOrigin = 'recording' | 'upload' | 'slack' | 'telegram' | 'miniapp' | 'web' | 'desktop' | 'api';

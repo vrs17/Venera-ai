@@ -1,5 +1,5 @@
 /**
- * Qo'ng'iroq yozuvi / "Ulashish -> Barno AI" importi uchun SOF yordamchilar.
+ * Qo'ng'iroq yozuvi / "Ulashish -> Barno" importi uchun SOF yordamchilar.
  *
  * NIMA UCHUN alohida fayl: native modulga bog'liq emas - deep link tozalovchi
  * (`deepLink.ts`) va testlar buni `nativeEntry` mock'idan qat'i nazar ishlata

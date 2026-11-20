@@ -5,6 +5,18 @@
 // Mavzu: saqlangan tanlov 'light' | 'dark' | 'system' (theme.ts bilan bir xil kalit).
 // 'system' yoki hech narsa - OS sozlamasi. data-theme HAR DOIM qo'yiladi: xotira
 // yopiq bo'lsa ham (maxfiy rejim) OS mavzusi ishlaydi.
+// Mobil ilova ichida (WebView, /barno?app=1 - `src/appBridge.ts`): mavzu va til ilovadan, URL'da keladi.
+// Saqlanadi (WebView xotirasi - ilovaniki, brauzerniki emas), keyin pastda odatdagidek o'qiladi.
+(function () {
+  try {
+    var q = new URLSearchParams(location.search)
+    if (q.get('app') !== '1') return
+    var th = q.get('theme')
+    if (th === 'light' || th === 'dark') localStorage.setItem('venera_theme', th)
+    var l = q.get('lang')
+    if (l === 'uz' || l === 'uz-Cyrl' || l === 'ru' || l === 'en') localStorage.setItem('venera_locale', l)
+  } catch (e) {}
+})();
 (function () {
   var dark = false
   try {

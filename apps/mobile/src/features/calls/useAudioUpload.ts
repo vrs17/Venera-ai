@@ -1,7 +1,7 @@
 /**
  * Plaud ro'yxatidagi "Audio/video yuklash": tizim fayl oynasi (expo-document-picker - audio,
  * `application/ogg` va video, bir nechta fayl; m4a, aac, mp3, wav, ogg, mp4, mov) -> `imports/` (`pickAudio`) -> mavjud
- * `/import` tasdiq ekrani ("Ulashish -> Barno AI" bilan bir yo'l). Hech bir fayl qabul qilinmasa -
+ * `/import` tasdiq ekrani ("Ulashish -> Barno" bilan bir yo'l). Hech bir fayl qabul qilinmasa -
  * sababi toast'da (format, mazmun, hajm, joy): odamni bo'sh tasdiq ekraniga olib bormaymiz.
  *
  * NIMA UCHUN `copyToCacheDirectory: false`: aks holda tanlash oynasi faylni ASOSIY oqimda keshga

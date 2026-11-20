@@ -28,7 +28,7 @@ import java.io.IOException
  * NIMA UCHUN shunday: Android 10+ da oddiy ilova qo'ng'iroq ovozini o'zi yoza
  * olmaydi. Samsung "Telefon" ilovasi yozadi (One UI 4+: Recordings/Call/, eskilari:
  * Call/), Barno esa tayyor faylni MediaStore orqali topadi yoki foydalanuvchi
- * "Ulashish -> Barno AI" qiladi. Ikkala yo'l ham faylni ilovaning SHAXSIY papkasiga
+ * "Ulashish -> Barno" qiladi. Ikkala yo'l ham faylni ilovaning SHAXSIY papkasiga
  * nusxalaydi: keyin yig'ilish yozuvi bilan bir xil navbat/yuklovchi ishlaydi, asl
  * fayl o'chirilsa yoki ko'chirilsa ham yuklash buzilmaydi.
  *
@@ -297,7 +297,7 @@ internal object CallImport {
     }
   }
 
-  // ---------------------------------------------------------------- "Ulashish -> Barno AI"
+  // ---------------------------------------------------------------- "Ulashish -> Barno"
 
   class SharedImport(val files: List<String>, val skipped: Int)
 

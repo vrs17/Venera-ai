@@ -1,6 +1,6 @@
 /**
  * "Audio yuklash" (Plaud ro'yxati): tizim fayl oynasidan tanlangan audio fayl(lar)ni "Ulashish ->
- * Barno AI" bilan AYNAN bir yo'lga qo'yadi. Fayl `Paths.document/imports/` ga (Android
+ * Barno" bilan AYNAN bir yo'lga qo'yadi. Fayl `Paths.document/imports/` ga (Android
  * `filesDir/imports/` - native `CallImport.readImportMeta` o'qiydigan o'sha papka) ImportActivity
  * beradigan nom va `<nom>.json` meta bilan nusxalanadi, so'ng mavjud tasdiq ekrani (`/import`):
  * suhbat tili, "Yuborish"/"Bekor qilish" -> navbat (source `share` - server tekshiradigan o'sha
@@ -10,7 +10,7 @@
  * (avval kengaytma, keyin MIME taxalluslari bilan - `lib/audioTypes`) va VIDEO (2026-11-17, ega qarori):
  * mp4/mov/m4v - server audiosini ajratib oladi, video saqlanmaydi; chegarasi alohida
  * (`MAX_VIDEO_COPY_BYTES`, server `maxVideoUploadBytes` - 1 GB); WebM/MKV/AVI - `video_unsupported`
- * ("MP4 yuboring"). Video nusxasi `.m4v` nomli - native uni tanimaydi, meta JS'da. Native "Ulashish -> Barno AI"
+ * ("MP4 yuboring"). Video nusxasi `.m4v` nomli - native uni tanimaydi, meta JS'da. Native "Ulashish -> Barno"
  * esa avvalgidek faqat m4a/aac: Kotlin modulini bu serverda qayta yig'ib, sinab bo'lmaydi - shuning
  * uchun mp3/wav/ogg FAQAT shu JS yo'lida (meta o'qish va tozalash ham JS'da - `importFiles.ts`).
  *

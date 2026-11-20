@@ -105,7 +105,7 @@ afterEach(() => {
 describe('AppDrawer', () => {
   it('brand, new chat, grouped chats and the profile footer; meeting entries hidden while meetings are off', async () => {
     const { chat } = await renderDrawer();
-    expect(screen.getByText('Barno AI')).toBeTruthy();
+    expect(screen.getByText('Barno')).toBeTruthy();
     expect(screen.getByTestId('drawer-new')).toBeTruthy();
     expect(screen.getByText('Suhbatlar')).toBeTruthy();
     expect(await screen.findByTestId('history-old-1')).toBeTruthy();
@@ -189,7 +189,7 @@ describe('AppDrawer', () => {
     await press('drawer-search');
     const input = screen.getByTestId('drawer-search-input');
     expect(input.props.placeholder).toBe('Suhbatlardan qidirish');
-    expect(screen.queryByText('Barno AI')).toBeNull();
+    expect(screen.queryByText('Barno')).toBeNull();
     expect(screen.queryByTestId('drawer-new')).toBeNull();
 
     await act(async () => {
@@ -205,7 +205,7 @@ describe('AppDrawer', () => {
     expect(screen.getByText('Hech narsa topilmadi')).toBeTruthy();
 
     await press('drawer-search-close');
-    expect(screen.getByText('Barno AI')).toBeTruthy();
+    expect(screen.getByText('Barno')).toBeTruthy();
     expect(screen.getByTestId('history-old-1')).toBeTruthy();
     expect(screen.getByTestId('history-old-2')).toBeTruthy();
   });
@@ -272,7 +272,7 @@ describe('AppDrawer', () => {
     });
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.queryByTestId('drawer-search-input')).toBeNull();
-    expect(screen.getByText('Barno AI')).toBeTruthy();
+    expect(screen.getByText('Barno')).toBeTruthy();
     await act(async () => {
       await fireEvent(screen.getByTestId('drawer-modal'), 'requestClose');
     });

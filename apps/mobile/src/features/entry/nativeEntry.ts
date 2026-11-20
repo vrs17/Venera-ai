@@ -14,7 +14,7 @@ export {
 
 /**
  * Qo'ng'iroq yozuvlari importi (2026-10-10): Samsung Recordings/Call/ (MediaStore)
- * va "Ulashish -> Barno AI". Sof yordamchilar (contentTypeFor, parseImportFiles,
+ * va "Ulashish -> Barno". Sof yordamchilar (contentTypeFor, parseImportFiles,
  * IMPORT_NAME_RE ...) native'siz - deepLink.ts ularni to'g'ridan-to'g'ri
  * `modules/venera-entry/importNames` dan olsin (bu fayl testlarda mock qilinadi).
  */

@@ -1,5 +1,5 @@
 /**
- * `imports/` dagi fayl nomlari - "Ulashish -> Barno AI" (native) va Plaud'dagi "Audio yuklash" (JS).
+ * `imports/` dagi fayl nomlari - "Ulashish -> Barno" (native) va Plaud'dagi "Audio yuklash" (JS).
  *
  * Native ImportActivity faqat m4a/aac yozadi; uning qoidalari Kotlin `CallImport.kt` bilan AYNAN
  * bir xil (`modules/venera-entry/importNames`) va O'ZGARMAYDI. "Audio yuklash" esa yana mp3/wav/ogg

@@ -1,7 +1,7 @@
 /**
- * Barno AI (mobil ilova) - Expo konfiguratsiyasi (spec 7.2).
+ * Barno (mobil ilova) - Expo konfiguratsiyasi (spec 7.2).
  *
- * Ilova nomi "Barno AI" (2026-10-09: mahsulot "Venera AI" dan "Barno AI" ga o'zgardi):
+ * Ilova nomi "Barno" (2026-11-20, ega qarori; avval "Barno AI", 2026-10-09 gacha "Venera AI"):
  * asosiy ekran - Mini App'ning o'zi, Telegram'dagi bilan bir xil. Texnik nomlar
  * O'ZGARMAYDI - slug, paket (`uz.brbtech.venera.meetings`), sxema (`venera-rec`), env
  * (`VENERA_*`): o'rnatilgan ilova ustidan yangilanadi, yorliq va havolalar ishlayveradi.
@@ -40,18 +40,18 @@ const apiBaseUrl = (process.env.VENERA_API_URL ?? 'https://llm.brb-tech.uz').rep
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
-  name: 'Barno AI',
+  name: 'Barno',
   slug: 'venera-yozuv',
-  version: '1.3.20',
+  version: '1.3.21',
   scheme: 'venera-rec',
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
-  // Ikonka: Barno AI yulduzchasi - Slack/Telegram'dagi Barno AI ikonkasi va web favicon.svg bilan bir xil
+  // Ikonka: Barno yulduzchasi - Slack/Telegram'dagi Barno ikonkasi va web favicon.svg bilan bir xil
   // shakl, rang theme.ts `brand` (#EE5A24). Ilgari ikonka berilmagan edi - APK'da Android'ning standart robotchasi turardi.
   icon: './assets/icon.png',
   android: {
     package: androidPackage,
-    versionCode: 25,
+    versionCode: 26,
     // Adaptive ikonka (Android 8+): oq fon + yulduzcha (qatlamning 50% - har qanday niqobda uchlari kesilmaydi).
     // monochromeImage - Android 13+ "mavzuli ikonkalar" yoqilganda rangni tizim beradi.
     adaptiveIcon: {
@@ -116,7 +116,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     [
       'expo-audio',
       {
-        microphonePermission: "Barno AI yig'ilishlarni yozib olish va ovozli savollar uchun mikrofondan foydalanadi.",
+        microphonePermission: "Barno yig'ilishlarni yozib olish va ovozli savollar uchun mikrofondan foydalanadi.",
         recordAudioAndroid: true,
         // microphone turidagi foreground service + FOREGROUND_SERVICE_MICROPHONE.
         enableBackgroundRecording: true,

@@ -22,7 +22,7 @@
     DIQQAT: READ_EXTERNAL_STORAGE app.config.ts blockedPermissions ro'yxatiga qaytarilmasin -
     u yerdagi tools:node="remove" shu e'lonni ham o'chirib, Android 8-12 da ro'yxatni bo'sh qoldiradi.
 
-  ImportActivity - "Ulashish -> Barno AI": audio/* (bitta yoki bir nechta fayl).
+  ImportActivity - "Ulashish -> Barno": audio/* (bitta yoki bir nechta fayl).
     Shaffof, tarixda qolmaydi: fayllarni filesDir/imports/ ga nusxalab, asosiy ilovani
     venera-rec://import?files=... bilan ochadi. NIMA UCHUN faqat audio/*:
     application/ogg (Telegram ovozli xabari) va video/mp4 ni server qabul qilmaydi,

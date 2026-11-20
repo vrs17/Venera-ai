@@ -1,5 +1,5 @@
 /**
- * "Ulashish -> Barno AI" tasdiq ekrani: ulashilgan fayllar (asl nom, suhbatdosh, hajm),
+ * "Ulashish -> Barno" tasdiq ekrani: ulashilgan fayllar (asl nom, suhbatdosh, hajm),
  * qabul qilinmaganlar soni, suhbat tili, "Yuborish" -> fayl recordings/ ga ko'chadi va
  * navbat qatori (source share) yoziladi, "Bekor qilish" -> imports/ tozalanadi.
  * Avtomatik yuborish YO'Q: kalitli havola ham faqat tasdiq ekranini ochadi.

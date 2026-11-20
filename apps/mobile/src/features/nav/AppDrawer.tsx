@@ -1,5 +1,5 @@
 /**
- * Chap panel (drawer) - Claude ilovasidagidek: tepada "Barno AI" va qidiruv, asosiy
+ * Chap panel (drawer) - Claude ilovasidagidek: tepada "Barno" va qidiruv, asosiy
  * bo'limlar (Yangi suhbat, Yozuvlar, Vazifalarim), so'ng suhbatlar ro'yxati, pastda
  * profil (-> Sozlamalar) va qizil "● Yozish" tugmasi.
  *

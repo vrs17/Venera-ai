@@ -7,6 +7,7 @@
 // deploy/nginx.conf). Matches the repo's existing VITE_API_BASE convention
 // (src/api.ts). Set VITE_API_BASE to an absolute origin only for direct/CORS mode.
 
+import { appToken, forgetAppToken } from '../appBridge'
 import type { ApiErrorResponse } from '../types'
 
 export const BASE_URL = ((import.meta.env.VITE_API_BASE as string | undefined) ?? '').replace(/\/+$/, '')
@@ -20,6 +21,9 @@ export const BASE_URL = ((import.meta.env.VITE_API_BASE as string | undefined) ?
 export const TOKEN_KEY = 'venera_token'
 
 export function getToken(): string | null {
+  // Mobil ilova ichida (/barno, `appBridge.ts`): ilova bergan token - faqat xotirada, localStorage'dan ustun.
+  const fromApp = appToken()
+  if (fromApp) return fromApp
   try {
     return localStorage.getItem(TOKEN_KEY)
   } catch {
@@ -34,6 +38,7 @@ export function setToken(token: string): void {
   }
 }
 export function clearToken(): void {
+  forgetAppToken()
   try {
     localStorage.removeItem(TOKEN_KEY)
   } catch {

@@ -27,7 +27,7 @@ import {
   type RecordingOptions,
 } from 'expo-audio';
 import { router } from 'expo-router';
-import { ArrowUp, AudioLines, Mic, Sparkles, Square, X } from 'lucide-react-native';
+import { ArrowUp, AudioLines, Headset, Mic, Sparkles, Square, X } from 'lucide-react-native';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -301,16 +301,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     removeFile(recorder.uri);
   }
 
-  // "Jonli": bo'sh maydonda o'ngdagi tugma ovozli suhbatni ochadi. Yig'ilish yozilayotganda
-  // mikrofon band (ikki yozuvchi bir-birini buzadi) - faqat ogohlantirish.
-  const openLive = () => {
+  // Ikki ovozli kirish (ega qarori 2026-11-20 - ikkalasi ham qoladi, har birining o'z vazifasi bor):
+  //   o'ngdagi asosiy tugma (bo'sh maydonda) - "Jonli suhbat" (`/live`): Barno bilan jonli qo'ng'iroq (Speko,
+  //     saytdagi /barno). Foydalanuvchiga eng qiziq va muhimi - shuning uchun eng qulay joyda;
+  //   chapdagi «Ovozli» chipi - "Ovozli rejim" (`/voice`): chat ichidagi ovozli savol-javob (CRM/HRM ma'lumotlari,
+  //     savollar chatda qoladi). Avval asosiy tugma shu edi.
+  // Yig'ilish yozilayotganda mikrofon band (ikki yozuvchi bir-birini buzadi) - faqat ogohlantirish.
+  const openVoice = (path: '/live' | '/voice') => {
     if (isActive(useRecorderStore.getState().machine)) {
       showToast(t('dict.meetingBusy'));
       return;
     }
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     Keyboard.dismiss();
-    router.push('/voice');
+    router.push(path);
   };
 
   // Ekran yopilsa - mikrofon albatta bo'shaydi.
@@ -391,6 +395,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               </Text>
             </Pressable>
           ) : null}
+          <Pressable
+            testID="composer-voice"
+            onPress={() => openVoice('/voice')}
+            accessibilityRole="button"
+            accessibilityLabel={t('nav.voice.open')}
+            hitSlop={6}
+            style={({ pressed }) => [s.pro, s.chipShrink, pressed && s.pressed]}>
+            <Headset size={16} color={th.textSoft} strokeWidth={2} />
+            <Text style={s.proText} numberOfLines={1}>
+              {t('nav.voice.chip')}
+            </Text>
+          </Pressable>
           <View style={{ flex: 1 }} />
           <RoundButton label={t('dict.start')} onPress={() => void start()} bg={th.composerBtn} disabled={busy} testID="composer-mic">
             <Mic size={19} color={th.textSoft} strokeWidth={1.9} />
@@ -404,8 +420,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               <ArrowUp size={19} color="#fff" strokeWidth={2.25} />
             </RoundButton>
           ) : (
-            // Bo'sh maydon: "Jonli" - Claude'dagi ovoz tugmasi kabi "siyoh" rangida.
-            <RoundButton label={t('nav.voice.open')} onPress={openLive} bg={th.primary} testID="composer-live">
+            // Bo'sh maydon: "Jonli suhbat" (Speko) - Claude'dagi ovoz tugmasi kabi "siyoh" rangida.
+            <RoundButton label={t('nav.live.open')} onPress={() => openVoice('/live')} bg={th.primary} testID="composer-live">
               <AudioLines size={19} color={th.primaryText} strokeWidth={2} />
             </RoundButton>
           )}
@@ -512,6 +528,8 @@ function makeStyles(th: Theme) {
       backgroundColor: th.composerBtn,
     },
     proOn: { backgroundColor: th.brandSoft, borderColor: th.brand },
+    // Tor ekranda «Ovozli» chipi qisqaradi (matn ... bilan) - o'ngdagi tugmalar joyidan siljimaydi.
+    chipShrink: { flexShrink: 1, minWidth: 0 },
     proText: { color: th.textSoft, fontSize: 14, fontWeight: '600' },
     pressed: { opacity: 0.8 },
     wave: { flex: 1, minWidth: 0, justifyContent: 'center', height: 36 },

@@ -77,6 +77,7 @@ const en = {
   sendFailed: 'Couldn’t send your feedback. Please try again.',
   again: 'Call again',
   home: 'Back to start',
+  close: 'Close',
   callId: 'Call ID: {id}',
 }
 
@@ -152,6 +153,7 @@ const uz: Mirror<typeof en> = {
   sendFailed: 'Fikringizni yuborib boʻlmadi. Qayta urinib koʻring.',
   again: 'Yana qoʻngʻiroq qilish',
   home: 'Bosh sahifa',
+  close: 'Yopish',
   callId: 'Suhbat ID: {id}',
 }
 
@@ -227,6 +229,7 @@ const uzCyrl: Mirror<typeof en> = {
   sendFailed: 'Фикрингизни юбориб бўлмади. Қайта уриниб кўринг.',
   again: 'Яна қўнғироқ қилиш',
   home: 'Бош саҳифа',
+  close: 'Ёпиш',
   callId: 'Суҳбат ID: {id}',
 }
 
@@ -302,6 +305,7 @@ const ru: Mirror<typeof en> = {
   sendFailed: 'Не удалось отправить отзыв. Попробуйте ещё раз.',
   again: 'Позвонить снова',
   home: 'На главную',
+  close: 'Закрыть',
   callId: 'ID звонка: {id}',
 }
 

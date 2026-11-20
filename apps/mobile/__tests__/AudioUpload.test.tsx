@@ -1,7 +1,7 @@
 /**
  * Plaud ro'yxatidagi "Audio yuklash": sarlavhadagi tugma va bo'sh holatdagi tugma tizim fayl
  * oynasini (expo-document-picker - mock) ochadi, tanlangan fayllar `imports/` ga tushadi va mavjud
- * `/import` tasdiq ekrani ochiladi ("Ulashish -> Barno AI" bilan bir yo'l). Hech biri qabul
+ * `/import` tasdiq ekrani ochiladi ("Ulashish -> Barno" bilan bir yo'l). Hech biri qabul
  * qilinmasa - sababi toast'da. Native import yo'q ilovada, qo'ng'iroqlar tabida va bo'lim
  * yoqilmaganda tugma yo'q.
  */

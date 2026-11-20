@@ -9,7 +9,7 @@ import { sharePart } from './parts/share';
 import type { TKey } from './uz';
 
 export const en: Record<TKey, string> = {
-  'app.name': 'Barno AI',
+  'app.name': 'Barno',
   'common.ok': 'OK',
   'common.cancel': 'Cancel',
   'common.save': 'Save',
@@ -63,7 +63,7 @@ export const en: Record<TKey, string> = {
   'template.short_call': 'Short call',
   'template.follow_up': 'Follow-up message',
 
-  'login.title': 'Barno AI',
+  'login.title': 'Barno',
   'login.subtitle': 'Sign in with your HRM/CRM login and password. You sign in once - after that the app signs in by itself.',
   'login.username': 'Login',
   'login.password': 'Password',
@@ -82,7 +82,7 @@ export const en: Record<TKey, string> = {
 
   'shell.offlineTitle': 'No internet',
   'shell.offlineBody': 'Could not reach Barno. The page opens by itself when the internet is back. You can still record a meeting offline - it uploads later.',
-  'shell.errorTitle': 'Barno AI did not open',
+  'shell.errorTitle': 'Barno did not open',
   'shell.errorBody': 'The server did not respond. Please try again a bit later. Meeting recording keeps working.',
   'shell.record': 'Record a meeting',
   'shell.meetings': 'Plaud',
@@ -129,10 +129,10 @@ export const en: Record<TKey, string> = {
   'record.openSettings': 'Open settings',
   'record.consentTitle': 'Before you record',
   'record.consentBody':
-    'Tell participants before you record. The audio is transcribed on the Barno AI server and then summarised.',
+    'Tell participants before you record. The audio is transcribed on the Barno server and then summarised.',
   'record.batteryTitle': 'For long recordings',
   'record.batteryBody':
-    'On Samsung: Settings > Battery > Background usage limits > add Barno AI to "Never sleeping apps". Otherwise a long recording may stop.',
+    'On Samsung: Settings > Battery > Background usage limits > add Barno to "Never sleeping apps". Otherwise a long recording may stop.',
   'record.batteryAction': 'Battery settings',
   'record.untrustedLink': 'Recording was opened from a link. Tap the button to start.',
   'record.backToList': 'Back to list',
@@ -483,7 +483,7 @@ export const en: Record<TKey, string> = {
   'dict.sending': "Sending…",
   'dict.starting': "Connecting the microphone…",
   'dict.noSpeech': "No voice heard",
-  'dict.denied': "No microphone access. Allow the microphone for Barno AI in phone settings.",
+  'dict.denied': "No microphone access. Allow the microphone for Barno in phone settings.",
   'dict.meetingBusy': "A meeting is being recorded - stop it first.",
   'dict.failed': "Couldn't convert the voice to text. Try again.",
   'dict.truncated': "The recording was long - only the beginning was converted.",

@@ -391,7 +391,7 @@ interface KeepAwakeNative {
  * tekshirildi). Teglar native tomonda sanaladi: jonli suhbat va "Tinglash" bir-birini
  * o'chirib qo'ymaydi. Modul yo'q bo'lsa (Jest, iOS sinovi) - jim no-op.
  */
-export function keepScreenOn(holder: 'voice' | 'read', on: boolean): void {
+export function keepScreenOn(holder: 'voice' | 'read' | 'live', on: boolean): void {
   try {
     const { requireOptionalNativeModule } = require('expo') as typeof import('expo');
     const mod = requireOptionalNativeModule<KeepAwakeNative>('ExpoKeepAwake');

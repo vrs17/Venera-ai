@@ -9,7 +9,7 @@
   <string name="venera_entry_tile_label">Yozish</string>
   <string name="venera_entry_tile_idle">Tap to record</string>
   <string name="venera_entry_tile_recording">Recording - tap to stop</string>
-  <string name="venera_entry_import_label">Barno AI</string>
+  <string name="venera_entry_import_label">Barno</string>
   <string name="venera_entry_import_preparing">Barno: preparing the recording…</string>
   <string name="venera_entry_import_unsupported">Barno couldn\'t accept this file - only .m4a or .aac audio.</string>
 </resources>

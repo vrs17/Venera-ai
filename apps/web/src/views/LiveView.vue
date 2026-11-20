@@ -12,6 +12,10 @@
  * SUHBATDOSH - Speko'dagi «Barno AI» agenti (`features/live/spekoTransport.ts`). Har qo'ng'iroq -
  * pullik daqiqalar, shuning uchun qo'ng'iroq FAQAT tizimga kirgan odamga: mehmon kartani bossa kirish sahifasiga
  * o'tadi va kirgach shu yerga qaytadi. Sahifaning o'zi kirishsiz ham ochiladi.
+ *
+ * ILOVA REJIMI (`?app=1`, mobil ilova ichidagi WebView - `appBridge.ts`): sarlavha yo'q, qo'ng'iroq o'zi
+ * boshlanadi (`autostart=1`), token ilovadan keladi (kirish sahifasi o'rniga ilovaga `auth`), "Bosh sahifa" o'rniga
+ * "Yopish" (ilovaga qaytish), qo'ng'iroq holati ilovaga yuboriladi (✕ / "orqaga" shundan bilib tugatadi).
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
@@ -34,6 +38,7 @@ import { PERSONAS } from '../features/live/personas'
 import type { LivePersona, OrbMode } from '../features/live/personas'
 import { useLiveCall } from '../features/live/useLiveCall'
 import { preloadSpeko } from '../features/live/spekoTransport'
+import { appParam, inApp, postToApp } from '../appBridge'
 
 const { t, locale } = useI18n({ useScope: 'global' })
 const router = useRouter()
@@ -46,6 +51,9 @@ const { status, error, phase, muted, elapsed, userLevel, agentLevel, caption, au
   callId } = call
 
 type Stage = 'home' | 'call' | 'after'
+/** Mobil ilova ichidami (WebView). Sahifa ochilganda bir marta aniqlanadi - URL va ko'prik o'zgarmaydi. */
+const app = inApp()
+
 const stage = computed<Stage>(() => (status.value === 'idle' ? 'home' : status.value === 'ended' ? 'after' : 'call'))
 const live = computed(() => status.value === 'live')
 
@@ -67,7 +75,9 @@ function onHover(id: string | null) {
 function startCall(p: LivePersona) {
   // Qo'ng'iroq faqat kirgan odamga (pullik daqiqalar): mehmon kirish sahifasiga, kirgach shu yerga qaytadi.
   if (!isAuthenticated.value) {
-    void router.push(LOGIN)
+    // Ilovada kirish sahifasi yo'q: token ilovadan keladi - ilova yangisini berib sahifani qayta ochadi.
+    if (app) postToApp({ type: 'auth' })
+    else void router.push(LOGIN)
     return
   }
   selected.value = p
@@ -218,6 +228,8 @@ async function sendFeedback() {
 function goHome() {
   resetFeedback()
   call.reset()
+  // Ilovada "Bosh sahifa" = "Yopish": chatga qaytiladi.
+  if (app) postToApp({ type: 'close' })
 }
 
 // --- sahifa -----------------------------------------------------------------------------
@@ -229,20 +241,33 @@ onBeforeRouteLeave(() => {
   return true
 })
 
+// Ilova holatni biladi: ✕ / "orqaga" qo'ng'iroq ketayotgan bo'lsa avval uni tugatadi.
+watch(status, (next) => postToApp({ type: 'status', status: next }), { immediate: true })
+// Server tokenni rad etdi (401) - ilova yangisini beradi (sahifani qayta ochadi).
+watch(error, (next) => { if (app && next === 'auth') postToApp({ type: 'auth' }) })
+
 let previousTitle = ''
 onMounted(() => {
   previousTitle = document.title
   document.title = t('live.docTitle')
+  if (app) {
+    window.__barnoLive = { end: () => call.end() }
+    // Ilovadagi tugma bosilib kelindi: qo'ng'iroq darhol (mikrofon ruxsatini ilova oldindan olgan).
+    if (appParam('autostart') === '1') startCall(PERSONAS[0])
+  }
 })
 watch(locale, () => { document.title = t('live.docTitle') })
-onBeforeUnmount(() => { document.title = previousTitle })
+onBeforeUnmount(() => {
+  document.title = previousTitle
+  if (app) delete window.__barnoLive
+})
 
 const tint = computed(() => (selected.value.tone === 'cool' ? 'var(--viz-1)' : 'var(--brand)'))
 </script>
 
 <template>
   <div class="live" :data-stage="stage" :style="{ '--tint': tint }">
-    <header class="live__bar">
+    <header v-if="!app" class="live__bar">
       <RouterLink to="/" class="live__logo">
         <span class="live__spark"><BrandSpark :size="16" /></span>
         <span>Barno</span>
@@ -275,6 +300,9 @@ const tint = computed(() => (selected.value.tone === 'cool' ? 'var(--viz-1)' : '
           <VButton v-if="canRetry" size="sm" variant="secondary" @click="startCall(selected)">
             {{ t('live.retry') }}
           </VButton>
+          <VButton v-else-if="error === 'auth' && app" size="sm" variant="secondary" @click="postToApp({ type: 'auth' })">
+            {{ t('live.retry') }}
+          </VButton>
           <VButton v-else-if="error === 'auth'" size="sm" variant="secondary" :to="LOGIN">{{ t('live.login') }}</VButton>
         </div>
 
@@ -305,7 +333,7 @@ const tint = computed(() => (selected.value.tone === 'cool' ? 'var(--viz-1)' : '
           </button>
         </div>
 
-        <p v-if="!isAuthenticated" class="home__login">{{ t('live.loginToCall') }}</p>
+        <p v-if="!isAuthenticated && !app" class="home__login">{{ t('live.loginToCall') }}</p>
         <p class="home__note">{{ t('live.disclaimerAgent', { name }) }}</p>
       </main>
 
@@ -454,7 +482,7 @@ const tint = computed(() => (selected.value.tone === 'cool' ? 'var(--viz-1)' : '
             {{ t('live.send') }}
           </VButton>
           <VButton variant="secondary" pill :icon="Phone" @click="startCall(selected)">{{ t('live.again') }}</VButton>
-          <VButton variant="ghost" pill @click="goHome">{{ t('live.home') }}</VButton>
+          <VButton variant="ghost" pill @click="goHome">{{ app ? t('live.close') : t('live.home') }}</VButton>
         </div>
 
         <p v-if="callId" class="after__id">

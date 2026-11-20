@@ -1,6 +1,6 @@
-# Barno AI (mobil ilova)
+# Barno (mobil ilova)
 
-> Mahsulot nomi 2026-10-09 dan **Barno AI** (avval "Venera AI"). Texnik nomlar
+> Mahsulot nomi 2026-11-20 dan **Barno** (avval "Barno AI", undan oldin "Venera AI"). Texnik nomlar
 > o'zgarmaydi: paket `uz.brbtech.venera.meetings`, sxema `venera-rec`, `VENERA_*` env,
 > `X-Venera-Client` sarlavhasi, `venera-entry` moduli.
 
@@ -15,7 +15,7 @@ server mobil kanalni AI dvigatel v3 ("Barno Core") ga yo'naltiradi
 (`HRM_ASSISTANT_ENGINE_BY_CHANNEL=mobile=v3`, deploy'da).
 
 **Ikkinchi bo'lim - yig'ilish yozuvlari (native).** Yig'ilishni telefonda yozib
-oladi, Barno AI serveriga yuklaydi va natijani ko'rsatadi: spikerlar bo'yicha
+oladi, Barno serveriga yuklaydi va natijani ko'rsatadi: spikerlar bo'yicha
 ajratilgan transkript (chat ko'rinishida), xulosa (vazifalar, qarorlar, ochiq
 savollar, xavflar, raqamlar, sanalar va boshqalar; ostida qaysi model yozgani -
 "Xulosa: Barno Core" / "GPT (...)" / "Gemma"), vazifalar ro'yxati va **Chat** tabi -
@@ -57,7 +57,7 @@ __tests__/               Jest testlari
 
 ## 1. Kompyuterga nima kerak
 
-Bu qadamlar **dasturchi kompyuterida** bajariladi (Barno AI serverida emas -
+Bu qadamlar **dasturchi kompyuterida** bajariladi (Barno serverida emas -
 u yerda JDK/Android SDK yo'q va xotira yetmaydi).
 
 | Narsa | Versiya |
@@ -202,7 +202,7 @@ bo'limi yoqilgan odamlarda; boshqalarda JWT muddati, 12 soat). Yozishda mikrofon
 va bildirishnoma ruxsatini bering (bildirishnomasiz Android ekran o'chganda
 yozuvni to'xtatadi). Chatdagi diktovka ham shu RECORD_AUDIO ruxsatini so'raydi.
 Samsung'da: Sozlamalar > Batareya > Fon rejimidagi cheklovlar > "Hech qachon
-uxlamaydigan ilovalar" ro'yxatiga **Barno AI** ilovasini qo'shing.
+uxlamaydigan ilovalar" ro'yxatiga **Barno** ilovasini qo'shing.
 
 ## 5a. Chat qanday ishlaydi
 
@@ -226,7 +226,7 @@ Quvvat tugmasini ikki marta bosishni hech bir ilova ushlay olmaydi (Android
 buni tizim uchun saqlaydi). Shuning uchun Samsung'ning o'z sozlamasidan
 foydalanamiz - u istalgan ilova belgisini ochadi:
 
-1. Barno AI > Sozlamalar > **Tez yozish** > `"Yozish" belgisini yoqish`.
+1. Barno > Sozlamalar > **Tez yozish** > `"Yozish" belgisini yoqish`.
    Ilovalar ro'yxatida alohida **Yozish** belgisi paydo bo'ladi.
 2. Telefon Sozlamalari > Qo'shimcha funksiyalar > **Yon tugma** >
    **Ikki marta bosish** ni yoqing > **Ilovani ochish** > **Yozish**.

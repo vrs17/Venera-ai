@@ -1,5 +1,5 @@
 /**
- * Qo'ng'iroq yozuvlari importi (Samsung Telefon yozuvlari va "Ulashish -> Barno AI").
+ * Qo'ng'iroq yozuvlari importi (Samsung Telefon yozuvlari va "Ulashish -> Barno").
  * Kalitlar `calls.` bilan.
  *
  * NIMA UCHUN alohida fayl: bo'limlar parallel yoziladi - har biri faqat o'z qismiga kalit
@@ -25,7 +25,7 @@ const uz = {
   'calls.permRationale': "Barno faqat qo'ng'iroq yozuvlarini ro'yxatda ko'rsatadi. Siz tanlamaguningizcha hech narsa yuborilmaydi.",
   'calls.permContinue': 'Davom etish',
   'calls.emptyTitle': "Qo'ng'iroq yozuvlari yo'q",
-  'calls.emptyBody': "Samsung Telefon yozgan qo'ng'iroqlar shu yerda chiqadi. Boshqa telefonda: Ulashish -> Barno AI.",
+  'calls.emptyBody': "Samsung Telefon yozgan qo'ng'iroqlar shu yerda chiqadi. Boshqa telefonda: Ulashish -> Barno.",
   'calls.autoSend': 'Avtomatik yuborish',
   'calls.autoOn': 'Barno ochilganda yuboriladi',
   'calls.autoOff': 'Faqat siz tanlaganlar',
@@ -69,7 +69,7 @@ const uz = {
   'calls.samsungStep4': "Yozuvlar Barno'da \"Qo'ng'iroqlar\" bo'limida chiqadi",
   'calls.shareHowTo': 'Boshqa ilovadan yuborish',
   'calls.shareStep1': 'Mening fayllarim -> Recordings -> Call: yozuvni tanlang',
-  'calls.shareStep2': 'Ulashish -> Barno AI',
+  'calls.shareStep2': 'Ulashish -> Barno',
   'calls.shareStep3': "Barno'da \"Yuborish\"ni bosing",
   'calls.privacy': 'Maxfiylik',
   'calls.privacy1': "Qo'ng'iroqni faqat suhbatdoshni ogohlantirib yozing - kompaniya qoidasi",
@@ -121,7 +121,7 @@ const ru: Record<K, string> = {
   'calls.permRationale': 'Barno показывает в списке только записи звонков. Ничего не отправляется, пока вы не выберете.',
   'calls.permContinue': 'Продолжить',
   'calls.emptyTitle': 'Записей звонков нет',
-  'calls.emptyBody': 'Здесь появятся звонки, записанные «Телефоном» Samsung. На другом телефоне: Поделиться -> Barno AI.',
+  'calls.emptyBody': 'Здесь появятся звонки, записанные «Телефоном» Samsung. На другом телефоне: Поделиться -> Barno.',
   'calls.autoSend': 'Отправлять автоматически',
   'calls.autoOn': 'Отправляются, когда вы открываете Barno',
   'calls.autoOff': 'Только выбранные вами',
@@ -165,7 +165,7 @@ const ru: Record<K, string> = {
   'calls.samsungStep4': 'Записи появятся в Barno в разделе «Звонки»',
   'calls.shareHowTo': 'Отправить из другого приложения',
   'calls.shareStep1': 'Мои файлы -> Recordings -> Call: выберите запись',
-  'calls.shareStep2': 'Поделиться -> Barno AI',
+  'calls.shareStep2': 'Поделиться -> Barno',
   'calls.shareStep3': 'Нажмите «Отправить» в Barno',
   'calls.privacy': 'Конфиденциальность',
   'calls.privacy1': 'Записывайте звонок, только предупредив собеседника, - правило компании',
@@ -213,7 +213,7 @@ const en: Record<K, string> = {
   'calls.permRationale': 'Barno only lists call recordings. Nothing is sent until you choose it.',
   'calls.permContinue': 'Continue',
   'calls.emptyTitle': 'No call recordings',
-  'calls.emptyBody': 'Calls recorded by the Samsung Phone app show up here. On other phones: Share -> Barno AI.',
+  'calls.emptyBody': 'Calls recorded by the Samsung Phone app show up here. On other phones: Share -> Barno.',
   'calls.autoSend': 'Send automatically',
   'calls.autoOn': 'Sent when you open Barno',
   'calls.autoOff': 'Only the ones you pick',
@@ -257,7 +257,7 @@ const en: Record<K, string> = {
   'calls.samsungStep4': 'Recordings show up in Barno under "Calls"',
   'calls.shareHowTo': 'Send from another app',
   'calls.shareStep1': 'My Files -> Recordings -> Call: pick the recording',
-  'calls.shareStep2': 'Share -> Barno AI',
+  'calls.shareStep2': 'Share -> Barno',
   'calls.shareStep3': 'Tap "Send" in Barno',
   'calls.privacy': 'Privacy',
   'calls.privacy1': 'Only record a call after telling the other person - company policy',

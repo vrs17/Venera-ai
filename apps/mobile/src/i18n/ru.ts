@@ -9,7 +9,7 @@ import { sharePart } from './parts/share';
 import type { TKey } from './uz';
 
 export const ru: Record<TKey, string> = {
-  'app.name': 'Barno AI',
+  'app.name': 'Barno',
   'common.ok': 'OK',
   'common.cancel': 'Отмена',
   'common.save': 'Сохранить',
@@ -63,7 +63,7 @@ export const ru: Record<TKey, string> = {
   'template.short_call': 'Короткий звонок',
   'template.follow_up': 'Письмо по итогам',
 
-  'login.title': 'Barno AI',
+  'login.title': 'Barno',
   'login.subtitle': 'Войдите с логином и паролем HRM/CRM. Вход нужен один раз - дальше приложение входит само.',
   'login.username': 'Логин',
   'login.password': 'Пароль',
@@ -82,7 +82,7 @@ export const ru: Record<TKey, string> = {
 
   'shell.offlineTitle': 'Нет интернета',
   'shell.offlineBody': 'Не удалось подключиться к Барно. Страница откроется сама, когда появится интернет. Встречу можно записать и без интернета - она загрузится позже.',
-  'shell.errorTitle': 'Не удалось открыть Barno AI',
+  'shell.errorTitle': 'Не удалось открыть Barno',
   'shell.errorBody': 'Сервер не ответил. Попробуйте ещё раз чуть позже. Запись встреч продолжает работать.',
   'shell.record': 'Записать встречу',
   'shell.meetings': 'Plaud',
@@ -129,10 +129,10 @@ export const ru: Record<TKey, string> = {
   'record.openSettings': 'Открыть настройки',
   'record.consentTitle': 'Перед записью',
   'record.consentBody':
-    'Перед записью предупредите участников. Аудио расшифровывается на сервере Barno AI, затем пишется итог.',
+    'Перед записью предупредите участников. Аудио расшифровывается на сервере Barno, затем пишется итог.',
   'record.batteryTitle': 'Для длинных записей',
   'record.batteryBody':
-    'На Samsung: Настройки > Батарея > Ограничения в фоне > добавьте Barno AI в "Приложения, которые никогда не спят". Иначе длинная запись может прерваться.',
+    'На Samsung: Настройки > Батарея > Ограничения в фоне > добавьте Barno в "Приложения, которые никогда не спят". Иначе длинная запись может прерваться.',
   'record.batteryAction': 'Настройки батареи',
   'record.untrustedLink': 'Запись открыта по ссылке. Нажмите кнопку, чтобы начать.',
   'record.backToList': 'К списку',
@@ -483,7 +483,7 @@ export const ru: Record<TKey, string> = {
   'dict.sending': "Отправляю…",
   'dict.starting': "Подключаю микрофон…",
   'dict.noSpeech': "Голос не слышно",
-  'dict.denied': "Нет доступа к микрофону. Включите микрофон для Barno AI в настройках телефона.",
+  'dict.denied': "Нет доступа к микрофону. Включите микрофон для Barno в настройках телефона.",
   'dict.meetingBusy': "Идёт запись встречи - сначала остановите её.",
   'dict.failed': "Не удалось распознать голос. Попробуйте ещё раз.",
   'dict.truncated': "Запись была длинной - распознано только начало.",

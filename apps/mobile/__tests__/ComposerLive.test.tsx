@@ -1,11 +1,12 @@
 /**
- * Chat: "Jonli" kirish tugmasi (bo'sh maydonda ↑ o'rnida), yig'ilish yozilayotganda
- * ogohlantirish, "Tinglash" 🔊 tugmasi va kichik pleer, ovozli savol belgisi.
+ * Chat: ikki ovozli kirish - asosiy tugma "Jonli suhbat" (`/live`, bo'sh maydonda ↑ o'rnida) va «Ovozli» chipi
+ * ("Ovozli rejim", `/voice`), yig'ilish yozilayotganda ogohlantirish, "Tinglash" 🔊 tugmasi va kichik pleer,
+ * ovozli savol belgisi.
  *
  * expo-router faqat `{ router }` bilan mock qilinadi (chat ekrani testi kabi): Composer,
  * ExchangeView, ReadAloudBar va ListenButton router hook'larini ishlatmasligi shart.
  */
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
 import { router } from 'expo-router';
 
 import { useChat, type Exchange } from '@/features/chat/chatStore';
@@ -47,8 +48,8 @@ async function renderComposer() {
   return { onSend };
 }
 
-describe('Composer "Jonli"', () => {
-  it('empty field: the primary button opens live voice; typing turns it into send', async () => {
+describe('Composer: "Jonli suhbat" and «Ovozli»', () => {
+  it('empty field: the primary button opens the live call (/live); typing turns it into send', async () => {
     await renderComposer();
     const live = screen.getByTestId('composer-live');
     expect(live.props.accessibilityLabel).toBe('Jonli suhbat');
@@ -58,7 +59,7 @@ describe('Composer "Jonli"', () => {
     await act(async () => {
       await fireEvent.press(live);
     });
-    expect(push).toHaveBeenCalledWith('/voice');
+    expect(push).toHaveBeenCalledWith('/live');
 
     await fireEvent.changeText(screen.getByTestId('composer-input'), 'Salom');
     expect(screen.getByTestId('composer-send')).toBeTruthy();
@@ -67,13 +68,31 @@ describe('Composer "Jonli"', () => {
     expect(screen.getByTestId('composer-live')).toBeTruthy();
   });
 
-  it('a meeting recording in progress: toast, no navigation', async () => {
+  it('the «Ovozli» chip opens the old voice mode (/voice) and stays while typing', async () => {
+    await renderComposer();
+    const chip = screen.getByTestId('composer-voice');
+    expect(chip.props.accessibilityLabel).toBe('Ovozli rejim');
+    expect(within(chip).getByText('Ovozli')).toBeTruthy();
+    expect(within(chip).getByTestId('icon-Headset')).toBeTruthy();
+    await act(async () => {
+      await fireEvent.press(chip);
+    });
+    expect(push).toHaveBeenCalledWith('/voice');
+    await fireEvent.changeText(screen.getByTestId('composer-input'), 'Salom');
+    expect(screen.getByTestId('composer-voice')).toBeTruthy();
+  });
+
+  it('a meeting recording in progress: toast, no navigation (both entries)', async () => {
     useRecorderStore.setState({ machine: { ...initialRecorderState, status: 'recording' } as typeof initialRecorderState });
     await renderComposer();
     await act(async () => {
       await fireEvent.press(screen.getByTestId('composer-live'));
     });
+    await act(async () => {
+      await fireEvent.press(screen.getByTestId('composer-voice'));
+    });
     expect(push).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledTimes(2);
     expect(showToast).toHaveBeenCalledWith(expect.stringMatching(/yozilmoqda|Yig'ilish/i));
   });
 

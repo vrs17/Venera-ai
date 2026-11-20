@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reliz APK tekshiruvi - tarqatishdan (APK API, Telegram bot) OLDIN, build serverda (README 4).
 
-NIMA UCHUN. Barno AI Google Play'dan emas, fayl sifatida (Telegram) tarqatiladi. Bunday
+NIMA UCHUN. Barno Google Play'dan emas, fayl sifatida (Telegram) tarqatiladi. Bunday
 ilovani Google Play Protect qattiq to'sib qo'yishi mumkin ("App blocked to protect your
 device"): Telegram/brauzer/fayl menejeridan o'rnatilayotgan ilova SMS, bildirishnomalarni
 o'qish yoki Accessibility ruxsatini e'lon qilsa (2026-11-06 jonli holat: 1.3.5 dagi
@@ -308,7 +308,7 @@ def check(path: str, *, package: str = PACKAGE, expect_cert: str | None = None,
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Barno AI reliz APK tekshiruvi (Play Protect va imzo)")
+    ap = argparse.ArgumentParser(description="Barno reliz APK tekshiruvi (Play Protect va imzo)")
     ap.add_argument("apk")
     ap.add_argument("--expect-cert", help="kutilgan release sertifikati SHA-256 (apksigner verify --print-certs)")
     ap.add_argument("--allow-debug-key", action="store_true", help="debug kalitga ruxsat (faqat o'zingiz sinash uchun)")

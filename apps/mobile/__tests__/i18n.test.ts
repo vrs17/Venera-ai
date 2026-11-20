@@ -94,14 +94,14 @@ describe('i18n', () => {
     for (const v of Object.values(uz)) expect(v).not.toMatch(/Yozuvlar(da|ga)\b|Yig'ilish yozuvlari/);
   });
 
-  it('the product is "Barno AI": no user-visible string says Venera (any language, any case)', () => {
+  it('the product is "Barno": no user-visible string says Venera (any language, any case)', () => {
     for (const lang of UI_LANGS) {
       for (const [k, v] of Object.entries(DICTS[lang])) expect([lang, k, v]).toEqual([lang, k, expect.not.stringMatching(/venera|венера/i)]);
     }
-    expect(translate('uz', 'app.name')).toBe('Barno AI');
-    expect(translate('ru', 'login.title')).toBe('Barno AI');
+    expect(translate('uz', 'app.name')).toBe('Barno');
+    expect(translate('ru', 'login.title')).toBe('Barno');
     expect(translate('uz', 'shell.offlineBody')).toMatch(/^Barnoga ulanib/);
-    expect(translate('ru', 'shell.errorTitle')).toBe('Не удалось открыть Barno AI');
+    expect(translate('ru', 'shell.errorTitle')).toBe('Не удалось открыть Barno');
   });
 
   it('native labels (tile, launcher, shortcut) and the launcher name follow the rename', () => {
@@ -115,9 +115,9 @@ describe('i18n', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const make = require('../app.config').default as (ctx: { config: object }) => Record<string, any>;
     const c = make({ config: {} });
-    expect(c.name).toBe('Barno AI');
+    expect(c.name).toBe('Barno');
     const audio = c.plugins.find((p: unknown) => Array.isArray(p) && p[0] === 'expo-audio');
-    expect(audio[1].microphonePermission).toMatch(/^Barno AI /);
+    expect(audio[1].microphonePermission).toMatch(/^Barno /);
     // Texnik nomlar o'zgarmaydi: o'rnatilgan ilova ustidan yangilanadi, havolalar ishlaydi.
     expect(c.scheme).toBe('venera-rec');
     expect(c.android.package).toBe('uz.brbtech.venera.meetings');
