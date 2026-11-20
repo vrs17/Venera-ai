@@ -400,6 +400,7 @@ export const uz = {
   'settings.uiLang': 'Ilova tili',
   'settings.about': 'Ilova haqida',
   'settings.version': 'Versiya {v}',
+  'legal.privacy': 'Maxfiylik siyosati',
   'settings.server': 'Server: {url}',
   'settings.queue': 'Yuklash navbati: {n}',
   'settings.uploadNow': 'Hozir yuklash',

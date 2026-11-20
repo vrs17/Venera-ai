@@ -390,6 +390,7 @@ export const en: Record<TKey, string> = {
   'settings.uiLang': 'App language',
   'settings.about': 'About',
   'settings.version': 'Version {v}',
+  'legal.privacy': 'Privacy policy',
   'settings.server': 'Server: {url}',
   'settings.queue': 'Upload queue: {n}',
   'settings.uploadNow': 'Upload now',

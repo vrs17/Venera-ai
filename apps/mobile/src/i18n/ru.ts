@@ -390,6 +390,7 @@ export const ru: Record<TKey, string> = {
   'settings.uiLang': 'Язык приложения',
   'settings.about': 'О приложении',
   'settings.version': 'Версия {v}',
+  'legal.privacy': 'Политика конфиденциальности',
   'settings.server': 'Сервер: {url}',
   'settings.queue': 'Очередь загрузки: {n}',
   'settings.uploadNow': 'Загрузить сейчас',

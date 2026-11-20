@@ -6,7 +6,7 @@
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import { router } from 'expo-router';
-import { Alert, AppState, type AlertButton } from 'react-native';
+import { Alert, AppState, Linking, type AlertButton } from 'react-native';
 
 import type { ChatApi, ConnectorStatus } from '@/api/chat';
 import type { MeetingsConfig } from '@/api/types';
@@ -430,5 +430,17 @@ describe('Profile and about', () => {
     await renderScreen(AboutScreen);
     expect(within(screen.getByTestId('about-version')).getByText('1.0.0')).toBeTruthy();
     expect(within(screen.getByTestId('about-server')).getByText('https://x.uz')).toBeTruthy();
+  });
+
+  it('privacy policy row opens the fixed public page, not the API server', async () => {
+    const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    try {
+      await renderScreen(SettingsScreen);
+      expect(within(screen.getByTestId('settings-privacy')).getByText('Maxfiylik siyosati')).toBeTruthy();
+      await fireEvent.press(screen.getByTestId('settings-privacy'));
+      expect(open).toHaveBeenCalledWith('https://llm.brb-tech.uz/privacy');
+    } finally {
+      open.mockRestore();
+    }
   });
 });

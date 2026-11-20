@@ -25,6 +25,7 @@ import type { SsoConfig } from '@/api/types';
 import { useAuth } from '@/features/auth/authStore';
 import { createPkce, saveVerifier, ssoStartUrl } from '@/features/auth/sso';
 import { useT } from '@/features/settings/settingsStore';
+import { openPrivacyPolicy } from '@/lib/privacy';
 import { deviceInfo, useServices } from '@/services';
 import { Banner, Button } from '@/ui/components';
 import { useTheme, type Theme } from '@/ui/theme';
@@ -163,6 +164,15 @@ export default function LoginScreen() {
           </>
           ) : null}
           <Button variant="ghost" style={{ marginTop: 12 }} title={t('login.recordWithout')} onPress={() => router.push('/record?src=app')} />
+          {/* Google Play: siyosat kirishdan OLDIN ham o'qilishi kerak (`lib/privacy.ts`). */}
+          <Pressable
+            testID="login-privacy"
+            onPress={() => void openPrivacyPolicy()}
+            accessibilityRole="link"
+            hitSlop={8}
+            style={s.privacy}>
+            <Text style={s.privacyText}>{t('legal.privacy')}</Text>
+          </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -189,5 +199,7 @@ function makeStyles(th: Theme) {
     pwRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, backgroundColor: th.surfaceAlt, marginBottom: 20 },
     eye: { width: 48, height: 50, alignItems: 'center', justifyContent: 'center' },
     or: { color: th.textFaint, fontSize: 13, textAlign: 'center', marginTop: 14, marginBottom: 6 },
+    privacy: { alignSelf: 'center', marginTop: 16, paddingVertical: 6, paddingHorizontal: 12 },
+    privacyText: { color: th.textMuted, fontSize: 13, textDecorationLine: 'underline' },
   });
 }

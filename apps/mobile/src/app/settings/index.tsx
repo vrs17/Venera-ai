@@ -14,7 +14,7 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { Directory, Paths } from 'expo-file-system';
 import { router, useFocusEffect } from 'expo-router';
-import { AudioLines, Brain, ChevronRight, Info, Languages, LogOut, Mic, PhoneCall, Plug, Speech, SunMoon, Zap } from 'lucide-react-native';
+import { AudioLines, Brain, ChevronRight, Info, Languages, LogOut, Mic, PhoneCall, Plug, ShieldCheck, Speech, SunMoon, Zap } from 'lucide-react-native';
 import { useCallback } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -38,6 +38,7 @@ import { SPEED_KEY } from '@/features/voice/ui/voiceText';
 import { useVoiceSettings } from '@/features/voice/voiceSettings';
 import type { TFn, TKey } from '@/i18n';
 import { clearExports, recordingsDir } from '@/lib/paths';
+import { openPrivacyPolicy } from '@/lib/privacy';
 import { useServices } from '@/services';
 import { Avatar } from '@/ui/Avatar';
 import { useSafeInsets } from '@/ui/insets';
@@ -227,6 +228,8 @@ export default function SettingsScreen() {
           subtitle={t('settings.version', { v: services.appVersion })}
           onPress={() => router.push('/settings/about')}
         />
+        {/* Google Play talabi: siyosat ilova ichida ham ochilsin (`lib/privacy.ts`). */}
+        <ListRow testID="settings-privacy" icon={ShieldCheck} title={t('legal.privacy')} onPress={() => void openPrivacyPolicy()} />
       </ListGroup>
 
       <ListGroup>
