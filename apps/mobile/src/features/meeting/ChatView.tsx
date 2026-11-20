@@ -1,5 +1,6 @@
 /**
- * Chat tabi: BITTA yozuv bo'yicha Barno bilan suhbat (javobni server Claude bilan yozadi).
+ * Chat tabi: BITTA yozuv bo'yicha Barno bilan suhbat (javobni server yozadi: bugun Claude, keyin lokal LLM -
+ * odamga model nomi ko'rsatilmaydi, tepada doim «Barno javob beradi»).
  * Javob faqat shu yozuv matni, xulosasi va suhbatning oldingi qismiga tayanadi - "batafsilroq",
  * "u kim edi?" kabi davomli savollar ishlaydi. Egasining suhbati kanaldan qat'i nazar bitta: Telegram'da
  * shu yozuv bo'yicha berilgan savollar ham shu yerda ko'rinadi. Slack'da (umumiy hisob) har odamning
@@ -64,7 +65,6 @@ import {
   CHAT_MAX_CHARS,
   chatErrorText,
   chatMissingOnServer,
-  chatModelLabel,
   chatRecordingGone,
   composerInset,
   newChatClientId,
@@ -193,7 +193,6 @@ export function ChatView({ meeting, speakers, onSeek, bottomInset = 0, onOpenMin
     );
   }
 
-  const model = chatModelLabel(history.data?.model);
   const quick = [
     { label: t('ask.quick.tasks'), q: t('ask.quick.tasksQ') },
     { label: t('ask.quick.decisions'), q: t('ask.quick.decisionsQ') },
@@ -207,7 +206,8 @@ export function ChatView({ meeting, speakers, onSeek, bottomInset = 0, onOpenMin
       {items.length && !closed ? (
         <View style={s.head}>
           <Text style={s.headText} numberOfLines={1}>
-            {model ? t('mchat.model', { model }) : ''}
+            {/* Model nomi emas - doim Barno (ega, 2026-11-20; `provenance.ts`). */}
+            {t('mchat.model')}
           </Text>
           <Button
             testID="chat-reset"

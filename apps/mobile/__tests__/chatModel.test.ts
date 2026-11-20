@@ -1,7 +1,7 @@
 /**
  * Yozuv chatining sof mantig'i (`chatModel`): server javobini tarixga qo'shish (takrorsiz), xabar
  * kaliti (`clientId`) va xabar aslida yetib borganmi, javobi noma'lum xato, xato matni (WAF ning
- * HTML 403 i "ruxsat yo'q" emas), chat 404 ining ikki ma'nosi (eski server / yozuv yo'q), model nomi
+ * HTML 403 i "ruxsat yo'q" emas), chat 404 ining ikki ma'nosi (eski server / yozuv yo'q)
  * va yozish maydonining klaviatura/pleer ustidagi bo'shlig'i. Tarmoqqa chiqmaydi.
  */
 import { ApiClient, ApiError, type TokenProvider } from '@/api/client';
@@ -10,7 +10,6 @@ import { makeT } from '@/i18n';
 import {
   chatErrorText,
   chatMissingOnServer,
-  chatModelLabel,
   chatOutcomeUnknown,
   chatRecordingGone,
   composerInset,
@@ -172,7 +171,7 @@ describe('chatErrorText', () => {
   });
 });
 
-describe('chatMissingOnServer / chatRecordingGone / chatModelLabel', () => {
+describe('chatMissingOnServer / chatRecordingGone', () => {
   /** Server konverti (`core/errors.py`): yo'l topilmasa `code` yo'q, yozuv topilmasa `code: not_found`. */
   const routeMissing = { timestamp: '2026-11-11T06:00:00Z', status: 404, error: 'Not Found', message: 'Not Found', path: '/api/v1/meetings/m1/chat' };
   const recordingMissing = { ...routeMissing, message: "Yig'ilish topilmadi", code: 'not_found' };
@@ -214,15 +213,6 @@ describe('chatMissingOnServer / chatRecordingGone / chatModelLabel', () => {
     const gone = await load('gone');
     expect(gone).toMatchObject({ status: 404, code: 'not_found' });
     expect([chatMissingOnServer(gone), chatRecordingGone(gone)]).toEqual([false, true]);
-  });
-
-  it('Claude models get the same name as the summary caption; other labels are not shown', () => {
-    expect(chatModelLabel('claude-sonnet-5-5')).toBe('Claude Sonnet 5.5');
-    expect(chatModelLabel('claude-opus-5-5')).toBe('Claude Opus 5.5');
-    expect(chatModelLabel('claude')).toBe('Claude');
-    expect(chatModelLabel('')).toBeNull();
-    expect(chatModelLabel(null)).toBeNull();
-    expect(chatModelLabel('gemma4:31b')).toBeNull();
   });
 });
 

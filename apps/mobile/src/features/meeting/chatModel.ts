@@ -12,7 +12,6 @@ import type { TFn } from '@/i18n';
 import { UUID_RE, uuidV4 } from '@/lib/uuid';
 import { errorText } from '@/ui/errors';
 
-import { engineLabel } from './provenance';
 
 /** Xabar uzunligi chegarasi (server `ChatRequest.message`: 1-1000 belgi). */
 export const CHAT_MAX_CHARS = 1000;
@@ -118,16 +117,6 @@ export function chatMissingOnServer(err: unknown): boolean {
  */
 export function chatRecordingGone(err: unknown): boolean {
   return err instanceof ApiError && err.status === 404 && serverCode(err) === 'not_found';
-}
-
-/**
- * Javob beradigan model nomi - xulosadagi "Tayyorladi" bilan bir xil (`claude-sonnet-5-5` ->
- * "Claude Sonnet 5.5"). Faqat Claude: boshqa provayderning server yorlig'i odamga ko'rsatiladigan
- * nom emas (masalan ichki dvigatel nomi) - u holda hech narsa yozilmaydi.
- */
-export function chatModelLabel(model: string | null | undefined): string | null {
-  const m = (model ?? '').trim();
-  return /^claude/i.test(m) ? engineLabel({ provider: 'claude', model: m.toLowerCase() }) : null;
 }
 
 /**

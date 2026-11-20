@@ -135,7 +135,7 @@ describe('Meeting chat tab', () => {
     await waitFor(() => expect(player.seekTo).toHaveBeenCalledWith(4.3));
 
     // Tepada: kim javob beradi va "Yangi suhbat"; bo'sh holat yo'q.
-    expect(screen.getByText('Javob beradi: Claude Sonnet 5.5')).toBeTruthy();
+    expect(screen.getByText('Barno javob beradi')).toBeTruthy();
     expect(screen.getByTestId('chat-reset')).toHaveTextContent('Yangi suhbat');
     expect(screen.queryByTestId('chat-empty')).toBeNull();
   });

@@ -67,7 +67,7 @@ describe('Meeting detail', () => {
     await fireEvent.press(screen.getByTestId('brief-decisions-1'));
     expect(within(screen.getByTestId('brief-decisions-1-details')).getByText('tekshiring')).toBeTruthy();
     // Eng pastda bitta jim qator: kayfiyat, kalit so'zlar, faollik, qaysi model yozgani.
-    expect(screen.getByTestId('summary-meta')).toHaveTextContent("Kayfiyat: ijobiy · Kalit so'zlar: narx, hisobot · Faollik: Aziz 58%, 2-ishtirokchi 42% · Tayyorladi: Gemma");
+    expect(screen.getByTestId('summary-meta')).toHaveTextContent("Kayfiyat: ijobiy · Kalit so'zlar: narx, hisobot · Faollik: Aziz 58%, 2-ishtirokchi 42% · Tayyorladi: Barno");
     expect(api.summary).toHaveBeenCalledWith(ID, 'b'.repeat(32));
     // Pleer audio'ni Bearer bilan oladi.
     await waitFor(() => expect(ExpoAudio.useAudioPlayer).toHaveBeenCalled());
@@ -101,16 +101,16 @@ describe('Meeting detail', () => {
     expect(copied).not.toContain('## Vazifalar');
     expect(copied).not.toContain('## Qarorlar');
     expect(copied).toContain('## Xavflar');
-    expect(copied.trimEnd().endsWith('Tayyorladi: Gemma')).toBe(true);
+    expect(copied.trimEnd().endsWith('Tayyorladi: Barno')).toBe(true);
     await fireEvent.press(screen.getByTestId('summary-share'));
     await waitFor(() => expect(share).toHaveBeenCalledWith({ message: '# Narxlar', title: 'Narxlar va hisobot' }));
     expect(api.exportSummary).toHaveBeenCalledWith(ID, 'b'.repeat(32), 'md');
   });
 
-  it('summary written by v3 says "Tayyorladi: Barno Core" in the meta line', async () => {
+  it('the meta line says "Tayyorladi: Barno" whatever engine wrote the summary (no model names)', async () => {
     const v3 = fakeMeetingsApi({ summary: jest.fn(async () => summary({ generatedBy: { provider: 'v3', model: 'venera-core' } })) });
     await open(v3);
-    await waitFor(() => expect(screen.getByTestId('summary-meta')).toHaveTextContent(/· Tayyorladi: Barno Core$/));
+    await waitFor(() => expect(screen.getByTestId('summary-meta')).toHaveTextContent(/· Tayyorladi: Barno$/));
   });
 
   it('no model caption for an old summary without generatedBy (the rest of the meta line stays)', async () => {

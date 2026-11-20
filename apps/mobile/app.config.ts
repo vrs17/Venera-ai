@@ -42,7 +42,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: 'Barno',
   slug: 'venera-yozuv',
-  version: '1.3.22',
+  version: '1.3.23',
   scheme: 'venera-rec',
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
@@ -51,7 +51,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   icon: './assets/icon.png',
   android: {
     package: androidPackage,
-    versionCode: 27,
+    versionCode: 28,
     // Adaptive ikonka (Android 8+): oq fon + yulduzcha (qatlamning 50% - har qanday niqobda uchlari kesilmaydi).
     // monochromeImage - Android 13+ "mavzuli ikonkalar" yoqilganda rangni tizim beradi.
     adaptiveIcon: {

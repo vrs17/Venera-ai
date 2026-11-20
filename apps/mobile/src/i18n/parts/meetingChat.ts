@@ -23,7 +23,7 @@ const uz = {
   'mchat.resetConfirm':
     "Oldingi savol-javoblar va bayonnoma ko'rsatmalari ro'yxatdan olinadi, Barno ularni endi hisobga olmaydi. Tayyor bayonnomalar saqlanib qoladi. Davom etasizmi?",
   'mchat.resetOk': 'Boshlash',
-  'mchat.model': 'Javob beradi: {model}',
+  'mchat.model': 'Barno javob beradi',
   // HTML sahifali 403 (yo'ldagi himoya yoki proksi): xabar serverga yetib bormagan.
   'mchat.failed': "Xabar yetib bormadi - qayta yuboring",
   'mchat.historyFailed': "Oldingi savol-javoblarni yuklab bo'lmadi",
@@ -61,7 +61,7 @@ const ru: Record<K, string> = {
   'mchat.resetConfirm':
     'Прежние вопросы, ответы и указания для протокола уйдут из списка, и Barno больше не будет их учитывать. Готовые протоколы сохранятся. Продолжить?',
   'mchat.resetOk': 'Начать',
-  'mchat.model': 'Отвечает: {model}',
+  'mchat.model': 'Отвечает Barno',
   'mchat.failed': 'Сообщение не дошло - отправьте ещё раз',
   'mchat.historyFailed': 'Не удалось загрузить прежние вопросы и ответы',
   'mchat.notOnServer': 'Чат на сервере ещё не включён - заработает после обновления сервера',
@@ -93,7 +93,7 @@ const en: Record<K, string> = {
   'mchat.resetConfirm':
     'Earlier questions, answers and directions for the minutes will leave the list, and Barno will no longer use them. Finished minutes are kept. Continue?',
   'mchat.resetOk': 'Start',
-  'mchat.model': 'Answered by {model}',
+  'mchat.model': 'Answered by Barno',
   'mchat.failed': "The message didn't go through - send it again",
   'mchat.historyFailed': "Couldn't load the earlier questions and answers",
   'mchat.notOnServer': "Chat isn't enabled on the server yet - it will work once the server is updated",
