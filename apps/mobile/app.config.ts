@@ -29,35 +29,39 @@
  * uchun ularni gitga tushmaydigan `apps/mobile/.env.local` ga yozing (Expo CLI
  * .env fayllarini o'zi yuklaydi) - README 3.
  */
-import type { ConfigContext, ExpoConfig } from 'expo/config';
+import type { ConfigContext, ExpoConfig } from "expo/config";
 
-const variant = process.env.APP_VARIANT ?? 'production';
+const variant = process.env.APP_VARIANT ?? "production";
 /** Google Play build'i (`BARNO_PLAY=1`) - alohida package ID; boshqa hamma narsa APK bilan bir xil. */
-const isPlay = process.env.BARNO_PLAY === '1';
-const androidPackage = isPlay ? 'uz.brbtech.barno' : 'uz.brbtech.venera.meetings';
-const isDev = variant === 'development';
-const apiBaseUrl = (process.env.VENERA_API_URL ?? 'https://llm.brb-tech.uz').replace(/\/+$/, '');
+const isPlay = process.env.BARNO_PLAY === "1";
+const androidPackage = isPlay
+  ? "uz.brbtech.barno"
+  : "uz.brbtech.venera.meetings";
+const isDev = variant === "development";
+const apiBaseUrl = (
+  process.env.VENERA_API_URL ?? "https://llm.brb-tech.uz"
+).replace(/\/+$/, "");
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
-  name: 'Barno',
-  slug: 'venera-yozuv',
-  version: '1.3.23',
-  scheme: 'venera-rec',
-  orientation: 'portrait',
-  userInterfaceStyle: 'automatic',
+  name: "Barno",
+  slug: "venera-yozuv",
+  version: "1.3.23",
+  scheme: "venera-rec",
+  orientation: "portrait",
+  userInterfaceStyle: "automatic",
   // Ikonka: Barno yulduzchasi - Slack/Telegram'dagi Barno ikonkasi va web favicon.svg bilan bir xil
   // shakl, rang theme.ts `brand` (#EE5A24). Ilgari ikonka berilmagan edi - APK'da Android'ning standart robotchasi turardi.
-  icon: './assets/icon.png',
+  icon: "./assets/icon.png",
   android: {
     package: androidPackage,
-    versionCode: 28,
+    versionCode: 29,
     // Adaptive ikonka (Android 8+): oq fon + yulduzcha (qatlamning 50% - har qanday niqobda uchlari kesilmaydi).
     // monochromeImage - Android 13+ "mavzuli ikonkalar" yoqilganda rangni tizim beradi.
     adaptiveIcon: {
-      foregroundImage: './assets/adaptive-icon.png',
-      monochromeImage: './assets/adaptive-icon-mono.png',
-      backgroundColor: '#FFFFFF',
+      foregroundImage: "./assets/adaptive-icon.png",
+      monochromeImage: "./assets/adaptive-icon-mono.png",
+      backgroundColor: "#FFFFFF",
     },
     // Yozuvlar va tokenlar Google zaxirasiga tushmasligi kerak (spec 2.3, 4.4).
     allowBackup: false,
@@ -67,56 +71,66 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // yozuvlarini MediaStore'dan o'qish uchun kerak (venera-entry manifesti, maxSdkVersion 32).
     // Bloklansa tools:node="remove" uni ham o'chiradi - ruxsat so'ralmay, ro'yxat doim bo'sh qoladi.
     blockedPermissions: [
-      'android.permission.SYSTEM_ALERT_WINDOW',
-      'android.permission.WRITE_EXTERNAL_STORAGE',
-      'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+      "android.permission.SYSTEM_ALERT_WINDOW",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+      "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
       // Google Play Protect (2026-11-09, ega qarori): "kuchaytirilgan firibgarlikdan himoya"
       // sideload qilingan ilovani o'rnatishning O'ZIDA to'sadi, agar u SMS (o'qish/qabul),
       // qo'ng'iroqlar jurnali, boshqa ilova o'rnatish yoki hamma ilovalarni ko'rish ruxsatini
       // e'lon qilsa - bank kodlarini o'g'irlovchi zararli ilovalarning belgilari. Barno bularning
       // hech birini ishlatmaydi; bu yerda ular kelajakdagi kutubxona qo'shib yuborsa ham
       // birlashtirilgan manifestdan olib tashlanadi (tools:node="remove"). Testi: playProtect.test.ts.
-      'android.permission.RECEIVE_SMS',
-      'android.permission.READ_SMS',
-      'android.permission.SEND_SMS',
-      'android.permission.RECEIVE_MMS',
-      'android.permission.RECEIVE_WAP_PUSH',
-      'android.permission.READ_CALL_LOG',
-      'android.permission.WRITE_CALL_LOG',
-      'android.permission.PROCESS_OUTGOING_CALLS',
-      'android.permission.REQUEST_INSTALL_PACKAGES',
-      'android.permission.QUERY_ALL_PACKAGES',
+      "android.permission.RECEIVE_SMS",
+      "android.permission.READ_SMS",
+      "android.permission.SEND_SMS",
+      "android.permission.RECEIVE_MMS",
+      "android.permission.RECEIVE_WAP_PUSH",
+      "android.permission.READ_CALL_LOG",
+      "android.permission.WRITE_CALL_LOG",
+      "android.permission.PROCESS_OUTGOING_CALLS",
+      "android.permission.REQUEST_INSTALL_PACKAGES",
+      "android.permission.QUERY_ALL_PACKAGES",
       // 1.3.5 APK auditi: kutubxona qo'shadi, ilova ishlatmaydi (keraksiz ruxsat - ortiqcha shubha).
       // androidx.biometric (expo-secure-store): faqat `requireAuthentication`/`canUseBiometricAuthentication`
       // bilan ishlaydi - biz SecureStore'ni oddiy get/set/delete bilan chaqiramiz.
-      'android.permission.USE_BIOMETRIC',
-      'android.permission.USE_FINGERPRINT',
+      "android.permission.USE_BIOMETRIC",
+      "android.permission.USE_FINGERPRINT",
       // installreferrer (expo-application): faqat `getInstallReferrerAsync` uchun - chaqirilmaydi.
-      'com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE',
+      "com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE",
     ],
-    permissions: ['android.permission.RECORD_AUDIO', 'android.permission.POST_NOTIFICATIONS', 'android.permission.VIBRATE'],
+    permissions: [
+      "android.permission.RECORD_AUDIO",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.VIBRATE",
+    ],
   },
   ios: {
     // iOS v1'da yig'ilmaydi (spec 1, non-goals); kod platformaga bog'liq emas.
-    bundleIdentifier: 'uz.brbtech.venera.meetings',
+    bundleIdentifier: "uz.brbtech.barno",
     supportsTablet: false,
   },
   plugins: [
-    'expo-router',
+    "expo-router",
+    "expo-background-task",
+    "./plugins/withIosSceneLifecycle",
     [
       // Ochilish ekrani: theme.ts fonlari (#FFFFFF / #0E0E0F) va brend rangidagi yulduzcha.
-      'expo-splash-screen',
+      "expo-splash-screen",
       {
-        image: './assets/splash-icon.png',
+        image: "./assets/splash-icon.png",
         imageWidth: 120,
-        backgroundColor: '#FFFFFF',
-        dark: { image: './assets/splash-icon-dark.png', backgroundColor: '#0E0E0F' },
+        backgroundColor: "#FFFFFF",
+        dark: {
+          image: "./assets/splash-icon-dark.png",
+          backgroundColor: "#0E0E0F",
+        },
       },
     ],
     [
-      'expo-audio',
+      "expo-audio",
       {
-        microphonePermission: "Barno yig'ilishlarni yozib olish va ovozli savollar uchun mikrofondan foydalanadi.",
+        microphonePermission:
+          "Barno yig'ilishlarni yozib olish va ovozli savollar uchun mikrofondan foydalanadi.",
         recordAudioAndroid: true,
         // microphone turidagi foreground service + FOREGROUND_SERVICE_MICROPHONE.
         enableBackgroundRecording: true,
@@ -124,9 +138,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         enableBackgroundPlayback: false,
       },
     ],
-    ['expo-secure-store', { configureAndroidBackup: false }],
+    ["expo-secure-store", { configureAndroidBackup: false }],
     [
-      'expo-build-properties',
+      "expo-build-properties",
       {
         android: {
           compileSdkVersion: 36,
@@ -139,9 +153,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         },
       },
     ],
-    'expo-quick-actions',
+    "expo-quick-actions",
     // Release faqat o'z kalitimiz bilan (debug kalit bilan pilot APK chiqmasin) - README 4.
-    './plugins/withReleaseSigning',
+    "./plugins/withReleaseSigning",
   ],
   experiments: {
     typedRoutes: false,

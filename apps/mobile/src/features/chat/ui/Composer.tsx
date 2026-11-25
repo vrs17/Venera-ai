@@ -32,6 +32,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import {
   ActivityIndicator,
   Keyboard,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -63,6 +64,9 @@ const MIN_MS = 400;
 /** Butun yozuvda shundan baland ovoz bo'lmasa - gap yo'q, yuklanmaydi. */
 const SPEECH_DB = -42;
 const LINE = 24;
+const INPUT_PADDING_TOP = 13;
+const INPUT_PADDING_BOTTOM = 5;
+const INPUT_PADDING = INPUT_PADDING_TOP + INPUT_PADDING_BOTTOM;
 const MAX_ROWS = 8;
 const BAR_COUNT = 40;
 
@@ -105,6 +109,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     setText: (v: string) => setText(v),
   }));
 
+  // iOS measures multiline text during layout. Feeding its content size back into
+  // an explicit height can trigger another measurement with a different size.
+  const nativeInputSizing = Platform.OS === 'ios';
   const maxInputH = Math.min(LINE * MAX_ROWS, Math.max(LINE * 3, Math.round(winH * 0.3)));
   const onContentSize = (e: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
     setInputH(Math.max(LINE, Math.min(maxInputH, Math.ceil(e.nativeEvent.contentSize.height))));
@@ -221,7 +228,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         showToast(t('dict.denied'));
         return;
       }
-      await setAudioModeAsync({ allowsRecording: true, interruptionMode: 'mixWithOthers' });
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: true,
+        interruptionMode: 'mixWithOthers',
+      });
       await recorder.prepareToRecordAsync(DICTATION_PRESET);
       if (mine !== session.current) {
         await release();
@@ -373,9 +384,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           placeholder={t('chat.placeholder')}
           placeholderTextColor={th.textMuted}
           accessibilityLabel={t('chat.message')}
-          onContentSizeChange={onContentSize}
-          style={[s.input, { height: inputH + 18 }]}
-          scrollEnabled={inputH >= maxInputH}
+          onContentSizeChange={nativeInputSizing ? undefined : onContentSize}
+          style={[
+            s.input,
+            nativeInputSizing
+              ? { minHeight: LINE + INPUT_PADDING, maxHeight: (text.length ? maxInputH : LINE) + INPUT_PADDING }
+              : { height: inputH + INPUT_PADDING },
+          ]}
+          scrollEnabled={nativeInputSizing || inputH >= maxInputH}
           textAlignVertical="top"
           autoCapitalize="sentences"
         />
@@ -510,8 +526,8 @@ function makeStyles(th: Theme) {
       color: th.text,
       fontSize: 16,
       lineHeight: LINE,
-      paddingTop: 13,
-      paddingBottom: 5,
+      paddingTop: INPUT_PADDING_TOP,
+      paddingBottom: INPUT_PADDING_BOTTOM,
       paddingHorizontal: 16,
     },
     bar: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, paddingTop: 4, paddingBottom: 8 },

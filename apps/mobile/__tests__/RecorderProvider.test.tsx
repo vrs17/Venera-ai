@@ -114,7 +114,10 @@ class FakeRecorder {
   }
 }
 
-const audio = jest.requireMock('expo-audio') as { useAudioRecorder: jest.Mock };
+const audio = jest.requireMock('expo-audio') as {
+  useAudioRecorder: jest.Mock;
+  setAudioModeAsync: jest.Mock;
+};
 
 // ---- yordamchilar -----------------------------------------------------------
 
@@ -190,6 +193,12 @@ describe('RecorderProvider', () => {
   it('writes the queue row (state recording) BEFORE record() and arms the native size limit', async () => {
     await mount();
     const id = await startOk();
+    expect(audio.setAudioModeAsync).toHaveBeenCalledWith({
+      playsInSilentMode: true,
+      allowsRecording: true,
+      allowsBackgroundRecording: true,
+      interruptionMode: 'mixWithOthers',
+    });
     expect(fake.log).toEqual(['prepare', 'insert', 'record']);
     const row = await queue.get(id);
     expect(row).toMatchObject({ state: 'recording', fileUri: fake.uri, source: 'launcher' });

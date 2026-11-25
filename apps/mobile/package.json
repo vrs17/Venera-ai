@@ -6,6 +6,7 @@
   "scripts": {
     "start": "expo start --dev-client",
     "android": "expo run:android",
+    "ios": "expo run:ios",
     "prebuild:android": "expo prebuild -p android --clean",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

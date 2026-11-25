@@ -10,33 +10,47 @@
  * kutmaydi (spec 7.5). Sessiya yo'q bo'lsa yozuv navbatda turadi va
  * kirgandan keyin yuklanadi.
  */
-import { MutationCache, QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
-import * as Crypto from 'expo-crypto';
-import * as Network from 'expo-network';
-import * as QuickActions from 'expo-quick-actions';
-import { router, Stack, useRootNavigationState } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef, useState } from 'react';
-import { AppState, Text, View } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import {
+  MutationCache,
+  QueryClient,
+  QueryClientProvider,
+  useQueryClient,
+} from "@tanstack/react-query";
+import * as Crypto from "expo-crypto";
+import * as Network from "expo-network";
+import * as QuickActions from "expo-quick-actions";
+import { router, Stack, useRootNavigationState } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
+import { StatusBar } from "expo-status-bar";
+import { useEffect, useRef, useState } from "react";
+import { AppState, Platform, Text, View } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 
-import { ApiError } from '@/api/client';
-import { useAuth } from '@/features/auth/authStore';
-import { CallAutoSend } from '@/features/calls/CallAutoSend';
-import { useCrmStore } from '@/features/crm/crmStore';
-import { setTrustedKey } from '@/features/entry/nativeEntry';
-import { hrefFromAction, installRecordShortcut, withEntryNonce } from '@/features/entry/quickActions';
-import { ensureInstallKey } from '@/features/entry/trustedKey';
-import { RecorderProvider } from '@/features/recorder/RecorderProvider';
-import { useSettings, useT } from '@/features/settings/settingsStore';
+import { ApiError } from "@/api/client";
+import { useAuth } from "@/features/auth/authStore";
+import { CallAutoSend } from "@/features/calls/CallAutoSend";
+import { useCrmStore } from "@/features/crm/crmStore";
+import { setTrustedKey } from "@/features/entry/nativeEntry";
+import {
+  hrefFromAction,
+  installRecordShortcut,
+  withEntryNonce,
+} from "@/features/entry/quickActions";
+import { ensureInstallKey } from "@/features/entry/trustedKey";
+import { RecorderProvider } from "@/features/recorder/RecorderProvider";
+import { useSettings, useT } from "@/features/settings/settingsStore";
 // Bu import modulni yuklaydi - backgroundTask.ts modul darajasida defineTask() chaqiradi.
-import { registerUploadTask } from '@/features/upload/backgroundTask';
-import { makeT } from '@/i18n';
-import { clearExports } from '@/lib/paths';
-import { getAppServices, ServicesProvider, useServices, type Services } from '@/services';
-import { toastError } from '@/ui/errors';
-import { useTheme } from '@/ui/theme';
+import { registerUploadTask } from "@/features/upload/backgroundTask";
+import { makeT } from "@/i18n";
+import { clearExports } from "@/lib/paths";
+import {
+  getAppServices,
+  ServicesProvider,
+  useServices,
+  type Services,
+} from "@/services";
+import { toastError } from "@/ui/errors";
+import { useTheme } from "@/ui/theme";
 
 void SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -45,7 +59,7 @@ void SplashScreen.preventAutoHideAsync().catch(() => {});
  * ostida asosiy ekran (chat) bo'lsin: aks holda stekda yolg'iz `/record`, to'xtatgandan
  * keyin yolg'iz `/meeting/<id>` qolib, "Orqaga" ilovadan chiqarardi.
  */
-export const unstable_settings = { anchor: 'index' };
+export const unstable_settings = { anchor: "index" };
 
 const queryClient = new QueryClient({
   // Mutatsiya xatosi jim qolmasin (nom, spiker, vazifa, xulosa...): kod -> i18n toast.
@@ -57,7 +71,9 @@ const queryClient = new QueryClient({
   }),
   defaultOptions: {
     queries: {
-      retry: (count, err) => !(err instanceof ApiError && err.status >= 400 && err.status < 500) && count < 2,
+      retry: (count, err) =>
+        !(err instanceof ApiError && err.status >= 400 && err.status < 500) &&
+        count < 2,
       staleTime: 5_000,
     },
   },
@@ -79,7 +95,14 @@ export default function RootLayout() {
 
   if (error) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
+        }}
+      >
         <Text>{error}</Text>
       </View>
     );
@@ -106,50 +129,113 @@ function AppStack() {
   const status = useAuth((s) => s.status);
   const th = useTheme();
   const t = useT();
-  if (status === 'unknown') return null;
-  const signedIn = status === 'signedIn';
+  if (status === "unknown") return null;
+  const signedIn = status === "signedIn";
   return (
     <>
-      <StatusBar style={th.dark ? 'light' : 'dark'} />
+      <StatusBar style={th.dark ? "light" : "dark"} />
       <Stack
         screenOptions={{
           // Claude uslubi: sarlavha sahifa bilan bir rangda, soya chizig'isiz - "tinch" ko'rinish.
           headerShadowVisible: false,
           headerStyle: { backgroundColor: th.bg },
           headerTintColor: th.text,
-          headerTitleStyle: { fontSize: 18, fontWeight: '600' },
+          headerTitleStyle: { fontSize: 18, fontWeight: "600" },
           contentStyle: { backgroundColor: th.bg },
-        }}>
+          title: Platform.OS === "ios" ? t("common.back") : undefined,
+        }}
+      >
         <Stack.Protected guard={signedIn}>
           {/* Chat o'z sarlavhasini va xavfsiz zonasini o'zi chizadi. */}
           <Stack.Screen name="index" options={{ headerShown: false }} />
-          <Stack.Screen name="meetings" options={{ title: t('nav.recordings') }} />
-          <Stack.Screen name="meeting/[id]" options={{ title: '' }} />
-          <Stack.Screen name="action-items" options={{ title: t('list.myTasks') }} />
+          <Stack.Screen
+            name="meetings"
+            options={{ title: t("nav.recordings") }}
+          />
+          <Stack.Screen name="meeting/[id]" options={{ title: "" }} />
+          <Stack.Screen
+            name="action-items"
+            options={{ title: t("list.myTasks") }}
+          />
           {/* Sozlamalar: hub + har qator o'z sahifasi (URL `/settings` o'zgarmaydi). */}
-          <Stack.Screen name="settings/index" options={{ title: t('settings.title') }} />
-          <Stack.Screen name="settings/account" options={{ title: t('set.profile') }} />
-          <Stack.Screen name="settings/connections" options={{ title: t('settings.connections') }} />
-          <Stack.Screen name="settings/memory" options={{ title: t('set.memory.title') }} />
-          <Stack.Screen name="settings/quick" options={{ title: t('settings.quick') }} />
-          <Stack.Screen name="settings/recording" options={{ title: t('set.recording') }} />
-          <Stack.Screen name="settings/language" options={{ title: t('set.language') }} />
-          <Stack.Screen name="settings/theme" options={{ title: t('settings.theme') }} />
-          <Stack.Screen name="settings/about" options={{ title: t('settings.about') }} />
-          <Stack.Screen name="settings/voice" options={{ title: t('nav.voice.settingsTitle') }} />
-          <Stack.Screen name="settings/calls" options={{ title: t('calls.settingsTitle') }} />
-          <Stack.Screen name="settings/voice-sample" options={{ title: t('vs.title') }} />
+          <Stack.Screen
+            name="settings/index"
+            options={{ title: t("settings.title") }}
+          />
+          <Stack.Screen
+            name="settings/account"
+            options={{ title: t("set.profile") }}
+          />
+          <Stack.Screen
+            name="settings/connections"
+            options={{ title: t("settings.connections") }}
+          />
+          <Stack.Screen
+            name="settings/memory"
+            options={{ title: t("set.memory.title") }}
+          />
+          <Stack.Screen
+            name="settings/quick"
+            options={{ title: t("settings.quick") }}
+          />
+          <Stack.Screen
+            name="settings/recording"
+            options={{ title: t("set.recording") }}
+          />
+          <Stack.Screen
+            name="settings/language"
+            options={{ title: t("set.language") }}
+          />
+          <Stack.Screen
+            name="settings/theme"
+            options={{ title: t("settings.theme") }}
+          />
+          <Stack.Screen
+            name="settings/about"
+            options={{ title: t("settings.about") }}
+          />
+          <Stack.Screen
+            name="settings/voice"
+            options={{ title: t("nav.voice.settingsTitle") }}
+          />
+          <Stack.Screen
+            name="settings/calls"
+            options={{ title: t("calls.settingsTitle") }}
+          />
+          <Stack.Screen
+            name="settings/voice-sample"
+            options={{ title: t("vs.title") }}
+          />
           {/* "Ulashish -> Barno": kirilmagan bo'lsa login chiqadi, fayllar imports/ da kutadi (chiqishda o'chiriladi). */}
-          <Stack.Screen name="import" options={{ title: t('calls.import.title') }} />
+          <Stack.Screen
+            name="import"
+            options={{ title: t("calls.import.title") }}
+          />
           {/* Jonli ovozli suhbat: to'liq ekran, doim qorong'i, o'z tugmalari bor (✕ / orqaga = tugatish). */}
-          <Stack.Screen name="voice" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', gestureEnabled: false }} />
+          <Stack.Screen
+            name="voice"
+            options={{
+              headerShown: false,
+              presentation: "fullScreenModal",
+              animation: "fade",
+              gestureEnabled: false,
+            }}
+          />
           {/* Jonli suhbat (Speko, saytdagi /barno WebView'da): to'liq ekran, ✕ / orqaga = avval qo'ng'iroqni tugatish. */}
-          <Stack.Screen name="live" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', gestureEnabled: false }} />
+          <Stack.Screen
+            name="live"
+            options={{
+              headerShown: false,
+              presentation: "fullScreenModal",
+              animation: "fade",
+              gestureEnabled: false,
+            }}
+          />
         </Stack.Protected>
         <Stack.Protected guard={!signedIn}>
           <Stack.Screen name="login" options={{ headerShown: false }} />
         </Stack.Protected>
-        <Stack.Screen name="record" options={{ title: t('record.title') }} />
+        <Stack.Screen name="record" options={{ title: t("record.title") }} />
       </Stack>
     </>
   );
@@ -178,10 +264,14 @@ function Bootstrap() {
         randomBytes: (n) => Crypto.getRandomBytes(n),
         setNativeKey: setTrustedKey,
       });
-      await installRecordShortcut(key, makeT(useSettings.getState().uiLang)('settings.shortcutTitle'));
+      await installRecordShortcut(
+        key,
+        makeT(useSettings.getState().uiLang)("settings.shortcutTitle"),
+      );
       await registerUploadTask();
     })().catch(() => {
-      if (alive && useAuth.getState().status === 'unknown') useAuth.getState().setSignedOut(false);
+      if (alive && useAuth.getState().status === "unknown")
+        useAuth.getState().setSignedOut(false);
     });
     return () => {
       alive = false;
@@ -193,7 +283,11 @@ function Bootstrap() {
     let alive = true;
     (async () => {
       const key = await services.tokens.getInstallKey();
-      if (alive && key) await installRecordShortcut(key, makeT(uiLang)('settings.shortcutTitle'));
+      if (alive && key)
+        await installRecordShortcut(
+          key,
+          makeT(uiLang)("settings.shortcutTitle"),
+        );
     })().catch(() => {});
     return () => {
       alive = false;
@@ -203,7 +297,7 @@ function Bootstrap() {
   // Chiqish / sessiya tugashi: boshqa odam shu telefonda kirsa oldingi
   // foydalanuvchining yig'ilish nomlari keshdan bir lahza ham ko'rinmasin.
   useEffect(() => {
-    if (status === 'signedOut') {
+    if (status === "signedOut") {
       qc.clear();
       useCrmStore.getState().reset();
     }
@@ -211,7 +305,7 @@ function Bootstrap() {
 
   // Konfig (limitlar, shablonlar, yozish sozlamasi) - kirgandan keyin.
   useEffect(() => {
-    if (status !== 'signedIn') return;
+    if (status !== "signedIn") return;
     services.meetings
       .config()
       .then((c) => useAuth.getState().setConfig(c))
@@ -228,7 +322,10 @@ function Bootstrap() {
   // Yuklash triggerlari: AppState active, tarmoq qaytishi.
   useEffect(() => {
     const kick = () => void services.uploader.runOnce().catch(() => {});
-    const app = AppState.addEventListener('change', (s) => s === 'active' && kick());
+    const app = AppState.addEventListener(
+      "change",
+      (s) => s === "active" && kick(),
+    );
     let net: { remove(): void } | null = null;
     try {
       net = Network.addNetworkStateListener((s) => {
@@ -262,7 +359,7 @@ function Bootstrap() {
   }, [navState?.key]);
 
   useEffect(() => {
-    if (navState?.key && pendingHref.current && status !== 'unknown') {
+    if (navState?.key && pendingHref.current && status !== "unknown") {
       const href = pendingHref.current;
       pendingHref.current = null;
       router.navigate(href as never);

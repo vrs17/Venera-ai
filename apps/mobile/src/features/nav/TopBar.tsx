@@ -31,7 +31,11 @@ import { hit, iconSize, stroke, type as typeScale } from '@/ui/tokens';
 /** Yon ustunlar bir xil kenglikda - sarlavha ekranning AYNAN o'rtasida tursin (o'ngda 2 tugma, chapda 1). */
 const SIDE = hit.min * 2;
 
-export function ChatTopBar({ title, onMenu }: { title: string; onMenu: () => void }) {
+export function ChatTopBar({ title, onMenu, showNewChat }: {
+  title: string;
+  onMenu: () => void;
+  showNewChat: boolean;
+}) {
   const th = useTheme();
   const t = useT();
   const meetings = useMeetingsVisible();
@@ -56,7 +60,9 @@ export function ChatTopBar({ title, onMenu }: { title: string; onMenu: () => voi
             testID="chat-meetings"
           />
         ) : null}
-        <IconButton icon={SquarePen} label={t('chat.newChat')} onPress={() => useChat.getState().newChat()} testID="chat-new" />
+        {showNewChat ? (
+          <IconButton icon={SquarePen} label={t('chat.newChat')} onPress={() => useChat.getState().newChat()} testID="chat-new" />
+        ) : null}
       </View>
     </View>
   );

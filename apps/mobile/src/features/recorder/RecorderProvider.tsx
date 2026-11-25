@@ -349,6 +349,7 @@ export function RecorderProvider({ children }: { children: ReactNode }) {
       let fileUri: string | null = null;
       try {
         await setAudioModeAsync({
+          playsInSilentMode: true,
           allowsRecording: true,
           allowsBackgroundRecording: true,
           interruptionMode: 'mixWithOthers',
