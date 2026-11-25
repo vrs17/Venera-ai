@@ -54,6 +54,9 @@ class EnginePolicy(BaseModel):
 
     default: str | None = None
     channels: dict[str, str] = Field(default_factory=dict)
+    #: Hamma chatda TANLAY oladigan versiyalar (default'dan tashqari) - hech kim o'z-o'zidan
+    #: ko'chmaydi (`engine_control.SELECTABLE_PREFIX`).
+    selectable: list[str] = Field(default_factory=list)
     source: Literal["admin", "env"] = "env"
     updatedAt: str | None = None
     updatedBy: str | None = None
@@ -126,6 +129,8 @@ class EnginePolicyUpdate(BaseModel):
 
     default: str | None = None
     channels: dict[str, str | None] = Field(default_factory=dict, max_length=16)
+    #: Berilsa - "hamma tanlay oladi" ro'yxati shuning o'zi (`[]` - hech biri). Berilmasa o'zgarmaydi.
+    selectable: list[str] | None = Field(default=None, max_length=16)
 
 
 class EngineAccessUpdate(BaseModel):

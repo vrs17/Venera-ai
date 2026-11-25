@@ -91,6 +91,11 @@ log = logging.getLogger(__name__)
 #: `engine_policy` kalitlari.
 DEFAULT_KEY = "default"
 CHANNEL_PREFIX = "channel:"
+#: "Hamma TANLAY oladi" (2026-11-25, ega: "v4 default, v5 ham mavjud"): `selectable:v5` = `v5`.
+#: Default'ni O'ZGARTIRMAYDI - hech kim o'z-o'zidan ko'chmaydi; faqat chatdagi versiya
+#: tanlovida (web kompozeri, `GET /chat/engines`) bu versiya ham chiqadi va odam o'zi tanlaydi.
+#: Qiymat kalitdagi versiya bilan bir xil - `load` dagi katalog tekshiruvi o'zgarmasin.
+SELECTABLE_PREFIX = "selectable:"
 
 #: Admin panelda "hozir nima ishlaydi" ko'rsatiladigan kanallar. `desktop` va
 #: `api` siyosatda bor (kalit saqlasa bo'ladi), lekin bugun ulardan savol
@@ -154,10 +159,17 @@ class Rules:
 EMPTY = Rules(policy={}, access={}, loaded=False)
 
 
-def _known_key(key: str) -> bool:
+def _known_key(key: str, engine: str | None = None) -> bool:
     if key == DEFAULT_KEY:
         return True
+    if key.startswith(SELECTABLE_PREFIX):
+        return engine is not None and key[len(SELECTABLE_PREFIX):] == engine
     return key.startswith(CHANNEL_PREFIX) and key[len(CHANNEL_PREFIX):] in CHANNELS
+
+
+def optional_engines(policy: Mapping[str, str]) -> tuple[str, ...]:
+    """Hamma tanlay oladigan versiyalar (`selectable:*`) - katalog tartibida."""
+    return _ordered(key[len(SELECTABLE_PREFIX):] for key in policy if key.startswith(SELECTABLE_PREFIX))
 
 
 def _ordered(engines: Iterable[str]) -> tuple[str, ...]:
@@ -223,7 +235,7 @@ def load(db: Database) -> Rules:
     updated_by: str | None = None
     for row in db.rows("SELECT key, value, updated_at, updated_by FROM engine_policy"):
         key, engine = str(row["key"]), _engines.catalog_id(row["value"])
-        if not _known_key(key) or engine is None:
+        if engine is None or not _known_key(key, engine):
             log_limited("engine_control.policy", "engine_policy: %r=%r tanilmadi - e'tiborsiz",
                         key, row["value"])
             continue
@@ -341,20 +353,30 @@ def resolve(user: AuthUser | int | None, channel: str | None, requested: object 
     name = normalize_channel(channel, default=None)
     wanted = _engines.catalog_id(requested)
 
+    optional = optional_engines(data.policy)
     if grant is not None:
-        allowed, many = grant.engines, len(grant.engines) > 1
+        # Odamga berilganlar + hamma tanlay oladiganlar. Odamning default'i va "bitta
+        # versiya - o'sha" qoidasi faqat O'Z ro'yxatidan: umumiy tanlov uni ko'chirmaydi.
+        allowed = _ordered((*grant.engines, *optional))
+        many = len(allowed) > 1
         if wanted is not None and wanted in allowed:
             return Choice(wanted, "requested", allowed, many)
-        own = grant.default_engine or (allowed[0] if len(allowed) == 1 else None)
+        own = grant.default_engine or (grant.engines[0] if len(grant.engines) == 1 else None)
         if own is not None:
             return Choice(own, "user", allowed, many, ignored=_ignored(requested, own))
         engine, source = _public(name, data)
         if engine not in allowed:
-            engine, source = allowed[0], "user"
+            engine, source = grant.engines[0], "user"
         return Choice(engine, source, allowed, many, ignored=_ignored(requested, engine))
 
     engine, source = _public(name, data)
-    return Choice(engine, source, (engine,), False, ignored=_ignored(requested, engine))
+    available = _ordered((engine, *optional))
+    if engine not in available:          # `.env` dagi versiyasiz yo'l (`""`) - katalogda yo'q
+        available = (engine, *available)
+    many = len(available) > 1
+    if many and wanted is not None and wanted in available:
+        return Choice(wanted, "requested", available, many)
+    return Choice(engine, source, available, many, ignored=_ignored(requested, engine))
 
 
 def _ignored(requested: object, engine: str) -> bool:
@@ -425,11 +447,12 @@ def client_view(user: AuthUser, channel: str | None) -> dict[str, Any]:
 
 
 def _policy_shape(policy: Mapping[str, str]) -> dict[str, Any]:
-    """`{default, channels}` - audit va javob uchun bir xil shakl."""
+    """`{default, channels, selectable}` - audit va javob uchun bir xil shakl."""
     return {
         "default": policy.get(DEFAULT_KEY),
         "channels": {name: policy[CHANNEL_PREFIX + name] for name in CHANNELS
                      if CHANNEL_PREFIX + name in policy},
+        "selectable": list(optional_engines(policy)),
     }
 
 
@@ -540,12 +563,13 @@ def _channel_or_422(value: object) -> str:
 
 
 def put_policy(admin: AuthUser, identities: Any, users: Any, *, default: Any = _UNSET,
-               channels: Mapping[str, Any] | None = None, db: Database | None = None,
-               now: float | None = None) -> dict[str, Any]:
+               channels: Mapping[str, Any] | None = None, selectable: Any = _UNSET,
+               db: Database | None = None, now: float | None = None) -> dict[str, Any]:
     """`PUT /api/v1/admin/engines/policy` - QO'SHILADIGAN o'zgarish.
 
     `default` berilmasa - o'zgarmaydi, `None` - o'chiriladi. `channels` dagi
-    har kalit xuddi shunday; yo'q kanal o'zgarmaydi. Avval HAMMASI
+    har kalit xuddi shunday; yo'q kanal o'zgarmaydi. `selectable` berilsa - "hamma tanlay
+    oladi" ro'yxati SHUNING O'ZI bo'ladi (to'liq almashtirish, `[]` - hech biri). Avval HAMMASI
     tekshiriladi (422), keyin bitta tranzaksiyada yoziladi - yarim
     saqlangan siyosat qolmaydi. Haqiqiy o'zgarish bo'lsagina auditga
     yoziladi. Javob - `admin_view` (yangi holat)."""
@@ -556,6 +580,12 @@ def put_policy(admin: AuthUser, identities: Any, users: Any, *, default: Any = _
         name = _channel_or_422(raw)
         changes[CHANNEL_PREFIX + name] = (None if value is None
                                           else _engine_or_422(value, f"channels.{name}"))
+    if selectable is not _UNSET:
+        if not isinstance(selectable, (list, tuple)):
+            raise AdminError("selectable: versiyalar ro'yxati kerak", status=422, code="UNKNOWN_ENGINE")
+        wanted = {_engine_or_422(value, "selectable") for value in selectable}
+        for engine in _engines.CATALOG_IDS:
+            changes[SELECTABLE_PREFIX + engine] = engine if engine in wanted else None
     db = db or get_db()
     now = time.time() if now is None else now
     by = _admin._by(admin)

@@ -33,7 +33,7 @@ from app.services.analytics.db import MIGRATIONS, SCHEMA_VERSION, Database
 from app.services.integrations.assistant import AssistantClient, AssistantError
 
 BASE = "http://assistant.test"
-STREAM_PATH = re.compile(r"/api/(?:(v[123])/)?chat/stream")
+STREAM_PATH = re.compile(r"/api/(?:(v[1-5])/)?chat/stream")
 QUOTA = {"remaining": {"day": 9, "week": 19, "month": 49},
          "limits": {"day": 10, "week": 20, "month": 50},
          "used": {"day": 1, "week": 1, "month": 1}}
@@ -42,7 +42,7 @@ ADMIN_ID = 1         # conftest: admin@venera.uz
 
 # types.ts shartnomasi (frontend aynan shularga quriladi)
 ADMIN_ENGINES_FIELDS = {"catalog", "policy", "envDefaults", "effective", "stats", "access"}
-POLICY_FIELDS = {"default", "channels", "source", "updatedAt", "updatedBy"}
+POLICY_FIELDS = {"default", "channels", "selectable", "source", "updatedAt", "updatedBy"}
 ACCESS_ROW_FIELDS = {"actorId", "name", "login", "engines", "defaultEngine", "note",
                      "updatedAt", "updatedBy"}
 USAGE_FIELDS = {"engine", "turns", "errors", "medianTtftMs", "users"}
@@ -586,7 +586,7 @@ def test_admin_korinish_shakli(api, auth, monkeypatch):
     assert set(body) == ADMIN_ENGINES_FIELDS
     assert body["catalog"] == CATALOG
     assert set(body["policy"]) == POLICY_FIELDS
-    assert body["policy"] == {"default": None, "channels": {}, "source": "env",
+    assert body["policy"] == {"default": None, "channels": {}, "selectable": [], "source": "env",
                               "updatedAt": None, "updatedBy": None}
     assert body["envDefaults"] == {"default": "v2", "channels": {"miniapp": "v1"}}
     assert body["effective"] == {"web": "v2", "miniapp": "v1", "bot": "v2"}
@@ -619,9 +619,10 @@ def test_admin_siyosat_qoshiladigan_ozgarish_va_audit(api, auth, db):
     assert [r["action"] for r in rows] == ["engine.policy"] * 3
     assert all((r["target_type"], r["target_id"], r["admin_actor_id"]) == (
         "engine", "policy", ADMIN_ID) for r in rows)
-    assert rows[0]["detail"] == {"from": {"default": None, "channels": {}},
-                                 "to": {"default": "v1", "channels": {"web": "v1", "bot": "v2"}}}
-    assert rows[2]["detail"]["to"] == {"default": None, "channels": {}}
+    assert rows[0]["detail"] == {"from": {"default": None, "channels": {}, "selectable": []},
+                                 "to": {"default": "v1", "channels": {"web": "v1", "bot": "v2"},
+                                        "selectable": []}}
+    assert rows[2]["detail"]["to"] == {"default": None, "channels": {}, "selectable": []}
 
 
 @pytest.mark.parametrize("body", [
