@@ -48,7 +48,8 @@ ACCESS_ROW_FIELDS = {"actorId", "name", "login", "engines", "defaultEngine", "no
 USAGE_FIELDS = {"engine", "turns", "errors", "medianTtftMs", "users"}
 CHOICE_FIELDS = {"current", "selectable", "available", "catalog"}
 CATALOG = [{"id": "v1", "pro": False, "law": False}, {"id": "v2", "pro": True, "law": True},
-           {"id": "v3", "pro": True, "law": True}, {"id": "v4", "pro": True, "law": True}]
+           {"id": "v3", "pro": True, "law": True}, {"id": "v4", "pro": True, "law": True},
+           {"id": "v5", "pro": False, "law": True}]
 ISO = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
 
 

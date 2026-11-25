@@ -141,7 +141,8 @@ function reset(): void {
 }
 
 /** "Pro" bor dvigatellar, katalog yuklanmagan bo'lsa (Mini App versiya tanlovini
- *  yuklamaydi) - server katalogi bilan bir xil (`core/engines.py`, `pro: True`). */
+ *  yuklamaydi) - server katalogi bilan bir xil (`core/engines.py`, `pro: True`).
+ *  v5 bu yerda ATAYLAB yo'q: agent unda "Pro" ni e'tiborsiz qoldiradi. */
 const PRO_FALLBACK: ReadonlySet<string> = new Set(['v2', 'v3', 'v4'])
 
 /** Javob bergan dvigatelda "Pro" bormi: avval serverdan kelgan katalog, bo'lmasa

@@ -16,6 +16,12 @@
                                     MUZLATILGAN - har yangilik faqat v4 ga tushadi.
                                     Shartnoma 4.0 (`X-Barno-Contract`, `purpose`),
                                     qolgani v3 bilan bir xil - `assistant.py`
+    v5   POST /api/v5/chat/stream   agentning v5 dvigateli (2026-11-25): shartnoma
+                                    4.0 AYNAN v4 niki (so'rov, kadrlar, tasdiq,
+                                    suhbatlar ro'yxati, xotira, tarix - v4 da
+                                    boshlangan suhbat v5 da davom etadi va
+                                    qaytadi). "Pro" yo'q (agent qabul qiladi va
+                                    e'tiborsiz qoldiradi), ariza fayli hali yo'q
     ""   POST /api/chat/stream      xizmatning default'i (bugun = v1) - eski,
                                     versiyasiz yo'l (prod hozir shunda)
 
@@ -82,6 +88,12 @@ ENGINES: tuple[dict[str, object], ...] = (
     # v4 - xuddi shu tartib: avval bitta odamga, keyin hammaga. "Pro" va qonun manbasi
     # v3 niki bilan BIR XIL yo'ldan (agentda v3 va v4 - bitta Core), ya'ni `True` halol.
     {"id": "v4", "pro": True, "law": True},
+    # v5 - o'sha tartib: avval bitta odamga (admin "Versiyalar" -> "Alohida ruxsat"), keyin
+    # hammaga. Shartnoma v4 niki (`assistant.CONTRACT_ENGINES`). `pro: False` - agent v5 da
+    # "Pro" ni qabul qiladi, lekin E'TIBORSIZ qoldiradi: `True` desak tugma ko'rinib, odam
+    # ishlamaydigan pulli rejimni yoqardi. `law: True` - hujjat javobida Mehnat kodeksi
+    # manbalari LEX.UZ havolasi bilan, v4 dagi kabi.
+    {"id": "v5", "pro": False, "law": True},
 )
 
 #: Katalogdagi kalitlar - admin va klient tanlovi faqat shulardan.
@@ -144,7 +156,7 @@ def default_engine() -> str:
     raw = getattr(settings, "hrm_assistant_engine", DEFAULT_ENGINE)
     found = normalize(raw)
     if found is None:
-        _warn_once(f"HRM_ASSISTANT_ENGINE={raw!r} tanilmadi (v1 | v2 | v3 | v4 | bo'sh) - "
+        _warn_once(f"HRM_ASSISTANT_ENGINE={raw!r} tanilmadi (v1 | v2 | v3 | v4 | v5 | bo'sh) - "
                    f"{DEFAULT_ENGINE} ishlatiladi")
         return DEFAULT_ENGINE
     return found
@@ -168,7 +180,7 @@ def channel_overrides() -> tuple[dict[str, str], list[str]]:
         engine = normalize(value)
         if not sep or channel is None or engine is None:
             problems.append(f"HRM_ASSISTANT_ENGINE_BY_CHANNEL: {part!r} tanilmadi "
-                            "(kanal=v1|v2|v3|v4|legacy) - e'tiborsiz qoldirildi")
+                            "(kanal=v1|v2|v3|v4|v5|legacy) - e'tiborsiz qoldirildi")
             continue
         found[channel] = engine
     return found, problems

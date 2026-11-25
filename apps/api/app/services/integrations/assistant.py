@@ -109,9 +109,11 @@ log = logging.getLogger(__name__)
 #: to'g'ri bo'lsa: `type` maydoni bor JSON obyekti.
 FRAME_TYPES = frozenset({"stage", "sources", "artifact", "proposal", "token", "done", "error"})
 
-#: Shartnoma 4.0 bilan ochiladigan dvigatellar (modul izohi, v4). Ro'yxat - ertaga v5
-#: chiqsa ham shu yo'l bilan ketishi uchun; bugun bitta.
-CONTRACT_ENGINES = frozenset({"v4"})
+#: Shartnoma 4.0 bilan ochiladigan dvigatellar (modul izohi, v4). v5 (2026-11-25) - AYNAN
+#: shu shartnoma: so'rov tanasi, sarlavha, kadrlar, tasdiq va bekor qilish yo'llari, tarix
+#: v4 niki; `done` da `engine: "v5"`. Farqi agent tomonida (ovozda gap javob to'liq tayyor
+#: bo'lganda keladi, ariza fayli hali yo'q) - bu klientda kod talab qilmaydi.
+CONTRACT_ENGINES = frozenset({"v4", "v5"})
 
 #: `X-Barno-Contract` qiymati. Asosiy raqami 4 bo'lishi SHART: agent boshqasini
 #: `unsupported_field` bilan rad etadi.
@@ -271,7 +273,7 @@ class AnswerStream:
     #: Oqim o'qilgach to'ladi - shu sababli `field(default_factory=dict)`.
     #: `pump()` yakunda `route` va kadr sonini shu yerga yozadi.
     outcome: dict[str, Any] = field(default_factory=dict)
-    #: So'ralgan dvigatel (`v1` ... `v4` | `""`). Yordamchiga bormagan javob
+    #: So'ralgan dvigatel (`v1` ... `v5` | `""`). Yordamchiga bormagan javob
     #: (xodimlar ma'lumotnomasi) - `None`. Javobning `done.engine` i bo'lsa
     #: haqiqatda qaysi dvigatel javob bergani - o'sha (`outcome["engine"]`).
     engine: str | None = None
@@ -381,7 +383,7 @@ class AssistantClient:
         ichida ochilsa, biz allaqachon 200 yuborib bo'lgan bo'lardik va
         xato brauzerga "uzilgan oqim" bo'lib ko'rinardi.
 
-        `engine` - `v1` ... `v4` | `""` (versiyasiz, xizmat default'i). Default
+        `engine` - `v1` ... `v5` | `""` (versiyasiz, xizmat default'i). Default
         `""`: klient o'zi tanlamaydi - qaysi dvigatel ekanini chaqiruvchi
         (`chat.open_stream`, kanal bo'yicha) aytadi.
 
@@ -390,10 +392,10 @@ class AssistantClient:
         savollari va fondagi xulosa yuki ajralib ko'rinsin.
 
         `style` - `voice`: savol GAPIRILGAN (ovozli suhbat, `chat.voice_style`). Faqat
-        v4 ga yuboriladi (`_V4_VOICE`); boshqa dvigatelda e'tiborsiz.
+        shartnoma 4.0 dvigatellariga (v4, v5) yuboriladi (`_V4_VOICE`); boshqasida e'tiborsiz.
 
         `audience` - `group`: javob Telegram GURUHIDA hammaga ko'rinadi (`_V4_GROUP`).
-        Faqat v4 da ma'noli - v1-v3 da cheklov tokenlar bilan (`chat.open_stream`).
+        Faqat v4 / v5 da ma'noli - v1-v3 da cheklov tokenlar bilan (`chat.open_stream`).
         """
         if engine not in ROUTES:
             # Dasturchi xatosi: `core/engines.py` faqat shu qiymatlarni beradi.
