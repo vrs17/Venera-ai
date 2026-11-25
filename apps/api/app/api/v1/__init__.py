@@ -17,6 +17,7 @@ from . import devices, live, meetings, voice
 from . import assistant_extras
 from . import slack
 from . import telephony
+from . import connector
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(auth.router)
@@ -60,5 +61,9 @@ router.include_router(slack.router)
 # Telefoniya: Barno chiquvchi qo'ng'iroqlari FreePBX orqali - qo'ng'iroq boshlash (admin) va FreePBX natijasi
 # (servis kaliti bilan, `telephony.py`).
 router.include_router(telephony.router)
+
+# Barno konnektori (Claude / ChatGPT): rozilik sahifasi va "Ulangan ilovalar" (`connector.py`;
+# MCP va OAuth eshigining o'zi ildizda - `app/connector/`).
+router.include_router(connector.router)
 
 __all__ = ["router"]

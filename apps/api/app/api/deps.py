@@ -104,12 +104,20 @@ def _resolve_user(token: str, store: UserStore, identities: IdentityStore) -> Au
     claims = verify_claims(token)
     if claims is None:
         raise unauthorized("Token yaroqsiz yoki muddati tugagan")
+    return user_for_subject(claims.subject, claims.version, store, identities)
 
-    identity = identities.by_subject(claims.subject)
+
+def user_for_subject(subject: str, version: object, store: UserStore,
+                     identities: IdentityStore) -> AuthUser:
+    """Token `sub` i (va versiyasi) -> foydalanuvchi, admin qarorlari bilan. Sayt tokeni
+    (`_resolve_user`) va konnektor ruxsati (`connector.core.user_for_grant`) BITTA qoidadan:
+    bloklangan hisob yoki "hamma joydan chiqarish" ikkalasini ham bir xil to'xtatadi."""
+    claims_subject, claims_version = subject, version
+    identity = identities.by_subject(claims_subject)
     if identity is not None:
         user, login = identity.to_public(), identity.username
     else:
-        stored = store.by_email(claims.subject)
+        stored = store.by_email(claims_subject)
         if stored is None:
             # Token haqiqiy, lekin foydalanuvchi o'chirilgan - 401 beramiz,
             # 403 emas: sessiya endi yaroqsiz va qayta kirish kerak.
@@ -119,7 +127,7 @@ def _resolve_user(token: str, store: UserStore, identities: IdentityStore) -> Au
     verdict = admin_users.access(user, login=login)
     if verdict.blocked:
         raise unauthorized("Hisob bloklangan")
-    if verdict.loaded and claims.version != verdict.token_version:
+    if verdict.loaded and claims_version != verdict.token_version:
         raise unauthorized("Sessiya yakunlangan")
     return verdict.user
 

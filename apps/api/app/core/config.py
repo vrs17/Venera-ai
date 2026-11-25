@@ -756,6 +756,20 @@ class Settings(BaseSettings):
     #: Ombor, audio va yuklanayotgan bo'laklar shu papkada. SHAXSIY
     #: MA'LUMOT: papka 700, fayllar 600, `data/` gitignore'da.
     meetings_dir: Path = BASE_DIR / "data" / "meetings"
+
+    # --- Barno konnektori (Claude / ChatGPT, MCP) - `docs/barno-connector.md` ---------------
+    #: Bosh kalit - `.env` dan JONLI (`mcp_connector_enabled_now`). O'chiq: `/mcp`, `/oauth/*`,
+    #: `/.well-known/oauth-*` 404, sayt rozilik sahifasi "o'chiq" deydi. Default o'chiq.
+    mcp_connector_enabled: bool = False
+    #: Konnektorning ochiq manzili (`https://llm.brb-tech.uz`). Bo'sh - `sso_app_url`.
+    #: Token `resource` i va metadata shundan: proksi Host'ini o'zgartirsa ham bitta qiymat.
+    mcp_public_url: str = ""
+    #: Mijozlar, so'rovlar, kodlar, tokenlar (HASH), ruxsatlar va murojaat jurnali.
+    connector_dir: Path = BASE_DIR / "data" / "connector"
+    #: Access token umri (soniya) - qisqa: bekor qilish baribir darhol, bu - o'g'irlangan
+    #: token oynasi. Refresh token har ishlatilganda AYLANADI.
+    mcp_access_ttl: int = 3600
+    mcp_refresh_ttl: int = 30 * 24 * 3600
     #: Fon ishchisi (transkripsiya, xulosa, tozalash). Testlarda O'CHIQ:
     #: `TestClient` ishga tushishi ip yaratmasin.
     meetings_worker: bool = True
@@ -1273,6 +1287,12 @@ def chat_shared_tokens_now() -> bool:
     """Umumiy (`.env`) HRM/CRM tokenlari odam nomidan ishlatiladimi - `.env` dan JONLI.
     Default o'chiq: faqat odamning o'z ulanishi (`settings.chat_shared_tokens`)."""
     return _env_flag("chat_shared_tokens", settings.chat_shared_tokens)
+
+
+def mcp_connector_enabled_now() -> bool:
+    """Barno konnektori (Claude / ChatGPT) yoqilganmi - `.env` dan JONLI: "darhol yopish"
+    restartsiz, keyingi chaqiruvdan (`docs/barno-connector.md`)."""
+    return _env_flag("mcp_connector_enabled", settings.mcp_connector_enabled)
 
 
 def agent_v4_enabled_now() -> bool:

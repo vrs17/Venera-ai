@@ -119,6 +119,26 @@ def _isolated_connectors(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_connector(tmp_path, monkeypatch):
+    """Barno konnektori ombori vaqtinchalik faylda; bosh kalit O'CHIQ (default) - kerakli
+    test o'zi yoqadi (`settings.mcp_connector_enabled`; `.env` testda yo'q), manzil bir xil."""
+    from app.connector import core as connector_core
+
+    monkeypatch.setattr(settings, "connector_dir", tmp_path / "connector", raising=False)
+    monkeypatch.setattr(settings, "mcp_public_url", "https://barno.test", raising=False)
+    monkeypatch.setattr(settings, "mcp_connector_enabled", False, raising=False)
+    # Bosh kalit `.env` dan emas, sozlama obyektidan (`_isolated_meetings` dagi kabi): mashinadagi
+    # `.env` (`MCP_CONNECTOR_ENABLED=true`) "o'chiq" testlarini buzmasin.
+    from app.core import config as config_module
+
+    monkeypatch.setattr(config_module, "mcp_connector_enabled_now",
+                        lambda: bool(settings.mcp_connector_enabled))
+    connector_core.reset_for_tests(tmp_path / "connector" / "connector.db")
+    yield
+    connector_core._store = None
+
+
+@pytest.fixture(autouse=True)
 def _isolated_identities(tmp_path, monkeypatch):
     """SSO hisoblar fayli HAR TESTDA vaqtinchalik va bo'sh.
 

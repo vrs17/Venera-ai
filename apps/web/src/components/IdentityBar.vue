@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Brain, ChevronsUpDown, Ear, Globe, LogOut, Monitor, MonitorDown, Moon, Shield, Sun, SunMoon } from 'lucide-vue-next'
+import { Brain, ChevronsUpDown, Ear, Globe, LogOut, Monitor, MonitorDown, Moon, Plug, Shield, Sun, SunMoon } from 'lucide-vue-next'
 import type { AuthUser } from '../types'
 import type { ThemePreference } from '../theme'
 import { LOCALES, setLocale } from '../i18n'
@@ -139,6 +139,8 @@ const SHORT: Record<Locale, string> = { uz: 'Oʻz', 'uz-Cyrl': 'Ўз', ru: 'Ру
 
     <!-- Xotira - oyna ChatView'da (menyu yopiladi, oyna qoladi). -->
     <VMenuItem :icon="Brain" @select="emit('openMemory')">{{ t('assistant.memory.open') }}</VMenuItem>
+    <!-- Claude / ChatGPT ga berilgan ruxsatlar (Barno konnektori) - ro'yxat va "Uzish". -->
+    <VMenuItem :icon="Plug" to="/connect">{{ t('shell.connector.menu') }}</VMenuItem>
     <!-- "Salom Venera" faqat uyg'otish so'zi bor tillarda: boshqasida kalit hech narsa qilmasdi. -->
     <VMenuItem v-if="wakeSupported" kind="checkbox" :icon="Ear" :checked="wake" @select="emit('toggleWake')">
       {{ t('wakeWord') }}

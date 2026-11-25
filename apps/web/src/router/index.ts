@@ -109,6 +109,22 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, loginDirect: true },
   },
   {
+    // Barno konnektori qo'llanmasi - OCHIQ sahifa (Claude / ChatGPT kataloglari "hujjat sahifasi"
+    // talab qiladi), maxfiylik sahifasining komponenti bilan.
+    path: '/connector',
+    name: 'connector-guide',
+    component: () => import('../views/PrivacyView.vue'),
+    props: { doc: 'connector' },
+  },
+  {
+    // Barno konnektori (Claude / ChatGPT): `?request=` bilan - rozilik (server `/oauth/authorize`
+    // yuboradi), usiz - "Ulangan ilovalar". Kirmagan odam avval kirish sahifasiga, keyin shu yerga.
+    path: '/connect',
+    name: 'connect',
+    component: () => import('../views/ConnectView.vue'),
+    meta: { requiresAuth: true, loginDirect: true },
+  },
+  {
     // Jonli ovozli suhbat (llm.brb-tech.uz/barno) - Speko agenti bilan. Sahifa kirishsiz ham ochiladi, lekin
     // qo'ng'iroq faqat kirgan odamga (pullik daqiqalar): mehmon kartani bossa kirish sahifasiga o'tadi va
     // kirgach shu yerga qaytadi (`views/LiveView.vue`).

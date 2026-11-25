@@ -7,11 +7,17 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BrandSpark from '../components/BrandSpark.vue'
-import { POLICY, UPDATED, policyLang, type PolicyLang } from '../features/privacy/policy'
+import { POLICY, UPDATED, policyLang, type PolicyLang, type PolicyText } from '../features/privacy/policy'
+import { GUIDE, GUIDE_UPDATED } from '../features/connector/guide'
+
+/** `privacy` - maxfiylik siyosati; `connector` - Barno konnektori qo'llanmasi (`/connector`). */
+const props = withDefaults(defineProps<{ doc?: 'privacy' | 'connector' }>(), { doc: 'privacy' })
+const DOCS: Record<PolicyLang, PolicyText> = props.doc === 'connector' ? GUIDE : POLICY
+const updated = props.doc === 'connector' ? GUIDE_UPDATED : UPDATED
 
 const { locale } = useI18n({ useScope: 'global' })
 const lang = ref<PolicyLang>(policyLang(locale.value))
-const text = computed(() => POLICY[lang.value])
+const text = computed(() => DOCS[lang.value])
 const LANGS: { id: PolicyLang; label: string }[] = [
   { id: 'uz', label: "O'zbekcha" },
   { id: 'ru', label: 'Русский' },
@@ -24,7 +30,7 @@ onMounted(() => {
 
 function pick(id: PolicyLang): void {
   lang.value = id
-  document.title = POLICY[id].title
+  document.title = DOCS[id].title
 }
 </script>
 
@@ -48,7 +54,7 @@ function pick(id: PolicyLang): void {
     </header>
     <article class="privacy__body">
       <h1>{{ text.title }}</h1>
-      <p class="privacy__updated">{{ text.updatedLabel }}: {{ UPDATED }}</p>
+      <p class="privacy__updated">{{ text.updatedLabel }}: {{ updated }}</p>
       <p>{{ text.intro }}</p>
       <section v-for="s in text.sections" :key="s.title">
         <h2>{{ s.title }}</h2>

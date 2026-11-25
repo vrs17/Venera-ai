@@ -1,6 +1,6 @@
 # Barno konnektori - Claude va ChatGPT uchun (MCP)
 
-Holat: LOYIHA (2026-11-25). Kod hali yo'q; bu hujjat - 1-bosqich rejasi va egasining qarorlari.
+Holat: 1-bosqich KODI YOZILDI (2026-11-25), hali ishlab chiqarishda yoqilmagan.
 Shox: `barno-mcp-connector`.
 
 ## Nima va nega
@@ -102,7 +102,13 @@ MCP o'zi: Streamable HTTP, holatsiz, `POST /mcp` JSON javob bilan (SSE yo'q); `i
   chaqiruvda) ishlamaydi.
 - Jurnal: kim, qaysi ilova (Claude / ChatGPT), qaysi vosita, qachon, natija hajmi -
   matnning o'zi jurnalga tushmaydi.
-- Chegaralar: daqiqasiga N chaqiruv, javob hajmi chegarasi (transkript bo'laklab).
+- Chegaralar: ruxsatga daqiqasiga 60 chaqiruv (rad etilganlar sanalmaydi), javob hajmi
+  chegarasi (transkript bo'laklab, uzun segment ham - kursor segment ichiga ko'rsatadi).
+- Bir odam bir ilovani bir necha qurilma/hisobdan ulay oladi (CIMD da `client_id` umumiy):
+  yangi rozilik eskisini uzmaydi; odamga 20 tadan ortiq jonli ruxsat bo'lsa eng eskisi uziladi.
+- DCR: ruxsatga yetmagan mijoz 1 soatda tozalanadi; chegara (5000) to'lsa eng eski
+  ishlatilmaganlari bo'shatiladi - begona to'ldirish haqiqiy ulanishni to'smaydi.
+- Jurnal 90 kun saqlanadi.
 
 ## Kataloglarga topshirish
 
@@ -133,7 +139,25 @@ osonlashtiradi (manzilni yozish o'rniga ro'yxatdan tanlash).
 5. Sinov: avval egasining o'zi Claude va ChatGPT da (manzil bilan), keyin kataloglar.
 6. Hujjatlar: `/privacy` bo'limi, `/connector` sahifasi, katalog materiallari.
 
-Yoqish: `.env` da `MCP_CONNECTOR_ENABLED=true` (jonli o'qiladi; o'chiq bo'lsa hamma yo'l 404).
+Kod: `apps/api/app/connector/` (`core.py` - kalit, manzil, qamrov; `store.py` - SQLite;
+`oauth.py` - eshik; `mcp.py` + `plaud_tools.py` - MCP), `apps/api/app/api/v1/connector.py`
+(rozilik API), sayt: `views/ConnectView.vue` (`/connect` - rozilik va "Ulangan ilovalar"),
+`/connector` qo'llanmasi (`features/connector/guide.ts`), `/privacy` ning 9-bo'limi, konteyner
+nginx'i (`apps/web/deploy/nginx.container.conf`).
+
+Yoqish (merge'dan keyin):
+
+1. Prod daraxtida `git pull`, sayt image'ini qayta yig'ish va `venera-api` + `venera-frontend`
+   ni qayta ishga tushirish (yangi kutubxona YO'Q). DIQQAT: jonli konteyner nginx sozlamasini
+   image'dan EMAS, `~/.local/share/venera-tg-conf/default.conf.template` dan o'qiydi (unit'dagi
+   mount) - restartdan oldin `apps/web/deploy/nginx.container.conf` o'sha joyga nusxalanadi
+   (eskisi `.bak-<sana>` bo'lib qoladi). Usiz `/mcp`, `/oauth/*` sayt sahifasiga tushadi.
+2. `apps/api/.env` ga `MCP_CONNECTOR_ENABLED=true` (ega o'zi; jonli o'qiladi - restart shart
+   emas). `MCP_PUBLIC_URL` kerak emas: bo'sh bo'lsa `SSO_APP_URL` (`https://llm.brb-tech.uz`).
+3. Tekshiruv: `https://llm.brb-tech.uz/.well-known/oauth-authorization-server` JSON qaytaradi,
+   tokensiz `POST https://llm.brb-tech.uz/mcp` - 401 va `WWW-Authenticate`; keyin Claude ->
+   Settings -> Connectors -> "Add custom connector" -> `https://llm.brb-tech.uz/mcp`.
+4. O'chirish: `MCP_CONNECTOR_ENABLED=false` - darhol, restartsiz.
 
 ## Qilinmaydi (1-bosqich)
 

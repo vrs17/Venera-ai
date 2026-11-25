@@ -34,6 +34,8 @@ from fastapi import Depends
 from .api.deps import current_user, docs_viewer, get_identity_store, get_user_store, require_roles
 from .api.metering import ChannelMiddleware
 from .api.v1 import router as v1_router
+from .connector import mcp as connector_mcp
+from .connector import oauth as connector_oauth
 from .core import errors
 from .core.config import crm_token_now, hrm_token_now, settings
 from .services.oidc import KeycloakOidc
@@ -207,6 +209,11 @@ if settings.cors_origins:
 app.add_middleware(ChannelMiddleware)
 
 app.include_router(v1_router)
+# Barno konnektori (Claude / ChatGPT): `/mcp`, `/oauth/*`, `/.well-known/oauth-*` - ILDIZDA,
+# `/api` ostida emas: MCP va OAuth metadata manzillari standart bo'yicha shunday kutiladi.
+# Bosh kalit o'chiq bo'lsa hammasi 404 (`connector/core.enabled`).
+app.include_router(connector_oauth.router)
+app.include_router(connector_mcp.router)
 
 
 #: Yuqoridagi ovoz xizmatlari holati. Keshlanadi - `/api/health` monitoring

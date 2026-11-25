@@ -13,7 +13,7 @@ export type PolicyLang = 'uz' | 'ru' | 'en'
 /** Murojaat manzili va operator nomi - nashrdan oldin ega tasdiqlaydi. */
 export const CONTACT_EMAIL = 'ai@brb-tech.uz'
 export const OPERATOR = 'BRB-Tech'
-export const UPDATED = '2026-11-19'
+export const UPDATED = '2026-11-25'
 
 export interface PolicySection {
   title: string
@@ -96,7 +96,15 @@ export const POLICY: Record<PolicyLang, PolicyText> = {
         paragraphs: ['Ilova 18 yoshdan kichiklar uchun mo’ljallanmagan va ulardan ataylab ma’lumot yig’maydi.'],
       },
       {
-        title: '9. O’zgarishlar va aloqa',
+        title: '9. Claude va ChatGPT konnektori',
+        paragraphs: [
+          'Xohlasangiz, Barno ma’lumotlaringizni o’zingizning Claude (Anthropic) yoki ChatGPT (OpenAI) hisobingizga ulashingiz mumkin. Konnektor sukut bo’yicha o’chiq: siz BRB-Tech ID bilan kirib, qaysi modulga (hozir faqat Plaud yig’ilishlari, faqat o’qish) ruxsat berishni o’zingiz tanlaysiz.',
+          'Ruxsat bersangiz, siz so’ragan ma’lumot (yig’ilishlar ro’yxati, xulosa, transkript, vazifalar) o’sha xizmatga uzatiladi va undan keyin uning maxfiylik siyosati amal qiladi. Shaxsiy rejalarda u xizmat sozlamalarida ma’lumotni model o’qitishga berishni o’chirishni tavsiya qilamiz.',
+          'Biz faqat kim, qaysi ilova, qaysi vosita va qachon chaqirilganini jurnalga yozamiz — ma’lumotning o’zi jurnalga tushmaydi. Kirish tokenlari serverda faqat xesh ko’rinishida saqlanadi. Istalgan payt Barno → «Ulangan ilovalar» dan uzishingiz mumkin; uzilgan ilova darhol kira olmaydi.',
+        ],
+      },
+      {
+        title: '10. O’zgarishlar va aloqa',
         paragraphs: [
           'Siyosat o’zgarsa, yangi matn shu sahifada e’lon qilinadi va sana yangilanadi.',
           `Savollar uchun: ${CONTACT_EMAIL} (${OPERATOR}).`,
@@ -172,7 +180,15 @@ export const POLICY: Record<PolicyLang, PolicyText> = {
         paragraphs: ['Приложение не предназначено для лиц младше 18 лет и намеренно не собирает их данные.'],
       },
       {
-        title: '9. Изменения и контакты',
+        title: '9. Коннектор для Claude и ChatGPT',
+        paragraphs: [
+          'По желанию вы можете подключить свои данные Barno к своему аккаунту Claude (Anthropic) или ChatGPT (OpenAI). По умолчанию коннектор выключен: вы входите через BRB-Tech ID и сами выбираете, к какому модулю дать доступ (сейчас только встречи Plaud, только чтение).',
+          'Если вы разрешите, запрошенные вами данные (список встреч, сводки, расшифровки, задачи) передаются этому сервису, и далее действует его политика конфиденциальности. На личных тарифах рекомендуем отключить в его настройках использование данных для обучения моделей.',
+          'Мы записываем в журнал только кто, какое приложение, какой инструмент и когда вызвал — сами данные в журнал не попадают. Токены доступа хранятся на сервере только в виде хеша. Отключить можно в любой момент: Barno → «Подключённые приложения»; отключённое приложение сразу теряет доступ.',
+        ],
+      },
+      {
+        title: '10. Изменения и контакты',
         paragraphs: [
           'При изменении политики новый текст публикуется на этой странице, дата обновляется.',
           `Вопросы: ${CONTACT_EMAIL} (${OPERATOR}).`,
@@ -248,7 +264,15 @@ export const POLICY: Record<PolicyLang, PolicyText> = {
         paragraphs: ['The app is not intended for anyone under 18 and does not knowingly collect their data.'],
       },
       {
-        title: '9. Changes and contact',
+        title: '9. Claude and ChatGPT connector',
+        paragraphs: [
+          'If you choose, you can connect your Barno data to your own Claude (Anthropic) or ChatGPT (OpenAI) account. The connector is off by default: you sign in with BRB-Tech ID and choose which module to allow (currently Plaud meetings only, read only).',
+          'If you allow it, the data you ask for (meeting list, summaries, transcripts, action items) is sent to that service, and its privacy policy applies from then on. On personal plans we recommend turning off the use of your data for model training in that service’s settings.',
+          'We log only who called which tool from which app and when — never the data itself. Access tokens are stored on our server only as hashes. You can disconnect at any time in Barno → “Connected apps”; a disconnected app loses access immediately.',
+        ],
+      },
+      {
+        title: '10. Changes and contact',
         paragraphs: [
           'If this policy changes, the new text is published on this page with a new date.',
           `Questions: ${CONTACT_EMAIL} (${OPERATOR}).`,
