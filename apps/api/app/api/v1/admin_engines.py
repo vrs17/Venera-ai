@@ -88,6 +88,8 @@ def put_policy(
     changes: dict = {}
     if "default" in sent:
         changes["default"] = body.default
+    if "selectable" in sent and body.selectable is not None:
+        changes["selectable"] = body.selectable
     try:
         view = _control.put_policy(admin, identities, users, channels=body.channels, **changes)
     except _admin.AdminError as exc:

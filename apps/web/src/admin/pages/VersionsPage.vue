@@ -170,6 +170,35 @@ function askEveryone(id: string) {
   })
 }
 
+/* ---------------------------------------------------------------- hamma tanlay oladi */
+
+// "v4 default, v5 ham mavjud" (ega, 2026-11-25): default'ni O'ZGARTIRMASDAN versiyani chatdagi
+// tanlovga qo'shish - hech kim o'z-o'zidan ko'chmaydi, odam web kompozeridagi "v4 ▾" dan o'zi tanlaydi.
+const selectableSaving = ref<string | null>(null)
+
+function isSelectable(id: string): boolean {
+  return data.value?.policy.selectable?.includes(id) ?? false
+}
+
+async function toggleSelectable(id: string) {
+  const d = data.value
+  if (!d || selectableSaving.value) return
+  const next = new Set(d.policy.selectable ?? [])
+  const on = !next.has(id)
+  if (on) next.add(id)
+  else next.delete(id)
+  selectableSaving.value = id
+  try {
+    const res = await putEnginePolicy({ selectable: [...next] })
+    q.mutate(() => res)
+    done(t(on ? 'admin.versions.selectableOn' : 'admin.versions.selectableOff', { v: id }), 'admin-engine-selectable')
+  } catch (err) {
+    toast.show({ message: userActionError(err, tr), tone: 'crit', id: 'admin-engine-selectable' })
+  } finally {
+    selectableSaving.value = null
+  }
+}
+
 /* ---------------------------------------------------------------- kanallar */
 
 /** VSegmented `null` qiymatni bilmaydi - "Umumiy" (meros) uchun belgi. */
@@ -376,9 +405,21 @@ function askRemove(r: EngineAccessRow) {
                 <RelTime :value="policySource.at" />
               </template>
             </p>
-            <VButton v-else-if="!c.isPublic" variant="primary" size="sm" @click="askEveryone(c.info.id)">
-              {{ t('admin.versions.giveEveryone') }}
-            </VButton>
+            <template v-else-if="!c.isPublic">
+              <VButton variant="primary" size="sm" @click="askEveryone(c.info.id)">
+                {{ t('admin.versions.giveEveryone') }}
+              </VButton>
+              <label class="vp-card__optional" :title="t('admin.versions.selectableHint')">
+                <input
+                  type="checkbox"
+                  :checked="isSelectable(c.info.id)"
+                  :disabled="selectableSaving !== null"
+                  :data-testid="`vp-selectable-${c.info.id}`"
+                  @change="toggleSelectable(c.info.id)"
+                />
+                <span>{{ t('admin.versions.selectable') }}</span>
+              </label>
+            </template>
           </footer>
         </article>
       </div>
@@ -633,9 +674,20 @@ function askRemove(r: EngineAccessRow) {
 }
 .vp-card__foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: var(--s-3);
   min-height: 32px;
   margin-top: auto;
+}
+.vp-card__optional {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1_5);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-caption);
+  color: var(--text-2);
+  cursor: pointer;
 }
 .vp-card__source {
   display: flex;

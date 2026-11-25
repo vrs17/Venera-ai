@@ -36,7 +36,7 @@ class ProQuota(BaseModel):
     #: So'rovchi uchun SHU KANALDA (`X-Venera-Client`) ishlaydigan dvigatel -
     #: admin qarori va `?engine=` tanlovi qo'llangandan keyin
     #: (`services/engine_control.py`): `v1` | `v2` | `""` (versiyasiz). "Pro" faqat `v2` da.
-    engine: Literal["v1", "v2", "v3", "v4", ""] = ""
+    engine: Literal["v1", "v2", "v3", "v4", "v5", ""] = ""
     #: "Pro" shu kanalda ishlatsa bo'ladimi: dvigatel `v2` VA byudjet
     #: yuqoridagi xizmatdan o'qildi. `false` bo'lsa klient "Pro" tugmasini
     #: ko'rsatmaydi (oynalar shunda nollar - ular haqiqiy byudjet emas).

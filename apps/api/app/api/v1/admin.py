@@ -1,7 +1,7 @@
 """Admin panel API - FAQAT ADMIN roli.
 
     GET   /admin/overview         KPI, faollik, kanallar, yo'nalishlar, dvigatellar, javob vaqti, ...
-    GET   /admin/turns            savollar: filtrlar (`engine=v1|v2|v3|v4|default` ham), kursor bilan
+    GET   /admin/turns            savollar: filtrlar (`engine=v1|v2|v3|v4|v5|default` ham), kursor bilan
     GET   /admin/turns/{id}       bitta savolning to'liq izi
     GET   /admin/chats            suhbatlar (`chat_id` bo'yicha guruhlangan)
     GET   /admin/reports          xabarlar (shikoyatlar) qutisi

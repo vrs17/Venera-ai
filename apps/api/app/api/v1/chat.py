@@ -589,7 +589,7 @@ def open_stream(question: str, user: AuthUser, chat_id: str | None, *,
         HR ma'lumoti u yerga chiqa olmasin). `None` - hammasi (odatiy);
       * `own_tokens` - faqat odamning O'Z ulanishlari: umumiy `.env` tokeni va
         agent sessiyasiga TUSHILMAYDI (guruhda vazifa so'ragan odam nomidan);
-      * `style` - `voice`: savol GAPIRILGAN (`voice_style`). Yuqoriga faqat v4 da
+      * `style` - `voice`: savol GAPIRILGAN (`voice_style`). Yuqoriga faqat v4 / v5 da
         ketadi (`assistant.stream`), boshqa dvigatellar bugungidek;
       * `audience` - `group`: javob Telegram GURUHIDA (`bot/runner.py: stream_group`).
         v4 da agentning o'zi guruh cheklovini kodda qo'yadi (`assistant._V4_GROUP`);

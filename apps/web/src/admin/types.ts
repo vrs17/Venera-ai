@@ -31,7 +31,8 @@ export type InputMode = 'text' | 'voice'
 /** Qaysi tomon javob berdi (yuqoridagi yordamchining `done.route`). `none` - faqat filtrda.
  *  `contacts` - yordamchi EMAS, xodimlar ma'lumotnomasi javob bergan (`services/contacts_chat.py`).
  *  2026-10-10 (yordamchi 3.3): `biznes247_kpi` (Biznes 24/7 ko'rsatkichlari), `biznes247_kb`
- *  (qo'llanmalar), `biznes247_help` (Biznes Help), `memory` (Barno xotirasidan javob). */
+ *  (qo'llanmalar), `biznes247_help` (Biznes Help), `memory` (Barno xotirasidan javob).
+ *  2026-11-25: `agent` - v5 dvigateli har javobda shuni beradi (yoki `error`). */
 export const ROUTES = [
   'rules',
   'hrm',
@@ -44,12 +45,13 @@ export const ROUTES = [
   'biznes247_kb',
   'biznes247_help',
   'memory',
+  'agent',
 ] as const
 export type Route = (typeof ROUTES)[number]
 
 /** Yordamchi dvigateli (2026-10-02): `v1` - barqaror, `v2` - yangi (qonun, "Pro").
  *  Filtrda faqat shu ikkitasi; `null` (eski yozuvlar, versiyasiz yo'l) - filtrsiz. */
-export const ENGINES = ['v1', 'v2', 'v3', 'v4'] as const
+export const ENGINES = ['v1', 'v2', 'v3', 'v4', 'v5'] as const
 export type Engine = (typeof ENGINES)[number]
 
 export type ProposalStatus = 'pending' | 'executed' | 'cancelled' | 'failed' | 'expired'
@@ -536,6 +538,8 @@ export type EngineChannel = (typeof ENGINE_CHANNELS)[number]
 export interface EnginePolicy {
   default: string | null
   channels: Partial<Record<Channel | (string & {}), string>>
+  /** Hamma chatda TANLAY oladigan versiyalar (default o'zgarmaydi, hech kim o'z-o'zidan ko'chmaydi). */
+  selectable?: string[]
   source: 'admin' | 'env' | (string & {})
   updatedAt: string | null
   updatedBy: string | null
@@ -593,6 +597,8 @@ export interface AdminEngines {
 export interface EnginePolicyUpdate {
   default?: string | null
   channels?: Partial<Record<Channel | (string & {}), string | null>>
+  /** Berilsa - "hamma tanlay oladi" ro'yxati shuning o'zi (`[]` - hech biri). */
+  selectable?: string[]
 }
 
 /** types.ts: EngineAccessUpdate. `note` yuborilmasa eskisi qoladi, `null`/`""` - o'chiriladi. */

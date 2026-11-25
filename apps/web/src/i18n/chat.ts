@@ -38,7 +38,7 @@ const en = {
   lawCaption: '{site} · legislation',
   lawOpen: 'Open in a new tab',
   // Yordamchi versiyasi (kompozerdagi "v2 ▾"): faqat odamga tanlov berilgan bo'lsa ko'rinadi.
-  // `v1`...`v4` - nomi, `*Desc` - bitta qator; noma'lum versiya - faqat kaliti ("v5").
+  // `v1`...`v5` - nomi, `*Desc` - bitta qator; noma'lum versiya - faqat kaliti ("v6").
   engines: {
     label: 'Assistant version',
     pill: 'Assistant version: {v}',
@@ -50,6 +50,8 @@ const en = {
     v3Desc: 'One agent for everything: keeps the task across messages',
     v4: 'Core+',
     v4Desc: 'Core with the newest updates: work activity, voice-style replies',
+    v5: 'Agent',
+    v5Desc: 'Newest agent (testing): no Pro or application documents yet',
     answeredBy: 'Answered by {v}',
     switched: 'Next answers: {v}',
   },
@@ -95,6 +97,8 @@ const uz: Mirror<typeof en> = {
     v3Desc: 'Hammasi uchun bitta agent: vazifani xabarlar orasida eslab qoladi',
     v4: 'Core+',
     v4Desc: 'Core va eng yangi imkoniyatlar: ish faolligi, ovozli javoblar',
+    v5: 'Agent',
+    v5Desc: 'Eng yangi agent (sinov): Pro va ariza hujjati hali yoʻq',
     answeredBy: '{v} javob berdi',
     switched: 'Keyingi javoblar: {v}',
   },
@@ -140,6 +144,8 @@ const uzCyrl: Mirror<typeof en> = {
     v3Desc: 'Ҳаммаси учун битта агент: вазифани хабарлар орасида эслаб қолади',
     v4: 'Core+',
     v4Desc: 'Core ва энг янги имкониятлар: иш фаоллиги, овозли жавоблар',
+    v5: 'Агент',
+    v5Desc: 'Энг янги агент (синов): Pro ва ариза ҳужжати ҳали йўқ',
     answeredBy: '{v} жавоб берди',
     switched: 'Кейинги жавоблар: {v}',
   },
@@ -185,6 +191,8 @@ const ru: Mirror<typeof en> = {
     v3Desc: 'Один агент для всего: помнит задачу между сообщениями',
     v4: 'Core+',
     v4Desc: 'Core с новейшими возможностями: рабочая активность, голосовые ответы',
+    v5: 'Агент',
+    v5Desc: 'Новейший агент (тест): Pro и заявлений пока нет',
     answeredBy: 'Ответ: {v}',
     switched: 'Следующие ответы: {v}',
   },
