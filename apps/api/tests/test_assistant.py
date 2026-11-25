@@ -829,6 +829,17 @@ def test_endpoint_kimlikni_tokendan_oladi(api, auth, server):
     assert "boshqa-odam" not in json.dumps(body)
 
 
+@pytest.fixture
+def shared_tokens(monkeypatch):
+    """Eski xulq (`CHAT_SHARED_TOKENS=true`): o'z ulanishi yo'q platformaga `.env` dagi umumiy
+    token / umumiy CRM hisobi. Default'da o'chiq (2026-11-25) - quyidagi testlar faqat shu
+    kalit yoqilganda nima bo'lishini tekshiradi."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "chat_shared_tokens", True)
+
+
+@pytest.mark.usefixtures("shared_tokens")
 def test_endpoint_tokenlarni_har_sorovda_oqiydi(api, auth, server, monkeypatch):
     """Tokenlar `.env` dan HAR SO'ROVDA olinadi, `settings` dan emas:
     sessiyalar bir necha daqiqada tugaydi va yangi qiymat uchun restart
@@ -854,6 +865,7 @@ def test_endpoint_token_bosh_bolsa_yubormaydi(api, auth, server, monkeypatch):
     assert "hrm_token" not in server.calls[0]["body"]
 
 
+@pytest.mark.usefixtures("shared_tokens")
 def test_endpoint_crm_tokenini_ham_uzatadi(api, auth, server, monkeypatch):
     """CRM savoli uchun CRM tokeni KERAK. Bu yo'l uzilganda "mening
     tasklarim" kabi savol `auth_missing` olib, foydalanuvchiga "CRM
@@ -865,6 +877,7 @@ def test_endpoint_crm_tokenini_ham_uzatadi(api, auth, server, monkeypatch):
     assert server.calls[0]["body"]["tokens"]["crm"] == "c"
 
 
+@pytest.mark.usefixtures("shared_tokens")
 def test_avtomatik_crm_sessiyasi_env_dan_ustun(api, auth, server, monkeypatch, tmp_path):
     """`CrmAuth` sozlangan bo'lsa `.env` dagi `crm_token` BOSILADI.
 
@@ -884,6 +897,7 @@ def test_avtomatik_crm_sessiyasi_env_dan_ustun(api, auth, server, monkeypatch, t
     assert server.calls[0]["body"]["tokens"] == {"hrm": "h", "crm": "AVTO-YANGI"}
 
 
+@pytest.mark.usefixtures("shared_tokens")
 def test_crm_sessiyasi_yiqilsa_env_ga_tushmaydi(api, auth, server, monkeypatch, tmp_path):
     """Sozlangan `CrmAuth` yiqilsa, eskirgan `.env` tokeni ISHLATILMAYDI.
 
@@ -908,6 +922,7 @@ def test_crm_sessiyasi_yiqilsa_env_ga_tushmaydi(api, auth, server, monkeypatch, 
     assert server.calls[0]["body"]["tokens"] == {"hrm": "h"}
 
 
+@pytest.mark.usefixtures("shared_tokens")
 def test_crm_sessiyasi_sozlanmasa_env_ishlatiladi(api, auth, server, monkeypatch):
     """Sozlama to'lmaguncha qo'lda yozilgan token bilan ishlashda davom
     etadi - butunlay ishsiz qolishdan ko'ra yaxshiroq."""

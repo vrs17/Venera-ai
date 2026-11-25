@@ -1002,6 +1002,15 @@ class Settings(BaseSettings):
     #: `CrmAuth` hisobi va HRM tokeni yuborilmaydi - vazifa so'ragan odam nomidan. `false` -
     #: o'z ulanishi bo'lmasa umumiy CRM hisobi (HRM baribir yuborilmaydi).
     meetings_crm_own_tokens: bool = True
+    #: Odam nomidan ishlaydigan HAMMA yo'l (web/mobil chat, Telegram bot, Slack, yig'ilish
+    #: savoli, tasdiq tugmalari, CRM holati - `chat._live_tokens`) faqat odamning O'Z HRM/CRM
+    #: ulanishini yuboradi (2026-11-25, ega qarori). `true` - eski xulq: o'z ulanishi yo'q
+    #: platformaga `.env` dagi umumiy token / umumiy `CrmAuth` hisobi. Nega o'chiq: SSO dan
+    #: keyin hamma xodimning o'z ulanishi bor; umumiy token faqat ulanmagan hisoblarga
+    #: (Google Play sharhlovchisining demo hisobi) tushardi - eskirganida har savol
+    #: `auth_expired`, ishlaganida esa begona odamga kompaniyaning HRM/CRM ma'lumoti.
+    #: `.env` dan JONLI (`chat_shared_tokens_now`).
+    chat_shared_tokens: bool = False
     #: Yig'ilish savol-javobida (Ask, v3) agentga SHU platformalar tokeni ketadi (vergul bilan).
     #: 2026-10-10 (F0 maxfiylik): faqat `crm` - yig'ilish savoliga HR ma'lumoti (maosh,
     #: ta'til) kerak emas, HRM tokeni ortiqcha ochiq eshik edi. `.env` dan JONLI
@@ -1258,6 +1267,12 @@ def meetings_enabled_now() -> bool:
     tushirish ayni paytda yuklanayotgan yozuvlarni uzib qo'yardi.
     """
     return _env_flag("meetings_enabled", settings.meetings_enabled)
+
+
+def chat_shared_tokens_now() -> bool:
+    """Umumiy (`.env`) HRM/CRM tokenlari odam nomidan ishlatiladimi - `.env` dan JONLI.
+    Default o'chiq: faqat odamning o'z ulanishi (`settings.chat_shared_tokens`)."""
+    return _env_flag("chat_shared_tokens", settings.chat_shared_tokens)
 
 
 def agent_v4_enabled_now() -> bool:

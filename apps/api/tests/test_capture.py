@@ -135,6 +135,9 @@ def upstream(monkeypatch, tmp_path):
         def open(self, request, timeout=None):
             return fake.open(request, timeout)
 
+    # Umumiy token yo'li (`CHAT_SHARED_TOKENS`, default o'chiq) - sir qiymatli token yuborilsin,
+    # ya'ni "izga tushmaydi" tekshiruvi haqiqatan biror narsani tekshirsin.
+    monkeypatch.setattr(settings, "chat_shared_tokens", True)
     monkeypatch.setattr(urllib.request, "build_opener", lambda *a, **kw: Opener())
     monkeypatch.setattr(chat_module, "_assistant",
                         AssistantClient(BASE, "venera", SECRET, timeout=5, max_concurrent=2))

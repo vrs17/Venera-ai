@@ -42,7 +42,7 @@ from starlette.concurrency import run_in_threadpool
 from ...core import engines as _engines
 from ...core.channels import channel_of
 from ...core.channels import normalize as normalize_channel
-from ...core.config import ollama_key_now, platform_tokens, settings
+from ...core.config import chat_shared_tokens_now, ollama_key_now, platform_tokens, settings
 from ...core.errors import bad_request, error_status
 from ...schemas.auth import AuthUser
 from ...schemas.chat import AskRequest, FileLink, FileLinkRequest, PipelineResponse, StreamRequest
@@ -490,6 +490,13 @@ def assistant_user_id(user: AuthUser) -> str:
 def _live_tokens(user: AuthUser) -> dict[str, str]:
     """Yuboriladigan platforma token'lari.
 
+    2026-11-25 (ega qarori): DEFAULT - FAQAT ODAMNING O'Z ULANISHI (`CHAT_SHARED_TOKENS`
+    o'chiq). Ulanmagan platforma xaritada bo'lmaydi va agent halol `auth_missing` beradi
+    ("tizimga ulaning") - eskirgan umumiy token tufayli har savol `auth_expired` bo'lmaydi va
+    ulanmagan hisobga (masalan Google Play sharhlovchisining demo hisobi) kompaniyaning
+    umumiy HRM/CRM sessiyasi orqali ma'lumot chiqmaydi. Quyidagi umumiy manbalar faqat
+    `CHAT_SHARED_TOKENS=true` bo'lsa (eski xulq, `.env` dan jonli).
+
     USTUNLIK: foydalanuvchining O'Z ulanishi HAMMASIDAN USTUN: HRM va CRM
     (ikkalasi ham BRB-Tech ID kirishida o'zi ulanadi, `api/v1/auth._connect_sso`). Ulangan bo'lsa o'sha platforma uchun FAQAT uning tokeni
     ketadi - shunda "men" degani haqiqatan o'sha odam; kalit yo'q, ulangan
@@ -515,6 +522,8 @@ def _live_tokens(user: AuthUser) -> dict[str, str]:
     Token YUBORMASLIK esa halol `auth_missing` beradi ("CRM tizimiga
     kiring"), va haqiqiy sabab `/api/health` da turadi.
     """
+    if not chat_shared_tokens_now():
+        return dict(_connectors.hub.tokens(str(user.actorId)))
     tokens = platform_tokens()
     if _crm.configured:
         crm = _crm.token()

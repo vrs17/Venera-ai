@@ -425,9 +425,30 @@ def test_api_notogri_platforma_404(client, auth, hub):
     assert response.status_code == 404
 
 
-def test_chat_odamning_tokeni_umumiydan_ustun(client, auth, hub, net, monkeypatch, tmp_path):
-    """O'z hisobi bilan kirgan odam uchun `.env` dagi umumiy token EMAS,
-    uning o'z tokeni ketadi; ulanmagan odam uchun umumiy token qoladi."""
+def test_chat_faqat_odamning_oz_tokeni(client, auth, hub, net, monkeypatch, tmp_path):
+    """Default (2026-11-25): odam nomidan FAQAT uning o'z ulanishi ketadi. Ulanmagan odamga
+    `.env` dagi umumiy token ham, umumiy CRM hisobi ham YUBORILMAYDI - agent halol
+    `auth_missing` beradi (eskirgan umumiy token bilan `auth_expired` emas, va begona hisobga
+    kompaniya ma'lumoti emas)."""
+    from app.core.config import settings
+
+    assert settings.chat_shared_tokens is False
+    monkeypatch.setattr(chat_api, "platform_tokens", lambda: {"hrm": "umumiy", "crm": "umumiy-crm"})
+    monkeypatch.setattr(chat_api, "_crm", CrmAuth("", "", "", tmp_path / "agent"))
+    me = AuthUser(actorId=1, email="admin@venera.uz", fullName="Admin")
+    other = AuthUser(actorId=2, email="demo@venera.uz", fullName="Demo")
+    assert chat_api._live_tokens(me) == {}
+    legacy_hrm(hub)
+    assert set(chat_api._live_tokens(me)) == {"hrm"} and chat_api._live_tokens(me)["hrm"].startswith("eyJ")
+    assert chat_api._live_tokens(other) == {}
+
+
+def test_chat_umumiy_token_kaliti_bilan_eski_xulq(client, auth, hub, net, monkeypatch, tmp_path):
+    """`CHAT_SHARED_TOKENS=true` - eski xulq: o'z hisobi bilan kirgan odamga o'z tokeni,
+    ulanmagan odamga `.env` dagi umumiy token."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "chat_shared_tokens", True)
     monkeypatch.setattr(chat_api, "platform_tokens", lambda: {"hrm": "umumiy"})
     # Agent sessiyasi (`.env` dagi CRM_USERNAME/PASSWORD) bu testga aloqasiz
     # va sozlangan bo'lsa soxta tarmoqqa noma'lum so'rov yuborardi.
