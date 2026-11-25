@@ -168,14 +168,14 @@ ENGINE_CHOICE_FIELDS = {"current", "selectable", "available", "catalog"}
 
 # types.ts: AdminEngines va ichidagilar - `GET /api/v1/admin/engines`
 ADMIN_ENGINES_FIELDS = {"catalog", "policy", "envDefaults", "effective", "stats", "access"}
-ENGINE_POLICY_FIELDS = {"default", "channels", "source", "updatedAt", "updatedBy"}
+ENGINE_POLICY_FIELDS = {"default", "channels", "selectable", "source", "updatedAt", "updatedBy"}
 ENV_DEFAULTS_FIELDS = {"default", "channels"}
 EFFECTIVE_ENGINES_FIELDS = {"web", "miniapp", "bot"}
 ENGINE_USAGE_FIELDS = {"engine", "turns", "errors", "medianTtftMs", "users"}
 ENGINE_ACCESS_ROW_FIELDS = {"actorId", "name", "login", "engines", "defaultEngine", "note",
                             "updatedAt", "updatedBy"}
 # types.ts: EnginePolicyUpdate / EngineAccessUpdate / EngineAccessRemoved / UserEngine
-ENGINE_POLICY_UPDATE_FIELDS = {"default", "channels"}
+ENGINE_POLICY_UPDATE_FIELDS = {"default", "channels", "selectable"}
 ENGINE_ACCESS_UPDATE_FIELDS = {"engines", "defaultEngine", "note"}
 USER_ENGINE_FIELDS = {"effective", "access"}
 USER_ENGINE_ACCESS_FIELDS = {"engines", "defaultEngine"}
