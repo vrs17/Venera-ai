@@ -95,6 +95,19 @@ def test_metadata(client, on):
     assert meta["scopes_supported"] == ["plaud.read"]
 
 
+def test_openai_domen_tasdigi(client, monkeypatch):
+    url = "/.well-known/openai-apps-challenge"
+    monkeypatch.setattr(settings, "openai_apps_challenge", " abc-123 \n", raising=False)
+    assert client.get(url).status_code == 404                           # bosh kalit o'chiq
+    monkeypatch.setattr(settings, "mcp_connector_enabled", True, raising=False)
+    response = client.get(url)
+    assert response.status_code == 200 and response.text == "abc-123"
+    assert response.headers["content-type"].startswith("text/plain")
+    assert response.headers["cache-control"] == "no-store"
+    monkeypatch.setattr(settings, "openai_apps_challenge", "", raising=False)
+    assert client.get(url).status_code == 404                           # kod qo'yilmagan
+
+
 # ================================================================ DCR va CIMD
 
 

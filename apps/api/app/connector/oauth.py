@@ -40,6 +40,7 @@ import urllib.request
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
+from ..core import config as _config
 from ..core.config import settings
 from . import core
 from .store import Client, new_secret
@@ -305,6 +306,15 @@ def get_protected_resource() -> Response:
 @router.get("/.well-known/oauth-authorization-server")
 def get_authorization_server() -> Response:
     return _off() or JSONResponse(authorization_server())
+
+
+@router.get("/.well-known/openai-apps-challenge")
+def get_openai_apps_challenge() -> Response:
+    """OpenAI ilovalar katalogi domen tasdig'i: `.env` dagi kod oddiy matn sifatida. Kod yo'q - 404."""
+    code = _config.openai_apps_challenge_now()[:1024]
+    if not code:
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    return _off() or _no_store(Response(code, media_type="text/plain"))
 
 
 # --- DCR ---------------------------------------------------------------------------------------

@@ -780,6 +780,9 @@ class Settings(BaseSettings):
     #: token oynasi. Refresh token har ishlatilganda AYLANADI.
     mcp_access_ttl: int = 3600
     mcp_refresh_ttl: int = 30 * 24 * 3600
+    # OpenAI ilovalar katalogi domen tasdig'i: `/.well-known/openai-apps-challenge` qaytaradigan kod
+    # (OpenAI kabinetida beriladi, ega `.env` ga `OPENAI_APPS_CHALLENGE=` qilib qo'yadi; JONLI o'qiladi).
+    openai_apps_challenge: str = ""
     #: Fon ishchisi (transkripsiya, xulosa, tozalash). Testlarda O'CHIQ:
     #: `TestClient` ishga tushishi ip yaratmasin.
     meetings_worker: bool = True
@@ -1297,6 +1300,12 @@ def chat_shared_tokens_now() -> bool:
     """Umumiy (`.env`) HRM/CRM tokenlari odam nomidan ishlatiladimi - `.env` dan JONLI.
     Default o'chiq: faqat odamning o'z ulanishi (`settings.chat_shared_tokens`)."""
     return _env_flag("chat_shared_tokens", settings.chat_shared_tokens)
+
+
+def openai_apps_challenge_now() -> str:
+    """OpenAI katalogi domen tasdig'i kodi - `.env` dagi `OPENAI_APPS_CHALLENGE`, JONLI (restartsiz)."""
+    return (_env_token("openai_apps_challenge", settings.openai_apps_challenge)
+            or settings.openai_apps_challenge).strip()
 
 
 def mcp_connector_enabled_now() -> bool:
