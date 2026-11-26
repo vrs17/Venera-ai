@@ -16,6 +16,7 @@ from . import admin, admin_engines, admin_osmap, admin_playground, admin_probe
 from . import devices, live, meetings, voice
 from . import assistant_extras
 from . import slack
+from . import telephony
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(auth.router)
@@ -56,5 +57,8 @@ router.include_router(devices.router)
 # Slack hisobini Barno hisobiga ulash - tasdiq sahifasining yo'llari (`slack.py`; Slack ilovasining
 # o'zi HTTP emas, Socket Mode - `app/slack/`).
 router.include_router(slack.router)
+# Telefoniya: Barno chiquvchi qo'ng'iroqlari FreePBX orqali - qo'ng'iroq boshlash (admin) va FreePBX natijasi
+# (servis kaliti bilan, `telephony.py`).
+router.include_router(telephony.router)
 
 __all__ = ["router"]

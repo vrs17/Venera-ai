@@ -16,6 +16,9 @@
  * ILOVA REJIMI (`?app=1`, mobil ilova ichidagi WebView - `appBridge.ts`): sarlavha yo'q, qo'ng'iroq o'zi
  * boshlanadi (`autostart=1`), token ilovadan keladi (kirish sahifasi o'rniga ilovaga `auth`), "Bosh sahifa" o'rniga
  * "Yopish" (ilovaga qaytish), qo'ng'iroq holati ilovaga yuboriladi (✕ / "orqaga" shundan bilib tugatadi).
+ *
+ * TELEFON QO'NG'IROG'I (`features/live/PhoneCallPanel.vue`): bosh sahifada, FAQAT ADMIN ga va faqat brauzerda
+ * (ilova rejimida yo'q) - raqam yoziladi, Barno unga bank telefon tizimi orqali qo'ng'iroq qiladi.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
@@ -34,6 +37,7 @@ import VIconButton from '../ui/VIconButton.vue'
 import VChoiceChips from '../ui/VChoiceChips.vue'
 import VCopy from '../ui/VCopy.vue'
 import LiveOrb from '../features/live/LiveOrb.vue'
+import PhoneCallPanel from '../features/live/PhoneCallPanel.vue'
 import { PERSONAS } from '../features/live/personas'
 import type { LivePersona, OrbMode } from '../features/live/personas'
 import { useLiveCall } from '../features/live/useLiveCall'
@@ -56,6 +60,8 @@ const app = inApp()
 
 const stage = computed<Stage>(() => (status.value === 'idle' ? 'home' : status.value === 'ended' ? 'after' : 'call'))
 const live = computed(() => status.value === 'live')
+/** Telefon raqamiga qo'ng'iroq paneli: faqat ADMIN va faqat brauzerda (server ham ADMIN ni tekshiradi). */
+const canPhone = computed(() => !app && isAuthenticated.value && Boolean(user.value?.roles?.includes('ADMIN')))
 
 // --- suhbatdosh ----------------------------------------------------------------------
 
@@ -334,6 +340,7 @@ const tint = computed(() => (selected.value.tone === 'cool' ? 'var(--viz-1)' : '
         </div>
 
         <p v-if="!isAuthenticated && !app" class="home__login">{{ t('live.loginToCall') }}</p>
+        <PhoneCallPanel v-if="canPhone" />
         <p class="home__note">{{ t('live.disclaimerAgent', { name }) }}</p>
       </main>
 

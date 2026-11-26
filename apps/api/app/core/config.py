@@ -358,6 +358,37 @@ class Settings(BaseSettings):
     #: Suhbatdan keyingi baholar (rahmat sahifasi) - JSON qatorlar: vaqt, kim, sessiya, baho, sabablar, izoh.
     live_feedback_file: Path = BASE_DIR / "data" / "live" / "feedback.jsonl"
 
+    # --- TELEFONIYA: Barno chiquvchi qo'ng'iroqlari FreePBX orqali (`api/v1/telephony.py`) ---
+    #
+    # YO'L. Barno `call-live.php` ga so'rov yuboradi -> FreePBX mijozga qo'ng'iroq qiladi -> mijoz javob bersa
+    # qo'ng'iroq Barno shlyuziga (Asterisk 20) va bridge orqali Speko agentiga ulanadi -> qo'ng'iroq tugagach
+    # FreePBX natijani `POST /telephony/call-result` ga yuboradi (servis kaliti bilan).
+    #
+    #: Qo'ng'iroq BOSHLASH bayrog'i. O'chiq - `POST /telephony/calls` 503. Natija endpoint'i bayroqqa
+    #: bog'liq EMAS: FreePBX yuborgan natija hech qachon yo'qolmasin.
+    telephony_enabled: bool = False
+    #: FreePBX'dagi `call-live.php` (HTTPS, ichki IP, masalan `https://192.168.77.3/barno-api/call-live.php`).
+    telephony_call_live_url: str = ""
+    #: `Authorization: Bearer ...` - FreePBX admini beradi. FAQAT `.env` da.
+    telephony_call_live_token: str = ""
+    #: FreePBX sertifikati o'z-o'zidan imzolangan: CA bilan emas, BARMOQ IZI (SHA-256) bilan tekshiriladi.
+    #: Mos kelmasa token YUBORILMAYDI. `AA:BB:...` yoki ikki nuqtasiz hex.
+    telephony_call_live_cert_sha256: str = ""
+    telephony_call_live_timeout: float = 10.0
+    #: FreePBX natija yuborganda `X-Service-Key` izlari (`nom:sha256hex`, vergul bilan; `service_auth.py`).
+    telephony_result_service_keys: str = ""
+    #: 202 dan keyin shuncha daqiqada natija kelmasa - `unknown`. Yakuniy EMAS: kech kelgan natija yangilaydi.
+    telephony_unknown_after_min: int = 20
+    #: Oxirgi 24 soatda boshlanadigan qo'ng'iroqlar chegarasi - pul himoyasi (FreePBX ham o'z chegarasini qo'yadi).
+    telephony_daily_cap: int = 20
+    #: Bitta admin daqiqasiga nechta qo'ng'iroq boshlay oladi.
+    telephony_calls_per_min: int = 3
+    #: Qo'ng'iroqlar ombori. `data/` gitignore'da, 600.
+    telephony_calls_db: Path = BASE_DIR / "data" / "telephony" / "calls.db"
+    #: Bridge qaydlari papkasi (`<papka>/calls/<kun>/<call_id>.json`: Speko sessiyasi, narx, tugash sababi).
+    #: Bo'sh - qo'ng'iroq tafsilotida bridge ma'lumoti ko'rsatilmaydi.
+    telephony_bridge_dir: str = ""
+
     # --- Uyg'otish so'zi jurnali ---
     #: "Salom Venera" urinishlari yozib boriladi: audio + transkript + qaror.
     #: Muammoni TAXMIN bilan emas, dalil bilan tuzatish uchun - qaysi
