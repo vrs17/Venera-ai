@@ -124,7 +124,40 @@ def place_call(phone_raw: str, *, actor_id: int | None, note: str = "") -> dict[
              answer.status, answer.detail, actor_id)
     if answer.detail == "cert_mismatch":
         log.warning("Telefoniya: FreePBX sertifikati kutilgan barmoq iziga mos EMAS - token yuborilmadi")
+    if status == "unknown" and int(settings.telephony_unknown_retry_sec) > 0:
+        timer = threading.Timer(int(settings.telephony_unknown_retry_sec), _retry_safely, args=(call_id,))
+        timer.daemon = True
+        timer.start()
     return calls.get(call_id)
+
+
+def _retry_safely(call_id: str) -> None:
+    try:
+        retry_unknown(call_id)
+    except Exception:  # noqa: BLE001 - fon ishi: xato jurnalga, API'ga ta'sir qilmaydi
+        log.exception("Telefoniya: %s - qayta yuborishda xato", call_id[:8])
+
+
+def retry_unknown(call_id: str) -> str | None:
+    """Javobsiz qolgan so'rovni XUDDI SHU call_id bilan bir marta qayta yuboradi. Qaytadi: yangi holat yoki None.
+
+    409 - birinchi so'rov yetib borgan, qo'ng'iroq ketgan; 202 - birinchisi yetmagan, qo'ng'iroq endi ketdi. Ikkalasida
+    ham natija keyin `call-result` ga keladi. Boshqa javob - holat `unknown` qoladi (sababi `retry_failed:...`).
+    """
+    calls = store()
+    if not calls.claim_retry(call_id):
+        return None                     # natija kelgan yoki allaqachon qayta yuborilgan
+    call = calls.get(call_id)
+    answer = freepbx.place(settings.telephony_call_live_url, settings.telephony_call_live_token,
+                           settings.telephony_call_live_cert_sha256, call_id=call_id, phone=call["phone"],
+                           timeout=float(settings.telephony_call_live_timeout))
+    if answer.status in (202, 409):
+        status, detail = "queued", "retry_accepted" if answer.status == 202 else "retry_duplicate"
+    else:
+        status, detail = "unknown", f"retry_failed:{answer.status or answer.detail}"[:80]
+    calls.mark_placed(call_id, status=status, http_status=answer.status or None, detail=detail, now=_now())
+    log.info("Telefoniya: %s - qayta yuborildi -> %s (HTTP %s)", call_id[:8], detail, answer.status)
+    return status
 
 
 # ---------------------------------------------------------------------------- FreePBX natijasi

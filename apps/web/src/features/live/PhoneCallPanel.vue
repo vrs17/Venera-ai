@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * Telefon raqamiga qo'ng'iroq - `/barno` bosh sahifasida, FAQAT ADMIN uchun (ko'rsatish shartini `LiveView` beradi,
- * server ham tekshiradi).
+ * Telefon raqamiga qo'ng'iroq - `/barno` bosh sahifasida (brauzerda). Kimga ko'rinishini SERVER aytadi
+ * (`status.allowed`: ADMIN roli yoki `TELEPHONY_LOGINS`); javob kelguncha va ruxsat bo'lmasa panel chizilmaydi.
  *
  * Barno raqamga bankning telefon tizimi (FreePBX) orqali qo'ng'iroq qiladi (`api/telephony.api.ts`). Raqam
  * yuborilgach holat so'rab turiladi: avval har 3 s, 2 daqiqadan keyin har 10 s, ko'pi bilan 15 daqiqa - FreePBX
@@ -96,7 +96,11 @@ function describe(call: PhoneCall): { tone: Tone; text: string } {
     case 'unknown':
       return {
         tone: 'warn',
-        text: call.detail === 'no_response' ? t('live.phone.status.unknownNoResponse') : t('live.phone.status.unknownNoResult'),
+        // no_response - so'rov ketdi, javob kelmadi; retrying / retry_failed:* - xuddi shu call_id bilan bir marta
+        // qayta yuborilmoqda yoki u ham javobsiz qoldi (server: `retry_unknown`).
+        text: /^(no_response|retrying|retry_failed)/.test(call.detail)
+          ? t('live.phone.status.unknownNoResponse')
+          : t('live.phone.status.unknownNoResult'),
       }
     case 'failed':
       return { tone: 'bad', text: t(`live.phone.outcome.${call.outcome || 'failed'}`) }
@@ -188,9 +192,9 @@ function newCall() {
   touched.value = false
 }
 
-onMounted(() => {
-  void loadStatus()
-  void loadRecent()
+onMounted(async () => {
+  await loadStatus()
+  if (status.value?.allowed) void loadRecent()
 })
 onBeforeUnmount(() => {
   alive = false
@@ -199,7 +203,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="phone" aria-labelledby="phone-title">
+  <section v-if="status?.allowed" class="phone" aria-labelledby="phone-title">
     <header class="phone__head">
       <span class="phone__icon" aria-hidden="true"><Phone :size="18" :stroke-width="1.9" /></span>
       <div class="phone__heading">

@@ -100,6 +100,7 @@ def pbx(tmp_path, monkeypatch):
         "telephony_call_live_timeout": 2.0,
         "telephony_calls_per_min": 100,
         "telephony_bridge_dir": "",
+        "telephony_unknown_retry_sec": 0,       # fon taymeri testlarda faqat o'zi uchun yoqiladi
     }.items():
         monkeypatch.setattr(settings, name, value)
     service.reset_store()
@@ -255,11 +256,23 @@ def test_daily_cap_and_per_minute_limit(client, auth, pbx, monkeypatch):
     assert len(pbx.requests) == 2
 
 
-def test_only_admin_can_place_or_see_calls(client, user_auth, pbx):
+def test_ordinary_user_cannot_place_or_see_calls(client, user_auth, pbx):
     assert client.post(CALLS, json={"phone": "901234567"}, headers=user_auth).status_code == 403
     assert client.get(CALLS, headers=user_auth).status_code == 403
     assert client.get(f"{CALLS}/{uuid.uuid4()}", headers=user_auth).status_code == 403
+    status = client.get("/api/v1/telephony/status", headers=user_auth).json()
+    assert status == {"allowed": False, "enabled": False, "configured": False, "dailyCap": 0, "used24h": 0}
+    assert client.get("/api/v1/telephony/status").status_code == 401
     assert pbx.requests == []
+
+
+def test_telephony_logins_open_the_panel_without_admin(client, user_auth, pbx, monkeypatch):
+    monkeypatch.setattr(settings, "telephony_logins", "someone.else, DEMO@venera.uz")   # users.yaml hisobi - emaili
+    assert client.get("/api/v1/telephony/status", headers=user_auth).json()["allowed"] is True
+    call = _place(client, user_auth)
+    assert call["status"] == "queued"
+    assert client.get(CALLS, headers=user_auth).status_code == 200
+    assert client.get("/api/v1/admin/users", headers=user_auth).status_code == 403    # ADMIN huquqi bermaydi
 
 
 def test_bridge_record_is_joined(client, auth, pbx, tmp_path, monkeypatch):
@@ -291,9 +304,53 @@ def test_fingerprint_formats():
 
 def test_status_for_the_panel(client, auth, user_auth, pbx, monkeypatch):
     status = client.get("/api/v1/telephony/status", headers=auth).json()
-    assert status == {"enabled": True, "configured": True, "dailyCap": 20, "used24h": 0}
+    assert status == {"allowed": True, "enabled": True, "configured": True, "dailyCap": 20, "used24h": 0}
     _place(client, auth)
     assert client.get("/api/v1/telephony/status", headers=auth).json()["used24h"] == 1
     monkeypatch.setattr(settings, "telephony_call_live_cert_sha256", "")
     assert client.get("/api/v1/telephony/status", headers=auth).json()["configured"] is False
-    assert client.get("/api/v1/telephony/status", headers=user_auth).status_code == 403
+    assert client.get("/api/v1/telephony/status", headers=user_auth).json()["allowed"] is False
+
+
+@pytest.mark.parametrize("reply, status, detail", [(409, "queued", "retry_duplicate"), (202, "queued", "retry_accepted"),
+                                                   (503, "unknown", "retry_failed:503")])
+def test_unanswered_request_is_retried_once_with_the_same_call_id(client, auth, pbx, monkeypatch, reply, status, detail):
+    monkeypatch.setattr(settings, "telephony_call_live_timeout", 0.5)
+    pbx.delay = 1.5
+    call = _place(client, auth)
+    assert call["status"] == "unknown"
+    pbx.delay, pbx.reply = 0.0, (reply, {"error": "x"})
+    monkeypatch.setattr(settings, "telephony_call_live_timeout", 2.0)
+    assert service.retry_unknown(call["callId"]) == status
+    assert service.retry_unknown(call["callId"]) is None             # faqat bir marta
+    assert [r["body"]["call_id"] for r in pbx.requests] == [call["callId"]] * 2
+    detail_now = client.get(f"{CALLS}/{call['callId']}", headers=auth).json()
+    assert (detail_now["status"], detail_now["detail"]) == (status, detail)
+
+
+def test_retry_skipped_when_result_already_arrived(client, auth, pbx, monkeypatch):
+    monkeypatch.setattr(settings, "telephony_call_live_timeout", 0.5)
+    pbx.delay = 1.5
+    call = _place(client, auth)
+    client.post(RESULT, json={"call_id": call["callId"], "event": "failed", "reason": 3}, headers=HEADERS)
+    assert service.retry_unknown(call["callId"]) is None
+    assert len(pbx.requests) == 1
+
+
+def test_retry_runs_by_itself_after_the_delay(client, auth, pbx, monkeypatch):
+    monkeypatch.setattr(settings, "telephony_call_live_timeout", 0.5)
+    monkeypatch.setattr(settings, "telephony_unknown_retry_sec", 1)
+    pbx.delay = 1.5
+    call = _place(client, auth)
+    pbx.delay, pbx.reply = 0.0, (409, {"error": "duplicate"})
+    monkeypatch.setattr(settings, "telephony_call_live_timeout", 2.0)
+    deadline = time.time() + 6
+    while time.time() < deadline and len(pbx.requests) < 2:
+        time.sleep(0.1)
+    time.sleep(0.3)
+    assert client.get(f"{CALLS}/{call['callId']}", headers=auth).json()["detail"] == "retry_duplicate"
+
+
+def test_default_call_live_timeout_is_at_least_20_seconds():
+    from app.core.config import Settings
+    assert Settings.model_fields["telephony_call_live_timeout"].default >= 20

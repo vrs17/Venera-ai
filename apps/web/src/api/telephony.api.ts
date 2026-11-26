@@ -1,11 +1,14 @@
 // Telefon qo'ng'iroqlari (`/barno` sahifasidagi admin paneli). Server: `apps/api/app/api/v1/telephony.py`.
 //
 // Barno mijozga bankning telefon tizimi (FreePBX) orqali qo'ng'iroq qiladi: brauzer faqat raqamni yuboradi va
-// holatni so'raydi. Hamma so'rov - tizimga kirgan ADMIN niki (Bearer token); boshqa rolga server 403 beradi.
+// holatni so'raydi. `status` - kirgan har kimga (`allowed`); qolgani faqat ruxsatli odamga (ADMIN yoki
+// `TELEPHONY_LOGINS`), boshqalarga server 403 beradi.
 
 import { apiFetch } from './http'
 
 export interface TelephonyStatus {
+  /** Panel shu odamga ochiqmi: ADMIN roli yoki serverdagi `TELEPHONY_LOGINS`. `false` bo'lsa panel ko'rsatilmaydi. */
+  allowed: boolean
   /** Qo'ng'iroq boshlash yoqilganmi (serverdagi `TELEPHONY_ENABLED`). */
   enabled: boolean
   /** FreePBX manzili, tokeni va sertifikat barmoq izi berilganmi. */
@@ -46,7 +49,7 @@ export interface PhoneCall {
   bridge?: PhoneCallBridge | null
 }
 
-/** Qo'ng'iroq boshlash mumkinmi. 403 - admin emas. */
+/** Panel shu odamga ochiqmi va qo'ng'iroq boshlash mumkinmi. */
 export function telephonyStatus(): Promise<TelephonyStatus> {
   return apiFetch<TelephonyStatus>('/api/v1/telephony/status')
 }

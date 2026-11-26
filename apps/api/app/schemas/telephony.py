@@ -16,6 +16,7 @@ class PlaceCallRequest(BaseModel):
 
 
 class TelephonyStatus(BaseModel):
+    allowed: bool = Field(description="Shu odamga telefon paneli ochiqmi (ADMIN yoki TELEPHONY_LOGINS)")
     enabled: bool = Field(description="Qo'ng'iroq boshlash yoqilganmi (TELEPHONY_ENABLED)")
     configured: bool = Field(description="FreePBX manzili, tokeni va sertifikat barmoq izi berilganmi")
     dailyCap: int

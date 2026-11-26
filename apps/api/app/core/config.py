@@ -367,6 +367,10 @@ class Settings(BaseSettings):
     #: Qo'ng'iroq BOSHLASH bayrog'i. O'chiq - `POST /telephony/calls` 503. Natija endpoint'i bayroqqa
     #: bog'liq EMAS: FreePBX yuborgan natija hech qachon yo'qolmasin.
     telephony_enabled: bool = False
+    #: Telefon paneli (`/barno`) va qo'ng'iroq API'si kimga ochiq: ADMIN rolidagilar VA shu ro'yxat - vergul (yoki
+    #: bo'shliq) bilan loginlar, harf registriga qaramaydi. Qoida `miniapp_beta_logins` dagi kabi: SSO hisobi FAQAT
+    #: logini bilan, `users.yaml` hisobi emaili bilan. Bu ADMIN huquqi EMAS - faqat telefon qo'ng'iroqlari.
+    telephony_logins: str = ""
     #: FreePBX'dagi `call-live.php` (HTTPS, ichki IP, masalan `https://192.168.77.3/barno-api/call-live.php`).
     telephony_call_live_url: str = ""
     #: `Authorization: Bearer ...` - FreePBX admini beradi. FAQAT `.env` da.
@@ -374,7 +378,13 @@ class Settings(BaseSettings):
     #: FreePBX sertifikati o'z-o'zidan imzolangan: CA bilan emas, BARMOQ IZI (SHA-256) bilan tekshiriladi.
     #: Mos kelmasa token YUBORILMAYDI. `AA:BB:...` yoki ikki nuqtasiz hex.
     telephony_call_live_cert_sha256: str = ""
-    telephony_call_live_timeout: float = 10.0
+    #: Kamida 20 s (FreePBX admini): FreePBX oldingi so'rovni 8 s gacha, Originate'dan keyin kanalni yana 3 s
+    #: gacha kutadi - qisqa bo'lsa keraksiz `unknown` holatlar chiqadi.
+    telephony_call_live_timeout: float = 25.0
+    #: So'rov ketib javob kelmasa (`unknown`/`no_response`) - shuncha soniyadan keyin XUDDI SHU call_id bilan bir
+    #: marta qayta yuboriladi: 409 - qo'ng'iroq birinchi so'rovda ketgan, 202 - birinchisi yetmagan, endi ketdi.
+    #: Mijozga ikki marta qo'ng'iroq bo'lmaydi (call_id takrorini FreePBX rad etadi). 0 - o'chiq.
+    telephony_unknown_retry_sec: int = 60
     #: FreePBX natija yuborganda `X-Service-Key` izlari (`nom:sha256hex`, vergul bilan; `service_auth.py`).
     telephony_result_service_keys: str = ""
     #: 202 dan keyin shuncha daqiqada natija kelmasa - `unknown`. Yakuniy EMAS: kech kelgan natija yangilaydi.

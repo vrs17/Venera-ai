@@ -104,6 +104,13 @@ class CallStore:
             "WHERE call_id = ? AND result_at IS NULL",
             (status, http_status, detail, now, call_id))
 
+    def claim_retry(self, call_id: str) -> bool:
+        """Javobsiz qolgan so'rovni qayta yuborish uchun band qiladi (bir marta; natija kelgan bo'lsa - yo'q)."""
+        cursor = self._connect().execute(
+            "UPDATE calls SET detail = 'retrying' "
+            "WHERE call_id = ? AND status = 'unknown' AND detail = 'no_response' AND result_at IS NULL", (call_id,))
+        return cursor.rowcount == 1
+
     def apply_result(self, call_id: str, fields: dict[str, Any], raw: str, now: int) -> str:
         """FreePBX natijasi -> `recorded` | `duplicate` (natija allaqachon bor) | `unknown_call` (bizda yo'q)."""
         columns = [name for name in RESULT_COLUMNS if name in fields]
