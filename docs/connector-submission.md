@@ -144,7 +144,7 @@ Negative:
 
 ## 8. Open items before submitting
 
-- Meeting links in tool results open `/meeting/<id>`, a phone-app path; on the website they land on the
-  home page. Reviewers may click them. Fix: add a meeting page to the website (planned).
+- Meeting links in tool results open `/meeting/<id>`: on the website that is a view-only meeting page
+  (summary, action items, transcript, minutes) for the signed-in owner (added 2026-11-26).
 - The privacy policy lists `ai@brb-tech.uz` as its contact, the connector pages list
   `y.mamajonov@brb-tech.uz`. Use one address everywhere or make sure both are monitored.

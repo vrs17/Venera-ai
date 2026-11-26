@@ -89,10 +89,10 @@ function acceptLanguage(): string {
   }
 }
 
-export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function request(path: string, options: RequestInit, accept: string): Promise<Response> {
   const token = getToken()
   const headers: Record<string, string> = {
-    Accept: 'application/json',
+    Accept: accept,
     'Accept-Language': acceptLanguage(),
     // Kanal: backend analitikasi so'rovni shu sarlavha bo'yicha "web" deb yozadi
     // (Mini App `miniapp` yuboradi). Chaqiruvchi o'z qiymatini berishi mumkin.
@@ -115,6 +115,16 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     }
     throw new ApiError(body?.message || `Request failed (${response.status})`, body)
   }
+  return response
+}
+
+/** Matn qaytaradigan yo'llar (masalan yig'ilish xulosasining Markdown eksporti). */
+export async function apiText(path: string, options: RequestInit = {}): Promise<string> {
+  return (await request(path, options, 'text/markdown, text/plain, */*')).text()
+}
+
+export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await request(path, options, 'application/json')
 
   // Some endpoints (logout, downloads) may return no JSON body.
   const contentType = response.headers.get('content-type') || ''

@@ -140,6 +140,15 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../views/LiveView.vue'),
   },
   {
+    // Yig'ilish sahifasi (faqat ko'rish): Barno konnektori (Claude / ChatGPT) havolalari va mobil ilova yo'li
+    // `/meeting/<id>` shu yerga ochiladi. Kirmagan odam avval kirish sahifasiga, keyin shu yerga.
+    path: '/meeting/:id',
+    name: 'meeting',
+    component: () => import('../views/MeetingView.vue'),
+    props: true,
+    meta: { requiresAuth: true, loginDirect: true },
+  },
+  {
     // Maxfiylik siyosati (Google Play talabi, 2026-11-19) - OCHIQ sahifa: `meta` yo'q, kirish so'ralmaydi.
     path: '/privacy',
     name: 'privacy',

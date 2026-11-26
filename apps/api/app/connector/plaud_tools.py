@@ -135,8 +135,8 @@ def _choice(args: dict[str, Any], key: str, choices: tuple[str, ...], default: s
 
 
 def meeting_url(meeting_id: str) -> str:
-    """Yig'ilish havolasi (ChatGPT iqtibos uchun kutadi). Mobil ilova yo'li (`/meeting/<id>`) bilan
-    bir xil; veb ilovada yig'ilish sahifasi hali yo'q - u yerda bosh sahifaga ochiladi."""
+    """Yig'ilish havolasi (ChatGPT iqtibos uchun kutadi). Mobil ilova yo'li (`/meeting/<id>`) bilan bir xil;
+    veb ilovada - yig'ilish sahifasi (`apps/web/src/views/MeetingView.vue`, kirgan egasiga, faqat ko'rish)."""
     return f"{core.public_base()}/meeting/{meeting_id}"
 
 
