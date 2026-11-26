@@ -55,13 +55,16 @@ def normalize_fingerprint(value: str) -> str:
 
 
 def _detail(body: dict) -> str:
-    """Rad etish sababi. FreePBX: `{"ok": false, "error": "busy", "details": "barno_max"}` - aniq sabab `details` da
-    (429: disabled | barno_max | trunk | lock; 422: call_id | phone), qolganida `error` ning o'zi
-    (duplicate_call_id, originate_failed, gateway_unavailable, pbx_unavailable, not_configured, unauthorized)."""
+    """Rad etish sababi. FreePBX: `{"ok": false, "error": "busy", "details": ["barno_max"]}` - aniq sabab `details`
+    RO'YXATIDA (429: disabled | barno_max | trunk | lock; 422: call_id, phone - ikkalasi bo'lsa `call_id,phone`),
+    qolganida `error` ning o'zi (duplicate_call_id, originate_failed, gateway_unavailable, pbx_unavailable,
+    not_configured, unauthorized). Satr ko'rinishidagi `details` ham qabul qilinadi."""
     for key in ("details", "error", "detail", "reason", "message"):
         value = body.get(key)
         if isinstance(value, dict):
             value = value.get("code") or value.get("message")
+        if isinstance(value, list):
+            value = ",".join(str(item) for item in value if item not in (None, ""))
         if value not in (None, ""):
             return str(value)[:80]
     return ""

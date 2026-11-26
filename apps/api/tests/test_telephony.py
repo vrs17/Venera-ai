@@ -190,9 +190,14 @@ def test_wrong_certificate_never_receives_the_token(client, auth, pbx, monkeypat
 
 
 @pytest.mark.parametrize("code, body, detail", [
-    (429, {"ok": False, "error": "busy", "details": "barno_max"}, "barno_max"),
-    (429, {"ok": False, "error": "busy", "details": "disabled"}, "disabled"),
-    (422, {"ok": False, "error": "validation", "details": "phone"}, "phone"),
+    # FreePBX `details` ni ro'yxat qilib yuboradi (2026-11-26 dagi haqiqiy javob: {"details": ["disabled"]})
+    (429, {"ok": False, "error": "busy", "details": ["barno_max"]}, "barno_max"),
+    (429, {"ok": False, "error": "busy", "details": ["disabled"]}, "disabled"),
+    (429, {"ok": False, "error": "busy", "details": ["lock"]}, "lock"),
+    (422, {"ok": False, "error": "validation", "details": ["phone"]}, "phone"),
+    (422, {"ok": False, "error": "validation", "details": ["call_id", "phone"]}, "call_id,phone"),
+    (429, {"ok": False, "error": "busy", "details": "trunk"}, "trunk"),
+    (429, {"ok": False, "error": "busy", "details": []}, "busy"),
     (409, {"ok": False, "error": "duplicate_call_id"}, "duplicate_call_id"),
     (502, {"ok": False, "error": "originate_failed"}, "originate_failed"),
     (503, {"ok": False, "error": "gateway_unavailable"}, "gateway_unavailable"),
