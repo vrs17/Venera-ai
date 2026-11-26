@@ -117,6 +117,13 @@ const routes: RouteRecordRaw[] = [
     props: { doc: 'connector' },
   },
   {
+    // Konnektorning foydalanish shartlari - OCHIQ sahifa (kataloglar "Terms of use" manzilini talab qiladi).
+    path: '/connector/terms',
+    name: 'connector-terms',
+    component: () => import('../views/PrivacyView.vue'),
+    props: { doc: 'terms' },
+  },
+  {
     // Barno konnektori (Claude / ChatGPT): `?request=` bilan - rozilik (server `/oauth/authorize`
     // yuboradi), usiz - "Ulangan ilovalar". Kirmagan odam avval kirish sahifasiga, keyin shu yerga.
     path: '/connect',

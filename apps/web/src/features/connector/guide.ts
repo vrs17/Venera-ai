@@ -4,9 +4,12 @@
  * Shakl `features/privacy/policy.ts` niki (bitta sahifa komponenti - `PrivacyView.vue`).
  * Konnektor o'zgarsa (yangi modul, yangi vosita) - matn ham, `GUIDE_UPDATED` ham yangilanadi.
  */
-import { CONTACT_EMAIL, OPERATOR, type PolicyLang, type PolicyText } from '../privacy/policy'
+import { OPERATOR, type PolicyLang, type PolicyText } from '../privacy/policy'
 
-export const GUIDE_UPDATED = '2026-11-25'
+export const GUIDE_UPDATED = '2026-11-26'
+/** Konnektor bo'yicha yordam manzili (ega bergan, 2026-11-26) - qo'llanma, shartlar va katalog arizalari. */
+export const SUPPORT_EMAIL = 'y.mamajonov@brb-tech.uz'
+export const TERMS_URL = 'https://llm.brb-tech.uz/connector/terms'
 export const MCP_URL = 'https://llm.brb-tech.uz/mcp'
 
 export const GUIDE: Record<PolicyLang, PolicyText> = {
@@ -47,7 +50,7 @@ export const GUIDE: Record<PolicyLang, PolicyText> = {
         title: '5. Uzish va yordam',
         paragraphs: [
           'Barno → hisob menyusi → «Ulangan ilovalar» → «Uzish». Uzilgan ilova darhol kira olmaydi.',
-          `Savollar uchun: ${CONTACT_EMAIL} (${OPERATOR}).`,
+          `Savollar va yordam: ${SUPPORT_EMAIL} (${OPERATOR}). Foydalanish shartlari: ${TERMS_URL}.`,
         ],
       },
     ],
@@ -89,7 +92,7 @@ export const GUIDE: Record<PolicyLang, PolicyText> = {
         title: '5. Отключение и поддержка',
         paragraphs: [
           'Barno → меню аккаунта → «Подключённые приложения» → «Отключить». Отключённое приложение сразу теряет доступ.',
-          `Вопросы: ${CONTACT_EMAIL} (${OPERATOR}).`,
+          `Вопросы и поддержка: ${SUPPORT_EMAIL} (${OPERATOR}). Условия использования: ${TERMS_URL}.`,
         ],
       },
     ],
@@ -131,7 +134,7 @@ export const GUIDE: Record<PolicyLang, PolicyText> = {
         title: '5. Disconnect and support',
         paragraphs: [
           'Barno → account menu → “Connected apps” → “Disconnect”. A disconnected app loses access immediately.',
-          `Questions: ${CONTACT_EMAIL} (${OPERATOR}).`,
+          `Questions and support: ${SUPPORT_EMAIL} (${OPERATOR}). Terms of use: ${TERMS_URL}.`,
         ],
       },
     ],

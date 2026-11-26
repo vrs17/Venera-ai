@@ -211,6 +211,12 @@ function home() {
         <VButton type="button" variant="ghost" size="lg" block pill :loading="busy === 'deny'" :disabled="!!busy" @click="deny">
           {{ t('shell.connector.deny') }}
         </VButton>
+        <p class="connect__legal">
+          {{ t('shell.connector.agree') }}
+          <a href="/connector/terms" target="_blank" rel="noopener">{{ t('shell.connector.terms') }}</a>
+          ·
+          <a href="/privacy" target="_blank" rel="noopener">{{ t('shell.connector.privacy') }}</a>
+        </p>
       </template>
 
       <template v-else-if="phase === 'apps'">
@@ -303,6 +309,16 @@ function home() {
   font-size: var(--fs-body-sm);
   line-height: var(--lh-body-sm);
   color: var(--text-3);
+}
+.connect__legal {
+  margin: 0;
+  text-align: center;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+.connect__legal a {
+  color: inherit;
+  text-decoration: underline;
 }
 .connect__apps {
   margin: 0;

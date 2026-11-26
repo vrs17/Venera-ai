@@ -9,11 +9,19 @@ import { useI18n } from 'vue-i18n'
 import BrandSpark from '../components/BrandSpark.vue'
 import { POLICY, UPDATED, policyLang, type PolicyLang, type PolicyText } from '../features/privacy/policy'
 import { GUIDE, GUIDE_UPDATED } from '../features/connector/guide'
+import { TERMS, TERMS_UPDATED } from '../features/connector/terms'
 
-/** `privacy` - maxfiylik siyosati; `connector` - Barno konnektori qo'llanmasi (`/connector`). */
-const props = withDefaults(defineProps<{ doc?: 'privacy' | 'connector' }>(), { doc: 'privacy' })
-const DOCS: Record<PolicyLang, PolicyText> = props.doc === 'connector' ? GUIDE : POLICY
-const updated = props.doc === 'connector' ? GUIDE_UPDATED : UPDATED
+/** `privacy` - maxfiylik siyosati; `connector` - Barno konnektori qo'llanmasi (`/connector`);
+ *  `terms` - konnektorning foydalanish shartlari (`/connector/terms`). */
+type Doc = 'privacy' | 'connector' | 'terms'
+const props = withDefaults(defineProps<{ doc?: Doc }>(), { doc: 'privacy' })
+const SOURCES: Record<Doc, { docs: Record<PolicyLang, PolicyText>; updated: string }> = {
+  privacy: { docs: POLICY, updated: UPDATED },
+  connector: { docs: GUIDE, updated: GUIDE_UPDATED },
+  terms: { docs: TERMS, updated: TERMS_UPDATED },
+}
+const DOCS = SOURCES[props.doc].docs
+const updated = SOURCES[props.doc].updated
 
 const { locale } = useI18n({ useScope: 'global' })
 const lang = ref<PolicyLang>(policyLang(locale.value))
