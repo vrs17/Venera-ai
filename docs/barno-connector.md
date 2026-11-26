@@ -127,6 +127,12 @@ yig'ilishlar (Google Play sharhlovchisi kabi); foydalanish shartlari matni; yord
 OpenAI va Anthropic tashkilot hisoblarida topshirish. Bizda: `/privacy` ga konnektor bo'limi,
 `/connector` hujjat sahifasi, ikonka.
 
+Tayyor paket (2026-11-26): `docs/connector-submission.md` - ariza matnlari, sinov hisobi, sinov
+holatlari, ikonka (`docs/connector-assets/`), egasi uchun qadamlar. Foydalanish shartlari -
+`/connector/terms`; OpenAI domen tasdig'i - `/.well-known/openai-apps-challenge` (kod `.env` dagi
+`OPENAI_APPS_CHALLENGE`). Protokol: MCP 2026-07-28 ham (holatsiz, `server/discover`), 2025 mijozlari
+avvalgidek (`connector/mcp.py`).
+
 Diqqat: ikkala katalogda ham faqat BRB-Tech xodimlari kira oladi - katalog faqat qo'shishni
 osonlashtiradi (manzilni yozish o'rniga ro'yxatdan tanlash).
 
