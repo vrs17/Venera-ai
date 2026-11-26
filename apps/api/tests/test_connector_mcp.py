@@ -7,6 +7,7 @@ Ruxsat (grant) haqiqiy ombor orqali yasaladi (`core.store()`: mijoz -> so'rov ->
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import json
 import sqlite3
@@ -116,7 +117,7 @@ def test_origin_va_versiya(on):
     for origin in ("https://claude.ai", "https://chatgpt.com", "https://claude.com", "https://barno.test"):
         assert rpc(on, token, "ping", Origin=origin).status_code == 200, origin
     response = rpc(on, token, "ping", **{"MCP-Protocol-Version": "2024-11-05"})
-    assert response.status_code == 400
+    assert response.status_code == 400 and response.json()["error"]["code"] == -32022
     assert rpc(on, token, "ping", **{"MCP-Protocol-Version": "2025-06-18"}).status_code == 200
     assert rpc(on, None, "ping", Origin="https://evil.example").status_code == 403   # Origin tokendan oldin
 
@@ -458,4 +459,113 @@ def test_jurnal_matnsiz(on, meeting):
         assert phrase not in dump
     assert core.store().grants_of(1)[0].last_used_at is not None
     assert rpc(on, token, "ping").status_code == 200 and len(calls()) == 3     # ping jurnalga tushmaydi
+
+
+# --- 2026-07-28: holatsiz yadro (initialize yo'q, har so'rov _meta va sarlavhalar bilan) ------------
+
+META_26 = {"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+           "io.modelcontextprotocol/clientCapabilities": {},
+           "io.modelcontextprotocol/clientInfo": {"name": "claude-ai", "version": "1"}}
+
+
+def rpc26(client, token, method: str, params=None, *, msg_id=1, meta=None, notify=False, **headers):
+    """2026-07-28 so'rovi: `_meta` va standart sarlavhalar; `headers` da `None` - sarlavha yuborilmaydi."""
+    params = {**(params or {}), "_meta": META_26 if meta is None else meta}
+    body = {"jsonrpc": "2.0", "method": method, "params": params}
+    if not notify:
+        body["id"] = msg_id
+    sent = {"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": method}
+    if method == "tools/call":
+        sent["Mcp-Name"] = params.get("name", "")
+    sent.update(headers)
+    return post(client, token, body, **{k: v for k, v in sent.items() if v is not None})
+
+
+def error_of(response, status: int, code: int) -> dict:
+    assert response.status_code == status, response.text
+    error = response.json()["error"]
+    assert error["code"] == code, error
+    return error
+
+
+def test_2026_discover(on):
+    token, _ = make_grant()
+    found = rpc26(on, token, "server/discover", msg_id="d-1").json()
+    assert found["id"] == "d-1" and found["jsonrpc"] == "2.0"
+    result = found["result"]
+    assert result["resultType"] == "complete"
+    assert result["supportedVersions"] == ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"]
+    assert result["capabilities"] == {"tools": {}}
+    assert result["_meta"] == {"io.modelcontextprotocol/serverInfo": mcp.SERVER_INFO}
+    assert "read-only" in result["instructions"]
+    assert result["ttlMs"] > 0 and result["cacheScope"] == "public"
+
+
+def test_2026_versiya_xatosi_qayta_urinish_uchun(on):
+    token, _ = make_grant()
+    # Noma'lum sarlavha - tokendan OLDIN, -32022 va qo'llanadigan ro'yxat (yangi mijoz 2025 ga tushmaydi).
+    for who in (None, token):
+        error = error_of(rpc(on, who, "server/discover", **{"MCP-Protocol-Version": "2099-01-01"}), 400, -32022)
+        assert error["data"] == {"supported": list(mcp.PROTOCOL_VERSIONS), "requested": "2099-01-01"}
+    # `_meta` dagi noma'lum versiya.
+    future = {**META_26, "io.modelcontextprotocol/protocolVersion": "2099"}
+    error = error_of(rpc26(on, token, "tools/list", meta=future), 400, -32022)
+    assert error["data"]["requested"] == "2099" and "2026-07-28" in error["data"]["supported"]
+
+
+def test_2026_meta_va_sarlavha_qoidalari(on):
+    token, _ = make_grant()
+    # `_meta` yo'q (sarlavha 2026) yoki imkoniyatlar yo'q - -32602 / 400.
+    bare = post(on, token, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                **{"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/list"})
+    assert "protocolVersion" in error_of(bare, 400, -32602)["message"]
+    no_caps = {k: v for k, v in META_26.items() if k != "io.modelcontextprotocol/clientCapabilities"}
+    assert "clientCapabilities" in error_of(rpc26(on, token, "tools/list", meta=no_caps), 400, -32602)["message"]
+    # Sarlavha yo'q yoki tana bilan mos emas - -32020 / 400 (javobda so'rov id si).
+    error_of(rpc26(on, token, "tools/list", **{"MCP-Protocol-Version": None}), 400, -32020)
+    assert rpc26(on, token, "tools/list", msg_id=7, **{"Mcp-Method": None}).json()["id"] == 7
+    error_of(rpc26(on, token, "tools/list", **{"Mcp-Method": None}), 400, -32020)
+    error_of(rpc26(on, token, "tools/list", **{"Mcp-Method": "tools/call"}), 400, -32020)
+    args = {"name": "search_meetings", "arguments": {}}
+    error_of(rpc26(on, token, "tools/call", args, **{"Mcp-Name": None}), 400, -32020)
+    error_of(rpc26(on, token, "tools/call", args, **{"Mcp-Name": "get_summary"}), 400, -32020)
+    error_of(rpc26(on, token, "tools/call", args, **{"Mcp-Name": "=?base64?***?="}), 400, -32020)
+    assert calls() == []                                              # rad etilgan so'rov vositagacha yetmaydi
+
+
+def test_2026_vositalar_va_natija_turi(on, meeting):
+    token, _ = make_grant()
+    listing = rpc26(on, token, "tools/list").json()["result"]
+    assert listing["resultType"] == "complete" and listing["cacheScope"] == "private" and listing["ttlMs"] > 0
+    assert {t["name"] for t in listing["tools"]} == TOOL_NAMES
+    search = {"name": "search_meetings", "arguments": {"query": "hisobot"}}
+    result = rpc26(on, token, "tools/call", search).json()["result"]
+    assert result["resultType"] == "complete" and len(ok(result)["meetings"]) == 1
+    # ASCII bo'lmagan qiymat uchun `=?base64?...?=` shakli ham qabul qilinadi.
+    encoded = "=?base64?" + base64.b64encode(b"get_summary").decode() + "?="
+    summary = rpc26(on, token, "tools/call", {"name": "get_summary", "arguments": {"meeting_id": meeting}},
+                    **{"Mcp-Name": encoded}).json()["result"]
+    assert summary["resultType"] == "complete" and summary["isError"] is False
+    unknown = rpc26(on, token, "tools/call", {"name": "nope", "arguments": {}})
+    assert error_of(unknown, 200, -32602)
+    assert [(r["tool"], r["status"]) for r in calls()] == [("search_meetings", "ok"), ("get_summary", "ok"),
+                                                           ("unknown", "error")]
+
+
+def test_2026_noma_lum_metod_bildirishnoma_va_initialize(on):
+    token, _ = make_grant()
+    error_of(rpc26(on, token, "ping"), 404, -32601)                    # 2026-07-28 da `ping` yo'q
+    note = rpc26(on, token, "notifications/cancelled", {"requestId": 1}, notify=True)
+    assert note.status_code == 202 and note.content == b""
+    # `initialize` - har doim 2025 davri: 2026-07-28 so'ralsa ham 2025-11-25, `resultType` siz.
+    init = rpc(on, token, "initialize", {"protocolVersion": "2026-07-28", "capabilities": {}},
+               **{"MCP-Protocol-Version": "2026-07-28"}).json()["result"]
+    assert init["protocolVersion"] == "2025-11-25" and "resultType" not in init
+    # 2025 mijozlari o'zgarmagan: `resultType` / kesh maydonlari yo'q, `ping` ishlaydi.
+    legacy = rpc(on, token, "tools/list", **{"MCP-Protocol-Version": "2025-11-25"}).json()["result"]
+    assert set(legacy) == {"tools"}
+    assert rpc(on, token, "ping").json()["result"] == {}
+    # 2025 mijozining boshqa `_meta` kalitlari (masalan `progressToken`) uni 2026 ga o'tkazmaydi.
+    progress = rpc(on, token, "tools/list", {"_meta": {"progressToken": 5}}).json()["result"]
+    assert set(progress) == {"tools"}
 

@@ -11,6 +11,15 @@ MCP spetsifikatsiyasi) -> `MCP-Protocol-Version` -> token (JSON-RPC dan OLDIN: t
 tanasi o'qilmaydi ham) -> xabar. 401 dagi `WWW-Authenticate` mijozni OAuth metadata siga yuboradi
 (`connector/oauth.py`).
 
+IKKI DAVR (har so'rov o'zi tanlaydi - server holatsiz):
+- 2025 (`initialize` bilan): 2025-11-25 / 2025-06-18 / 2025-03-26 - avvalgidek.
+- 2026-07-28 (holatsiz yadro): `initialize` yo'q; har so'rov `_meta` da versiya va mijoz imkoniyatlarini,
+  sarlavhalarda `MCP-Protocol-Version`, `Mcp-Method` (va `tools/call` uchun `Mcp-Name`) olib keladi -
+  tana bilan mos kelmasa 400 / -32020. `server/discover`; natijalarda `resultType` va kesh ko'rsatmalari
+  (`ttlMs`, `cacheScope`); noma'lum metod 404 / -32601.
+Noma'lum versiya (sarlavhada yoki `_meta` da) - 400 / -32022, `data.supported` bilan: yangi mijoz
+"eski server" deb 2025 ga tushib qolmasdan 2026-07-28 bilan qayta so'raydi.
+
 `tools/call`: qamrov (`plaud.read`), tezlik chegarasi (ruxsatga daqiqasiga 60), jurnal
 (`core.record_call` - kim / ilova / vosita / holat / vaqt / hajm; MATN YO'Q). Vositalar va
 ularning xatolari - `plaud_tools.py`.
@@ -18,8 +27,10 @@ ularning xatolari - `plaud_tools.py`.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import re
 import time
 
 from typing import Any
@@ -38,8 +49,21 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["connector"], include_in_schema=False)
 
-#: Qo'llanadigan protokol versiyalari - birinchisi eng yangisi (mijozniki noma'lum bo'lsa shu).
-PROTOCOL_VERSIONS: tuple[str, ...] = ("2025-11-25", "2025-06-18", "2025-03-26")
+#: 2026-07-28 - holatsiz yadro (har so'rov o'z versiyasi bilan keladi).
+MODERN_VERSION = "2026-07-28"
+#: `initialize` bilan ishlaydigan versiyalar - birinchisi eng yangisi (`initialize` da mijozniki
+#: noma'lum bo'lsa shu).
+LEGACY_VERSIONS: tuple[str, ...] = ("2025-11-25", "2025-06-18", "2025-03-26")
+#: Hammasi - `MCP-Protocol-Version` sarlavhasi, `server/discover` va -32022 dagi ro'yxat.
+PROTOCOL_VERSIONS: tuple[str, ...] = (MODERN_VERSION, *LEGACY_VERSIONS)
+#: 2026-07-28 so'rov `_meta` kalitlari.
+META_VERSION = "io.modelcontextprotocol/protocolVersion"
+META_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities"
+META_SERVER_INFO = "io.modelcontextprotocol/serverInfo"
+#: Kesh ko'rsatmalari (2026-07-28 `caching`): `server/discover` hamma uchun bir xil - `public`;
+#: vositalar ro'yxati ruxsat qamroviga qarab - `private`.
+DISCOVER_TTL_MS = 3_600_000
+TOOLS_TTL_MS = 300_000
 #: `Origin` sarlavhasi kelsa - faqat shular (va o'zimiz, `core.public_base`).
 ALLOWED_ORIGINS = frozenset({"https://claude.ai", "https://claude.com", "https://chatgpt.com"})
 #: Ruxsat bo'yicha tezlik chegarasi (`calls` jurnalidan sanaladi - jarayonlar orasida ham bir xil).
@@ -63,15 +87,22 @@ PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
 METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
+HEADER_MISMATCH = -32020          # 2026-07-28: sarlavha yo'q yoki tana bilan mos emas
+UNSUPPORTED_VERSION = -32022      # 2026-07-28: `data.supported` / `data.requested` bilan
+
+#: 2026-07-28 sarlavha qiymati ASCII bo'lmasa: `=?base64?...?=`.
+_BASE64_HEADER = re.compile(r"=\?base64\?([A-Za-z0-9+/]*={0,2})\?=")
 
 
 class RpcError(Exception):
-    """JSON-RPC xatosi (HTTP 200, `error` bilan): noma'lum metod / vosita, ruxsatsiz qamrov."""
+    """JSON-RPC xatosi (`error` bilan): noma'lum metod / vosita, ruxsatsiz qamrov. HTTP 200;
+    2026-07-28 da noma'lum metod - 404."""
 
-    def __init__(self, code: int, message: str) -> None:
+    def __init__(self, code: int, message: str, status: int = 200) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.status = status
 
 
 # --- transport -------------------------------------------------------------------------------------
@@ -137,9 +168,14 @@ def _error(msg_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": message}}
 
 
+def _valid_id(msg_id: Any) -> bool:
+    return msg_id is None or (isinstance(msg_id, (str, int)) and not isinstance(msg_id, bool))
+
+
 def _envelope(body: bytes) -> dict[str, Any] | Response:
-    """Tana -> javob kutadigan so'rov xabari, yoki tayyor javob: xato (400 / -326xx) yoki 202
-    (bildirishnoma, mijozning javobi - ularga JSON-RPC javobi berilmaydi)."""
+    """Tana -> so'rov yoki bildirishnoma xabari (`id` yo'q bo'lishi mumkin - `mcp_post` hal qiladi),
+    yoki tayyor javob: xato (400 / -326xx) yoki 202 (mijozning javobi - unga JSON-RPC javobi
+    berilmaydi)."""
     try:
         msg = json.loads(body)
     except (ValueError, RecursionError):          # buzuq JSON yoki juda chuqur ichma-ichlik
@@ -154,17 +190,76 @@ def _envelope(body: bytes) -> dict[str, Any] | Response:
             return Response(status_code=202)
         return _json(_error(None, INVALID_REQUEST, "Invalid request"), 400)
     msg_id = msg.get("id")
-    if msg_id is not None and (isinstance(msg_id, bool) or not isinstance(msg_id, (str, int))):
+    if not _valid_id(msg_id):
         return _json(_error(None, INVALID_REQUEST, "Invalid id"), 400)
     if msg.get("jsonrpc") != "2.0" or not isinstance(msg["method"], str):
         return _json(_error(msg_id, INVALID_REQUEST, "Invalid request"), 400)
-    if "id" not in msg:
-        return Response(status_code=202)                # bildirishnoma (`notifications/initialized` ...)
-    if msg_id is None:
-        return _json(_error(None, INVALID_REQUEST, "Request id must not be null"), 400)
-    if msg.get("params") is not None and not isinstance(msg["params"], dict):
-        return _json(_error(msg_id, INVALID_PARAMS, "params must be an object"))
     return msg
+
+
+def _meta(msg: dict[str, Any]) -> dict[str, Any] | None:
+    params = msg.get("params")
+    meta = params.get("_meta") if isinstance(params, dict) else None
+    return meta if isinstance(meta, dict) else None
+
+
+def _is_modern(header_version: str | None, msg: dict[str, Any]) -> bool:
+    """2026-07-28 so'rovimi: sarlavha yoki `_meta` dagi versiya kaliti. `initialize` - har doim
+    2025 davri ("initialize eski semantikani tanlaydi", 2026-07-28 versioning)."""
+    if msg["method"] == "initialize":
+        return False
+    if header_version == MODERN_VERSION:
+        return True
+    meta = _meta(msg)
+    return meta is not None and META_VERSION in meta
+
+
+def _unsupported(msg_id: Any, requested: Any) -> Response:
+    error = _error(msg_id, UNSUPPORTED_VERSION, "Unsupported protocol version")
+    error["error"]["data"] = {"supported": list(PROTOCOL_VERSIONS), "requested": str(requested)[:64]}
+    return _json(error, 400)
+
+
+def _header(request: Request, name: str) -> str | None:
+    """2026-07-28 standart sarlavhasi (`=?base64?...?=` ochiladi). Ochilmasa - `None` (mos emas)."""
+    raw = request.headers.get(name)
+    if raw is None:
+        return None
+    raw = raw.strip()
+    found = _BASE64_HEADER.fullmatch(raw)
+    if found is None:
+        return raw
+    try:
+        return base64.b64decode(found.group(1), validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):            # `binascii.Error` - `ValueError`
+        return None
+
+
+def _modern_problem(request: Request, header_version: str | None, msg: dict[str, Any]) -> Response | None:
+    """2026-07-28 so'rov qoidalari (basic `_meta`, streamable-http sarlavhalari). `None` - joyida."""
+    msg_id = msg.get("id")
+    meta = _meta(msg) or {}
+    version = meta.get(META_VERSION)
+    if version is None:
+        return _json(_error(msg_id, INVALID_PARAMS, f"Missing required _meta field: {META_VERSION}"), 400)
+    if version != MODERN_VERSION:
+        return _unsupported(msg_id, version)
+    if header_version != version:
+        return _json(_error(msg_id, HEADER_MISMATCH,
+                            "Header mismatch: MCP-Protocol-Version header does not match the request body"), 400)
+    if not isinstance(meta.get(META_CAPABILITIES), dict):
+        return _json(_error(msg_id, INVALID_PARAMS, f"Missing required _meta field: {META_CAPABILITIES}"), 400)
+    if _header(request, "mcp-method") != msg["method"]:
+        return _json(_error(msg_id, HEADER_MISMATCH,
+                            "Header mismatch: Mcp-Method header is missing or does not match the request body"), 400)
+    if msg["method"] == "tools/call":
+        params = msg.get("params")
+        name = params.get("name") if isinstance(params, dict) else None
+        if not isinstance(name, str) or _header(request, "mcp-name") != name:
+            return _json(_error(msg_id, HEADER_MISMATCH,
+                                "Header mismatch: Mcp-Name header is missing or does not match the request body"),
+                         400)
+    return None
 
 
 @router.api_route("/mcp", methods=["GET", "DELETE"])
@@ -179,8 +274,9 @@ async def mcp_post(request: Request) -> Response:
     if (blocked := _gate(request)) is not None:
         return blocked
     version = request.headers.get("mcp-protocol-version")
-    if version is not None and version.strip() not in PROTOCOL_VERSIONS:
-        return _json(_error(None, INVALID_REQUEST, "Unsupported MCP-Protocol-Version"), 400)
+    version = version.strip() if version is not None else None
+    if version is not None and version not in PROTOCOL_VERSIONS:
+        return _unsupported(None, version)
     raw = _bearer(request)
     auth = await run_in_threadpool(_authenticate, raw)
     if auth is None:
@@ -196,18 +292,38 @@ async def mcp_post(request: Request) -> Response:
     msg = _envelope(body)
     if isinstance(msg, Response):
         return msg
-    msg_id, method, params = msg["id"], msg["method"], msg.get("params") or {}
+    modern = _is_modern(version, msg)
+    if modern and (problem := _modern_problem(request, version, msg)) is not None:
+        return problem
+    if "id" not in msg:
+        return Response(status_code=202)                # bildirishnoma (`notifications/initialized` ...)
+    msg_id, method, params = msg["id"], msg["method"], msg.get("params")
+    if msg_id is None:
+        return _json(_error(None, INVALID_REQUEST, "Request id must not be null"), 400)
+    if params is not None and not isinstance(params, dict):
+        return _json(_error(msg_id, INVALID_PARAMS, "params must be an object"))
     try:
-        result = await _dispatch(method, params, grant, user)
+        result = await _dispatch(method, params or {}, grant, user, modern)
     except RpcError as exc:
-        return _json(_error(msg_id, exc.code, exc.message))
+        return _json(_error(msg_id, exc.code, exc.message), exc.status)
     return _json({"jsonrpc": "2.0", "id": msg_id, "result": result})
 
 
 # --- metodlar --------------------------------------------------------------------------------------
 
 
-async def _dispatch(method: str, params: dict[str, Any], grant: GrantRow, user: AuthUser) -> dict[str, Any]:
+async def _dispatch(method: str, params: dict[str, Any], grant: GrantRow, user: AuthUser,
+                    modern: bool = False) -> dict[str, Any]:
+    if modern:
+        if method == "server/discover":
+            return discover()
+        if method == "tools/list":
+            return {"resultType": "complete", "tools": [t.listing() for t in granted_tools(grant)],
+                    "ttlMs": TOOLS_TTL_MS, "cacheScope": "private"}
+        if method == "tools/call":
+            return {"resultType": "complete", **await run_in_threadpool(call_tool, grant, user, params)}
+        # `ping`, `initialize` ... 2026-07-28 da yo'q; noma'lum metod - 404 (streamable-http).
+        raise RpcError(METHOD_NOT_FOUND, "Method not found", status=404)
     if method == "initialize":
         return initialize(params)
     if method == "ping":
@@ -220,10 +336,18 @@ async def _dispatch(method: str, params: dict[str, Any], grant: GrantRow, user: 
 
 
 def initialize(params: dict[str, Any]) -> dict[str, Any]:
+    """2025 davri. 2026-07-28 so'ralsa ham 2025-11-25 (u versiyada `initialize` yo'q)."""
     wanted = params.get("protocolVersion")
-    return {"protocolVersion": wanted if wanted in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0],
+    return {"protocolVersion": wanted if wanted in LEGACY_VERSIONS else LEGACY_VERSIONS[0],
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": SERVER_INFO, "instructions": INSTRUCTIONS}
+
+
+def discover() -> dict[str, Any]:
+    """2026-07-28 `server/discover`: versiyalar, imkoniyatlar, server nomi (`_meta`), ko'rsatma, kesh."""
+    return {"resultType": "complete", "supportedVersions": list(PROTOCOL_VERSIONS),
+            "capabilities": {"tools": {}}, "_meta": {META_SERVER_INFO: SERVER_INFO},
+            "instructions": INSTRUCTIONS, "ttlMs": DISCOVER_TTL_MS, "cacheScope": "public"}
 
 
 def granted_tools(grant: GrantRow) -> list[Tool]:
