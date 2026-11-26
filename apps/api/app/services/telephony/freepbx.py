@@ -10,7 +10,7 @@ JAVOB KODLARI:
     400  JSON buzilgan;  401  token noto'g'ri;  405  usul noto'g'ri;
     409  bu call_id allaqachon ishlatilgan (qayta urinish YANGI call_id bilan bo'ladi);
     422  raqam yoki call_id noto'g'ri;
-    429  chegara: disabled | barno_max | trunk | lock (javobdagi sabab `detail` ga yoziladi);
+    429  chegara: disabled | barno_max | trunk | lock (javobdagi `details` - bizda `detail` ga yoziladi);
     502  FreePBX qo'ng'iroqni boshlay olmadi (originate rad etildi);
     503  not_configured | pbx_unavailable | gateway_unavailable.
 
@@ -55,7 +55,10 @@ def normalize_fingerprint(value: str) -> str:
 
 
 def _detail(body: dict) -> str:
-    for key in ("detail", "error", "reason", "status", "message"):
+    """Rad etish sababi. FreePBX: `{"ok": false, "error": "busy", "details": "barno_max"}` - aniq sabab `details` da
+    (429: disabled | barno_max | trunk | lock; 422: call_id | phone), qolganida `error` ning o'zi
+    (duplicate_call_id, originate_failed, gateway_unavailable, pbx_unavailable, not_configured, unauthorized)."""
+    for key in ("details", "error", "detail", "reason", "message"):
         value = body.get(key)
         if isinstance(value, dict):
             value = value.get("code") or value.get("message")

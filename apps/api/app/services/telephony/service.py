@@ -10,6 +10,7 @@ NATIJA ENDPOINT'I QOIDALARI (FreePBX admini bilan kelishilgan):
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import re
@@ -169,6 +170,17 @@ def _int(value: Any) -> int | None:
         return None
 
 
+def _epoch(value: Any) -> int | None:
+    """FreePBX vaqti -> epoch soniya. Kontraktda ISO 8601 UTC (`2025-11-25T10:00:00Z`); son ham qabul qilinadi."""
+    number = _int(value)
+    if number is not None:
+        return number
+    try:
+        return int(dt.datetime.fromisoformat(str(value).strip().replace("Z", "+00:00")).timestamp())
+    except (TypeError, ValueError):
+        return None
+
+
 def _text(value: Any, limit: int = 64) -> str | None:
     return None if value in (None, "") else str(value)[:limit]
 
@@ -184,7 +196,7 @@ def result_fields(payload: dict[str, Any]) -> dict[str, Any]:
     # boshqasi - mijoz javob berdi, lekin shlyuz/bridge ulanmadi (u uzr yozuvini eshitdi); yo'q - noma'lum.
     outcome = ("talked" if gateway.upper() == "ANSWER" else "gateway_failed") if gateway else ""
     return {"status": "completed", "outcome": outcome,
-            "answer_time": _int(payload.get("answer_time")), "end_time": _int(payload.get("end_time")),
+            "answer_time": _epoch(payload.get("answer_time")), "end_time": _epoch(payload.get("end_time")),
             "talk_sec": _int(payload.get("talk_sec")), "gateway_status": gateway,
             "hangup_cause": _text(payload.get("hangup_cause")), "uniqueid": _text(payload.get("uniqueid"))}
 

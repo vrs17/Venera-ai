@@ -77,6 +77,7 @@ function reasonText(call: PhoneCall): string {
   const known: Record<string, string> = {
     disabled: 'disabled', barno_max: 'barno_max', trunk: 'trunk', lock: 'lock', not_configured: 'unavailable',
     pbx_unavailable: 'unavailable', gateway_unavailable: 'unavailable', cert_mismatch: 'cert',
+    originate_failed: 'originate', unauthorized: 'auth', duplicate_call_id: 'duplicate',
   }
   if (known[detail]) return t(`live.phone.reason.${known[detail]}`)
   if (detail.startsWith('connect_failed') || detail.startsWith('send_failed')) return t('live.phone.reason.connect')

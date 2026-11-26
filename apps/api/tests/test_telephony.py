@@ -52,7 +52,7 @@ class FakeFreePBX:
     def __init__(self, folder) -> None:
         cert, key, self.fingerprint = _self_signed(folder)
         self.requests: list[dict] = []
-        self.reply: tuple[int, dict] = (202, {"status": "accepted", "call_id": None})
+        self.reply: tuple[int, dict] = (202, {"ok": True, "call_id": None})
         self.delay = 0.0
         fake = self
 
@@ -189,10 +189,20 @@ def test_wrong_certificate_never_receives_the_token(client, auth, pbx, monkeypat
     assert pbx.requests == []
 
 
-def test_freepbx_refusal_is_kept_with_reason(client, auth, pbx):
-    pbx.reply = (429, {"error": "barno_max"})
+@pytest.mark.parametrize("code, body, detail", [
+    (429, {"ok": False, "error": "busy", "details": "barno_max"}, "barno_max"),
+    (429, {"ok": False, "error": "busy", "details": "disabled"}, "disabled"),
+    (422, {"ok": False, "error": "validation", "details": "phone"}, "phone"),
+    (409, {"ok": False, "error": "duplicate_call_id"}, "duplicate_call_id"),
+    (502, {"ok": False, "error": "originate_failed"}, "originate_failed"),
+    (503, {"ok": False, "error": "gateway_unavailable"}, "gateway_unavailable"),
+    (401, {"ok": False, "error": "unauthorized"}, "unauthorized"),
+])
+def test_freepbx_refusal_is_kept_with_reason(client, auth, pbx, code, body, detail):
+    """call-live.php javoblari - FreePBX kodidagi shakl (`{"ok": false, "error": ..., "details": ...}`)."""
+    pbx.reply = (code, body)
     call = _place(client, auth)
-    assert (call["status"], call["httpStatus"], call["detail"]) == ("rejected", 429, "barno_max")
+    assert (call["status"], call["httpStatus"], call["detail"]) == ("rejected", code, detail)
 
 
 def test_sent_without_answer_is_unknown_and_late_result_wins(client, auth, pbx, monkeypatch):
@@ -354,3 +364,23 @@ def test_retry_runs_by_itself_after_the_delay(client, auth, pbx, monkeypatch):
 def test_default_call_live_timeout_is_at_least_20_seconds():
     from app.core.config import Settings
     assert Settings.model_fields["telephony_call_live_timeout"].default >= 20
+
+
+def test_contract_payloads_with_iso_times(client, auth, pbx):
+    """CONTRACT.md 3-bo'lim: vaqtlar ISO 8601 UTC, reason va hangup_cause - son, gateway_status bo'sh bo'lishi mumkin."""
+    call = _place(client, auth)
+    body = {"call_id": call["callId"], "event": "answered", "answer_time": "2026-11-30T14:00:00Z",
+            "end_time": "2026-11-30T14:01:20Z", "talk_sec": 80, "gateway_status": "ANSWER", "hangup_cause": 16,
+            "uniqueid": "1764064790.41"}
+    assert client.post(RESULT, json=body, headers=HEADERS).status_code == 200
+    detail = client.get(f"{CALLS}/{call['callId']}", headers=auth).json()
+    assert (detail["answerTime"], detail["endTime"], detail["talkSec"]) == (1796047200, 1796047280, 80)
+    other = _place(client, auth)
+    hung_up_early = {"call_id": other["callId"], "event": "answered", "answer_time": "2026-11-30T14:00:00Z",
+                     "end_time": "2026-11-30T14:00:03Z", "talk_sec": 3, "gateway_status": "", "hangup_cause": 16}
+    client.post(RESULT, json=hung_up_early, headers=HEADERS)
+    assert client.get(f"{CALLS}/{other['callId']}", headers=auth).json()["outcome"] == ""
+    third = _place(client, auth)
+    failed = {"call_id": third["callId"], "event": "failed", "reason": 5, "uniqueid": "1.2", "time": "2026-11-30T14:00:00Z"}
+    client.post(RESULT, json=failed, headers=HEADERS)
+    assert client.get(f"{CALLS}/{third['callId']}", headers=auth).json()["outcome"] == "busy"
